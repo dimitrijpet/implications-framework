@@ -17,6 +17,7 @@ export async function parseFile(filePath) {
     
     const result = {
       path: filePath,
+      content: content,  // ADD THIS LINE
       classes: [],
       functions: [],
       imports: [],
@@ -169,24 +170,82 @@ export function hasPattern(parsed, pattern) {
   }
 }
 
+
 /**
- * Extract XState transitions from xstateConfig
+ * Extract XState transitions from xstateConfig static property
  */
-export function extractXStateTransitions(parsed) {
+export function extractXStateTransitions(parsed, className) {
   const transitions = [];
   
-  // Find the xstateConfig property
-  const xstateClass = parsed.classes.find(cls => 
-    cls.staticProperties.some(p => p.name === 'xstateConfig')
-  );
-  
-  if (!xstateClass) return transitions;
-  
-  const xstateConfig = xstateClass.staticProperties.find(p => p.name === 'xstateConfig');
-  
-  // TODO: Parse the AST to extract transitions from the 'on' object
-  // For now, we'll return empty array
-  // This requires traversing the ObjectExpression in the AST
+  try {
+    // Find the class with xstateConfig
+    const cls = parsed.classes.find(c => 
+      c.staticProperties.some(p => p.name === 'xstateConfig')
+    );
+    
+    if (!cls) return transitions;
+    
+    // We need to re-parse to get the full AST with the xstateConfig object
+    const content = parsed.content || ''; // We'll need to pass this
+    if (!content) return transitions;
+    
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    // Traverse to find xstateConfig and extract 'on' transitions
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          // Found xstateConfig
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            // Look for 'on' property
+            const onProperty = value.properties.find(
+              p => p.key?.name === 'on'
+            );
+            
+            if (onProperty && onProperty.value?.type === 'ObjectExpression') {
+              // Extract each transition
+              onProperty.value.properties.forEach(transitionProp => {
+                const eventName = transitionProp.key?.name || 
+                                 transitionProp.key?.value;
+                
+                let targetState = null;
+                
+                // Handle different transition formats
+                if (transitionProp.value?.type === 'StringLiteral') {
+                  // Simple: ACCEPT: 'accepted'
+                  targetState = transitionProp.value.value;
+                } else if (transitionProp.value?.type === 'ObjectExpression') {
+                  // Complex: ACCEPT: { target: 'accepted' }
+                  const targetProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'target'
+                  );
+                  if (targetProp?.value?.type === 'StringLiteral') {
+                    targetState = targetProp.value.value;
+                  }
+                }
+                
+                if (eventName && targetState) {
+                  transitions.push({
+                    event: eventName,
+                    from: className,
+                    to: targetState,
+                  });
+                }
+              });
+            }
+          }
+        }
+      },
+    });
+    
+  } catch (error) {
+    console.error(`Error extracting transitions from ${className}:`, error.message);
+  }
   
   return transitions;
 }

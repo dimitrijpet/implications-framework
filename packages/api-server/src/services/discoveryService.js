@@ -1,6 +1,6 @@
 import { glob } from 'glob';
 import path from 'path';
-import { parseFile, hasPattern } from './astParser.js';
+import { parseFile, hasPattern, extractXStateTransitions } from './astParser.js';
 import { isImplication, extractImplicationMetadata } from '../../../core/src/patterns/implications.js';
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
@@ -9,11 +9,17 @@ import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discove
 /**
  * Discover all patterns in a project
  */
+/**
+ * Discover all patterns in a project
+ */
 export async function discoverProject(projectPath) {
   console.log(`🔍 Discovering project at: ${projectPath}`);
   
   const result = new DiscoveryResult();
   result.projectPath = projectPath;
+  
+  // Add transitions array
+  result.transitions = [];
   
   try {
     // Find all JavaScript files
@@ -41,6 +47,15 @@ export async function discoverProject(projectPath) {
         
         // Check what type of file this is
         await classifyFile(parsed, result);
+        
+        // NEW: Extract transitions if it's an implication
+        if (isImplication(parsed)) {
+          const metadata = extractImplicationMetadata(parsed);
+          if (metadata.hasXStateConfig) {
+            const transitions = extractXStateTransitions(parsed, metadata.className);
+            result.transitions.push(...transitions);
+          }
+        }
         
         // Check for patterns
         if (hasPattern(parsed, 'xstate')) result.patterns.hasXState = true;

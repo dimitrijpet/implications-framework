@@ -2,33 +2,58 @@
  * Build Cytoscape graph from discovery results
  */
 export function buildGraphFromDiscovery(discoveryResult) {
-  const { files } = discoveryResult;
+  const { files, transitions } = discoveryResult;
   const implications = files.implications || [];
   
   const nodes = [];
   const edges = [];
   
+  // Create a map of state names to class names
+  const stateMap = new Map();
+  
   // Create nodes from implications
   implications.forEach(imp => {
     const metadata = imp.metadata || {};
+    const stateName = extractStateName(metadata.className);
+    
+    stateMap.set(metadata.className, stateName.toLowerCase());
+    stateMap.set(stateName.toLowerCase(), stateName.toLowerCase());
     
     nodes.push({
       data: {
-        id: metadata.className || imp.className,
-        label: extractStateName(metadata.className),
+        id: stateName.toLowerCase(),
+        label: stateName,
         type: 'state',
         isStateful: metadata.isStateful,
         pattern: metadata.pattern,
         hasXState: metadata.hasXStateConfig,
-        // Store full metadata for details panel
         metadata: metadata,
       },
       classes: metadata.pattern || 'default',
     });
   });
   
-  // TODO: Extract transitions from xstateConfig
-  // For now, we'll create edges manually or in Phase 2.5
+  // Create edges from transitions
+  if (transitions && transitions.length > 0) {
+    transitions.forEach(transition => {
+      const fromState = extractStateName(transition.from).toLowerCase();
+      const toState = transition.to.toLowerCase();
+      
+      // Only add edge if both nodes exist
+      if (stateMap.has(fromState) && stateMap.has(toState)) {
+        edges.push({
+          data: {
+            id: `${fromState}-${toState}`,
+            source: fromState,
+            target: toState,
+            label: transition.event,
+          },
+        });
+      }
+    });
+  }
+  
+  console.log(`Built graph: ${nodes.length} nodes, ${edges.length} edges`);
   
   return { nodes, edges };
 }
