@@ -1,1 +1,13 @@
+# Already have these
 node_modules/
+dist/
+.env
+.env.local
+
+# Add these if missing
+packages/*/dist/
+packages/*/node_modules/
+packages/*/.vite/
+.pnpm-store/
+*.log
+.DS_Store
