@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import Visualizer from './pages/Visualizer';
 
 function Dashboard() {
   return (
@@ -59,7 +60,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/projects" element={<div className="p-8">Projects (coming soon)</div>} />
-            <Route path="/visualizer" element={<div className="p-8">Visualizer (coming soon)</div>} />
+            <Route path="/visualizer" element={<Visualizer />} />
           </Routes>
         </main>
       </div>

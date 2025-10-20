@@ -99,11 +99,14 @@ importers:
         specifier: ^1.6.2
         version: 1.12.2
       cytoscape:
-        specifier: ^3.28.0
+        specifier: ^3.33.1
         version: 3.33.1
       cytoscape-dagre:
         specifier: ^2.5.0
         version: 2.5.0(cytoscape@3.33.1)
+      dagre:
+        specifier: ^0.8.5
+        version: 0.8.5
       react:
         specifier: ^18.2.0
         version: 18.3.1

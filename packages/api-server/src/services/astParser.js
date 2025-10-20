@@ -168,3 +168,25 @@ export function hasPattern(parsed, pattern) {
       return false;
   }
 }
+
+/**
+ * Extract XState transitions from xstateConfig
+ */
+export function extractXStateTransitions(parsed) {
+  const transitions = [];
+  
+  // Find the xstateConfig property
+  const xstateClass = parsed.classes.find(cls => 
+    cls.staticProperties.some(p => p.name === 'xstateConfig')
+  );
+  
+  if (!xstateClass) return transitions;
+  
+  const xstateConfig = xstateClass.staticProperties.find(p => p.name === 'xstateConfig');
+  
+  // TODO: Parse the AST to extract transitions from the 'on' object
+  // For now, we'll return empty array
+  // This requires traversing the ObjectExpression in the AST
+  
+  return transitions;
+}
