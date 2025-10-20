@@ -7,7 +7,11 @@
   "exports": {
     ".": "./src/index.js",
     "./types": "./src/types/index.js",
-    "./utils": "./src/utils/index.js"
+    "./types/discovery": "./src/types/discovery.js",
+    "./utils": "./src/utils/index.js",
+    "./patterns/implications": "./src/patterns/implications.js",
+    "./patterns/sections": "./src/patterns/sections.js",
+    "./patterns/screens": "./src/patterns/screens.js"
   },
   "scripts": {
     "build": "echo 'No build needed for core'",
@@ -16,7 +20,8 @@
     "clean": "rm -rf node_modules"
   },
   "dependencies": {
-    "fs-extra": "^11.2.0"
+    "fs-extra": "^11.2.0",
+    "joi": "^17.11.0"
   },
   "devDependencies": {
     "eslint": "^8.55.0"

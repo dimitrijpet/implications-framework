@@ -11,18 +11,19 @@
     "clean": "rm -rf node_modules"
   },
   "dependencies": {
+    "@babel/parser": "^7.28.4",
+    "@babel/traverse": "^7.28.4",
     "@implications/core": "workspace:*",
-    "express": "^4.18.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "morgan": "^1.10.0",
+    "express": "^4.18.2",
     "fs-extra": "^11.2.0",
+    "glob": "^11.0.3",
     "handlebars": "^4.7.8",
-    "@babel/parser": "^7.23.6",
-    "@babel/traverse": "^7.23.6"
+    "morgan": "^1.10.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
-    "eslint": "^8.55.0"
+    "eslint": "^8.55.0",
+    "nodemon": "^3.0.2"
   }
 }
