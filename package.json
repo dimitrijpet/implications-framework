@@ -1,0 +1,34 @@
+{
+  "name": "implications-framework",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A code generation system for implications-based testing",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./packages/{web-app,api-server}\" dev",
+    "dev:web": "pnpm --filter web-app dev",
+    "dev:api": "pnpm --filter api-server dev",
+    "dev:cli": "pnpm --filter cli dev",
+    "dev:all": "pnpm --parallel --filter \"./packages/*\" dev",
+    "build": "pnpm --filter \"./packages/*\" build",
+    "lint": "pnpm --filter \"./packages/*\" lint",
+    "test": "pnpm --filter \"./packages/*\" test",
+    "clean": "pnpm --filter \"./packages/*\" clean && rm -rf node_modules",
+    "implications": "pnpm --filter cli start"
+  },
+  "keywords": [
+    "testing",
+    "implications",
+    "xstate",
+    "code-generation",
+    "playwright"
+  ],
+  "author": "Your Team",
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^3.0.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@implications/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./types": "./src/types/index.js",
+    "./utils": "./src/utils/index.js"
+  },
+  "scripts": {
+    "build": "echo 'No build needed for core'",
+    "lint": "eslint src --ext .js",
+    "test": "echo 'Tests coming soon'",
+    "clean": "rm -rf node_modules"
+  },
+  "dependencies": {
+    "fs-extra": "^11.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0"
+  }
+}
