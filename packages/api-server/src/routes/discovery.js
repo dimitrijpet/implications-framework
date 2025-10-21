@@ -1,61 +1,62 @@
+// packages/api-server/src/routes/discovery.js (FIX)
+
 import express from 'express';
 import { discoverProject } from '../services/discoveryService.js';
-import path from 'path';
+import { ProjectAnalyzer } from '../../../analyzer/src/index.js';
+import { StateRegistry } from '../../../core/src/index.js';
+import { loadConfig } from '../services/configService.js';
 
 const router = express.Router();
 
-/**
- * POST /api/discovery/scan
- * Scan a project directory
- */
-router.post('/scan', async (req, res, next) => {
+router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
     if (!projectPath) {
-      return res.status(400).json({
-        error: 'projectPath is required',
-      });
+      return res.status(400).json({ error: 'projectPath is required' });
     }
     
-    // Validate path exists
-    const absolutePath = path.resolve(projectPath);
+    console.log(`\n🔍 Starting discovery for: ${projectPath}`);
+    const startTime = Date.now();
     
-    console.log(`📡 API: Starting discovery for ${absolutePath}`);
+    // Load project config
+    const config = await loadConfig(projectPath);
     
-    const result = await discoverProject(absolutePath);
+    // Run discovery
+    const discoveryResult = await discoverProject(projectPath);
     
+    // Build state registry
+    console.log('\n🗺️  Building State Registry...');
+    const stateRegistry = new StateRegistry(config);
+    await stateRegistry.build(discoveryResult);
+    
+    // Run analysis with registry
+    const analyzer = new ProjectAnalyzer();
+    const analysisResult = analyzer.analyze(discoveryResult, {
+      stateRegistry
+    });
+    
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✅ Discovery complete in ${duration}s`);
+    console.log(`   - Files: ${discoveryResult.stats?.totalFiles || 'N/A'}`);
+    console.log(`   - Implications: ${discoveryResult.files.implications.length}`);
+    console.log(`   - State Mappings: ${stateRegistry.size}`);
+    console.log(`   - Issues Found: ${analysisResult.summary.totalIssues}`);
+    
+    // Include registry in response
     res.json({
-      success: true,
-      result,
+      ...discoveryResult,
+      analysis: analysisResult,
+      stateRegistry: stateRegistry.toJSON()
     });
     
   } catch (error) {
-    next(error);
+    console.error('Discovery error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
-});
-
-/**
- * GET /api/discovery/patterns
- * Get list of known patterns
- */
-router.get('/patterns', (req, res) => {
-  res.json({
-    patterns: {
-      implications: {
-        description: 'XState-based or stateless implications',
-        markers: ['xstateConfig', 'mirrorsOn', '*Implications.js'],
-      },
-      sections: {
-        description: 'EnhancedBaseSection children',
-        markers: ['extends EnhancedBaseSection', 'SCENARIOS', '*Section.js'],
-      },
-      screens: {
-        description: 'Page Object Model screens',
-        markers: ['*Screen.js', 'constructor(page)'],
-      },
-    },
-  });
 });
 
 export default router;

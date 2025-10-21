@@ -1,135 +1,174 @@
-import { useState, useEffect } from 'react';
+// packages/web-app/src/pages/Visualizer.jsx
+
+import { useState } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
 import StateDetailModal from '../components/StateGraph/StateDetailModal';
-import apiClient from '../api/client';
-import { buildGraphFromDiscovery, buildSampleGraph } from '../utils/graphBuilder';  // ✅ ADD buildSampleGraph
+import { buildGraphFromDiscovery } from '../utils/graphBuilder';
 import { defaultTheme } from '../config/visualizerTheme';
 import StatsPanel from '../components/StatsPanel/StatsPanel';
+import IssuePanel from '../components/IssuePanel/IssuePanel';
+import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 
 export default function Visualizer() {
-  const [graphData, setGraphData] = useState(null);
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
-  const [selectedState, setSelectedState] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [projectPath, setProjectPath] = useState('');
-  const [discoveryResult, setDiscoveryResult] = useState(null);
-  
-  useEffect(() => {
-    const sampleGraph = buildSampleGraph();
-    setGraphData(sampleGraph);
-    console.log('✅ Loaded sample graph:', sampleGraph);
-  }, []);
+  // Load from localStorage on mount
+  const [projectPath, setProjectPath] = useState(
+    localStorage.getItem('lastProjectPath') || '/home/dimitrij/Projects/cxm/PolePosition-TESTING'
+  );
+  const [discoveryResult, setDiscoveryResult] = useState(() => {
+    const saved = localStorage.getItem('lastDiscoveryResult');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [analysisResult, setAnalysisResult] = useState(() => {
+    const saved = localStorage.getItem('lastAnalysisResult');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [stateRegistry, setStateRegistry] = useState(() => {
+    const saved = localStorage.getItem('lastStateRegistry');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [graphData, setGraphData] = useState(() => {
+    const saved = localStorage.getItem('lastGraphData');
+    return saved ? JSON.parse(saved) : null;
+  });
 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedState, setSelectedState] = useState(null);
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  
+  // Clear cache and reset state
+  const handleClearCache = () => {
+    localStorage.removeItem('lastProjectPath');
+    localStorage.removeItem('lastDiscoveryResult');
+    localStorage.removeItem('lastAnalysisResult');
+    localStorage.removeItem('lastStateRegistry');
+    localStorage.removeItem('lastGraphData');
+    
+    setDiscoveryResult(null);
+    setAnalysisResult(null);
+    setStateRegistry(null);
+    setGraphData(null);
+    setSelectedState(null);
+    setSelectedNodeId(null);
+  };
+
+  // Scan project and save to localStorage
   const handleScan = async () => {
-  if (!projectPath) {
-    alert('Please enter a project path');
-    return;
-  }
-  
-  setLoading(true);
-  try {
-    const response = await apiClient.post('/discovery/scan', { projectPath });
-    const discovery = response.data.result;
+    if (!projectPath.trim()) {
+      alert('Please enter a project path');
+      return;
+    }
     
-    // ✅ ADD THIS - Check what we got
-    console.log('📦 Discovery result:', discovery);
-    console.log('📦 First implication:', discovery.files.implications[0]);
+    setLoading(true);
+    setError(null);
     
-    setDiscoveryResult(discovery);
-    const graph = buildGraphFromDiscovery(discovery);
-    setGraphData(graph);
-    
-    alert(`Found ${discovery.files.implications.length} implications!`);
-  } catch (error) {
-    console.error('Scan failed:', error);
-    alert('Failed to scan project');
-  } finally {
-    setLoading(false);
-  }
-};
-  
-const handleNodeClick = (nodeData) => {
-  setSelectedNodeId(nodeData.id);
-  
-  console.log('🖱️ Node clicked:', nodeData);
-  
-  // ... sample graph handling stays the same ...
-  
-  // ✅ Handle real discovery result
-  if (discoveryResult) {
-    const implication = discoveryResult.files.implications.find(
-      imp => extractStateName(imp.metadata.className) === nodeData.id
-    );
-    
-    if (implication) {
-      const metadata = implication.metadata;
+    try {
+      console.log('📡 Scanning:', projectPath);
       
-      // ✅ CHECK: Does this implication have xstateConfig?
-      if (!metadata.hasXStateConfig) {
-        console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
-        alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
-        return;
+      const response = await fetch('http://localhost:3000/api/discovery/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: projectPath.trim() })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
       
-      // Extract transitions for this state
-      const stateTransitions = (discoveryResult.transitions || [])
-        .filter(t => extractStateName(t.from) === nodeData.id)
-        .map(t => ({
-          event: t.event,
-          target: t.to
-        }));
+      const data = await response.json();
+      console.log('📦 Discovery result:', data);
       
-      // Build state object
-      // Build state object
-const state = {
-  name: nodeData.id,
-  displayName: metadata.status || nodeData.label,
-  meta: {
-    // Basic info
-    status: metadata.status,
-    triggerAction: metadata.triggerAction,
-    triggerButton: metadata.triggerButton,
-    afterButton: metadata.afterButton,
-    previousButton: metadata.previousButton,
-    notificationKey: metadata.notificationKey,
-    
-    // Status info
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    
-    // Platform
-    platform: metadata.platform || 'unknown',
-    
-    // Required fields
-    requiredFields: metadata.requiredFields || [],
-    
-    // Prerequisites
-    requires: metadata.requires || {},
-    
-    // Setup
-    setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
-    allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
-    
-    // Action info
-    actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
-  },
-  transitions: stateTransitions,
-  files: {
-    implication: implication.path,
-    test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-  },
-  // ✅ ADD UI COVERAGE HERE!
-  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
-};
-
-console.log('✅ Selected state with full metadata:', state);
-console.log('🖥️ UI Coverage:', state.uiCoverage);  // ✅ Add this debug log
-setSelectedState(state);
-    } else {
-      console.warn('⚠️ Implication not found for:', nodeData.id);
+      const { analysis, stateRegistry: registry, ...discoveryResult } = data;
+      
+      setDiscoveryResult(discoveryResult);
+      setAnalysisResult(analysis);
+      setStateRegistry(registry);
+      
+      // Build graph data
+      const builtGraphData = buildGraphFromDiscovery(discoveryResult);
+      setGraphData(builtGraphData);
+      
+      // Save to localStorage
+      localStorage.setItem('lastProjectPath', projectPath.trim());
+      localStorage.setItem('lastDiscoveryResult', JSON.stringify(discoveryResult));
+      localStorage.setItem('lastAnalysisResult', JSON.stringify(analysis));
+      localStorage.setItem('lastStateRegistry', JSON.stringify(registry));
+      localStorage.setItem('lastGraphData', JSON.stringify(builtGraphData));
+      
+      console.log('✅ Scan complete');
+      console.log('   - States:', discoveryResult.files?.implications?.length || 0);
+      console.log('   - Issues:', analysis?.summary?.totalIssues || 0);
+      console.log('   - Mappings:', registry?.size || 0);
+      
+    } catch (err) {
+      console.error('❌ Scan failed:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-  }
-};
+  };
+  
+  // Handle node click in graph
+  const handleNodeClick = (nodeData) => {
+    setSelectedNodeId(nodeData.id);
+    console.log('🖱️ Node clicked:', nodeData);
+    
+    if (discoveryResult) {
+      const implication = discoveryResult.files.implications.find(
+        imp => extractStateName(imp.metadata.className) === nodeData.id
+      );
+      
+      if (implication) {
+        const metadata = implication.metadata;
+        
+        if (!metadata.hasXStateConfig) {
+          console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
+          alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
+          return;
+        }
+        
+        const stateTransitions = (discoveryResult.transitions || [])
+          .filter(t => extractStateName(t.from) === nodeData.id)
+          .map(t => ({
+            event: t.event,
+            target: t.to
+          }));
+        
+        const state = {
+          name: nodeData.id,
+          displayName: metadata.status || nodeData.label,
+          meta: {
+            status: metadata.status,
+            triggerAction: metadata.triggerAction,
+            triggerButton: metadata.triggerButton,
+            afterButton: metadata.afterButton,
+            previousButton: metadata.previousButton,
+            notificationKey: metadata.notificationKey,
+            statusCode: metadata.statusCode,
+            statusNumber: metadata.statusNumber,
+            platform: metadata.platform || 'unknown',
+            requiredFields: metadata.requiredFields || [],
+            requires: metadata.requires || {},
+            setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
+            allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
+            actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
+          },
+          transitions: stateTransitions,
+          files: {
+            implication: implication.path,
+            test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
+          },
+          uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+        };
+        
+        console.log('✅ Selected state with full metadata:', state);
+        setSelectedState(state);
+      } else {
+        console.warn('⚠️ Implication not found for:', nodeData.id);
+      }
+    }
+  };
+  
   const closeDetail = () => {
     setSelectedState(null);
     setSelectedNodeId(null);
@@ -162,16 +201,34 @@ setSelectedState(state);
                 Interactive visualization & documentation
               </p>
             </div>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="px-4 py-2 rounded-lg font-semibold transition"
-              style={{ 
-                background: defaultTheme.colors.accents.blue,
-                color: 'white'
-              }}
-            >
-              🔄 Refresh
-            </button>
+            
+            {/* Action Buttons */}
+            <div className="flex gap-2">
+              {discoveryResult && (
+                <button 
+                  onClick={handleClearCache}
+                  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-90"
+                  style={{ 
+                    background: defaultTheme.colors.background.tertiary,
+                    color: defaultTheme.colors.text.primary,
+                    border: `1px solid ${defaultTheme.colors.border}`
+                  }}
+                  title="Clear cached data and start fresh"
+                >
+                  🗑️ Clear
+                </button>
+              )}
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-90"
+                style={{ 
+                  background: defaultTheme.colors.accents.blue,
+                  color: 'white'
+                }}
+              >
+                🔄 Refresh
+              </button>
+            </div>
           </div>
           
           {/* Scanner */}
@@ -188,6 +245,7 @@ setSelectedState(state);
                 placeholder="/path/to/project"
                 value={projectPath}
                 onChange={(e) => setProjectPath(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleScan()}
                 className="flex-1 px-4 py-2 rounded-lg"
                 style={{
                   background: defaultTheme.colors.background.secondary,
@@ -209,24 +267,44 @@ setSelectedState(state);
                 {loading ? '⏳ Scanning...' : '🔍 Scan Project'}
               </button>
             </div>
+            
+            {error && (
+              <div 
+                className="mt-3 p-3 rounded"
+                style={{ 
+                  background: `${defaultTheme.colors.accents.red}20`,
+                  color: defaultTheme.colors.accents.red 
+                }}
+              >
+                ❌ {error}
+              </div>
+            )}
           </div>
         </div>
       </header>
-      
-
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
+        {/* Stats Panel */}
+        {discoveryResult && (
+          <div className="mb-6">
+            <StatsPanel 
+              discoveryResult={discoveryResult}
+              theme={defaultTheme}
+            />
+          </div>
+        )}
 
-              {/* Stats Panel */}
-{discoveryResult && (
-  <div className="mb-6">
-    <StatsPanel 
-      discoveryResult={discoveryResult}
-      theme={defaultTheme}
-    />
-  </div>
-)}
+        {/* State Registry Panel */}
+        {stateRegistry && (
+          <div className="mb-6">
+            <StateRegistryPanel 
+              stateRegistry={stateRegistry}
+              theme={defaultTheme}
+              onRefresh={handleScan}
+            />
+          </div>
+        )}
         
         {/* Graph */}
         <div 
@@ -244,26 +322,43 @@ setSelectedState(state);
             </div>
             
             {/* Graph Controls */}
-            <div className="flex gap-2">
-              <button 
-                className="graph-btn"
-                onClick={() => window.cytoscapeGraph?.fit()}
-              >
-                <span>🎯</span> Fit
-              </button>
-              <button 
-                className="graph-btn"
-                onClick={() => window.cytoscapeGraph?.resetZoom()}
-              >
-                <span>🔍</span> Reset
-              </button>
-              <button 
-                className="graph-btn"
-                onClick={() => window.cytoscapeGraph?.relayout()}
-              >
-                <span>🔄</span> Layout
-              </button>
-            </div>
+            {graphData && (
+              <div className="flex gap-2">
+                <button 
+                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
+                  style={{
+                    background: `${defaultTheme.colors.background.tertiary}`,
+                    color: defaultTheme.colors.text.primary,
+                    border: `1px solid ${defaultTheme.colors.border}`
+                  }}
+                  onClick={() => window.cytoscapeGraph?.fit()}
+                >
+                  <span>🎯</span> Fit
+                </button>
+                <button 
+                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
+                  style={{
+                    background: `${defaultTheme.colors.background.tertiary}`,
+                    color: defaultTheme.colors.text.primary,
+                    border: `1px solid ${defaultTheme.colors.border}`
+                  }}
+                  onClick={() => window.cytoscapeGraph?.resetZoom()}
+                >
+                  <span>🔍</span> Reset
+                </button>
+                <button 
+                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
+                  style={{
+                    background: `${defaultTheme.colors.background.tertiary}`,
+                    color: defaultTheme.colors.text.primary,
+                    border: `1px solid ${defaultTheme.colors.border}`
+                  }}
+                  onClick={() => window.cytoscapeGraph?.relayout()}
+                >
+                  <span>🔄</span> Layout
+                </button>
+              </div>
+            )}
           </div>
           
           {graphData ? (
@@ -281,11 +376,23 @@ setSelectedState(state);
                 color: defaultTheme.colors.text.tertiary
               }}
             >
-              <p>Scan a project to visualize its state machine</p>
+              <p>🔍 {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
             </div>
           )}
         </div>
-        
+
+        {/* Issue Panel */}
+        {analysisResult && (
+          <div className="mb-8">
+            <IssuePanel 
+              analysisResult={analysisResult}
+              theme={defaultTheme}
+              onIssueClick={(issue) => {
+                console.log('Issue clicked:', issue);
+              }}
+            />
+          </div>
+        )}
       </main>
       
       {/* Detail Modal */}
@@ -300,7 +407,7 @@ setSelectedState(state);
   );
 }
 
-// Helper functions
+// Helper function
 function extractStateName(className) {
   if (!className) return 'unknown';
   return className
@@ -310,9 +417,4 @@ function extractStateName(className) {
     .replace(/([A-Z])/g, (match, p1, offset) => {
       return offset > 0 ? '_' + p1.toLowerCase() : p1.toLowerCase();
     });
-}
-
-function extractTransitions(discovery, stateName) {
-  // TODO: Extract from discovery.transitions
-  return [];
 }
