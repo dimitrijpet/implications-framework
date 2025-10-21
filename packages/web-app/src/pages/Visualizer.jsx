@@ -1,3 +1,5 @@
+// packages/web-app/src/pages/Visualizer.jsx
+
 import { useState } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
 import StateDetailModal from '../components/StateGraph/StateDetailModal';
@@ -5,12 +7,14 @@ import { buildGraphFromDiscovery } from '../utils/graphBuilder';
 import { defaultTheme } from '../config/visualizerTheme';
 import StatsPanel from '../components/StatsPanel/StatsPanel';
 import IssuePanel from '../components/IssuePanel/IssuePanel';
+import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel'; // NEW
 
 export default function Visualizer() {
   // All state declarations
   const [projectPath, setProjectPath] = useState('/home/dimitrij/Projects/cxm/PolePosition-TESTING');
   const [discoveryResult, setDiscoveryResult] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [stateRegistry, setStateRegistry] = useState(null); // NEW
   const [graphData, setGraphData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -103,10 +107,11 @@ export default function Visualizer() {
       const data = await response.json();
       console.log('📦 Discovery result:', data);
       
-      const { analysis, ...discoveryResult } = data;
+      const { analysis, stateRegistry: registry, ...discoveryResult } = data; // NEW: extract registry
       
       setDiscoveryResult(discoveryResult);
       setAnalysisResult(analysis);
+      setStateRegistry(registry); // NEW: set registry state
       
       // Build graph data
       const builtGraphData = buildGraphFromDiscovery(discoveryResult);
@@ -115,7 +120,8 @@ export default function Visualizer() {
       
       console.log('✅ Scan complete');
       console.log('   - States:', discoveryResult.files?.implications?.length || 0);
-      console.log('   - Issues:', analysis?.summary?.total || 0);
+      console.log('   - Issues:', analysis?.summary?.totalIssues || 0);
+      console.log('   - Mappings:', registry?.size || 0); // NEW
       
     } catch (err) {
       console.error('❌ Scan failed:', err);
@@ -231,6 +237,17 @@ export default function Visualizer() {
             />
           </div>
         )}
+
+        {/* NEW: State Registry Panel */}
+        {stateRegistry && (
+          <div className="mb-6">
+            <StateRegistryPanel 
+              stateRegistry={stateRegistry}
+              theme={defaultTheme}
+              onRefresh={handleScan}
+            />
+          </div>
+        )}
         
         {/* Graph */}
         <div 
@@ -307,19 +324,19 @@ export default function Visualizer() {
           )}
         </div>
 
-         {/* ✅ NEW: Issue Panel */}
-  {analysisResult && (
-    <div className="mb-8">
-      <IssuePanel 
-        analysisResult={analysisResult}
-        theme={defaultTheme}
-        onIssueClick={(issue) => {
-          console.log('Issue clicked:', issue);
-          // TODO: Jump to state in graph or open modal
-        }}
-      />
-    </div>
-  )}
+        {/* Issue Panel */}
+        {analysisResult && (
+          <div className="mb-8">
+            <IssuePanel 
+              analysisResult={analysisResult}
+              theme={defaultTheme}
+              onIssueClick={(issue) => {
+                console.log('Issue clicked:', issue);
+                // TODO: Jump to state in graph or open modal
+              }}
+            />
+          </div>
+        )}
       </main>
       
       {/* Detail Modal */}
