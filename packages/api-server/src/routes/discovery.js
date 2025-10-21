@@ -12,6 +12,8 @@ router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
+     req.app.set('lastScannedProject', projectPath);  // 👈 Add this line
+     
     if (!projectPath) {
       return res.status(400).json({ error: 'projectPath is required' });
     }

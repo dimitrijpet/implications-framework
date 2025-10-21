@@ -1,359 +1,558 @@
-// packages/web-app/src/components/AddStateModal/AddStateModal.jsx (NEW FILE)
+// packages/web-app/src/components/AddStateModal/AddStateModal.jsx
 
-import { useState } from 'react';
-import { defaultTheme } from '../../config/visualizerTheme';
+import React, { useState, useEffect } from 'react';
+import './AddStateModal.css';
 
-export default function AddStateModal({ onClose, onCreate, existingStates, projectPath, theme = defaultTheme }) {
+export default function AddStateModal({ isOpen, onClose, onCreate, existingStates, theme }) {
+  console.log('🎭 AddStateModal render:', { 
+    isOpen, 
+    existingStatesCount: existingStates?.length,
+    hasTheme: !!theme 
+  });
+  const [mode, setMode] = useState('quick'); // 'quick' or 'custom'
   const [formData, setFormData] = useState({
     stateName: '',
-    status: '',
+    platform: 'web',
+    copyFrom: '',
+    // Advanced fields (hidden by default)
     triggerButton: '',
     afterButton: '',
     previousButton: '',
-    platform: 'mobile-manager',
-    previousStatus: 'pending',
-    requiredFields: ['dancerName', 'clubName', 'bookingTime', 'bookingType'],
-    notificationKey: ''
+    statusCode: '',
+    statusNumber: '',
+    notificationKey: '',
+    setupActions: [],
+    requiredFields: []
   });
-  
-  const [creating, setCreating] = useState(false);
-  const [fieldInput, setFieldInput] = useState('');
-  
-  const handleAddField = () => {
-    if (fieldInput.trim() && !formData.requiredFields.includes(fieldInput.trim())) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [copyPreview, setCopyPreview] = useState(null);
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
       setFormData({
-        ...formData,
-        requiredFields: [...formData.requiredFields, fieldInput.trim()]
+        stateName: '',
+        platform: 'web',
+        copyFrom: '',
+        triggerButton: '',
+        afterButton: '',
+        previousButton: '',
+        statusCode: '',
+        statusNumber: '',
+        notificationKey: '',
+        setupActions: [],
+        requiredFields: []
       });
-      setFieldInput('');
+      setErrors({});
+      setShowAdvanced(false);
+      setCopyPreview(null);
+    }
+  }, [isOpen]);
+
+  // Load copy preview when state selected
+  useEffect(() => {
+    if (formData.copyFrom) {
+      loadCopyPreview(formData.copyFrom);
+    } else {
+      setCopyPreview(null);
+    }
+  }, [formData.copyFrom]);
+
+  const loadCopyPreview = async (stateId) => {
+    try {
+      const response = await fetch(`http://localhost:3000/api/implications/get-state-details?stateId=${stateId}`);
+      const data = await response.json();
+      setCopyPreview(data);
+      
+      // Auto-fill form from copied state
+      setFormData(prev => ({
+        ...prev,
+        platform: data.platform || prev.platform,
+        triggerButton: data.triggerButton || '',
+        afterButton: data.afterButton || '',
+        previousButton: data.previousButton || '',
+        statusCode: data.statusCode || '',
+        statusNumber: data.statusNumber || '',
+        notificationKey: data.notificationKey || '',
+        setupActions: data.setupActions || [],
+        requiredFields: data.requiredFields || []
+      }));
+    } catch (error) {
+      console.error('Failed to load copy preview:', error);
     }
   };
-  
-  const handleRemoveField = (field) => {
-    setFormData({
+
+  const validateForm = () => {
+    const newErrors = {};
+    
+    // State name required
+    if (!formData.stateName.trim()) {
+      newErrors.stateName = 'State name is required';
+    } else if (!/^[a-z_]+$/.test(formData.stateName)) {
+      newErrors.stateName = 'Use lowercase letters and underscores only';
+    }
+
+    // Check if state already exists
+    if (existingStates?.some(s => s.id === formData.stateName)) {
+      newErrors.stateName = 'A state with this name already exists';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleCreate = () => {
+    if (!validateForm()) return;
+    
+    onCreate({
       ...formData,
-      requiredFields: formData.requiredFields.filter(f => f !== field)
+      displayName: formData.stateName
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ')
     });
   };
-  
-  const handleCreate = async () => {
-    // Validation
-    if (!formData.stateName.trim()) {
-      alert('State name is required');
-      return;
-    }
-    
-    if (!formData.status.trim()) {
-      alert('Status is required');
-      return;
-    }
-    
-    if (!formData.triggerButton.trim()) {
-      alert('Trigger button is required');
-      return;
-    }
-    
-    setCreating(true);
-    
-    try {
-      await onCreate({
-        ...formData,
-        projectPath,
-        notificationKey: formData.notificationKey || formData.status
-      });
-    } catch (error) {
-      alert(`Failed to create state: ${error.message}`);
-    } finally {
-      setCreating(false);
-    }
-  };
-  
-  return (
-    <div 
-      className="fixed inset-0 bg-black bg-opacity-80 z-50 overflow-y-auto backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="min-h-screen px-4 py-12">
-        <div className="max-w-4xl mx-auto">
-          <div 
-            className="glass rounded-2xl p-8 border"
-            style={{ 
-              borderColor: theme.colors.border,
-              boxShadow: '0 24px 64px rgba(0, 0, 0, 0.5)'
+
+  if (!isOpen) {
+  console.log('❌ Modal isOpen=false, not rendering');
+  return null;
+}
+
+ console.log('✅ Modal rendering with isOpen=true');
+
+return (
+  <div className="modal-overlay" onClick={onClose}>
+      <div 
+        className="modal-content add-state-modal"
+        onClick={(e) => e.stopPropagation()}
+        style={{ 
+          background: theme.colors.background.secondary,
+          color: theme.colors.text.primary
+        }}
+      >
+        {/* Header */}
+        <div className="modal-header">
+          <h2 style={{ color: theme.colors.text.primary }}>
+            ➕ Create New State
+          </h2>
+          <button 
+            className="close-button"
+            onClick={onClose}
+            style={{ color: theme.colors.text.secondary }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Mode Toggle */}
+        <div className="mode-toggle" style={{ marginBottom: '24px' }}>
+          <button
+            className={`mode-button ${mode === 'quick' ? 'active' : ''}`}
+            onClick={() => setMode('quick')}
+            style={{
+              background: mode === 'quick' ? theme.colors.primary : 'transparent',
+              color: mode === 'quick' ? '#fff' : theme.colors.text.secondary,
+              border: `2px solid ${mode === 'quick' ? theme.colors.primary : theme.colors.border}`
             }}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-8">
-              <div>
-                <h2 className="text-3xl font-bold text-white mb-2">
-                  ➕ Create New State
-                </h2>
-                <p className="text-sm" style={{ color: theme.colors.text.tertiary }}>
-                  Define a new state in your implications system
-                </p>
-              </div>
-              <button 
-                onClick={onClose}
-                className="text-red-400 hover:text-red-300 text-2xl font-bold px-3 py-1 rounded-lg hover:bg-red-900/20 transition"
-              >
-                ✕
-              </button>
-            </div>
-            
-            {/* Form */}
-            <div className="space-y-6">
-              
-              {/* State Name & Status */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    State Name *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Approved, Confirmed"
-                    value={formData.stateName}
-                    onChange={(e) => setFormData({ ...formData, stateName: e.target.value })}
-                    className="w-full px-4 py-3 rounded-lg font-semibold"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    Status Label *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Approved, Confirmed"
-                    value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                    className="w-full px-4 py-3 rounded-lg font-semibold"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                </div>
-              </div>
-              
-              {/* Buttons */}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    Trigger Button *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., APPROVE"
-                    value={formData.triggerButton}
-                    onChange={(e) => setFormData({ ...formData, triggerButton: e.target.value.toUpperCase() })}
-                    className="w-full px-4 py-3 rounded-lg font-mono font-semibold"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    After Button
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., UNDO"
-                    value={formData.afterButton}
-                    onChange={(e) => setFormData({ ...formData, afterButton: e.target.value.toUpperCase() })}
-                    className="w-full px-4 py-3 rounded-lg font-mono"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    Previous Button
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., PENDING"
-                    value={formData.previousButton}
-                    onChange={(e) => setFormData({ ...formData, previousButton: e.target.value.toUpperCase() })}
-                    className="w-full px-4 py-3 rounded-lg font-mono"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                </div>
-              </div>
-              
-              {/* Platform & Previous Status */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    Platform *
-                  </label>
-                  <select
-                    value={formData.platform}
-                    onChange={(e) => setFormData({ ...formData, platform: e.target.value })}
-                    className="w-full px-4 py-3 rounded-lg font-semibold"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  >
-                    <option value="mobile-manager">📲 Manager App</option>
-                    <option value="mobile-dancer">📱 Dancer App</option>
-                    <option value="web">🌐 Web</option>
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                    Previous Status *
-                  </label>
-                  <select
-                    value={formData.previousStatus}
-                    onChange={(e) => setFormData({ ...formData, previousStatus: e.target.value })}
-                    className="w-full px-4 py-3 rounded-lg font-semibold"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  >
-                    <option value="">None (initial state)</option>
-                    {existingStates.map(state => (
-                      <option key={state} value={state}>{state}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              {/* Required Fields */}
-              <div>
-                <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                  Required Fields
+            🚀 Quick Copy
+          </button>
+          <button
+            className={`mode-button ${mode === 'custom' ? 'active' : ''}`}
+            onClick={() => setMode('custom')}
+            style={{
+              background: mode === 'custom' ? theme.colors.primary : 'transparent',
+              color: mode === 'custom' ? '#fff' : theme.colors.text.secondary,
+              border: `2px solid ${mode === 'custom' ? theme.colors.primary : theme.colors.border}`
+            }}
+          >
+            ✏️ Custom Build
+          </button>
+        </div>
+
+        {/* Form Content */}
+        <div className="modal-body">
+          
+          {/* State Name - Always visible */}
+          <div className="form-group">
+            <label style={{ color: theme.colors.text.primary }}>
+              State Name <span style={{ color: theme.colors.accents.red }}>*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.stateName}
+              onChange={(e) => setFormData({ ...formData, stateName: e.target.value.toLowerCase() })}
+              placeholder="e.g., reviewing_booking"
+              style={{
+                background: theme.colors.background.tertiary,
+                color: theme.colors.text.primary,
+                border: `1px solid ${errors.stateName ? theme.colors.accents.red : theme.colors.border}`
+              }}
+            />
+            {errors.stateName && (
+              <span className="error-message" style={{ color: theme.colors.accents.red }}>
+                {errors.stateName}
+              </span>
+            )}
+            <span className="helper-text" style={{ color: theme.colors.text.tertiary }}>
+              Use lowercase letters and underscores only
+            </span>
+          </div>
+
+       {/* QUICK MODE */}
+{mode === 'quick' && (
+  <>
+    {/* Copy From Dropdown */}
+    <div className="form-group">
+      <label style={{ color: theme.colors.text.primary }}>
+        Copy from <span style={{ color: theme.colors.accents.red }}>*</span>
+      </label>
+      <select
+        value={formData.copyFrom}
+        onChange={(e) => setFormData({ ...formData, copyFrom: e.target.value })}
+        style={{
+          background: theme.colors.background.tertiary,
+          color: theme.colors.text.primary,
+          border: `1px solid ${theme.colors.border}`
+        }}
+      >
+        <option value="">Select state to copy...</option>
+        {existingStates?.map(state => (
+          <option key={state.id} value={state.id}>
+            {state.uiCoverage.totalScreens > 0 ? '⭐' : '📋'} {state.id} ({state.platform}, {state.uiCoverage.totalScreens} screens)
+          </option>
+        ))}
+      </select>
+    </div>
+
+    {/* 🔥 SHOW ALL EDITABLE FIELDS WHEN COPIED */}
+    {formData.copyFrom && copyPreview && (
+      <>
+        <div style={{ 
+          padding: '12px', 
+          background: `${theme.colors.accents.green}15`,
+          border: `1px solid ${theme.colors.accents.green}60`,
+          borderRadius: '8px',
+          marginBottom: '16px'
+        }}>
+          <div style={{ color: theme.colors.accents.green, fontWeight: 600, marginBottom: '4px' }}>
+            ✨ Copied from "{formData.copyFrom}" - Edit any fields below
+          </div>
+        </div>
+
+        {/* Display Name */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Display Name
+          </label>
+          <input
+            type="text"
+            value={formData.displayName || formData.stateName.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+            onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+            placeholder="e.g., Reviewing Booking"
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* Platform Override */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Platform
+          </label>
+          <div className="platform-radio-group">
+            {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
+              <label key={platform} className="radio-label">
+                <input
+                  type="radio"
+                  value={platform}
+                  checked={formData.platform === platform}
+                  onChange={(e) => setFormData({ ...formData, platform: e.target.value })}
+                />
+                <span style={{ color: theme.colors.text.primary }}>
+                  {platform === 'web' ? '🌐' : '📱'} {platform}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Trigger Button */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Trigger Button
+          </label>
+          <input
+            type="text"
+            value={formData.triggerButton}
+            onChange={(e) => setFormData({ ...formData, triggerButton: e.target.value.toUpperCase() })}
+            placeholder="e.g., REVIEW_BOOKING"
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* After Button */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            After Button
+          </label>
+          <input
+            type="text"
+            value={formData.afterButton || ''}
+            onChange={(e) => setFormData({ ...formData, afterButton: e.target.value })}
+            placeholder="e.g., UNDO"
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* Previous Button */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Previous Button
+          </label>
+          <input
+            type="text"
+            value={formData.previousButton || ''}
+            onChange={(e) => setFormData({ ...formData, previousButton: e.target.value })}
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* Status Code */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Status Code
+          </label>
+          <input
+            type="text"
+            value={formData.statusCode || ''}
+            onChange={(e) => setFormData({ ...formData, statusCode: e.target.value })}
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* Status Number */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Status Number
+          </label>
+          <input
+            type="number"
+            value={formData.statusNumber || ''}
+            onChange={(e) => setFormData({ ...formData, statusNumber: e.target.value })}
+            style={{
+              background: theme.colors.background.tertiary,
+              color: theme.colors.text.primary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          />
+        </div>
+
+        {/* Setup Actions (read-only for now) */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Setup Actions <span style={{ fontSize: '12px', opacity: 0.7 }}>(from copied state)</span>
+          </label>
+          <div style={{ 
+            padding: '10px', 
+            background: theme.colors.background.tertiary,
+            borderRadius: '6px',
+            fontSize: '14px',
+            color: theme.colors.text.secondary
+          }}>
+            {formData.setupActions?.length > 0 
+              ? formData.setupActions.join(', ')
+              : 'None'
+            }
+          </div>
+        </div>
+
+        {/* Required Fields (read-only for now) */}
+        <div className="form-group">
+          <label style={{ color: theme.colors.text.primary }}>
+            Required Fields <span style={{ fontSize: '12px', opacity: 0.7 }}>(from copied state)</span>
+          </label>
+          <div style={{ 
+            padding: '10px', 
+            background: theme.colors.background.tertiary,
+            borderRadius: '6px',
+            fontSize: '14px',
+            color: theme.colors.text.secondary
+          }}>
+            {formData.requiredFields?.length > 0 
+              ? formData.requiredFields.join(', ')
+              : 'None'
+            }
+          </div>
+        </div>
+      </>
+    )}
+
+    {/* If NO copy selected yet, show helper */}
+    {!formData.copyFrom && (
+      <div style={{
+        padding: '20px',
+        textAlign: 'center',
+        color: theme.colors.text.tertiary,
+        fontSize: '14px'
+      }}>
+        👆 Select a state to copy from above
+      </div>
+    )}
+  </>
+)}
+
+          {/* CUSTOM MODE */}
+          {mode === 'custom' && (
+            <>
+              {/* Platform Selection */}
+              <div className="form-group">
+                <label style={{ color: theme.colors.text.primary }}>
+                  Platform <span style={{ color: theme.colors.accents.red }}>*</span>
                 </label>
-                
-                <div className="flex gap-2 mb-3">
-                  <input
-                    type="text"
-                    placeholder="Add field name..."
-                    value={fieldInput}
-                    onChange={(e) => setFieldInput(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        handleAddField();
-                      }
-                    }}
-                    className="flex-1 px-4 py-2 rounded-lg font-mono text-sm"
-                    style={{
-                      background: theme.colors.background.tertiary,
-                      border: `2px solid ${theme.colors.border}`,
-                      color: theme.colors.text.primary
-                    }}
-                  />
-                  <button
-                    onClick={handleAddField}
-                    className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                    style={{
-                      background: theme.colors.accents.green,
-                      color: 'white'
-                    }}
-                  >
-                    ➕ Add
-                  </button>
-                </div>
-                
-                <div className="flex flex-wrap gap-2">
-                  {formData.requiredFields.map((field, idx) => (
-                    <span
-                      key={idx}
-                      className="px-3 py-1 rounded-lg font-mono text-sm flex items-center gap-2"
-                      style={{
-                        background: `${theme.colors.accents.purple}40`,
-                        color: theme.colors.accents.purple
-                      }}
-                    >
-                      {field}
-                      <button
-                        onClick={() => handleRemoveField(field)}
-                        className="hover:text-red-400 transition"
-                      >
-                        ✕
-                      </button>
-                    </span>
+                <div className="platform-radio-group">
+                  {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
+                    <label key={platform} className="radio-label">
+                      <input
+                        type="radio"
+                        value={platform}
+                        checked={formData.platform === platform}
+                        onChange={(e) => setFormData({ ...formData, platform: e.target.value })}
+                      />
+                      <span style={{ color: theme.colors.text.primary }}>
+                        {platform === 'web' ? '🌐' : '📱'} {platform}
+                      </span>
+                    </label>
                   ))}
                 </div>
               </div>
-              
-              {/* Notification Key */}
-              <div>
-                <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
-                  Notification Key
-                  <span className="ml-2 text-xs" style={{ color: theme.colors.text.tertiary }}>
-                    (defaults to Status if empty)
-                  </span>
+
+              {/* Trigger Button */}
+              <div className="form-group">
+                <label style={{ color: theme.colors.text.primary }}>
+                  Trigger Button
                 </label>
                 <input
                   type="text"
-                  placeholder={formData.status || "e.g., Approved"}
-                  value={formData.notificationKey}
-                  onChange={(e) => setFormData({ ...formData, notificationKey: e.target.value })}
-                  className="w-full px-4 py-3 rounded-lg"
+                  value={formData.triggerButton}
+                  onChange={(e) => setFormData({ ...formData, triggerButton: e.target.value.toUpperCase() })}
+                  placeholder="e.g., REVIEW_BOOKING"
                   style={{
                     background: theme.colors.background.tertiary,
-                    border: `2px solid ${theme.colors.border}`,
-                    color: theme.colors.text.primary
+                    color: theme.colors.text.primary,
+                    border: `1px solid ${theme.colors.border}`
                   }}
                 />
+                <span className="helper-text" style={{ color: theme.colors.text.tertiary }}>
+                  Button text in UPPERCASE
+                </span>
               </div>
-              
-            </div>
-            
-            {/* Actions */}
-            <div className="flex gap-3 mt-8">
+
+              {/* Advanced Options Toggle */}
               <button
-                onClick={handleCreate}
-                disabled={creating}
-                className="flex-1 px-6 py-3 rounded-lg font-bold transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  background: theme.colors.accents.green,
-                  color: 'white'
-                }}
+                className="advanced-toggle"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                style={{ color: theme.colors.primary }}
               >
-                {creating ? '⏳ Creating...' : '✅ Create State'}
+                ⚙️ {showAdvanced ? 'Hide' : 'Show'} Advanced Options
               </button>
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="px-6 py-3 rounded-lg font-semibold transition hover:brightness-90 disabled:opacity-50"
-                style={{
-                  background: theme.colors.background.tertiary,
-                  color: theme.colors.text.primary
-                }}
-              >
-                ❌ Cancel
-              </button>
-            </div>
-            
-          </div>
+
+              {/* Advanced Fields */}
+              {showAdvanced && (
+                <div className="advanced-section">
+                  <div className="form-group">
+                    <label>After Button</label>
+                    <input
+                      type="text"
+                      value={formData.afterButton}
+                      onChange={(e) => setFormData({ ...formData, afterButton: e.target.value })}
+                      style={{
+                        background: theme.colors.background.tertiary,
+                        color: theme.colors.text.primary,
+                        border: `1px solid ${theme.colors.border}`
+                      }}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Previous Button</label>
+                    <input
+                      type="text"
+                      value={formData.previousButton}
+                      onChange={(e) => setFormData({ ...formData, previousButton: e.target.value })}
+                      style={{
+                        background: theme.colors.background.tertiary,
+                        color: theme.colors.text.primary,
+                        border: `1px solid ${theme.colors.border}`
+                      }}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Status Code</label>
+                    <input
+                      type="text"
+                      value={formData.statusCode}
+                      onChange={(e) => setFormData({ ...formData, statusCode: e.target.value })}
+                      style={{
+                        background: theme.colors.background.tertiary,
+                        color: theme.colors.text.primary,
+                        border: `1px solid ${theme.colors.border}`
+                      }}
+                    />
+                  </div>
+
+                  {/* Add more advanced fields as needed */}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="modal-footer">
+          <button
+            className="button button-secondary"
+            onClick={onClose}
+            style={{
+              background: 'transparent',
+              color: theme.colors.text.secondary,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            className="button button-primary"
+            onClick={handleCreate}
+            disabled={mode === 'quick' && !formData.copyFrom}
+            style={{
+              background: theme.colors.primary,
+              opacity: (mode === 'quick' && !formData.copyFrom) ? 0.5 : 1
+            }}
+          >
+            Create State
+          </button>
         </div>
       </div>
     </div>

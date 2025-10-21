@@ -358,17 +358,19 @@ export default function Visualizer() {
                   
                   {/* Mode Buttons */}
                   <div className="flex gap-2 ml-2 pl-2 border-l" style={{ borderColor: defaultTheme.colors.border }}>
-                    <button
-                      onClick={() => setShowAddStateModal(true)}
-                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                      style={{
-                        background: defaultTheme.colors.accents.green,
-                        color: 'white'
-                      }}
-                    >
-                      ➕ Add State
-                    </button>
-                    
+                   <button
+  onClick={() => {
+    console.log('🔘 Add State button clicked');
+    setShowAddStateModal(true);
+  }}
+  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+  style={{
+    background: defaultTheme.colors.accents.green,
+    color: 'white'
+  }}
+>
+  ➕ Add State
+</button>       
                     <button
                       onClick={() => {
                         if (mode === 'add-transition') {
@@ -579,18 +581,39 @@ export default function Visualizer() {
         />
       )}
       
-      {/* Add State Modal */}
-      {showAddStateModal && (
-        <AddStateModal
-          onClose={() => setShowAddStateModal(false)}
-          onCreate={handleCreateState}
-          existingStates={discoveryResult?.files.implications.map(
-            imp => extractStateName(imp.metadata.className)
-          ) || []}
-          projectPath={projectPath}
-          theme={defaultTheme}
-        />
-      )}
+   {showAddStateModal && (
+  <AddStateModal
+    isOpen={showAddStateModal}
+    onClose={() => setShowAddStateModal(false)}
+    onCreate={handleCreateState}
+    existingStates={discoveryResult?.files.implications
+  .map(imp => ({
+    id: extractStateName(imp.metadata.className),
+    className: imp.metadata.className,
+    platform: imp.metadata.platform || 'unknown',
+    uiCoverage: {
+      totalScreens: imp.metadata.uiCoverage?.total || 0,  // 👈 Use .total!
+      platforms: imp.metadata.uiCoverage?.platforms || {}
+    },
+    hasXState: imp.metadata.hasXStateConfig,
+    status: imp.metadata.status
+  }))
+  .filter(state => {
+    if (!state.hasXState) return false;
+    return state.uiCoverage.totalScreens > 0 || 
+           state.className?.includes('Booking') ||
+           state.status;
+  })
+  .sort((a, b) => {
+    if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
+      return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
+    }
+    return a.id.localeCompare(b.id);
+  })
+|| []}
+    theme={defaultTheme}
+  />
+)}
     </div>
   );
 }

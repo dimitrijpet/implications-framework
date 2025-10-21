@@ -547,3 +547,395 @@ pnpm --filter web-app dev
 ---
 
 *Last updated: October 21, 2025*
+
+---
+
+## 🆕 Add State Feature Issues (Session 7)
+
+### Modal not visible
+
+**Problem:** Click "Add State" button, nothing happens
+
+**Symptoms:**
+- Console logs "Modal rendering" but screen stays normal
+- No visual change
+- Modal appears to be mounted (React DevTools shows it)
+
+**Debug checklist:**
+```javascript
+// 1. Check if modal state is updating
+console.log('showAddStateModal:', showAddStateModal);  // Should be true
+
+// 2. Check if component renders
+// In AddStateModal.jsx:
+console.log('Modal render, isOpen:', isOpen);  // Should log
+
+// 3. Check browser Elements tab
+// Should see:
+<div class="modal-overlay">...</div>
+```
+
+**Solutions:**
+
+**Solution 1: CSS z-index**
+```css
+/* Ensure high z-index */
+.modal-overlay {
+  position: fixed;
+  z-index: 99999;  /* Very high */
+}
+```
+
+**Solution 2: CSS file not loaded**
+```javascript
+// Verify import exists
+import './AddStateModal.css';  // Must be present
+```
+
+**Solution 3: Position absolute vs fixed**
+```css
+/* Must be fixed, not absolute */
+.modal-overlay {
+  position: fixed;  /* ✅ Correct */
+  /* position: absolute;  ❌ Wrong */
+}
+```
+
+---
+
+### Fields not pre-filling when copying
+
+**Problem:** Select state from dropdown, fields stay empty
+
+**Symptoms:**
+- Dropdown works
+- No fields populate
+- Console may show 500 error
+- `copyPreview` stays null
+
+**Debug checklist:**
+```javascript
+// 1. Check network request
+// DevTools Network tab:
+GET /api/implications/get-state-details?stateId=rejected
+Status: 200 ✅ or 500 ❌
+
+// 2. Check server logs
+🔍 Getting details for state: rejected
+📄 Found file: .../RejectedBookingImplications.js
+✅ Extracted details: { platform: '...', ... }
+
+// 3. Check response data
+console.log('Copy preview:', copyPreview);
+// Should be object with fields
+```
+
+**Common Causes & Solutions:**
+
+**Cause 1: glob not imported**
+```javascript
+// ❌ Missing import
+import express from 'express';
+
+// ✅ Add this
+import { glob } from 'glob';
+```
+
+**Cause 2: traverse.default not used**
+```javascript
+// ❌ Wrong
+traverse(ast, { ... });
+
+// ✅ Correct
+traverse.default(ast, { ... });
+```
+
+**Cause 3: Wrong file found**
+```bash
+# Server logs show:
+📄 Found file: .../PostRejectedImplications.js  # ❌ Wrong
+
+# Should be:
+📄 Found file: .../RejectedBookingImplications.js  # ✅ Correct
+```
+
+**Solution:** Update glob patterns to prioritize BookingImplications:
+```javascript
+const patterns = [
+  `${projectPath}/**/bookings/**/${stateNamePascal}BookingImplications.js`,  // Most specific
+  `${projectPath}/**/${stateNamePascal}BookingImplications.js`,
+  `${projectPath}/**/*${stateNamePascal}*Implications.js`,  // Fallback
+];
+```
+
+**Cause 4: AST parsing error**
+```javascript
+// Check if xstateConfig exists in file
+static xstateConfig = {  // Must be present
+  meta: { ... }
+}
+```
+
+---
+
+### New state not showing in graph after re-scan
+
+**Problem:** File created successfully, but re-scan doesn't show new node
+
+**Symptoms:**
+- File exists in filesystem
+- Re-scan completes
+- Graph shows same number of nodes
+- Console shows "Filtered to X stateful implications"
+
+**Debug checklist:**
+```bash
+# 1. Check file was created
+ls /path/to/project/tests/implications/bookings/status/
+# Should see: ReviewingBookingImplications.js
+
+# 2. Check file structure
+cat ReviewingBookingImplications.js
+# Should have:
+static xstateConfig = {
+  meta: {
+    status: "...",  # Must have status
+  }
+}
+
+# 3. Check discovery logs
+📦 Discovery result: { ... }
+✅ Filtered to 6 stateful implications (from 26 total)
+# Should be 7 now, not 6
+```
+
+**Common Causes & Solutions:**
+
+**Cause 1: Missing status field**
+```javascript
+// ❌ Invalid xstateConfig
+static xstateConfig = {
+  meta: {
+    // status: "...",  // Missing!
+  }
+}
+
+// ✅ Valid xstateConfig
+static xstateConfig = {
+  meta: {
+    status: "Reviewing",  // Required for "stateful" detection
+  }
+}
+```
+
+**Cause 2: Not registered in state machine**
+```javascript
+// Check BookingStateMachine.js
+
+// Should have import:
+const ReviewingBookingImplications = require('./status/ReviewingBookingImplications.js');
+
+// Should be in states:
+states: {
+  reviewing_booking: ReviewingBookingImplications.xstateConfig,
+}
+```
+
+If missing, either:
+- Auto-registration failed (check logs)
+- Add manually
+
+**Cause 3: Syntax error in generated file**
+```bash
+# Try to require the file
+node -e "require('./ReviewingBookingImplications.js')"
+
+# Should not throw errors
+```
+
+**Cause 4: Cache not cleared**
+```javascript
+// Clear discovery cache
+localStorage.clear();
+// Re-scan
+```
+
+---
+
+### Import errors on server
+
+**Problem:** Server crashes with `glob is not defined` or `traverse is not a function`
+
+**Symptoms:**
+```
+ReferenceError: glob is not defined
+TypeError: traverse is not a function
+```
+
+**Solutions:**
+
+**For glob:**
+```javascript
+// ✅ Add at top of implications.js
+import { glob } from 'glob';  // Named import
+```
+
+**For traverse:**
+```javascript
+// ✅ Import correctly
+import traverse from '@babel/traverse';
+
+// ✅ Use with .default
+traverse.default(ast, {
+  ClassProperty(path) {
+    // ...
+  }
+});
+```
+
+**For ES modules compatibility:**
+```javascript
+// Add to package.json
+{
+  "type": "module"
+}
+
+// Or use .mjs extension
+implications.mjs
+```
+
+---
+
+### Wrong screen count showing (0 instead of 12)
+
+**Problem:** Dropdown shows "rejected (mobile-manager, 0 screens)" when it should show 12
+
+**Cause:** Data structure mismatch
+```javascript
+// ❌ Looking for wrong property
+uiCoverage.totalScreens  // Doesn't exist
+
+// ✅ Correct property
+uiCoverage.total  // This exists
+```
+
+**Solution:**
+```javascript
+// In Visualizer.jsx
+existingStates={discoveryResult?.files.implications.map(imp => ({
+  id: extractStateName(imp.metadata.className),
+  platform: imp.metadata.platform,
+  uiCoverage: {
+    totalScreens: imp.metadata.uiCoverage?.total || 0  // ✅ Use .total
+  }
+}))}
+```
+
+---
+
+### Template rendering errors
+
+**Problem:** Generated file has syntax errors or missing fields
+
+**Symptoms:**
+```javascript
+// Generated code looks wrong:
+status: "undefined",
+triggerButton: "",
+```
+
+**Causes & Solutions:**
+
+**Cause 1: Missing template variables**
+```javascript
+// ❌ Not passing to template
+const code = template({ stateName });
+
+// ✅ Pass all variables
+const code = template({
+  stateName,
+  status,
+  triggerButton,
+  // ... all fields
+});
+```
+
+**Cause 2: Helper not registered**
+```javascript
+// ✅ Register before compiling
+Handlebars.registerHelper('camelCase', function(str) {
+  return str.charAt(0).toLowerCase() + str.slice(1);
+});
+
+const template = Handlebars.compile(templateContent);
+```
+
+**Cause 3: Conditional not working**
+```handlebars
+{{! ❌ Wrong }}
+{{#if afterButton}}
+afterButton: {{afterButton}},
+{{/if}}
+
+{{! ✅ Correct }}
+{{#if afterButton}}
+afterButton: "{{afterButton}}",
+{{/if}}
+```
+
+---
+
+### Auto-registration fails
+
+**Problem:** File created but not registered in BookingStateMachine.js
+
+**Symptoms:**
+- `autoRegistered: false` in response
+- No import in state machine
+- No entry in states object
+
+**Solutions:**
+
+**Check if state machine file exists:**
+```bash
+ls /path/to/project/tests/implications/bookings/BookingStateMachine.js
+```
+
+**Check logs:**
+```
+⚠️ Could not auto-register in state machine: [error message]
+```
+
+**Manual registration:**
+```javascript
+// Add to BookingStateMachine.js
+
+// 1. Add import
+const ReviewingBookingImplications = require('./status/ReviewingBookingImplications.js');
+
+// 2. Add to states
+states: {
+  reviewing_booking: ReviewingBookingImplications.xstateConfig,
+}
+```
+
+---
+
+## Quick Reference
+
+**Modal not visible?**
+→ Check z-index, CSS file import, position: fixed
+
+**Fields not filling?**
+→ Check glob import, traverse.default, server logs
+
+**State not in graph?**
+→ Check status field, state machine registration, file syntax
+
+**Import errors?**
+→ Add glob/traverse imports, use .default for traverse
+
+**Wrong screen count?**
+→ Use `uiCoverage.total` not `.totalScreens`
+
+---

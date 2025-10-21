@@ -94,7 +94,6 @@ export default function StateGraph({ graphData, onNodeClick, selectedNode, theme
             'line-color': 'data(platformColor)',
             'target-arrow-color': 'data(platformColor)',
             'target-arrow-shape': 'triangle',
-            'target-arrow-size': theme.graph.arrowSize,
             'arrow-scale': 2,
             'curve-style': 'bezier',
             'control-point-step-size': 60,
