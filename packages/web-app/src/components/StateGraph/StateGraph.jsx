@@ -2,10 +2,22 @@ import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { defaultTheme, getPlatformStyle } from '../../config/visualizerTheme';
+function getNodeColor(ele) {
+  const status = ele.data('status') || ele.id();
+  const colors = {
+    'pending': '#f59e0b',
+    'accepted': '#10b981',
+    'rejected': '#ef4444',
+    'cancelled': '#6b7280',
+    'completed': '#3b82f6'
+  };
+  return colors[status.toLowerCase()] || '#8b5cf6';
+}
 
 cytoscape.use(dagre);
 
-export default function StateGraph({ graphData, onNodeClick, selectedNode, theme = defaultTheme }) {
+export default function StateGraph({ graphData, onNodeClick, selectedNode, theme, transitionMode = false, transitionSource = null }) {
+
   const containerRef = useRef(null);
   const cyRef = useRef(null);
   
@@ -24,27 +36,34 @@ export default function StateGraph({ graphData, onNodeClick, selectedNode, theme
         // Base node style
         {
           selector: 'node',
-          style: {
-            'background-color': 'data(color)',
-            'label': 'data(label)',
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'color': '#fff',
-            'text-outline-color': '#000',
-            'text-outline-width': 2,
-            'font-size': '14px',
-            'font-weight': 'bold',
-            'width': theme.graph.nodeWidth + 'px',
-            'height': theme.graph.nodeHeight + 'px',
-            'border-width': theme.graph.borderWidth,
-            'border-color': 'data(platformColor)',
-            'shadow-blur': theme.graph.shadowBlur,
-            'shadow-color': 'data(platformColor)',
-            'shadow-opacity': 0.8,
-            'shadow-offset-x': 0,
-            'shadow-offset-y': 0,
-          }
-        },
+    style: {
+      'background-color': (ele) => getNodeColor(ele),
+      'label': 'data(label)',
+      'text-valign': 'center',
+      'text-halign': 'center',
+      'color': '#ffffff',
+      'font-size': '14px',
+      'font-weight': 'bold',
+      'text-outline-width': 2,
+      'text-outline-color': (ele) => getNodeColor(ele),
+      'width': 80,
+      'height': 80,
+      'border-width': (ele) => {
+        if (transitionMode && ele.id() === transitionSource) {
+          return 6; // Thick border for source in transition mode
+        }
+        return ele.id() === selectedNode ? 4 : 2;
+      },
+      'border-color': (ele) => {
+        if (transitionMode && ele.id() === transitionSource) {
+          return theme.colors.accents.orange; // Orange for selected source
+        }
+        return ele.id() === selectedNode ? theme.colors.accents.blue : getNodeColor(ele);
+      },
+      'border-opacity': 1
+    }
+  },
+
         
         // Multi-platform nodes (green dashed border)
         {
@@ -107,31 +126,30 @@ export default function StateGraph({ graphData, onNodeClick, selectedNode, theme
     
     // Node click handler
     cy.on('tap', 'node', (event) => {
-      const node = event.target;
-      if (onNodeClick) {
-        onNodeClick(node.data());
-      }
-    });
+  const node = event.target;
+  const nodeData = node.data();
+  
+  if (transitionMode) {
+    console.log(transitionSource ? '👉 Select target state' : '👆 Source state selected');
+  }
+  
+  onNodeClick(nodeData);
+});
     
     // Hover effect for multi-platform nodes
-    cy.on('mouseover', 'node', function(evt) {
-      const node = evt.target;
-      const allPlatforms = node.data('allPlatforms');
-      
-      if (allPlatforms && allPlatforms.length > 1) {
-        // Show tooltip or highlight effect
-        node.style('border-width', theme.graph.multiBorderWidth + 2);
-      }
-    });
+    cy.on('mouseover', 'node', () => {
+  if (cyRef.current) {
+    const container = cyRef.current.container();
+    container.style.cursor = transitionMode ? 'crosshair' : 'pointer';
+  }
+});
     
-    cy.on('mouseout', 'node', function(evt) {
-      const node = evt.target;
-      const allPlatforms = node.data('allPlatforms');
-      
-      if (allPlatforms && allPlatforms.length > 1) {
-        node.style('border-width', theme.graph.multiBorderWidth);
-      }
-    });
+    cy.on('mouseout', 'node', () => {
+  if (cyRef.current) {
+    const container = cyRef.current.container();
+    container.style.cursor = transitionMode ? 'crosshair' : 'default';
+  }
+});
     
     cyRef.current = cy;
     

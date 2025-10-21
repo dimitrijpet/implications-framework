@@ -1,4 +1,4 @@
-// packages/web-app/src/pages/Visualizer.jsx
+// packages/web-app/src/pages/Visualizer.jsx (COMPLETE REPLACEMENT)
 
 import { useState } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
@@ -8,6 +8,7 @@ import { defaultTheme } from '../config/visualizerTheme';
 import StatsPanel from '../components/StatsPanel/StatsPanel';
 import IssuePanel from '../components/IssuePanel/IssuePanel';
 import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
+import AddStateModal from '../components/AddStateModal/AddStateModal';
 
 export default function Visualizer() {
   // Load from localStorage on mount
@@ -35,6 +36,9 @@ export default function Visualizer() {
   const [error, setError] = useState(null);
   const [selectedState, setSelectedState] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [mode, setMode] = useState('view'); // 'view', 'add-transition'
+  const [transitionSource, setTransitionSource] = useState(null);
+  const [showAddStateModal, setShowAddStateModal] = useState(false);
   
   // Clear cache and reset state
   const handleClearCache = () => {
@@ -134,32 +138,32 @@ export default function Visualizer() {
             target: t.to
           }));
         
-       const state = {
-  name: nodeData.id,
-  displayName: metadata.status || nodeData.label,
-  meta: {
-    status: metadata.status,
-    triggerAction: metadata.triggerAction,
-    triggerButton: metadata.triggerButton,
-    afterButton: metadata.afterButton,
-    previousButton: metadata.previousButton,
-    notificationKey: metadata.notificationKey,
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    platform: metadata.platform || 'unknown',
-    requiredFields: metadata.requiredFields || [],
-    requires: metadata.requires || {},
-    setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
-    allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
-    actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
-  },
-  transitions: stateTransitions,
-  files: {
-    implication: `${projectPath}/${implication.path}`,  // ← FIX HERE
-    test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-  },
-  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
-};
+        const state = {
+          name: nodeData.id,
+          displayName: metadata.status || nodeData.label,
+          meta: {
+            status: metadata.status,
+            triggerAction: metadata.triggerAction,
+            triggerButton: metadata.triggerButton,
+            afterButton: metadata.afterButton,
+            previousButton: metadata.previousButton,
+            notificationKey: metadata.notificationKey,
+            statusCode: metadata.statusCode,
+            statusNumber: metadata.statusNumber,
+            platform: metadata.platform || 'unknown',
+            requiredFields: metadata.requiredFields || [],
+            requires: metadata.requires || {},
+            setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
+            allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
+            actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
+          },
+          transitions: stateTransitions,
+          files: {
+            implication: `${projectPath}/${implication.path}`,
+            test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
+          },
+          uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+        };
         
         console.log('✅ Selected state with full metadata:', state);
         setSelectedState(state);
@@ -172,6 +176,139 @@ export default function Visualizer() {
   const closeDetail = () => {
     setSelectedState(null);
     setSelectedNodeId(null);
+  };
+
+  // Handler for creating state
+  const handleCreateState = async (formData) => {
+    try {
+      const response = await fetch('http://localhost:3000/api/implications/create-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ State created:', result);
+      
+      // Show success notification
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 16px 24px;
+        border-radius: 8px;
+        font-weight: bold;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      `;
+      notification.textContent = `✅ Created ${result.fileName}! Re-scan to see it.`;
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.remove();
+      }, 5000);
+      
+      setShowAddStateModal(false);
+      
+    } catch (error) {
+      console.error('❌ Create failed:', error);
+      throw error;
+    }
+  };
+
+  // Handler for transition mode clicks
+  const handleTransitionModeClick = async (nodeData) => {
+    if (mode !== 'add-transition') {
+      return handleNodeClick(nodeData); // Normal click in view mode
+    }
+    
+    // Transition mode logic
+    if (!transitionSource) {
+      // First click - select source
+      setTransitionSource(nodeData);
+      console.log('📍 Source selected:', nodeData.id);
+    } else {
+      // Second click - select target and create transition
+      if (transitionSource.id === nodeData.id) {
+        alert('❌ Source and target cannot be the same');
+        return;
+      }
+      
+      const event = prompt(`Add transition from "${transitionSource.id}" to "${nodeData.id}".\n\nEnter event name (e.g., ACCEPT, REJECT):`);
+      
+      if (!event) {
+        setTransitionSource(null);
+        return;
+      }
+      
+      try {
+        // Find source implication file
+        const sourceImplication = discoveryResult.files.implications.find(
+          imp => extractStateName(imp.metadata.className) === transitionSource.id
+        );
+        
+        if (!sourceImplication) {
+          throw new Error(`Could not find implication for ${transitionSource.id}`);
+        }
+        
+        const filePath = `${projectPath}/${sourceImplication.path}`;
+        
+        const response = await fetch('http://localhost:3000/api/implications/add-transition', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath,
+            event: event.toUpperCase(),
+            target: nodeData.id
+          })
+        });
+        
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('✅ Transition added:', result);
+        
+        // Show success
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: #10b981;
+          color: white;
+          padding: 16px 24px;
+          border-radius: 8px;
+          font-weight: bold;
+          z-index: 9999;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        `;
+        notification.textContent = `✅ Added ${event} → ${nodeData.id}! Re-scan to see it.`;
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+          notification.remove();
+        }, 5000);
+        
+        setTransitionSource(null);
+        setMode('view');
+        
+      } catch (error) {
+        console.error('❌ Add transition failed:', error);
+        alert(`Failed: ${error.message}`);
+        setTransitionSource(null);
+      }
+    }
   };
   
   return (
@@ -203,21 +340,57 @@ export default function Visualizer() {
             </div>
             
             {/* Action Buttons */}
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               {discoveryResult && (
-                <button 
-                  onClick={handleClearCache}
-                  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-90"
-                  style={{ 
-                    background: defaultTheme.colors.background.tertiary,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`
-                  }}
-                  title="Clear cached data and start fresh"
-                >
-                  🗑️ Clear
-                </button>
+                <>
+                  <button 
+                    onClick={handleClearCache}
+                    className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-90"
+                    style={{ 
+                      background: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.text.primary,
+                      border: `1px solid ${defaultTheme.colors.border}`
+                    }}
+                    title="Clear cached data and start fresh"
+                  >
+                    🗑️ Clear
+                  </button>
+                  
+                  {/* Mode Buttons */}
+                  <div className="flex gap-2 ml-2 pl-2 border-l" style={{ borderColor: defaultTheme.colors.border }}>
+                    <button
+                      onClick={() => setShowAddStateModal(true)}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                      style={{
+                        background: defaultTheme.colors.accents.green,
+                        color: 'white'
+                      }}
+                    >
+                      ➕ Add State
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        if (mode === 'add-transition') {
+                          setMode('view');
+                          setTransitionSource(null);
+                        } else {
+                          setMode('add-transition');
+                        }
+                      }}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                      style={{
+                        background: mode === 'add-transition' ? defaultTheme.colors.accents.orange : defaultTheme.colors.background.tertiary,
+                        color: mode === 'add-transition' ? 'white' : defaultTheme.colors.text.primary,
+                        border: `2px solid ${mode === 'add-transition' ? defaultTheme.colors.accents.orange : defaultTheme.colors.border}`
+                      }}
+                    >
+                      {mode === 'add-transition' ? '✓ Adding Transition...' : '🔗 Add Transition'}
+                    </button>
+                  </div>
+                </>
               )}
+              
               <button 
                 onClick={() => window.location.reload()} 
                 className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-90"
@@ -317,7 +490,7 @@ export default function Visualizer() {
                 📊 Interactive State Graph
               </h2>
               <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
-                💡 Click nodes to view details | Scroll to zoom | Drag to pan
+                💡 {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
               </p>
             </div>
             
@@ -364,9 +537,11 @@ export default function Visualizer() {
           {graphData ? (
             <StateGraph 
               graphData={graphData}
-              onNodeClick={handleNodeClick}
-              selectedNode={selectedNodeId}
+              onNodeClick={handleTransitionModeClick}
+              selectedNode={transitionSource?.id || selectedNodeId}
               theme={defaultTheme}
+              transitionMode={mode === 'add-transition'}
+              transitionSource={transitionSource?.id}
             />
           ) : (
             <div 
@@ -400,6 +575,19 @@ export default function Visualizer() {
         <StateDetailModal 
           state={selectedState}
           onClose={closeDetail}
+          theme={defaultTheme}
+        />
+      )}
+      
+      {/* Add State Modal */}
+      {showAddStateModal && (
+        <AddStateModal
+          onClose={() => setShowAddStateModal(false)}
+          onCreate={handleCreateState}
+          existingStates={discoveryResult?.files.implications.map(
+            imp => extractStateName(imp.metadata.className)
+          ) || []}
+          projectPath={projectPath}
           theme={defaultTheme}
         />
       )}

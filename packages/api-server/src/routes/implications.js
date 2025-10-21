@@ -7,8 +7,102 @@ import * as parser from '@babel/parser';
 import generate from '@babel/generator';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
+import Handlebars from 'handlebars';
+
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const router = express.Router();
+
+// Register Handlebars helpers
+Handlebars.registerHelper('camelCase', function(str) {
+  return str.charAt(0).toLowerCase() + str.slice(1);
+});
+
+/**
+ * POST /api/implications/create-state
+ * Generate a new implication file from template
+ */
+router.post('/create-state', async (req, res) => {
+  try {
+    const { projectPath, stateName, status, triggerButton, afterButton, previousButton, 
+            platform, previousStatus, requiredFields, notificationKey } = req.body;
+    
+    if (!projectPath || !stateName || !status || !triggerButton) {
+      return res.status(400).json({ 
+        error: 'projectPath, stateName, status, and triggerButton are required' 
+      });
+    }
+    
+    console.log(`➕ Creating new state: ${stateName}BookingImplications`);
+    
+    // Load template
+    const templatePath = path.join(__dirname, '../templates/implication.hbs');
+    const templateContent = await fs.readFile(templatePath, 'utf-8');
+    const template = Handlebars.compile(templateContent);
+    
+    // Prepare data
+    const data = {
+      stateName,
+      status,
+      statusUpperCase: status.toUpperCase(),
+      triggerButton,
+      afterButton: afterButton || null,
+      previousButton: previousButton || null,
+      platform: platform || 'mobile-manager',
+      previousStatus: previousStatus || '',
+      requiredFields: requiredFields || ['dancerName', 'clubName', 'bookingTime'],
+      notificationKey: notificationKey || status,
+      actionName: `${status.toLowerCase()}Booking`,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Generate code
+    const code = template(data);
+    
+    // Determine file path
+    const fileName = `${stateName}BookingImplications.js`;
+    const filePath = path.join(
+      projectPath,
+      'tests/implications/bookings/status',
+      fileName
+    );
+    
+    // Check if file already exists
+    const exists = await fs.pathExists(filePath);
+    if (exists) {
+      return res.status(409).json({ 
+        error: `File already exists: ${fileName}`,
+        filePath
+      });
+    }
+    
+    // Ensure directory exists
+    await fs.ensureDir(path.dirname(filePath));
+    
+    // Write file
+    await fs.writeFile(filePath, code, 'utf-8');
+    
+    console.log(`✅ Created: ${filePath}`);
+    
+    res.json({
+      success: true,
+      filePath,
+      fileName,
+      stateName: `${stateName}BookingImplications`
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating state:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
 
 /**
  * POST /api/implications/use-base-directly
@@ -366,6 +460,112 @@ router.post('/update-metadata', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error updating metadata:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/implications/add-transition
+ * Add a transition to an existing implication file
+ */
+router.post('/add-transition', async (req, res) => {
+  try {
+    const { filePath, event, target } = req.body;
+    
+    if (!filePath || !event || !target) {
+      return res.status(400).json({ 
+        error: 'filePath, event, and target are required' 
+      });
+    }
+    
+    console.log(`🔗 Adding transition: ${event} → ${target} in ${path.basename(filePath)}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse.default(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const onProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'on'
+              );
+              
+              if (onProp && t.isObjectExpression(onProp.value)) {
+                // Check if transition already exists
+                const existingTransition = onProp.value.properties.find(
+                  p => t.isObjectProperty(p) && p.key.name === event
+                );
+                
+                if (existingTransition) {
+                  return res.status(409).json({ 
+                    error: `Transition "${event}" already exists`
+                  });
+                }
+                
+                // Add new transition
+                onProp.value.properties.push(
+                  t.objectProperty(
+                    t.identifier(event),
+                    t.stringLiteral(target)
+                  )
+                );
+                
+                modified = true;
+                console.log(`✅ Added transition: ${event} → ${target}`);
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!modified) {
+      return res.status(400).json({ 
+        error: 'Could not add transition - no xstateConfig found'
+      });
+    }
+    
+    const output = generate.default(ast, {
+      retainLines: true,
+      comments: true
+    }, originalContent);
+    
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    console.log('📦 Backup created:', backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Transition added successfully');
+    
+    res.json({
+      success: true,
+      filePath,
+      backup: backupPath,
+      transition: { event, target }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding transition:', error);
     res.status(500).json({ 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
