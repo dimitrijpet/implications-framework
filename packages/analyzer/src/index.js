@@ -1,17 +1,16 @@
-import { AnalysisResult } from './types/issues.js';
-import { MissingTransitionsRule } from './rules/MissingTransitionsRule.js';
+// packages/analyzer/src/index.js (UPDATE)
+
+import { BrokenTransitionRule } from './rules/BrokenTransitionRule.js';
 import { IsolatedStateRule } from './rules/IsolatedStateRule.js';
+import { MissingTransitionsRule } from './rules/MissingTransitionsRule.js';
 import { MissingUICoverageRule } from './rules/MissingUICoverageRule.js';
 import { EmptyInheritanceRule } from './rules/EmptyInheritanceRule.js';
-import { BrokenTransitionRule } from './rules/BrokenTransitionRule.js';
+import { AnalysisResult, AnalysisSummary } from './types/issues.js';
 
-/**
- * Main Analyzer Service
- */
-export class Analyzer {
+export class ProjectAnalyzer {
   constructor() {
     this.rules = [
-      new BrokenTransitionRule(),      // Check first (most critical)
+      new BrokenTransitionRule(),
       new IsolatedStateRule(),
       new MissingTransitionsRule(),
       new MissingUICoverageRule(),
@@ -20,78 +19,68 @@ export class Analyzer {
   }
   
   /**
-   * Analyze a discovery result and return issues
-   * @param {DiscoveryResult} discoveryResult
-   * @returns {AnalysisResult}
+   * Analyze discovery result and detect issues
+   * @param {Object} discoveryResult - From discovery service
+   * @param {Object} options - Analysis options (includes stateRegistry)
    */
-  analyze(discoveryResult) {
-    console.log('🔍 Analyzing project for issues...');
+  analyze(discoveryResult, options = {}) {
+    console.log('\n🔍 Running analysis...');
     
-    const implications = discoveryResult.files.implications;
-    const transitions = discoveryResult.transitions;
+    const implications = discoveryResult.files?.implications || [];
+    const transitions = discoveryResult.transitions || [];
     
+    // ✅ Build context with state registry
     const context = {
       implications,
       transitions,
-      projectPath: discoveryResult.projectPath
+      stateRegistry: options.stateRegistry, // ✅ Include registry
+      projectPath: discoveryResult.projectPath,
+      projectType: discoveryResult.projectType
     };
     
-    const allIssues = [];
+    const result = new AnalysisResult();
     
-    // Run each rule on each implication
-    implications.forEach(implication => {
-      this.rules.forEach(rule => {
-        if (!rule.enabled) return;
-        
+    // Run each rule
+    for (const rule of this.rules) {
+      console.log(`  Running: ${rule.name}`);
+      
+      for (const implication of implications) {
         if (rule.appliesTo(implication)) {
           const issues = rule.analyze(implication, context);
-          allIssues.push(...issues);
+          result.issues.push(...issues);
         }
-      });
-    });
+      }
+    }
     
-    // Create analysis result
-    const result = new AnalysisResult({
-      projectPath: discoveryResult.projectPath,
-      totalImplications: implications.length,
-      issues: allIssues
-    });
+    // Build summary
+    result.summary = this.buildSummary(result.issues);
     
-    // Calculate summary
-    result.calculateSummary();
-    
-    console.log(`✅ Analysis complete:`);
-    console.log(`   - Total issues: ${result.summary.total}`);
-    console.log(`   - Errors: ${result.summary.errors}`);
-    console.log(`   - Warnings: ${result.summary.warnings}`);
-    console.log(`   - Info: ${result.summary.info}`);
+    console.log(`✅ Analysis complete: ${result.summary.totalIssues} issues found`);
     
     return result;
   }
   
-  /**
-   * Add a custom rule
-   */
-  addRule(rule) {
-    this.rules.push(rule);
-  }
-  
-  /**
-   * Enable/disable a rule
-   */
-  setRuleEnabled(ruleName, enabled) {
-    const rule = this.rules.find(r => r.name === ruleName);
-    if (rule) {
-      rule.enabled = enabled;
-    }
+  buildSummary(issues) {
+    const summary = new AnalysisSummary();
+    
+    summary.totalIssues = issues.length;
+    summary.errorCount = issues.filter(i => i.severity === 'error').length;
+    summary.warningCount = issues.filter(i => i.severity === 'warning').length;
+    summary.infoCount = issues.filter(i => i.severity === 'info').length;
+    
+    // Group by type
+    summary.byType = issues.reduce((acc, issue) => {
+      acc[issue.type] = (acc[issue.type] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Group by state
+    summary.byState = issues.reduce((acc, issue) => {
+      const state = issue.stateName || 'unknown';
+      acc[state] = (acc[state] || 0) + 1;
+      return acc;
+    }, {});
+    
+    return summary;
   }
 }
-
-// Export everything
-export * from './types/issues.js';
-export * from './rules/BaseRule.js';
-export * from './rules/MissingTransitionsRule.js';
-export * from './rules/IsolatedStateRule.js';
-export * from './rules/MissingUICoverageRule.js';
-export * from './rules/EmptyInheritanceRule.js';
-export * from './rules/BrokenTransitionRule.js';

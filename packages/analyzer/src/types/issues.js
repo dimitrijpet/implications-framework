@@ -1,3 +1,5 @@
+// packages/analyzer/src/types/issues.js (ADD THIS CLASS)
+
 /**
  * Issue severity levels
  */
@@ -33,7 +35,8 @@ export class Issue {
     message,
     suggestions = [],
     affectedFields = [],
-    location = null
+    location = null,
+    details = {}
   }) {
     this.severity = severity;
     this.type = type;
@@ -43,6 +46,7 @@ export class Issue {
     this.suggestions = suggestions; // Array of Suggestion objects
     this.affectedFields = affectedFields; // Fields that are affected
     this.location = location; // File path
+    this.details = details; // Additional context data
     this.timestamp = new Date().toISOString();
   }
 }
@@ -67,19 +71,28 @@ export class Suggestion {
 }
 
 /**
+ * Analysis summary statistics
+ */
+export class AnalysisSummary {
+  constructor() {
+    this.totalIssues = 0;
+    this.errorCount = 0;
+    this.warningCount = 0;
+    this.infoCount = 0;
+    this.byType = {}; // Count by issue type
+    this.byState = {}; // Count by state name
+  }
+}
+
+/**
  * Analysis result
  */
 export class AnalysisResult {
-  constructor({
-    projectPath,
-    totalImplications = 0,
-    issues = [],
-    summary = {}
-  }) {
-    this.projectPath = projectPath;
-    this.totalImplications = totalImplications;
-    this.issues = issues;
-    this.summary = summary;
+  constructor() {
+    this.projectPath = null;
+    this.totalImplications = 0;
+    this.issues = [];
+    this.summary = new AnalysisSummary();
     this.timestamp = new Date().toISOString();
   }
   
@@ -102,28 +115,5 @@ export class AnalysisResult {
    */
   getForState(stateName) {
     return this.issues.filter(issue => issue.stateName === stateName);
-  }
-  
-  /**
-   * Calculate summary statistics
-   */
-  calculateSummary() {
-    this.summary = {
-      total: this.issues.length,
-      errors: this.getBySeverity(IssueSeverity.ERROR).length,
-      warnings: this.getBySeverity(IssueSeverity.WARNING).length,
-      info: this.getBySeverity(IssueSeverity.INFO).length,
-      byType: {}
-    };
-    
-    // Count by type
-    Object.values(IssueType).forEach(type => {
-      const count = this.getByType(type).length;
-      if (count > 0) {
-        this.summary.byType[type] = count;
-      }
-    });
-    
-    return this.summary;
   }
 }

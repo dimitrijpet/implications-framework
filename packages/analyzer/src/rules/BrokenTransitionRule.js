@@ -1,10 +1,13 @@
-import { BaseRule } from './BaseRule.js';
-import { Issue, Suggestion, IssueSeverity, IssueType } from '../types/issues.js';
+// packages/analyzer/src/rules/BrokenTransitionRule.js (UPDATE)
 
-/**
- * Detects transitions that reference non-existent states
- */
+import { BaseRule } from './BaseRule.js';
+import { IssueSeverity, IssueType, Issue, Suggestion } from '../types/issues.js';
+
 export class BrokenTransitionRule extends BaseRule {
+  constructor() {
+    super('broken-transitions', 'Broken State Transitions');
+  }
+  
   appliesTo(implication) {
     return implication.metadata?.hasXStateConfig === true;
   }
@@ -13,49 +16,111 @@ export class BrokenTransitionRule extends BaseRule {
     const issues = [];
     const className = implication.metadata.className;
     
-    // Get all valid state names
-    const validStates = context.implications
-      .filter(i => i.metadata.hasXStateConfig)
-      .map(i => i.metadata.className);
+    // ✅ Get state registry from context
+    const registry = context.stateRegistry;
     
-    // Find transitions from this state
+    if (!registry) {
+      console.warn('⚠️  No state registry available for analysis');
+      return issues;
+    }
+    
+    // Find outgoing transitions from this state
     const outgoing = context.transitions.filter(t => t.from === className);
     
+    if (outgoing.length === 0) {
+      return issues;
+    }
+    
     outgoing.forEach(transition => {
-      // Check if target state exists
-      const targetExists = validStates.includes(transition.to);
+      // ✅ Resolve target using registry
+      const resolvedTarget = registry.resolve(transition.to);
       
-      if (!targetExists) {
+      if (!resolvedTarget) {
+        // Target cannot be resolved at all
         issues.push(this.createIssue({
           severity: IssueSeverity.ERROR,
           type: IssueType.BROKEN_TRANSITION,
           stateName: className,
-          title: 'Broken Transition',
-          message: `${className} has transition "${transition.event}" to "${transition.to}", but that state doesn't exist.`,
+          title: `Unresolvable Transition: ${transition.event}`,
+          message: `State "${className}" has transition "${transition.event}" pointing to "${transition.to}", which cannot be resolved to any known state class.`,
+          details: {
+            event: transition.event,
+            targetName: transition.to,
+            sourceFile: implication.path
+          },
           suggestions: [
             new Suggestion({
+              action: 'check-registry',
+              title: '📋 Check State Registry',
+              description: 'Verify state registry configuration and naming patterns',
+              autoFixable: false
+            }),
+            new Suggestion({
+              action: 'add-mapping',
+              title: '➕ Add Custom Mapping',
+              description: `Add explicit mapping for "${transition.to}" in ai-testing.config.js`,
+              autoFixable: false,
+              data: { 
+                targetName: transition.to,
+                suggestedMapping: this.suggestMapping(transition.to, context)
+              }
+            })
+          ]
+        }));
+        return;
+      }
+      
+      // Check if resolved target exists as a class
+      const targetExists = context.implications.some(
+        impl => impl.metadata.className === resolvedTarget
+      );
+      
+      if (!targetExists) {
+        // Target resolves but class doesn't exist
+        issues.push(this.createIssue({
+          severity: IssueSeverity.ERROR,
+          type: IssueType.BROKEN_TRANSITION,
+          stateName: className,
+          title: `Missing Target State: ${transition.event}`,
+          message: `State "${className}" has transition "${transition.event}" to "${transition.to}" (resolves to "${resolvedTarget}"), but that state class doesn't exist.`,
+          details: {
+            event: transition.event,
+            targetName: transition.to,
+            resolvedName: resolvedTarget,
+            sourceFile: implication.path
+          },
+          suggestions: [
+            new Suggestion({
+              action: 'create-state',
+              title: `✨ Create ${resolvedTarget}`,
+              description: 'Generate the missing state class with template',
+              autoFixable: true,
+              data: { 
+                className: resolvedTarget,
+                shortName: transition.to
+              }
+            }),
+            new Suggestion({
               action: 'fix-target',
-              title: 'Fix Target State',
-              description: 'Update the transition to reference a valid state',
+              title: '🔧 Fix Transition Target',
+              description: 'Update transition to reference an existing state',
               autoFixable: false,
               data: {
                 currentTarget: transition.to,
-                event: transition.event,
-                possibleTargets: this.suggestSimilarStates(transition.to, validStates)
+                resolvedTarget: resolvedTarget,
+                possibleTargets: this.suggestSimilarStates(resolvedTarget, context)
               }
             }),
             new Suggestion({
               action: 'remove-transition',
-              title: 'Remove Transition',
+              title: '🗑️ Remove Transition',
               description: 'Delete this broken transition',
               autoFixable: true,
               data: {
                 event: transition.event
               }
             })
-          ],
-          affectedFields: [`xstateConfig.on.${transition.event}`],
-          location: implication.path
+          ]
         }));
       }
     });
@@ -64,23 +129,49 @@ export class BrokenTransitionRule extends BaseRule {
   }
   
   /**
-   * Suggest states with similar names
+   * Suggest a mapping for an unresolvable state
    */
-  suggestSimilarStates(targetName, validStates) {
-    // Simple Levenshtein-like matching
-    return validStates
-      .map(state => ({
-        name: state,
-        similarity: this.calculateSimilarity(targetName.toLowerCase(), state.toLowerCase())
-      }))
-      .filter(s => s.similarity > 0.5)
-      .sort((a, b) => b.similarity - a.similarity)
+  suggestMapping(targetName, context) {
+    // Find similar class names
+    const similar = context.implications
+      .map(impl => impl.metadata.className)
+      .filter(name => {
+        const lowerName = name.toLowerCase();
+        const lowerTarget = targetName.toLowerCase();
+        return lowerName.includes(lowerTarget) || lowerTarget.includes(lowerName);
+      });
+    
+    if (similar.length > 0) {
+      return similar[0];
+    }
+    
+    // Suggest a class name based on naming pattern
+    const capitalizedTarget = targetName.charAt(0).toUpperCase() + targetName.slice(1);
+    return `${capitalizedTarget}BookingImplications`;
+  }
+  
+  /**
+   * Find states with similar names
+   */
+  suggestSimilarStates(targetName, context) {
+    const allStates = context.implications.map(impl => impl.metadata.className);
+    
+    // Calculate similarity scores
+    const scored = allStates.map(state => ({
+      name: state,
+      score: this.calculateSimilarity(targetName, state)
+    }));
+    
+    // Return top 3 matches
+    return scored
+      .sort((a, b) => b.score - a.score)
       .slice(0, 3)
+      .filter(s => s.score > 0.3)
       .map(s => s.name);
   }
   
   /**
-   * Simple similarity calculation
+   * Simple similarity score (Levenshtein-ish)
    */
   calculateSimilarity(str1, str2) {
     const longer = str1.length > str2.length ? str1 : str2;
@@ -88,7 +179,7 @@ export class BrokenTransitionRule extends BaseRule {
     
     if (longer.length === 0) return 1.0;
     
-    const editDistance = this.levenshteinDistance(longer, shorter);
+    const editDistance = this.levenshteinDistance(str1.toLowerCase(), str2.toLowerCase());
     return (longer.length - editDistance) / longer.length;
   }
   

@@ -1,90 +1,121 @@
-import { BaseRule } from './BaseRule.js';
-import { Issue, Suggestion, IssueSeverity, IssueType } from '../types/issues.js';
+// packages/analyzer/src/rules/IsolatedStateRule.js (UPDATE)
 
-/**
- * Detects states that have no incoming or outgoing transitions (completely isolated)
- */
+import { BaseRule } from './BaseRule.js';
+import { IssueSeverity, IssueType, Issue, Suggestion } from '../types/issues.js';
+
 export class IsolatedStateRule extends BaseRule {
+  constructor() {
+    super('isolated-states', 'Isolated States');
+  }
+  
   appliesTo(implication) {
-    return implication.metadata?.hasXStateConfig === true;
+    return true; // Check all implications
   }
   
   analyze(implication, context) {
     const issues = [];
     const className = implication.metadata.className;
     
-    // Find incoming and outgoing transitions
-    const incoming = context.transitions.filter(t => t.to === className);
-    const outgoing = context.transitions.filter(t => t.from === className);
+    // ✅ Get state registry
+    const registry = context.stateRegistry;
     
-    // If no incoming AND no outgoing, this state is completely isolated
-    if (incoming.length === 0 && outgoing.length === 0) {
-      issues.push(this.createIssue({
-        severity: IssueSeverity.ERROR,
-        type: IssueType.ISOLATED_STATE,
-        stateName: className,
-        title: 'Isolated State',
-        message: `${className} is completely isolated with no incoming or outgoing transitions. This state is unreachable and serves no purpose in the state machine.`,
-        suggestions: [
-          new Suggestion({
-            action: 'add-incoming-transition',
-            title: 'Add Incoming Transition',
-            description: 'Connect this state to the state machine by adding a transition from another state',
-            autoFixable: false,
-            data: {
-              possibleSources: context.implications
-                .filter(i => i.metadata.hasXStateConfig)
-                .map(i => i.metadata.className)
-                .slice(0, 5)
-            }
-          }),
-          new Suggestion({
-            action: 'delete-state',
-            title: 'Delete This State',
-            description: 'If this state is not needed, consider removing it',
-            autoFixable: false
-          })
-        ],
-        affectedFields: ['xstateConfig.on'],
-        location: implication.path
-      }));
+    if (!registry) {
+      return issues;
     }
-    // If no incoming but has outgoing, warn about unreachable state
-    else if (incoming.length === 0 && outgoing.length > 0) {
+    
+    // Check if state is referenced by any transition
+    const isReferenced = context.transitions.some(t => {
+      // ✅ Resolve target name using registry
+      const resolvedTarget = registry.resolve(t.to);
+      return resolvedTarget === className;
+    });
+    
+    // Check if state has any outgoing transitions
+    const hasOutgoing = context.transitions.some(t => t.from === className);
+    
+    // Isolated if: no incoming AND no outgoing
+    const isIsolated = !isReferenced && !hasOutgoing;
+    
+    if (isIsolated) {
+      // Check if it's a terminal state (might be intentional)
+      const isTerminal = this.isTerminalState(implication);
+      
       issues.push(this.createIssue({
-        severity: IssueSeverity.WARNING,
+        severity: isTerminal ? IssueSeverity.WARNING : IssueSeverity.ERROR,
         type: IssueType.ISOLATED_STATE,
         stateName: className,
-        title: 'Unreachable State',
-        message: `${className} has no incoming transitions. This state can never be reached from other states.`,
-        suggestions: [
-          new Suggestion({
-            action: 'add-incoming-transition',
-            title: 'Add Incoming Transition',
-            description: 'Make this state reachable by adding a transition from another state',
-            autoFixable: false,
-            data: {
-              possibleSources: context.implications
-                .filter(i => i.metadata.hasXStateConfig)
-                .map(i => i.metadata.className)
-                .slice(0, 5)
-            }
-          }),
-          new Suggestion({
-            action: 'mark-initial',
-            title: 'Mark as Initial State',
-            description: 'If this is the starting state, document it in the meta',
-            autoFixable: true,
-            data: {
-              addToMeta: { initial: true }
-            }
-          })
-        ],
-        affectedFields: [],
-        location: implication.path
+        title: isTerminal ? 'Terminal State Not Referenced' : 'Completely Isolated State',
+        message: isTerminal 
+          ? `State "${className}" appears to be a terminal state but is never referenced by any transition.`
+          : `State "${className}" is completely isolated - it has no incoming or outgoing transitions.`,
+        details: {
+          hasOutgoing: false,
+          isReferenced: false,
+          isTerminal: isTerminal,
+          sourceFile: implication.path
+        },
+        suggestions: this.getSuggestions(className, implication, context)
       }));
     }
     
     return issues;
+  }
+  
+  isTerminalState(implication) {
+    const metadata = implication.metadata;
+    
+    // Check if xstateConfig has no outgoing transitions
+    if (metadata.hasXStateConfig) {
+      // Assume terminal if no 'on' property or empty 'on'
+      return true; // Simplified check
+    }
+    
+    return false;
+  }
+  
+  getSuggestions(className, implication, context) {
+    const suggestions = [];
+    
+    // Suggest adding transitions
+    suggestions.push(new Suggestion({
+      action: 'add-transition',
+      title: '➕ Add Incoming Transition',
+      description: 'Add a transition from another state to this one',
+      autoFixable: false,
+      data: {
+        targetState: className,
+        possibleSources: this.suggestSourceStates(className, context)
+      }
+    }));
+    
+    // Suggest adding outgoing transitions
+    suggestions.push(new Suggestion({
+      action: 'add-outgoing',
+      title: '➕ Add Outgoing Transition',
+      description: 'Add transitions from this state to others',
+      autoFixable: false
+    }));
+    
+    // Suggest removal if truly isolated
+    suggestions.push(new Suggestion({
+      action: 'remove-state',
+      title: '🗑️ Remove Isolated State',
+      description: 'Delete this state if it\'s not needed',
+      autoFixable: true,
+      data: {
+        className: className,
+        filePath: implication.path
+      }
+    }));
+    
+    return suggestions;
+  }
+  
+  suggestSourceStates(targetState, context) {
+    // Return all states that could transition to this one
+    return context.implications
+      .filter(impl => impl.metadata.className !== targetState)
+      .map(impl => impl.metadata.className)
+      .slice(0, 5); // Top 5
   }
 }
