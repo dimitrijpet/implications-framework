@@ -1,4 +1,4 @@
-// packages/api-server/src/routes/implications.js (NEW FILE)
+// packages/api-server/src/routes/implications.js (COMPLETE FIX)
 
 import express from 'express';
 import path from 'path';
@@ -24,85 +24,161 @@ router.post('/use-base-directly', async (req, res) => {
       });
     }
     
-    console.log(`📝 Removing override: ${platform}.${screen} in ${path.basename(filePath)}`);
+    console.log(`📝 Attempting to remove override: ${platform}.${screen} in ${path.basename(filePath)}`);
     
     // Read the file
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
-      return res.status(404).json({ error: 'File not found' });
+      return res.status(404).json({ error: 'File not found: ' + filePath });
     }
     
     const originalContent = await fs.readFile(filePath, 'utf-8');
     
+    // Quick check: does file even contain mergeWithBase?
+    if (!originalContent.includes('mergeWithBase')) {
+      return res.status(400).json({ 
+        error: 'This file does not use mergeWithBase pattern',
+        hint: 'This action only works on files that extend a base class and use ImplicationHelper.mergeWithBase'
+      });
+    }
+    
     // Parse the file
     const ast = parser.parse(originalContent, {
       sourceType: 'module',
-      plugins: ['jsx', 'classProperties']
+      plugins: ['jsx', 'classProperties', 'decorators-legacy']
     });
     
     let modified = false;
     let baseClassName = null;
+    let foundMirrorsOn = false;
     
     // Traverse and modify
     traverse.default(ast, {
-      ClassDeclaration(path) {
+      ClassDeclaration(classPath) {
         // Get the base class name
-        if (path.node.superClass && path.node.superClass.name) {
-          baseClassName = path.node.superClass.name;
+        if (classPath.node.superClass && classPath.node.superClass.name) {
+          baseClassName = classPath.node.superClass.name;
         }
         
-        // Find the mirrorsOn property
-        path.traverse({
-          ClassProperty(propertyPath) {
-            if (propertyPath.node.key.name === 'mirrorsOn' && 
-                propertyPath.node.static) {
-              
-              // Navigate to the specific platform.screen
-              traverse.default(propertyPath.node.value, {
-                Property(screenPath) {
-                  // Check if this is the platform we're looking for
-                  if (screenPath.node.key.name === platform) {
-                    const platformValue = screenPath.node.value;
-                    
-                    // Find the screen property within the platform
-                    if (t.isObjectExpression(platformValue)) {
-                      platformValue.properties.forEach((prop, index) => {
-                        if (prop.key.name === screen) {
-                          // Check if this is a mergeWithBase call
-                          if (t.isArrayExpression(prop.value) && 
-                              prop.value.elements.length > 0) {
-                            
-                            const firstElement = prop.value.elements[0];
-                            
-                            if (t.isCallExpression(firstElement) &&
-                                firstElement.callee.property?.name === 'mergeWithBase') {
-                              
-                              // Get the base reference (first argument)
-                              const baseRef = firstElement.arguments[0];
-                              
-                              // Replace the entire array with just the base reference
-                              prop.value = baseRef;
-                              modified = true;
-                              
-                              console.log(`✅ Replaced mergeWithBase with base reference`);
-                            }
-                          }
-                        }
-                      });
-                    }
-                  }
-                }
-              }, screenPath.scope, screenPath.state, screenPath);
+        // Find the mirrorsOn static property
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'mirrorsOn') {
+            
+            foundMirrorsOn = true;
+            console.log('  ✓ Found mirrorsOn property');
+            
+            // Navigate: mirrorsOn.UI.{platform}.{screen}
+            const mirrorsOnValue = member.value;
+            
+            if (!t.isObjectExpression(mirrorsOnValue)) {
+              return;
             }
+            
+            // Find UI property
+            const uiProp = mirrorsOnValue.properties.find(
+              p => t.isObjectProperty(p) && p.key.name === 'UI'
+            );
+            
+            if (!uiProp || !t.isObjectExpression(uiProp.value)) {
+              console.log('  ✗ No UI property found');
+              return;
+            }
+            
+            console.log(`  ✓ Found UI property, looking for platform: ${platform}`);
+            
+            // Find platform property (dancer, web, clubApp, etc.)
+            const platformProp = uiProp.value.properties.find(
+              p => t.isObjectProperty(p) && p.key.name === platform
+            );
+            
+            if (!platformProp || !t.isObjectExpression(platformProp.value)) {
+              console.log(`  ✗ Platform "${platform}" not found`);
+              return;
+            }
+            
+            console.log(`  ✓ Found platform "${platform}", looking for screen: ${screen}`);
+            
+            // Find screen property
+            const screenProp = platformProp.value.properties.find(
+              p => t.isObjectProperty(p) && p.key.name === screen
+            );
+            
+            if (!screenProp) {
+              console.log(`  ✗ Screen "${screen}" not found`);
+              return;
+            }
+            
+            console.log(`  ✓ Found screen "${screen}"`);
+            
+            // Check if it's an array with mergeWithBase
+            if (!t.isArrayExpression(screenProp.value)) {
+              console.log('  ✗ Screen value is not an array');
+              return;
+            }
+            
+            if (screenProp.value.elements.length === 0) {
+              console.log('  ✗ Screen array is empty');
+              return;
+            }
+            
+            const firstElement = screenProp.value.elements[0];
+            
+            // Check if it's a mergeWithBase call
+            if (!t.isCallExpression(firstElement)) {
+              console.log('  ✗ First element is not a function call');
+              return;
+            }
+            
+            // Check if it's ImplicationHelper.mergeWithBase or just mergeWithBase
+            const isMergeWithBase = 
+              (t.isMemberExpression(firstElement.callee) && 
+               firstElement.callee.property?.name === 'mergeWithBase') ||
+              (t.isIdentifier(firstElement.callee) && 
+               firstElement.callee.name === 'mergeWithBase');
+            
+            if (!isMergeWithBase) {
+              console.log('  ✗ Not a mergeWithBase call');
+              return;
+            }
+            
+            console.log('  ✓ Found mergeWithBase call!');
+            
+            // Get the base reference (first argument)
+            if (!firstElement.arguments || firstElement.arguments.length === 0) {
+              console.log('  ✗ mergeWithBase has no arguments');
+              return;
+            }
+            
+            const baseRef = firstElement.arguments[0];
+            
+            // Replace the array with just the base reference
+            screenProp.value = baseRef;
+            modified = true;
+            
+            console.log('  ✅ Successfully replaced mergeWithBase with base reference');
           }
         });
       }
     });
     
+    if (!foundMirrorsOn) {
+      return res.status(400).json({ 
+        error: 'No mirrorsOn property found in this file',
+        hint: 'This action only works on implication classes with a static mirrorsOn property'
+      });
+    }
+    
     if (!modified) {
       return res.status(400).json({ 
-        error: 'Could not find mergeWithBase call for specified platform/screen',
-        details: { platform, screen, baseClassName }
+        error: `Could not find mergeWithBase call for ${platform}.${screen}`,
+        details: { 
+          platform, 
+          screen, 
+          baseClassName,
+          hint: 'The screen may not use mergeWithBase pattern, or the platform/screen names may be incorrect'
+        }
       });
     }
     
@@ -136,36 +212,6 @@ router.post('/use-base-directly', async (req, res) => {
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
-  }
-});
-
-/**
- * POST /api/implications/add-override
- * Add a new override to an existing screen (for add-overrides action)
- */
-router.post('/add-override', async (req, res) => {
-  try {
-    const { filePath, platform, screen, overrides } = req.body;
-    
-    if (!filePath || !platform || !screen || !overrides) {
-      return res.status(400).json({ 
-        error: 'filePath, platform, screen, and overrides are required' 
-      });
-    }
-    
-    console.log(`📝 Adding overrides to: ${platform}.${screen} in ${path.basename(filePath)}`);
-    
-    // TODO: Implement this in next iteration
-    // This would add visible/hidden/checks to an existing mergeWithBase call
-    
-    res.status(501).json({ 
-      error: 'Not implemented yet',
-      message: 'This feature will be added in the next phase'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error adding override:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 

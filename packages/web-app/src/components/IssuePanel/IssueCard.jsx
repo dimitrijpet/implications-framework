@@ -1,4 +1,4 @@
-// packages/web-app/src/components/IssuePanel/IssueCard.jsx (FIXED)
+// packages/web-app/src/components/IssuePanel/IssueCard.jsx
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -30,7 +30,11 @@ export default function IssueCard({ issue, theme, onActionComplete }) {
           navigate('/settings');
           return;
           
-        // File mutations (not implemented yet)
+        // File mutations
+        case 'use-base-directly':
+          await handleUseBaseDirectly(suggestion.data);
+          break;
+          
         case 'add-transition':
           alert('➕ Add Transition\n\nThis will open a transition editor.\n\nComing in next phase!');
           return;
@@ -40,16 +44,12 @@ export default function IssueCard({ issue, theme, onActionComplete }) {
           return;
           
         case 'remove-state':
-          alert('🗑️ Remove Isolated State\n\nThis will comment out the state file.\n\nComing in next phase!');
-          return;
+          await handleRemoveState(suggestion.data);
+          break;
           
         case 'add-overrides':
           alert('✏️ Add Meaningful Overrides\n\nThis will open the state editor.\n\nComing in next phase!');
           return;
-          
-        case 'use-base-directly':
-  await handleUseBaseDirectly(suggestion.data);
-  break;
           
         default:
           console.warn('Unknown action:', suggestion.action);
@@ -141,42 +141,47 @@ export default function IssueCard({ issue, theme, onActionComplete }) {
     console.log('✅ API response:', result);
   };
   
-  // Remove isolated state (comment out)
-  const handleRemoveState = async (data) => {
-    const { className, filePath } = data;
-    
-    const confirm = window.confirm(
-      `Are you sure you want to comment out ${className}?\n\n` +
-      `This will add a comment to the file.\n\n` +
-      `File: ${filePath}`
-    );
-    
-    if (!confirm) throw new Error('Cancelled');
-    
-    alert('Remove state feature not implemented yet. Coming soon!');
-    throw new Error('Not implemented');
-  };
+// packages/web-app/src/components/IssuePanel/IssueCard.jsx
+// Replace the handleUseBaseDirectly function:
 
-  const handleUseBaseDirectly = async (data) => {
-  const { className, filePath, platform, screen } = data;
+const handleUseBaseDirectly = async (data) => {
+  const { className, platform, screen } = data;
+  
+  // Extract filePath from issue.location (format: "path/to/file.js:line:col")
+  let filePath = data.filePath;
+  if (!filePath && issue.location) {
+    filePath = issue.location.split(':')[0];
+  }
+  
+  if (!filePath) {
+    throw new Error('Cannot determine file path for this state');
+  }
+  
+  // Make path absolute by prepending project path
+  const projectPath = localStorage.getItem('lastProjectPath');
+  const absolutePath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`;
+  
+  console.log('📍 Paths:', { relative: filePath, absolute: absolutePath, projectPath });
   
   const confirm = window.confirm(
     `Remove override for ${platform}.${screen}?\n\n` +
     `This will change the code to use the base implementation directly.\n\n` +
-    `File: ${filePath}\n` +
+    `Class: ${className || issue.stateName}\n` +
+    `File: ${filePath}\n\n` +
     `A backup will be created automatically.`
   );
   
   if (!confirm) throw new Error('Cancelled');
   
   console.log(`📝 Removing override: ${platform}.${screen}`);
+  console.log(`📂 File: ${absolutePath}`);
   
   // Call API to remove override
   const response = await fetch('http://localhost:3000/api/implications/use-base-directly', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      filePath,
+      filePath: absolutePath,  // Send absolute path
       platform,
       screen
     })
@@ -191,6 +196,39 @@ export default function IssueCard({ issue, theme, onActionComplete }) {
   console.log('✅ API response:', result);
   console.log('📦 Backup created:', result.backup);
 };
+  // Remove isolated state (comment out file)
+  const handleRemoveState = async (data) => {
+    const { className, filePath } = data;
+    
+    const confirm = window.confirm(
+      `Are you sure you want to comment out ${className}?\n\n` +
+      `This will add a comment block around the entire file.\n\n` +
+      `File: ${filePath}\n` +
+      `A backup will be created automatically.`
+    );
+    
+    if (!confirm) throw new Error('Cancelled');
+    
+    console.log(`🗑️ Commenting out: ${className}`);
+    
+    // Call API to comment out file
+    const response = await fetch('http://localhost:3000/api/implications/remove-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ API response:', result);
+    console.log('📦 Backup created:', result.backup);
+  };
   
   // Helper
   const capitalize = (str) => str.charAt(0).toUpperCase() + str.slice(1);
