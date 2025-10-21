@@ -79,6 +79,12 @@ importers:
 
   packages/core:
     dependencies:
+      '@babel/parser':
+        specifier: ^7.28.4
+        version: 7.28.4
+      '@babel/traverse':
+        specifier: ^7.28.4
+        version: 7.28.4
       fs-extra:
         specifier: ^11.2.0
         version: 11.3.2

@@ -249,3 +249,115 @@ export function extractXStateTransitions(parsed, className) {
   
   return transitions;
 }
+
+/**
+ * Extract detailed metadata from xstateConfig.meta
+ */
+export function extractXStateMetadata(content) {
+  const metadata = {};
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            // Find meta property
+            const metaProperty = value.properties.find(
+              p => p.key?.name === 'meta'
+            );
+            
+            if (metaProperty?.value?.type === 'ObjectExpression') {
+              // Extract all meta fields
+              metaProperty.value.properties.forEach(prop => {
+                if (!prop.key) return;
+                
+                const key = prop.key.name;
+                const extractedValue = extractValueFromNode(prop.value);
+                
+                if (extractedValue !== null && extractedValue !== undefined) {
+                  metadata[key] = extractedValue;
+                }
+              });
+              
+              // Handle setup array/object
+              if (metadata.setup) {
+                if (Array.isArray(metadata.setup)) {
+                  metadata.platforms = metadata.setup
+                    .map(s => s?.platform)
+                    .filter(Boolean);
+                  if (!metadata.platform && metadata.platforms.length > 0) {
+                    metadata.platform = metadata.platforms[0];
+                  }
+                } else if (metadata.setup?.platform) {
+                  metadata.platform = metadata.setup.platform;
+                  metadata.platforms = [metadata.setup.platform];
+                }
+              }
+            }
+          }
+        }
+      },
+    });
+    
+  } catch (error) {
+    console.error('Error extracting XState metadata:', error.message);
+  }
+  
+  return metadata;
+}
+
+/**
+ * Extract value from AST node
+ */
+function extractValueFromNode(node) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+      return node.value;
+      
+    case 'NullLiteral':
+      return null;
+      
+    case 'Identifier':
+      if (node.name === 'undefined') return undefined;
+      if (node.name === 'null') return null;
+      return node.name;
+      
+    case 'ArrayExpression':
+      return node.elements
+        .map(el => extractValueFromNode(el))
+        .filter(v => v !== null && v !== undefined);
+      
+    case 'ObjectExpression':
+      const obj = {};
+      node.properties.forEach(prop => {
+        if (prop.key) {
+          const key = prop.key.name || prop.key.value;
+          const value = extractValueFromNode(prop.value);
+          if (value !== undefined) {
+            obj[key] = value;
+          }
+        }
+      });
+      return obj;
+      
+    case 'TemplateLiteral':
+      if (node.quasis && node.quasis.length === 1) {
+        return node.quasis[0].value.cooked;
+      }
+      return null;
+      
+    default:
+      return null;
+  }
+}
