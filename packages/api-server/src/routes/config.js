@@ -153,4 +153,128 @@ function getDefaultConfig() {
   };
 }
 
+/**
+ * POST /api/config/add-mapping
+ * Add a custom mapping to config
+ */
+router.post('/add-mapping', async (req, res) => {
+  try {
+    const { projectPath, shortName, fullName } = req.body;
+    
+    if (!projectPath || !shortName || !fullName) {
+      return res.status(400).json({ 
+        error: 'projectPath, shortName, and fullName are required' 
+      });
+    }
+    
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    
+    console.log(`➕ Adding mapping: "${shortName}" → "${fullName}"`);
+    
+    // Load current config
+    const configModule = await import(`file://${configPath}?t=${Date.now()}`);
+    const config = configModule.default || configModule;
+    
+    // Ensure stateRegistry.mappings exists
+    if (!config.stateRegistry) {
+      config.stateRegistry = { strategy: 'auto', mappings: {} };
+    }
+    if (!config.stateRegistry.mappings) {
+      config.stateRegistry.mappings = {};
+    }
+    
+    // Add mapping
+    config.stateRegistry.mappings[shortName] = fullName;
+    
+    // Create backup
+    const exists = await fs.pathExists(configPath);
+    if (exists) {
+      const backupPath = `${configPath}.backup.${Date.now()}`;
+      await fs.copy(configPath, backupPath);
+      console.log('📦 Backup created:', backupPath);
+    }
+    
+    // Save
+    const configContent = generateConfigFile(config);
+    await fs.writeFile(configPath, configContent, 'utf-8');
+    
+    console.log('✅ Mapping added successfully');
+    
+    res.json({
+      success: true,
+      mapping: { shortName, fullName }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding mapping:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/config/add-prefix
+ * Add a status prefix to config
+ */
+router.post('/add-prefix', async (req, res) => {
+  try {
+    const { projectPath, prefix } = req.body;
+    
+    if (!projectPath || !prefix) {
+      return res.status(400).json({ 
+        error: 'projectPath and prefix are required' 
+      });
+    }
+    
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    
+    console.log(`➕ Adding prefix: "${prefix}"`);
+    
+    // Load current config
+    const configModule = await import(`file://${configPath}?t=${Date.now()}`);
+    const config = configModule.default || configModule;
+    
+    // Ensure stateRegistry.statusPrefixes exists
+    if (!config.stateRegistry) {
+      config.stateRegistry = { strategy: 'auto', statusPrefixes: [] };
+    }
+    if (!config.stateRegistry.statusPrefixes) {
+      config.stateRegistry.statusPrefixes = [];
+    }
+    
+    // Add prefix if not already present
+    if (!config.stateRegistry.statusPrefixes.includes(prefix)) {
+      config.stateRegistry.statusPrefixes.push(prefix);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Prefix already exists',
+        prefix
+      });
+    }
+    
+    // Create backup
+    const exists = await fs.pathExists(configPath);
+    if (exists) {
+      const backupPath = `${configPath}.backup.${Date.now()}`;
+      await fs.copy(configPath, backupPath);
+      console.log('📦 Backup created:', backupPath);
+    }
+    
+    // Save
+    const configContent = generateConfigFile(config);
+    await fs.writeFile(configPath, configContent, 'utf-8');
+    
+    console.log('✅ Prefix added successfully');
+    
+    res.json({
+      success: true,
+      prefix
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding prefix:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

@@ -1,8 +1,10 @@
+// packages/web-app/src/components/IssuePanel/IssuePanel.jsx
+
 import { useState } from 'react';
 import IssueCard from './IssueCard';
 
-export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
-  const [filter, setFilter] = useState('all'); // all, error, warning, info
+export default function IssuePanel({ analysisResult, theme, onIssueClick, onRefresh }) {
+  const [filter, setFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   
   if (!analysisResult || !analysisResult.issues) {
@@ -30,6 +32,32 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
     
     return true;
   });
+
+  // Handle action complete
+  const handleActionComplete = (action) => {
+    console.log('✅ Action completed:', action);
+    
+    // Show notification
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #10b981;
+      color: white;
+      padding: 16px 24px;
+      border-radius: 8px;
+      font-weight: bold;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    notification.textContent = '✅ Fix applied! Re-scan to see changes.';
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.remove();
+    }, 5000);
+  };
   
   return (
     <div 
@@ -48,7 +76,7 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
               🔍 Issues Detected
             </h2>
             <p className="text-sm" style={{ color: theme.colors.text.tertiary }}>
-              Analysis found {summary.total} issue{summary.total !== 1 ? 's' : ''} in your implications
+              Analysis found {summary.totalIssues || summary.total || 0} issue{(summary.totalIssues || summary.total) !== 1 ? 's' : ''} in your implications
             </p>
           </div>
           
@@ -62,7 +90,7 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
               }}
             >
               <div className="text-2xl font-bold" style={{ color: theme.colors.accents.red }}>
-                {summary.errors}
+                {summary.errorCount || summary.errors || 0}
               </div>
               <div className="text-xs" style={{ color: theme.colors.text.secondary }}>
                 Errors
@@ -77,7 +105,7 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
               }}
             >
               <div className="text-2xl font-bold" style={{ color: theme.colors.accents.orange }}>
-                {summary.warnings}
+                {summary.warningCount || summary.warnings || 0}
               </div>
               <div className="text-xs" style={{ color: theme.colors.text.secondary }}>
                 Warnings
@@ -92,7 +120,7 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
               }}
             >
               <div className="text-2xl font-bold" style={{ color: theme.colors.accents.blue }}>
-                {summary.info}
+                {summary.infoCount || summary.info || 0}
               </div>
               <div className="text-xs" style={{ color: theme.colors.text.secondary }}>
                 Info
@@ -157,7 +185,7 @@ export default function IssuePanel({ analysisResult, theme, onIssueClick }) {
               key={index}
               issue={issue}
               theme={theme}
-              onClick={() => onIssueClick && onIssueClick(issue)}
+              onActionComplete={handleActionComplete}
             />
           ))
         ) : (
