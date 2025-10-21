@@ -12,14 +12,16 @@ router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
-     req.app.set('lastScannedProject', projectPath);  // 👈 Add this line
-     
+    // Validate input
     if (!projectPath) {
       return res.status(400).json({ error: 'projectPath is required' });
     }
     
     console.log(`\n🔍 Starting discovery for: ${projectPath}`);
     const startTime = Date.now();
+    
+    // Store project path immediately
+    req.app.set('lastScannedProject', projectPath);
     
     // Load project config
     const config = await loadConfig(projectPath);
@@ -38,22 +40,30 @@ router.post('/scan', async (req, res) => {
       stateRegistry
     });
     
+    // Calculate duration
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    
+    // Log results
     console.log(`✅ Discovery complete in ${duration}s`);
     console.log(`   - Files: ${discoveryResult.stats?.totalFiles || 'N/A'}`);
     console.log(`   - Implications: ${discoveryResult.files.implications.length}`);
     console.log(`   - State Mappings: ${stateRegistry.size}`);
     console.log(`   - Issues Found: ${analysisResult.summary.totalIssues}`);
     
-    // Include registry in response
-    res.json({
+    // 🔥 CACHE THE DISCOVERY RESULT FOR PATTERN ANALYSIS
+    req.app.set('lastDiscoveryResult', discoveryResult);
+    
+    // Build complete response
+    const response = {
       ...discoveryResult,
       analysis: analysisResult,
       stateRegistry: stateRegistry.toJSON()
-    });
+    };
+    
+    res.json(response);
     
   } catch (error) {
-    console.error('Discovery error:', error);
+    console.error('❌ Discovery error:', error);
     res.status(500).json({ 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined

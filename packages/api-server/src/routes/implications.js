@@ -531,6 +531,7 @@ router.post('/update-metadata', async (req, res) => {
     }
     
     console.log(`📝 Updating metadata in: ${path.basename(filePath)}`);
+    console.log(`📊 Fields to update:`, Object.keys(metadata));
     
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
@@ -558,27 +559,66 @@ router.post('/update-metadata', async (req, res) => {
                 p => t.isObjectProperty(p) && p.key.name === 'meta'
               );
               
-              if (metaProp && t.isObjectExpression(metaProp.value)) {
-                Object.entries(metadata).forEach(([key, value]) => {
-                  const existingProp = metaProp.value.properties.find(
-                    p => t.isObjectProperty(p) && p.key.name === key
-                  );
-                  
-                  if (existingProp) {
-                    if (typeof value === 'string') {
-                      existingProp.value = t.stringLiteral(value);
-                    } else if (typeof value === 'number') {
-                      existingProp.value = t.numericLiteral(value);
-                    } else if (Array.isArray(value)) {
-                      existingProp.value = t.arrayExpression(
-                        value.map(v => typeof v === 'string' ? t.stringLiteral(v) : t.identifier(String(v)))
-                      );
-                    }
-                    modified = true;
-                  }
-                });
-              }
+             if (metaProp && t.isObjectExpression(metaProp.value)) {
+  // ✅ WHITELIST: Only update these simple fields
+  const EDITABLE_FIELDS = [
+    'status',
+    'statusCode', 
+    'statusNumber',
+    'triggerButton',
+    'afterButton',
+    'previousButton',
+    'triggerAction',
+    'notificationKey',
+    'platform'
+  ];
+  
+  Object.entries(metadata).forEach(([key, value]) => {
+    // ❌ Skip if not in whitelist
+    if (!EDITABLE_FIELDS.includes(key)) {
+      console.log(`  ⏭️  Skipping ${key} (not editable)`);
+      return;
+    }
+    
+    // ❌ Skip undefined
+    if (value === undefined) return;
+    
+    const existingProp = metaProp.value.properties.find(
+      p => t.isObjectProperty(p) && p.key.name === key
+    );
+    
+    // Create the AST node for SIMPLE values only
+    let valueNode;
+    if (value === null) {
+      valueNode = t.nullLiteral();
+    } else if (typeof value === 'string') {
+      valueNode = t.stringLiteral(value);
+    } else if (typeof value === 'number') {
+      valueNode = t.numericLiteral(value);
+    } else {
+      console.log(`  ⚠️  Skipping ${key} - complex type`);
+      return;
+    }
+    
+    if (existingProp) {
+      // ✅ Update existing
+      existingProp.value = valueNode;
+      console.log(`  ✏️  Updated ${key}: ${value}`);
+      modified = true;
+    } else {
+      // ✅ Add new (simple fields only)
+      const newProp = t.objectProperty(
+        t.identifier(key),
+        valueNode
+      );
+      metaProp.value.properties.push(newProp);
+      console.log(`  ➕ Added ${key}: ${value}`);
+      modified = true;
+    }
+  });
+}
               
+              // Handle transitions
               if (transitions) {
                 const onProp = member.value.properties.find(
                   p => t.isObjectProperty(p) && p.key.name === 'on'
@@ -593,6 +633,23 @@ router.post('/update-metadata', async (req, res) => {
                       )
                     )
                   );
+                  console.log(`  🔄 Updated ${transitions.length} transitions`);
+                  modified = true;
+                } else if (transitions.length > 0) {
+                  // ✅ ADD 'on' property if it doesn't exist
+                  const newOnProp = t.objectProperty(
+                    t.identifier('on'),
+                    t.objectExpression(
+                      transitions.map(trans =>
+                        t.objectProperty(
+                          t.identifier(trans.event),
+                          t.stringLiteral(trans.target)
+                        )
+                      )
+                    )
+                  );
+                  member.value.properties.push(newOnProp);
+                  console.log(`  ➕ Added 'on' with ${transitions.length} transitions`);
                   modified = true;
                 }
               }
@@ -608,15 +665,20 @@ router.post('/update-metadata', async (req, res) => {
       });
     }
     
+    // Generate code with better formatting
     const output = generate.default(ast, {
-      retainLines: true,
-      comments: true
+      retainLines: false,  // ✅ Better formatting
+      compact: false,
+      comments: true,
+      concise: false
     }, originalContent);
     
+    // Create backup
     const backupPath = `${filePath}.backup.${Date.now()}`;
     await fs.copy(filePath, backupPath);
-    console.log('📦 Backup created:', backupPath);
+    console.log('📦 Backup created:', path.basename(backupPath));
     
+    // Write updated file
     await fs.writeFile(filePath, output.code, 'utf-8');
     
     console.log('✅ Metadata updated successfully');
@@ -625,7 +687,10 @@ router.post('/update-metadata', async (req, res) => {
       success: true,
       filePath,
       backup: backupPath,
-      modified: { metadata: Object.keys(metadata), transitions: transitions?.length || 0 }
+      modified: { 
+        metadata: Object.keys(metadata), 
+        transitions: transitions?.length || 0 
+      }
     });
     
   } catch (error) {
@@ -636,7 +701,6 @@ router.post('/update-metadata', async (req, res) => {
     });
   }
 });
-
 /**
  * POST /api/implications/add-transition
  * Add a transition to an existing implication file

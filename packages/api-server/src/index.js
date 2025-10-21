@@ -10,6 +10,7 @@ import discoveryRouter from './routes/discovery.js';
 import configRoutes from './routes/config.js';
 import errorHandler from './middleware/errorHandler.js';
 import implicationsRoutes from './routes/implications.js';
+import patternsRoutes from './routes/patterns.js';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/discovery', discoveryRouter);
 app.use('/api/config', configRoutes);
 app.use('/api/implications', implicationsRoutes); // ADD THIS
+app.use('/api/patterns', patternsRoutes);
 
 // Error handling
 app.use(errorHandler);

@@ -1,6 +1,6 @@
 // packages/web-app/src/pages/Visualizer.jsx (COMPLETE REPLACEMENT)
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
 import StateDetailModal from '../components/StateGraph/StateDetailModal';
 import { buildGraphFromDiscovery } from '../utils/graphBuilder';
@@ -58,59 +58,64 @@ export default function Visualizer() {
 
   // Scan project and save to localStorage
   const handleScan = async () => {
-    if (!projectPath.trim()) {
-      alert('Please enter a project path');
-      return;
-    }
-    
-    setLoading(true);
+    setLoading(true);  // ✅ FIXED: Use loading, not isScanning
     setError(null);
     
     try {
-      console.log('📡 Scanning:', projectPath);
+      console.log('🔍 Starting discovery scan...');
       
       const response = await fetch('http://localhost:3000/api/discovery/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath: projectPath.trim() })
+        body: JSON.stringify({ projectPath })
       });
-      
+
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Discovery scan failed');
+      }
+
+      const result = await response.json();
+      
+      // ✅ FIXED: Save all data
+      setDiscoveryResult(result);
+      setAnalysisResult(result.analysis || null);  // ✅ FIXED: Was setAnalysis
+      setStateRegistry(result.stateRegistry || null);
+      
+      // ✅ FIXED: Build graph data
+      if (result.files?.implications) {
+        const graph = buildGraphFromDiscovery(result);
+        setGraphData(graph);
+        
+        // Save to localStorage
+        localStorage.setItem('lastProjectPath', projectPath);
+        localStorage.setItem('lastDiscoveryResult', JSON.stringify(result));
+        localStorage.setItem('lastAnalysisResult', JSON.stringify(result.analysis || null));
+        localStorage.setItem('lastStateRegistry', JSON.stringify(result.stateRegistry || null));
+        localStorage.setItem('lastGraphData', JSON.stringify(graph));
       }
       
-      const data = await response.json();
-      console.log('📦 Discovery result:', data);
-      
-      const { analysis, stateRegistry: registry, ...discoveryResult } = data;
-      
-      setDiscoveryResult(discoveryResult);
-      setAnalysisResult(analysis);
-      setStateRegistry(registry);
-      
-      // Build graph data
-      const builtGraphData = buildGraphFromDiscovery(discoveryResult);
-      setGraphData(builtGraphData);
-      
-      // Save to localStorage
-      localStorage.setItem('lastProjectPath', projectPath.trim());
-      localStorage.setItem('lastDiscoveryResult', JSON.stringify(discoveryResult));
-      localStorage.setItem('lastAnalysisResult', JSON.stringify(analysis));
-      localStorage.setItem('lastStateRegistry', JSON.stringify(registry));
-      localStorage.setItem('lastGraphData', JSON.stringify(builtGraphData));
-      
       console.log('✅ Scan complete');
-      console.log('   - States:', discoveryResult.files?.implications?.length || 0);
-      console.log('   - Issues:', analysis?.summary?.totalIssues || 0);
-      console.log('   - Mappings:', registry?.size || 0);
+      console.log('   - States:', result.files?.implications?.length || 0);
+      console.log('   - Issues:', result.analysis?.issues?.length || 0);
+      console.log('   - Mappings:', result.stateRegistry?.mappings ? Object.keys(result.stateRegistry.mappings).length : 0);
       
     } catch (err) {
       console.error('❌ Scan failed:', err);
       setError(err.message);
     } finally {
-      setLoading(false);
+      setLoading(false);  // ✅ FIXED: Use loading
     }
   };
+
+  // ✅ Expose refresh function globally for StateDetailModal
+  useEffect(() => {
+    window.refreshDiscovery = handleScan;
+    
+    return () => {
+      delete window.refreshDiscovery;
+    };
+  }, [projectPath]);  // ✅ FIXED: Dependency array
   
   // Handle node click in graph
   const handleNodeClick = (nodeData) => {
@@ -124,6 +129,11 @@ export default function Visualizer() {
       
       if (implication) {
         const metadata = implication.metadata;
+        console.log('🔍 Modal data for', nodeData.id, ':', {
+  statusCode: metadata.statusCode,
+  statusNumber: metadata.statusNumber,
+  triggerButton: metadata.triggerButton
+});
         
         if (!metadata.hasXStateConfig) {
           console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
@@ -358,19 +368,19 @@ export default function Visualizer() {
                   
                   {/* Mode Buttons */}
                   <div className="flex gap-2 ml-2 pl-2 border-l" style={{ borderColor: defaultTheme.colors.border }}>
-                   <button
-  onClick={() => {
-    console.log('🔘 Add State button clicked');
-    setShowAddStateModal(true);
-  }}
-  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-  style={{
-    background: defaultTheme.colors.accents.green,
-    color: 'white'
-  }}
->
-  ➕ Add State
-</button>       
+                    <button
+                      onClick={() => {
+                        console.log('🔘 Add State button clicked');
+                        setShowAddStateModal(true);
+                      }}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                      style={{
+                        background: defaultTheme.colors.accents.green,
+                        color: 'white'
+                      }}
+                    >
+                      ➕ Add State
+                    </button>       
                     <button
                       onClick={() => {
                         if (mode === 'add-transition') {
@@ -573,47 +583,47 @@ export default function Visualizer() {
       </main>
       
       {/* Detail Modal */}
-      {selectedState && (
-        <StateDetailModal 
-          state={selectedState}
-          onClose={closeDetail}
+{selectedState && (
+  <StateDetailModal 
+    state={selectedState}
+    onClose={closeDetail}
+    theme={defaultTheme}
+    projectPath={projectPath}  // ✅ ADD THIS LINE
+  />
+)}
+      
+      {showAddStateModal && (
+        <AddStateModal
+          isOpen={showAddStateModal}
+          onClose={() => setShowAddStateModal(false)}
+          onCreate={handleCreateState}
+          existingStates={discoveryResult?.files.implications.map(imp => ({
+            id: extractStateName(imp.metadata.className),
+            className: imp.metadata.className,
+            platform: imp.metadata.platform || 'unknown',
+            uiCoverage: {
+              totalScreens: imp.metadata.uiCoverage?.total || 0
+            },
+            hasXState: imp.metadata.hasXStateConfig,
+            status: imp.metadata.status
+          }))
+            .filter(state => {
+              if (!state.hasXState) return false;
+              return state.uiCoverage.totalScreens > 0 || 
+                     state.className?.includes('Booking') ||
+                     state.status;
+            })
+            .sort((a, b) => {
+              if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
+                return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
+              }
+              return a.id.localeCompare(b.id);
+            })
+          || []}
+          projectPath={projectPath}
           theme={defaultTheme}
         />
       )}
-      
-   {showAddStateModal && (
-  <AddStateModal
-    isOpen={showAddStateModal}
-    onClose={() => setShowAddStateModal(false)}
-    onCreate={handleCreateState}
-    existingStates={discoveryResult?.files.implications
-  .map(imp => ({
-    id: extractStateName(imp.metadata.className),
-    className: imp.metadata.className,
-    platform: imp.metadata.platform || 'unknown',
-    uiCoverage: {
-      totalScreens: imp.metadata.uiCoverage?.total || 0,  // 👈 Use .total!
-      platforms: imp.metadata.uiCoverage?.platforms || {}
-    },
-    hasXState: imp.metadata.hasXStateConfig,
-    status: imp.metadata.status
-  }))
-  .filter(state => {
-    if (!state.hasXState) return false;
-    return state.uiCoverage.totalScreens > 0 || 
-           state.className?.includes('Booking') ||
-           state.status;
-  })
-  .sort((a, b) => {
-    if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
-      return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
-    }
-    return a.id.localeCompare(b.id);
-  })
-|| []}
-    theme={defaultTheme}
-  />
-)}
     </div>
   );
 }
