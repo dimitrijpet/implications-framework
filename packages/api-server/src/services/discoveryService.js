@@ -6,9 +6,9 @@ import { isSection, extractSectionMetadata } from '../../../core/src/patterns/se
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
 import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discovery.js';
 
-/**
- * Discover all patterns in a project
- */
+// ❌ REMOVE THIS LINE - it's out of place
+// const uiData = await extractUIImplications(fileContent, projectPath);
+
 /**
  * Discover all patterns in a project
  */
@@ -46,11 +46,17 @@ export async function discoverProject(projectPath) {
         }
         
         // Check what type of file this is
-        await classifyFile(parsed, result);
+        await classifyFile(parsed, result, projectPath);
         
         // NEW: Extract transitions if it's an implication
         if (isImplication(parsed)) {
-          const metadata = extractImplicationMetadata(parsed);
+          // ✅ AWAIT the metadata extraction!
+          const metadata = await extractImplicationMetadata(
+            parsed,
+            extractXStateMetadata,
+            (content) => extractUIImplications(content, projectPath)
+          );
+          
           if (metadata.hasXStateConfig) {
             const transitions = extractXStateTransitions(parsed, metadata.className);
             result.transitions.push(...transitions);
@@ -82,6 +88,7 @@ export async function discoverProject(projectPath) {
     console.log(`   - Sections: ${result.files.sections.length}`);
     console.log(`   - Screens: ${result.files.screens.length}`);
     console.log(`   - Project Type: ${result.projectType}`);
+    console.log(`   - Transitions: ${result.transitions.length}`);  // ✅ Log this!
     
     return result;
     
@@ -94,12 +101,18 @@ export async function discoverProject(projectPath) {
 /**
  * Classify a parsed file
  */
-async function classifyFile(parsed, result) {
+async function classifyFile(parsed, result, projectPath) {
   const relativePath = path.relative(result.projectPath, parsed.path);
   
   // Check for Implication
   if (isImplication(parsed)) {
-    const metadata = extractImplicationMetadata(parsed, extractXStateMetadata, extractUIImplications);  // ✅ Pass both extractors
+    // ✅ AWAIT the async function!
+    const metadata = await extractImplicationMetadata(
+      parsed, 
+      extractXStateMetadata, 
+      (content) => extractUIImplications(content, projectPath)
+    );
+    
     result.files.implications.push(new DiscoveredFile({
       path: relativePath,
       type: 'implication',
@@ -108,7 +121,7 @@ async function classifyFile(parsed, result) {
     }));
     return;
   }
-  
+
   // Check for Section
   if (isSection(parsed)) {
     const metadata = extractSectionMetadata(parsed);

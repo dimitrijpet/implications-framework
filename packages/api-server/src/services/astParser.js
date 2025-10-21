@@ -1,208 +1,113 @@
 import { parse } from '@babel/parser';
 import traverse from '@babel/traverse';
-import fs from 'fs-extra';
+import fs from 'fs/promises';
+import { glob } from 'glob';
+import path from 'path';
 
 /**
- * Parse a JavaScript file and extract structure
+ * Parse a JavaScript file and extract basic structure
  */
 export async function parseFile(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     
-    // Parse with all features enabled
     const ast = parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    const result = {
-      path: filePath,
-      content: content,  // ADD THIS LINE
-      classes: [],
-      functions: [],
-      imports: [],
-      exports: [],
-    };
+    const classes = [];
     
-    // Traverse AST
     traverse.default(ast, {
-      // Extract class declarations
       ClassDeclaration(path) {
-        const classInfo = {
-          name: path.node.id?.name,
-          superClass: path.node.superClass?.name,
-          methods: [],
-          properties: [],
-          staticMethods: [],
-          staticProperties: [],
-        };
+        const className = path.node.id?.name;
         
-        // Extract class body
+        const staticProperties = [];
+        const methods = [];
+        
         path.node.body.body.forEach(member => {
-          if (member.type === 'ClassMethod') {
-            const methodInfo = {
-              name: member.key.name,
+          if (member.type === 'ClassProperty' && member.static) {
+            staticProperties.push({
+              name: member.key?.name,
+              type: member.value?.type,
+            });
+          } else if (member.type === 'ClassMethod') {
+            methods.push({
+              name: member.key?.name,
               static: member.static,
               async: member.async,
-              params: member.params.map(p => p.name),
-            };
-            
-            if (member.static) {
-              classInfo.staticMethods.push(methodInfo);
-            } else {
-              classInfo.methods.push(methodInfo);
-            }
-          } else if (member.type === 'ClassProperty') {
-            const propInfo = {
-              name: member.key.name,
-              static: member.static,
-              value: extractValue(member.value),
-            };
-            
-            if (member.static) {
-              classInfo.staticProperties.push(propInfo);
-            } else {
-              classInfo.properties.push(propInfo);
-            }
+            });
           }
         });
         
-        result.classes.push(classInfo);
-      },
-      
-      // Extract imports
-      ImportDeclaration(path) {
-        result.imports.push({
-          source: path.node.source.value,
-          specifiers: path.node.specifiers.map(s => ({
-            type: s.type,
-            local: s.local.name,
-            imported: s.imported?.name,
-          })),
-        });
-      },
-      
-      // Extract exports
-      ExportNamedDeclaration(path) {
-        if (path.node.declaration) {
-          result.exports.push({
-            type: 'named',
-            name: path.node.declaration.id?.name || path.node.declaration.name,
-          });
-        }
-      },
-      
-      ExportDefaultDeclaration(path) {
-        result.exports.push({
-          type: 'default',
-          name: path.node.declaration.id?.name || path.node.declaration.name,
+        classes.push({
+          name: className,
+          staticProperties,
+          methods,
         });
       },
     });
     
-    return result;
-    
-  } catch (error) {
-    console.error(`Error parsing ${filePath}:`, error.message);
     return {
       path: filePath,
-      error: error.message,
+      content,
+      classes,
+      error: null,
+    };
+    
+  } catch (error) {
+    return {
+      path: filePath,
+      content: null,
       classes: [],
-      functions: [],
-      imports: [],
-      exports: [],
+      error: error.message,
     };
   }
 }
 
 /**
- * Extract simple values from AST nodes
+ * Check if parsed file has a specific pattern
  */
-function extractValue(node) {
-  if (!node) return null;
+export function hasPattern(parsed, patternName) {
+  const content = parsed.content || '';
   
-  switch (node.type) {
-    case 'StringLiteral':
-      return node.value;
-    case 'NumericLiteral':
-      return node.value;
-    case 'BooleanLiteral':
-      return node.value;
-    case 'ObjectExpression':
-      return '<Object>';
-    case 'ArrayExpression':
-      return '<Array>';
-    case 'ArrowFunctionExpression':
-    case 'FunctionExpression':
-      return '<Function>';
-    default:
-      return `<${node.type}>`;
-  }
-}
-
-/**
- * Check if file has specific pattern
- */
-export function hasPattern(parsed, pattern) {
-  switch (pattern) {
+  switch (patternName) {
     case 'xstate':
-      return parsed.imports.some(imp => 
-        imp.source === 'xstate' || imp.source.includes('xstate')
-      );
+      return content.includes('xstateConfig') || content.includes('createMachine');
       
     case 'enhancedBaseSection':
-      return parsed.classes.some(cls => 
-        cls.superClass === 'EnhancedBaseSection'
-      );
+      return content.includes('EnhancedBaseSection');
       
     case 'testContext':
-      return parsed.imports.some(imp => 
-        imp.source.includes('TestContext')
-      );
+      return content.includes('TestContext');
       
     case 'expectImplication':
-      return parsed.imports.some(imp => 
-        imp.source.includes('ExpectImplication')
-      );
+      return content.includes('ExpectImplication');
       
     default:
       return false;
   }
 }
 
-
 /**
- * Extract XState transitions from xstateConfig static property
+ * Extract XState transitions from xstateConfig
  */
 export function extractXStateTransitions(parsed, className) {
   const transitions = [];
   
   try {
-    // Find the class with xstateConfig
-    const cls = parsed.classes.find(c => 
-      c.staticProperties.some(p => p.name === 'xstateConfig')
-    );
-    
-    if (!cls) return transitions;
-    
-    // We need to re-parse to get the full AST with the xstateConfig object
-    const content = parsed.content || ''; // We'll need to pass this
-    if (!content) return transitions;
-    
-    const ast = parse(content, {
+    const ast = parse(parsed.content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    // Traverse to find xstateConfig and extract 'on' transitions
     traverse.default(ast, {
       ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          // Found xstateConfig
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
-            // Look for 'on' property
+            // Find 'on' property
             const onProperty = value.properties.find(
               p => p.key?.name === 'on'
             );
@@ -210,17 +115,13 @@ export function extractXStateTransitions(parsed, className) {
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
-                const eventName = transitionProp.key?.name || 
-                                 transitionProp.key?.value;
-                
+                const eventName = transitionProp.key?.name || transitionProp.key?.value;
                 let targetState = null;
                 
-                // Handle different transition formats
+                // Handle different formats
                 if (transitionProp.value?.type === 'StringLiteral') {
-                  // Simple: ACCEPT: 'accepted'
                   targetState = transitionProp.value.value;
                 } else if (transitionProp.value?.type === 'ObjectExpression') {
-                  // Complex: ACCEPT: { target: 'accepted' }
                   const targetProp = transitionProp.value.properties.find(
                     p => p.key?.name === 'target'
                   );
@@ -231,9 +132,9 @@ export function extractXStateTransitions(parsed, className) {
                 
                 if (eventName && targetState) {
                   transitions.push({
-                    event: eventName,
                     from: className,
                     to: targetState,
+                    event: eventName,
                   });
                 }
               });
@@ -244,17 +145,31 @@ export function extractXStateTransitions(parsed, className) {
     });
     
   } catch (error) {
-    console.error(`Error extracting transitions from ${className}:`, error.message);
+    console.error('Error extracting transitions:', error.message);
   }
   
   return transitions;
 }
 
 /**
- * Extract detailed metadata from xstateConfig.meta
+ * Extract metadata from xstateConfig.meta
  */
 export function extractXStateMetadata(content) {
-  const metadata = {};
+  const metadata = {
+    status: null,
+    triggerAction: null,
+    triggerButton: null,
+    afterButton: null,
+    previousButton: null,
+    platform: null,
+    platforms: [],
+    notificationKey: null,
+    statusCode: null,
+    statusNumber: null,
+    requiredFields: [],
+    requires: null,
+    setup: null,
+  };
   
   try {
     const ast = parse(content, {
@@ -268,31 +183,28 @@ export function extractXStateMetadata(content) {
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
-            // Find meta property
+            // Find 'meta' property
             const metaProperty = value.properties.find(
               p => p.key?.name === 'meta'
             );
             
-            if (metaProperty?.value?.type === 'ObjectExpression') {
-              // Extract all meta fields
+            if (metaProperty && metaProperty.value?.type === 'ObjectExpression') {
+              // Extract each field from meta
               metaProperty.value.properties.forEach(prop => {
-                if (!prop.key) return;
+                const key = prop.key?.name;
+                const value = extractValueFromNode(prop.value);
                 
-                const key = prop.key.name;
-                const extractedValue = extractValueFromNode(prop.value);
-                
-                if (extractedValue !== null && extractedValue !== undefined) {
-                  metadata[key] = extractedValue;
+                if (key && value !== undefined) {
+                  metadata[key] = value;
                 }
               });
               
-              // Handle setup array/object
+              // Handle special cases
               if (metadata.setup) {
-                if (Array.isArray(metadata.setup)) {
-                  metadata.platforms = metadata.setup
-                    .map(s => s?.platform)
-                    .filter(Boolean);
-                  if (!metadata.platform && metadata.platforms.length > 0) {
+                // Extract platforms from setup if present
+                if (Array.isArray(metadata.setup.platforms)) {
+                  metadata.platforms = metadata.setup.platforms;
+                  if (metadata.platforms.length > 0) {
                     metadata.platform = metadata.platforms[0];
                   }
                 } else if (metadata.setup?.platform) {
@@ -362,7 +274,11 @@ function extractValueFromNode(node) {
   }
 }
 
-export function extractUIImplications(content) {
+/**
+ * Extract UI implications from mirrorsOn.UI
+ * NOW ASYNC to support base file resolution
+ */
+export async function extractUIImplications(content, projectPath) {
   console.log('🔍 Extracting UI implications...');
   
   const uiData = {
@@ -376,6 +292,9 @@ export function extractUIImplications(content) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
+    // We need to collect promises for base resolution
+    const platformPromises = [];
+    
     traverse.default(ast, {
       ClassProperty(path) {
         if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
@@ -384,94 +303,44 @@ export function extractUIImplications(content) {
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
-            console.log('✅ mirrorsOn is an object');
+            const uiProperty = value.properties.find(p => p.key?.name === 'UI');
             
-            // Find UI property
-            const uiProperty = value.properties.find(
-              p => p.key?.name === 'UI'
-            );
-            
-            if (uiProperty) {
-              console.log('✅ Found UI property');
+            if (uiProperty?.value?.type === 'ObjectExpression') {
+              console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
               
-              if (uiProperty.value?.type === 'ObjectExpression') {
-                console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
+              // Extract platforms
+              uiProperty.value.properties.forEach(platformProp => {
+                const platformName = platformProp.key?.name;
+                if (!platformName) return;
                 
-                // Extract platforms
-                uiProperty.value.properties.forEach(platformProp => {
-                  const platformName = platformProp.key?.name;
-                  console.log('  📱 Platform:', platformName);
+                console.log('  📱 Platform:', platformName);
+                
+                if (platformProp.value?.type === 'ObjectExpression') {
+                  console.log('    Platform has', platformProp.value.properties.length, 'screens');
                   
-                  if (!platformName) return;
+                  // Process this platform (async)
+                  const platformPromise = processPlatform(
+                    platformName,
+                    platformProp.value,
+                    projectPath
+                  ).then(platformData => {
+                    if (platformData && platformData.screens.length > 0) {
+                      uiData.platforms[platformName] = platformData;
+                      uiData.total += platformData.count;
+                    }
+                  });
                   
-                  const screens = [];
-                  
-                 if (platformProp.value?.type === 'ObjectExpression') {
-  console.log('    Platform has', platformProp.value.properties.length, 'screens');
-  
-  platformProp.value.properties.forEach(screenProp => {
-    const screenName = screenProp.key?.name;
-    console.log('    📺 Screen:', screenName);
-    
-    if (!screenName) return;
-    
-    // ✅ FIX: Handle ArrayExpression (multiple validation objects per screen)
-    if (screenProp.value?.type === 'ArrayExpression') {
-      console.log('      Screen is an array with', screenProp.value.elements.length, 'validation objects');
-      
-      // Parse each validation object in the array
-      screenProp.value.elements.forEach((validationNode, idx) => {
-        const screenData = parseScreenValidation(validationNode);
-        console.log('      Validation', idx, 'data:', screenData);
-        
-        if (screenData) {
-          // If multiple validations, add index to name
-          const fullName = screenProp.value.elements.length > 1 
-            ? `${screenName}_${idx + 1}`
-            : screenName;
-            
-          screens.push({
-            name: fullName,
-            originalName: screenName,
-            ...screenData
-          });
-        }
-      });
-    } else {
-      // Fallback: single object (rare case)
-      const screenData = parseScreenValidation(screenProp.value);
-      console.log('      Screen data:', screenData);
-      
-      if (screenData) {
-        screens.push({
-          name: screenName,
-          ...screenData
-        });
-      }
-    }
-  });
-}
-                  
-                  console.log('  📊 Platform', platformName, 'has', screens.length, 'parsed screens');
-                  
-                  if (screens.length > 0) {
-                    uiData.platforms[platformName] = {
-                      count: screens.length,
-                      screens: screens
-                    };
-                    uiData.total += screens.length;
-                  }
-                });
-              } else {
-                console.log('⚠️ UI is not an object, type:', uiProperty.value?.type);
-              }
-            } else {
-              console.log('⚠️ No UI property found');
+                  platformPromises.push(platformPromise);
+                }
+              });
             }
           }
         }
       },
     });
+    
+    // Wait for all platform processing to complete
+    await Promise.all(platformPromises);
     
     console.log('📊 Final UI data:', uiData);
     
@@ -483,27 +352,108 @@ export function extractUIImplications(content) {
 }
 
 /**
- * Parse a screen validation object (simplified - handle any structure)
+ * Process a single platform's screens (async)
  */
-function parseScreenValidation(node) {
+async function processPlatform(platformName, platformNode, projectPath) {
+  const screens = [];
+  const screenPromises = [];
+  
+  // Process each screen
+  for (const screenProp of platformNode.properties) {
+    const screenName = screenProp.key?.name;
+    if (!screenName) continue;
+    
+    console.log('    📺 Screen:', screenName);
+    
+    // Handle ArrayExpression (multiple validation objects)
+    if (screenProp.value?.type === 'ArrayExpression') {
+      console.log('      Screen is an array with', screenProp.value.elements.length, 'validation objects');
+      
+      // Parse each validation object in the array
+      for (let idx = 0; idx < screenProp.value.elements.length; idx++) {
+        const validationNode = screenProp.value.elements[idx];
+        
+        const screenPromise = parseScreenValidation(validationNode, projectPath)
+          .then(screenData => {
+            if (screenData) {
+              // If multiple validations, add index to name
+              const fullName = screenProp.value.elements.length > 1 
+                ? `${screenName}_${idx + 1}`
+                : screenName;
+              
+              screens.push({
+                name: fullName,
+                originalName: screenName,
+                ...screenData
+              });
+            }
+          });
+        
+        screenPromises.push(screenPromise);
+      }
+    } else {
+      // Fallback: single object (rare case)
+      const screenPromise = parseScreenValidation(screenProp.value, projectPath)
+        .then(screenData => {
+          if (screenData) {
+            screens.push({
+              name: screenName,
+              ...screenData
+            });
+          }
+        });
+      
+      screenPromises.push(screenPromise);
+    }
+  }
+  
+  // Wait for all screens to be processed
+  await Promise.all(screenPromises);
+  
+  console.log('  📊 Platform', platformName, 'has', screens.length, 'parsed screens');
+  
+  return {
+    count: screens.length,
+    screens: screens
+  };
+}
+
+/**
+ * Parse a screen validation object (NOW ASYNC)
+ */
+async function parseScreenValidation(node, projectPath) {
   console.log('      🔍 Parsing screen validation, node type:', node?.type);
   
-  // Handle any type - just extract what we can
-  const screenData = {
-    description: '',
-    visible: [],
-    hidden: [],
-    checks: {
-      visible: [],
-      hidden: [],
-      text: {}
-    }
-  };
-  
-  // If it's a function call (like mergeWithBase), we can't parse it easily
-  // Just return basic data so the screen shows up
+  // ✅ STEP 1 & 2: Check if this is a mergeWithBase call
   if (node?.type === 'CallExpression') {
-    console.log('      ⚠️ Screen uses function call (like mergeWithBase), showing basic info');
+    // Check if it's specifically ImplicationHelper.mergeWithBase()
+    if (node.callee?.type === 'MemberExpression' &&
+        node.callee.object?.name === 'ImplicationHelper' &&
+        node.callee.property?.name === 'mergeWithBase') {
+      
+      console.log('      ✅ Detected mergeWithBase call!');
+      
+      const mergeData = parseMergeWithBaseCall(node);
+      
+      if (mergeData && mergeData.baseInfo) {
+        // ✅ STEP 3: Resolve base file and merge
+        const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath);
+        const merged = mergeScreenData(baseData, mergeData.overrides);
+        
+        return merged;
+      } else {
+        // Just return overrides if we couldn't parse base reference
+        return mergeData?.overrides || {
+          description: 'MergeWithBase parse error',
+          visible: [],
+          hidden: [],
+          checks: { visible: [], hidden: [], text: {} }
+        };
+      }
+    }
+    
+    // Other function calls - return generic placeholder
+    console.log('      ⚠️ Screen uses function call (unknown type)');
     return {
       description: 'Screen validation defined',
       visible: [],
@@ -512,15 +462,80 @@ function parseScreenValidation(node) {
     };
   }
   
-  if (!node || node.type !== 'ObjectExpression') {
-    console.log('      ⚠️ Not a parseable type');
-    // Still return something so screen shows up
-    return {
-      description: 'Screen validation detected',
+  // Handle object literals
+  return parseScreenValidationObject(node);
+}
+
+/**
+ * Parse mergeWithBase call and extract arguments
+ */
+function parseMergeWithBaseCall(callNode) {
+  console.log('      🔧 Parsing mergeWithBase arguments...');
+  
+  const args = callNode.arguments;
+  
+  if (args.length < 2) {
+    console.log('      ⚠️ mergeWithBase has less than 2 arguments');
+    return null;
+  }
+  
+  // Argument 0: Base reference (e.g., BaseBookingImplications.dancer.bookingDetailsScreen)
+  const baseRef = args[0];
+  let baseInfo = null;
+  
+  if (baseRef?.type === 'MemberExpression') {
+    // Parse: BaseBookingImplications.dancer.bookingDetailsScreen
+    baseInfo = {
+      className: baseRef.object?.object?.name,      // BaseBookingImplications
+      platform: baseRef.object?.property?.name,     // dancer
+      screenName: baseRef.property?.name            // bookingDetailsScreen
+    };
+    console.log('      📋 Base reference:', baseInfo);
+  }
+  
+  // Argument 1: Overrides object
+  const overridesNode = args[1];
+  const overrides = parseScreenValidationObject(overridesNode);
+  console.log('      📝 Overrides parsed:', overrides);
+  
+  // Argument 2: Options (optional) - { parentClass: ... }
+  const optionsNode = args[2];
+  let parentClass = null;
+  if (optionsNode?.type === 'ObjectExpression') {
+    const parentProp = optionsNode.properties.find(p => p.key?.name === 'parentClass');
+    if (parentProp) {
+      parentClass = parentProp.value?.name;
+      console.log('      🏷️ Parent class:', parentClass);
+    }
+  }
+  
+  return {
+    baseInfo,
+    overrides,
+    parentClass
+  };
+}
+
+/**
+ * Parse screen validation object (extracted from parseScreenValidation)
+ * This handles the object literal part
+ */
+function parseScreenValidationObject(node) {
+  const screenData = {
+    description: '',
+    visible: [],
+    hidden: [],
+    alwaysVisible: [],
+    sometimesVisible: [],
+    checks: {
       visible: [],
       hidden: [],
-      checks: { visible: [], hidden: [], text: {} }
-    };
+      text: {}
+    }
+  };
+  
+  if (!node || node.type !== 'ObjectExpression') {
+    return screenData;
   }
   
   console.log('      Found', node.properties.length, 'properties');
@@ -543,27 +558,21 @@ function parseScreenValidation(node) {
         break;
         
       case 'visible':
-        if (value.type === 'ArrayExpression') {
-          screenData.visible = value.elements
-            .map(el => extractValueFromNode(el))
-            .filter(Boolean);
-          console.log('          Visible:', screenData.visible.length);
-        }
-        break;
-        
       case 'hidden':
+      case 'alwaysVisible':
+      case 'sometimesVisible':
         if (value.type === 'ArrayExpression') {
-          screenData.hidden = value.elements
+          screenData[key] = value.elements
             .map(el => extractValueFromNode(el))
             .filter(Boolean);
-          console.log('          Hidden:', screenData.hidden.length);
+          console.log('          ', key, ':', screenData[key].length);
         }
         break;
         
       case 'checks':
         if (value.type === 'ObjectExpression') {
           screenData.checks = parseChecksObject(value);
-          console.log('          Checks:', screenData.checks);
+          console.log('          Checks parsed');
         }
         break;
     }
@@ -571,8 +580,9 @@ function parseScreenValidation(node) {
   
   return screenData;
 }
+
 /**
- * Parse the checks object (visible, hidden, text)
+ * Parse checks object
  */
 function parseChecksObject(node) {
   const checks = {
@@ -593,16 +603,9 @@ function parseChecksObject(node) {
     
     switch (key) {
       case 'visible':
-        if (value.type === 'ArrayExpression') {
-          checks.visible = value.elements
-            .map(el => extractValueFromNode(el))
-            .filter(Boolean);
-        }
-        break;
-        
       case 'hidden':
         if (value.type === 'ArrayExpression') {
-          checks.hidden = value.elements
+          checks[key] = value.elements
             .map(el => extractValueFromNode(el))
             .filter(Boolean);
         }
@@ -611,11 +614,11 @@ function parseChecksObject(node) {
       case 'text':
         if (value.type === 'ObjectExpression') {
           value.properties.forEach(textProp => {
-            if (textProp.key && textProp.value) {
-              const elementName = textProp.key.name || textProp.key.value;
-              const expectedText = extractValueFromNode(textProp.value);
-              if (elementName && expectedText) {
-                checks.text[elementName] = expectedText;
+            if (textProp.key) {
+              const textKey = textProp.key.name || textProp.key.value;
+              const textValue = extractValueFromNode(textProp.value);
+              if (textValue !== undefined) {
+                checks.text[textKey] = textValue;
               }
             }
           });
@@ -625,4 +628,187 @@ function parseChecksObject(node) {
   });
   
   return checks;
+}
+
+/**
+ * Find a file by name in the project
+ */
+async function findFile(projectPath, fileName) {
+  console.log(`    🔍 Searching for ${fileName} in ${projectPath}...`);
+  
+  const patterns = [
+    `${projectPath}/**/${fileName}`,
+    `${projectPath}/tests/**/${fileName}`,
+    `${projectPath}/test/**/${fileName}`
+  ];
+  
+  for (const pattern of patterns) {
+    const files = await glob(pattern, { 
+      ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'] 
+    });
+    
+    if (files.length > 0) {
+      console.log(`    ✅ Found: ${files[0]}`);
+      return files[0];
+    }
+  }
+  
+  console.log(`    ⚠️ ${fileName} not found`);
+  return null;
+}
+
+/**
+ * Extract static property from base class content
+ */
+function extractStaticPropertyFromContent(content, platform, screenName) {
+  console.log(`    📖 Extracting ${platform}.${screenName} from base file...`);
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    let baseData = null;
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        // Look for: static dancer = { ... }
+        if (path.node.static && 
+            path.node.key?.name === platform &&
+            path.node.value?.type === 'ObjectExpression') {
+          
+          console.log(`    ✅ Found static ${platform} property`);
+          
+          // Find the screen property
+          const screenProp = path.node.value.properties.find(
+            p => p.key?.name === screenName
+          );
+          
+          if (screenProp && screenProp.value?.type === 'ObjectExpression') {
+            console.log(`    ✅ Found ${screenName} screen`);
+            baseData = parseScreenValidationObject(screenProp.value);
+          }
+        }
+      }
+    });
+    
+    return baseData;
+    
+  } catch (error) {
+    console.error(`    ❌ Error parsing base file:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Resolve base implication and return base data
+ */
+async function resolveBaseImplication(baseInfo, projectPath) {
+  if (!baseInfo || !baseInfo.className) {
+    return null;
+  }
+  
+  console.log(`    🔗 Resolving base: ${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`);
+  
+  // Find the base file
+  const baseFilePath = await findFile(projectPath, `${baseInfo.className}.js`);
+  
+  if (!baseFilePath) {
+    console.log(`    ⚠️ Base file not found, using overrides only`);
+    return null;
+  }
+  
+  // Read and parse the base file
+  const baseContent = await fs.readFile(baseFilePath, 'utf-8');
+  const baseData = extractStaticPropertyFromContent(
+    baseContent, 
+    baseInfo.platform, 
+    baseInfo.screenName
+  );
+  
+  if (baseData) {
+    console.log(`    ✅ Base data resolved:`, {
+      visible: baseData.visible?.length || 0,
+      hidden: baseData.hidden?.length || 0,
+      alwaysVisible: baseData.alwaysVisible?.length || 0,
+      description: baseData.description ? 'yes' : 'no'
+    });
+  }
+  
+  return baseData;
+}
+
+/**
+ * Merge base data with overrides (like ImplicationHelper.mergeWithBase does)
+ */
+function mergeScreenData(baseData, overrides) {
+  if (!baseData) {
+    console.log(`    ℹ️ No base data, returning overrides only`);
+    return overrides;
+  }
+  
+  console.log(`    🔀 Merging base + overrides...`);
+  console.log(`      Base visible:`, baseData.visible);
+  console.log(`      Base alwaysVisible:`, baseData.alwaysVisible);
+  console.log(`      Override visible:`, overrides.visible);
+  console.log(`      Override alwaysVisible:`, overrides.alwaysVisible);
+  
+  // Merge arrays (deduplicate)
+  const mergeArrays = (...arrays) => {
+    const flattened = arrays.flat().filter(Boolean); // Flatten and remove nulls/undefined
+    return [...new Set(flattened)]; // Deduplicate
+  };
+  
+  // Merge checks objects
+  const mergeChecks = (baseChecks, overrideChecks) => {
+    return {
+      visible: mergeArrays(baseChecks?.visible || [], overrideChecks?.visible || []),
+      hidden: mergeArrays(baseChecks?.hidden || [], overrideChecks?.hidden || []),
+      text: {
+        ...(baseChecks?.text || {}),
+        ...(overrideChecks?.text || {})
+      }
+    };
+  };
+  
+  // ✅ Combine alwaysVisible + visible into one visible array
+  const combinedVisible = mergeArrays(
+    baseData.alwaysVisible || [],
+    baseData.visible || [],
+    overrides.alwaysVisible || [],
+    overrides.visible || []
+  );
+  
+  console.log(`      Combined visible:`, combinedVisible);
+  
+  // ✅ Combine sometimesVisible + hidden into one hidden array
+  let combinedHidden = mergeArrays(
+    baseData.sometimesVisible || [],
+    baseData.hidden || [],
+    overrides.sometimesVisible || [],
+    overrides.hidden || []
+  );
+  
+  console.log(`      Combined hidden (before filter):`, combinedHidden);
+  
+  // ✅ CRITICAL: Remove items from hidden if they appear in visible
+  combinedHidden = combinedHidden.filter(item => !combinedVisible.includes(item));
+  
+  console.log(`      Combined hidden (after filter):`, combinedHidden);
+  
+  const merged = {
+    description: overrides.description || baseData.description || '',
+    visible: combinedVisible,
+    hidden: combinedHidden,
+    checks: mergeChecks(baseData.checks || {}, overrides.checks || {})
+  };
+  
+  console.log(`    ✅ Merged result:`, {
+    visible: merged.visible,
+    hidden: merged.hidden,
+    description: merged.description ? 'yes' : 'no'
+  });
+  
+  return merged;
 }

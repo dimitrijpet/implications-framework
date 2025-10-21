@@ -119,7 +119,14 @@ See PARSER-IMPROVEMENT-NEEDED.md in Project Knowledge for full details.
 - SESSION-1-SUMMARY.md (what we built)
 - PARSER-IMPROVEMENT-NEEDED.md (detailed fix plan)
 - NEXT-STEPS.md (Session 2 roadmap)
-- SYSTEM-RULES.md (core principles)
+- SYSTEM-RULES.md (core principI'm continuing development of the Implications Framework from Session 1.
+
+**Context:**
+- We built a state machine visualizer with dark theme and platform-aware styling
+- Discovery system extracts metadata from xstateConfig.meta and mirrorsOn.UI
+- Graph shows 5 stateful implications with 11 transitions
+- UI coverage displays 12 screens across 3 platforms
+- All screens show up but some sles)
 - Source files (current implementation)
 
 **What I need:**

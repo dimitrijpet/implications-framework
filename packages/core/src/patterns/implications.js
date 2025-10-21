@@ -18,8 +18,9 @@ export function isImplication(parsed) {
 
 /**
  * Extract metadata from an Implication class
+ * NOW ASYNC to support async UI extraction
  */
-export function extractImplicationMetadata(parsed, extractXStateMetadata = null, extractUIImplications = null) {
+export async function extractImplicationMetadata(parsed, extractXStateMetadata = null, extractUIImplications = null) {
   const metadata = {
     className: null,
     isStateful: false,
@@ -86,22 +87,22 @@ export function extractImplicationMetadata(parsed, extractXStateMetadata = null,
   
   // Check for mirrorsOn
   const hasMirrorsOn = implClass.staticProperties.some(p => p.name === 'mirrorsOn');
-if (hasMirrorsOn) {
-  metadata.hasMirrorsOn = true;
-  
-  console.log('🔍 Has mirrorsOn, extracting UI...', {
-    hasContent: !!parsed.content,
-    hasExtractor: !!extractUIImplications
-  });
-  
-  // Extract UI implications
-  if (parsed.content && extractUIImplications) {
-    metadata.uiCoverage = extractUIImplications(parsed.content);
-    console.log('✅ Extracted UI coverage:', metadata.uiCoverage);
-  } else {
-    console.log('⚠️ Cannot extract UI - missing content or extractor');
+  if (hasMirrorsOn) {
+    metadata.hasMirrorsOn = true;
+    
+    console.log('🔍 Has mirrorsOn, extracting UI...', {
+      hasContent: !!parsed.content,
+      hasExtractor: !!extractUIImplications
+    });
+    
+    // ✅ Extract UI implications (NOW AWAIT!)
+    if (parsed.content && extractUIImplications) {
+      metadata.uiCoverage = await extractUIImplications(parsed.content);
+      console.log('✅ Extracted UI coverage:', metadata.uiCoverage);
+    } else {
+      console.log('⚠️ Cannot extract UI - missing content or extractor');
+    }
   }
-}
   
   return metadata;
 }
