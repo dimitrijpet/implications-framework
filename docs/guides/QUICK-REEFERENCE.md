@@ -446,3 +446,66 @@ Savings: 59+ minutes
 
 *Quick Reference v1.3.0*  
 *For detailed information, see full documentation*
+
+## Smart Suggestions (Phase 4)
+
+### Overview
+Pattern-based suggestions help you create and edit states faster by learning from existing states in your project.
+
+### Features
+
+**Pattern Analysis**
+- Analyzes all states in project
+- Detects naming conventions (SINGLE_VERB, VERB_OBJECT)
+- Identifies common fields and setup actions
+- Shows confidence levels and usage percentages
+
+**In Edit Modal**
+```
+1. Click any state in graph
+2. Click "Edit" button
+3. Suggestions panel appears with three sections:
+   - 🔘 Button Naming
+   - 📋 Required Fields
+   - ⚙️ Setup Actions
+4. Click "Replace" or "Add" buttons to apply
+5. Save changes (creates backup automatically)
+```
+
+**Inline Field Editing**
+```
+1. In Edit mode, hover over any field
+2. Click ✏️ button
+3. Edit value
+4. Click ✓ to save or ✕ to cancel
+5. Click "Save" to persist to file
+```
+
+### Editable Fields
+- status, statusCode, statusNumber
+- triggerButton, afterButton, previousButton
+- triggerAction, notificationKey, platform
+
+### Safety Features
+- **Auto-Backup:** Timestamped backup created before every save
+- **Whitelist:** Only simple fields editable (complex objects protected)
+- **Unsaved Changes:** Visual warning before closing
+- **Background Refresh:** Graph updates after save
+
+---
+```
+
+---
+
+## 🎯 About the Refresh Optimization
+
+You're absolutely right! The full project refresh after editing is slow (~10 seconds). Here's the optimization idea:
+
+### Current Flow (Slow)
+```
+Edit statusCode → Save → Full Project Scan (10s) → Update Everything
+```
+
+### Optimized Flow (Fast)
+```
+Edit statusCode → Save → Re-parse Single File (100ms) → Update Just That Node

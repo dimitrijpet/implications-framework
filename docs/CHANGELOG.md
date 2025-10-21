@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+# Changelog
+
+## [1.4.0] - 2025-10-21
+
+### Added - Smart Suggestions & Edit Modal Complete (Phase 4)
+- **Smart Suggestions Panel** in Edit Modal with pattern analysis
+- **Button Suggestions** - Detects naming patterns (SINGLE_VERB, VERB_OBJECT)
+- **Field Suggestions** - Separates required fields vs context fields  
+- **Setup Suggestions** - Shows actual function names
+- **One-Click Apply** - Apply suggestions with single button click
+- **Inline Field Editing** - Edit statusCode, statusNumber, buttons, etc.
+- **Safe File Updates** - Whitelisted fields prevent corruption
+- **Auto-Backup** - Creates timestamped backup before every save
+- **Background Refresh** - Auto-scans after save
+- **Success Notifications** - Beautiful green toast with backup info
+
+### Fixed
+- Missing `useEffect` import in Visualizer
+- Missing state variables (`setIsScanning`, `setAnalysisResult`)
+- Edit modal closing on toggle (state initialization)
+- Missing `projectPath` prop to StateDetailModal
+- Backend only updating existing fields (now adds new fields)
+- Backend breaking complex objects (now whitelists simple fields)
+- AST generation creating `[object Object]` strings
+
+### Improved
+- Pattern analyzer field separation (required vs context)
+- Setup action extraction (no more `[object Object]`)
+- File integrity preservation (complex objects untouched)
+- UX with visual feedback (yellow border, badges, notifications)
+
+### Performance
+- Pattern analysis: ~2-3ms for 26 states
+- Save operation: ~100ms with backup
+- Note: Full refresh after save takes ~10s (optimization opportunity)
+
+---
+
 ## [1.2.0] - 2025-10-21
 
 ### Added - Session 2
