@@ -8,6 +8,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 # Changelog
 
+## [1.5.0] - 2025-10-21
+
+### Added - UI Screen Editor (Phase 5 Part 1)
+- **Visual UI Screen Editor** with collapsible platform sections
+- **Inline Array Editing** - Add/remove visible/hidden elements with hover controls
+- **Text Checks Editor** - Add/edit/remove key-value pairs inline
+- **Smart AST Preservation** - Only regenerates modified screens, preserves original code
+- **Platform Cards** - Color-coded sections for web, dancer, clubApp
+- **Screen Cards** - Individual screen validations with expand/collapse
+- **Quick Stats** - Element count badges (✅ visible, ❌ hidden, 📝 text)
+- **Keyboard Support** - Enter to save, Escape to cancel inline edits
+- **Unsaved Changes Warning** - Visual badge and confirmation on discard
+- **Auto-Backup** - Creates timestamped backup before every save
+
+### Improved
+- **Save Performance** - Smart AST comparison only regenerates changed screens
+- **Structure Preservation** - Maintains platform → screen key → array nesting
+- **Fast Refresh Integration** - UI updates in 0.5s after save (vs 10s full scan)
+- **Visual Feedback** - Hover effects, badges, notifications
+- **Empty States** - Clear messages for empty sections
+
+### Fixed
+- Nested button warning (separated click areas)
+- Structure flattening (preserved nested platform structure)
+- Missing originalName field (added to all screens)
+- Remove button not working (added stopPropagation)
+- hasChanges not setting (fixed state propagation)
+- Modal showing old values after save (updated local state)
+- Spreads destroyed on save (smart AST preservation)
+- API 500 error (data validation)
+- Empty checks.text breaking (skip empty objects)
+
+### Technical
+- **Backend:** New `/api/implications/update-ui` endpoint with smart AST builder
+- **Frontend:** New UIScreenEditor component (~750 lines)
+- **Algorithm:** Smart comparison prevents unnecessary regeneration
+- **Performance:** Save operation ~200-300ms with backup
+
+---
+
 ## [1.4.0] - 2025-10-21
 
 ### Added - Smart Suggestions & Edit Modal Complete (Phase 4)

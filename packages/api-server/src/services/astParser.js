@@ -431,7 +431,6 @@ async function processPlatform(platformName, platformNode, projectPath, cache) {
     screens: screens
   };
 }
-
 /**
  * Parse a screen validation object (NOW ASYNC with caching)
  */

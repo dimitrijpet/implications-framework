@@ -954,4 +954,571 @@ router.get('/get-state-details', async (req, res) => {
   }
 });
 
+router.post('/update-ui', async (req, res) => {
+  try {
+    const { filePath, uiData } = req.body;
+    
+    // ✅ ADD THIS DEBUG
+    console.log('📥 Received uiData:', JSON.stringify(uiData, null, 2));
+    console.log('📥 uiData type:', typeof uiData);
+    console.log('📥 uiData keys:', uiData ? Object.keys(uiData) : 'NULL');
+    
+    if (!filePath || !uiData) {
+      return res.status(400).json({ 
+        error: 'filePath and uiData are required' 
+      });
+    }
+    
+    console.log(`🖥️  Updating UI in: ${path.basename(filePath)}`);
+    console.log(`📊 Platforms: ${Object.keys(uiData).join(', ')}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    let originalUINode = null;
+    
+    // First pass: Extract original UI structure
+    traverse.default(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'mirrorsOn') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const uiProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'UI'
+              );
+              
+              if (uiProp && t.isObjectExpression(uiProp.value)) {
+                originalUINode = uiProp.value;
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!originalUINode) {
+      return res.status(400).json({ 
+        error: 'Could not find mirrorsOn.UI in file'
+      });
+    }
+    
+    // Build new UI AST with smart preservation
+    const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent);
+    
+    // Second pass: Replace UI node
+    traverse.default(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'mirrorsOn') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const uiProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'UI'
+              );
+              
+              if (uiProp) {
+                uiProp.value = newUINode;
+                modified = true;
+                console.log('✅ Updated mirrorsOn.UI with smart preservation');
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!modified) {
+      return res.status(400).json({ 
+        error: 'Could not update UI'
+      });
+    }
+    
+    // Generate code
+    const output = generate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true,
+      concise: false
+    }, originalContent);
+    
+    // Create backup
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    console.log('📦 Backup created:', path.basename(backupPath));
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ UI updated successfully');
+    
+    res.json({
+      success: true,
+      filePath,
+      backup: backupPath,
+      platforms: Object.keys(uiData)
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating UI:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * ✅ SMART: Build UI AST while preserving original structure where possible
+ */
+function buildSmartUIAst(newData, originalUINode, originalContent) {
+  const platformProps = [];
+  
+  // For each platform in new data
+  for (const [platformName, platformData] of Object.entries(newData)) {
+    // Find original platform node
+    const originalPlatformProp = originalUINode.properties.find(
+      p => p.key?.name === platformName
+    );
+    
+    let platformScreenProps;
+    
+    if (originalPlatformProp && t.isObjectExpression(originalPlatformProp.value)) {
+      // Platform exists in original - preserve what we can
+      platformScreenProps = buildSmartScreenProps(
+        platformData.screens,
+        originalPlatformProp.value,
+        originalContent
+      );
+    } else {
+      // New platform - build from scratch
+      platformScreenProps = buildScreenPropsFromData(platformData.screens);
+    }
+    
+    platformProps.push(
+      t.objectProperty(
+        t.identifier(platformName),
+        t.objectExpression(platformScreenProps)
+      )
+    );
+  }
+  
+  return t.objectExpression(platformProps);
+}
+
+/**
+ * Build screen properties while preserving original AST where unchanged
+ */
+function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent) {
+  // Group new screens by originalName
+  const screenGroups = {};
+  newScreens.forEach(screen => {
+    const key = screen.originalName || screen.name;
+    if (!screenGroups[key]) {
+      screenGroups[key] = [];
+    }
+    screenGroups[key].push(screen);
+  });
+  
+  const screenProps = [];
+  
+  for (const [screenKey, screens] of Object.entries(screenGroups)) {
+    // Find original screen array
+    const originalScreenProp = originalPlatformNode.properties.find(
+      p => p.key?.name === screenKey
+    );
+    
+    let screenArrayNode;
+    
+    if (originalScreenProp && t.isArrayExpression(originalScreenProp.value)) {
+      // Check if screens changed
+      const hasChanges = screensHaveChanges(screens, originalScreenProp.value);
+      
+      if (!hasChanges) {
+        // ✅ NO CHANGES - Use original AST (preserves spreads, merges, comments!)
+        console.log(`  ✨ Preserving original AST for ${screenKey}`);
+        screenArrayNode = originalScreenProp.value;
+      } else {
+        // ❌ HAS CHANGES - Generate new AST
+        console.log(`  🔧 Regenerating AST for ${screenKey} (modified)`);
+        screenArrayNode = t.arrayExpression(
+          screens.map(screen => buildScreenObjectAst(screen))
+        );
+      }
+    } else {
+      // New screen - build from scratch
+      screenArrayNode = t.arrayExpression(
+        screens.map(screen => buildScreenObjectAst(screen))
+      );
+    }
+    
+    screenProps.push(
+      t.objectProperty(
+        t.identifier(screenKey),
+        screenArrayNode
+      )
+    );
+  }
+  
+  return screenProps;
+}
+
+
+/**
+ * Check if screens have changes compared to original AST
+ */
+function screensHaveChanges(newScreens, originalArrayNode) {
+  // Simple check: compare lengths
+  if (newScreens.length !== originalArrayNode.elements.length) {
+    return true;
+  }
+  
+  // Deep check: compare each screen's data
+  for (let i = 0; i < newScreens.length; i++) {
+    const newScreen = newScreens[i];
+    const originalElement = originalArrayNode.elements[i];
+    
+    if (!originalElement || originalElement.type !== 'ObjectExpression') {
+      return true;  // Can't compare - assume changed
+    }
+    
+    // Extract data from original AST
+    const originalData = extractScreenDataFromAst(originalElement);
+    
+    // Compare
+    if (!screensMatch(newScreen, originalData)) {
+      return true;
+    }
+  }
+  
+  return false;  // No changes detected
+}
+
+/**
+ * Extract screen data from AST node for comparison
+ */
+function extractScreenDataFromAst(objectNode) {
+  const data = {};
+  
+  objectNode.properties.forEach(prop => {
+    if (!t.isObjectProperty(prop) || !prop.key) return;
+    
+    const key = prop.key.name;
+    
+    if (t.isStringLiteral(prop.value)) {
+      data[key] = prop.value.value;
+    } else if (t.isArrayExpression(prop.value)) {
+      data[key] = prop.value.elements
+        .filter(e => t.isStringLiteral(e))
+        .map(e => e.value);
+    } else if (t.isObjectExpression(prop.value)) {
+      data[key] = extractScreenDataFromAst(prop.value);
+    }
+  });
+  
+  return data;
+}
+
+/**
+ * Compare two screen objects
+ */
+function screensMatch(newScreen, originalData) {
+  // Compare basic fields
+  if (newScreen.name !== originalData.name) return false;
+  if (newScreen.description !== originalData.description) return false;
+  
+  // Compare arrays
+  if (!arraysMatch(newScreen.visible, originalData.visible)) return false;
+  if (!arraysMatch(newScreen.hidden, originalData.hidden)) return false;
+  
+  // Compare checks
+  if (newScreen.checks || originalData.checks) {
+    if (!newScreen.checks || !originalData.checks) return false;
+    
+    if (!arraysMatch(newScreen.checks.visible, originalData.checks.visible)) return false;
+    if (!arraysMatch(newScreen.checks.hidden, originalData.checks.hidden)) return false;
+    
+    // Compare checks.text
+    if (!objectsMatch(newScreen.checks.text, originalData.checks.text)) return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Compare two arrays
+ */
+function arraysMatch(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  
+  return a.every((item, i) => item === b[i]);
+}
+
+/**
+ * Compare two objects
+ */
+function objectsMatch(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  
+  const keysA = Object.keys(a || {});
+  const keysB = Object.keys(b || {});
+  
+  if (keysA.length !== keysB.length) return false;
+  
+  return keysA.every(key => a[key] === b[key]);
+}
+
+/**
+ * Build screen props from data (when no original to preserve)
+ */
+function buildScreenPropsFromData(screens) {
+  const screenGroups = {};
+  
+  screens.forEach(screen => {
+    const key = screen.originalName || screen.name;
+    if (!screenGroups[key]) {
+      screenGroups[key] = [];
+    }
+    screenGroups[key].push(screen);
+  });
+  
+  return Object.entries(screenGroups).map(([screenKey, screenArray]) =>
+    t.objectProperty(
+      t.identifier(screenKey),
+      t.arrayExpression(screenArray.map(s => buildScreenObjectAst(s)))
+    )
+  );
+}
+
+/**
+ * ✅ FIXED: Build AST for UI data with proper structure
+ * Structure: { dancer: { screens: [...] }, web: { screens: [...] } }
+ * Target:    { dancer: { screenKey: [...], screenKey: [...] }, web: { screenKey: [...] } }
+ */
+function buildUIAstFromPlatforms(uiData) {
+  const platformProps = [];
+  
+  // For each platform (dancer, web, clubApp)
+  for (const [platformName, platformData] of Object.entries(uiData)) {
+    const screens = platformData.screens || [];
+    
+    // Group screens by their screen name (e.g., notificationsScreen, requestBookingScreen)
+    const screenGroups = {};
+    
+    screens.forEach(screen => {
+      const screenKey = screen.originalName || screen.name;
+      if (!screenGroups[screenKey]) {
+        screenGroups[screenKey] = [];
+      }
+      screenGroups[screenKey].push(screen);
+    });
+    
+    // Build platform object: { notificationsScreen: [...], requestBookingScreen: [...] }
+    const screenKeyProps = Object.entries(screenGroups).map(([screenKey, screenArray]) => {
+      return t.objectProperty(
+        t.identifier(screenKey),
+        t.arrayExpression(screenArray.map(screen => buildScreenObjectAst(screen)))
+      );
+    });
+    
+    // Add this platform
+    platformProps.push(
+      t.objectProperty(
+        t.identifier(platformName),
+        t.objectExpression(screenKeyProps)
+      )
+    );
+  }
+  
+  return t.objectExpression(platformProps);
+}
+
+/**
+ * ✅ FIXED: Build AST for a single screen object
+ */
+function buildScreenObjectAst(screen) {
+  const props = [];
+  
+  // Only add properties that exist and have values
+  
+  if (screen.name) {
+    props.push(t.objectProperty(
+      t.identifier('name'),
+      t.stringLiteral(screen.name)
+    ));
+  }
+  
+  if (screen.description) {
+    props.push(t.objectProperty(
+      t.identifier('description'),
+      t.stringLiteral(screen.description)
+    ));
+  }
+  
+  // Top-level visible array
+  if (screen.visible && screen.visible.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('visible'),
+      t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
+    ));
+  }
+  
+  // Top-level hidden array
+  if (screen.hidden && screen.hidden.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('hidden'),
+      t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
+    ));
+  }
+  
+  // Checks object
+  if (screen.checks && Object.keys(screen.checks).length > 0) {
+    const checkProps = [];
+    
+    // checks.visible
+    if (screen.checks.visible && screen.checks.visible.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('visible'),
+        t.arrayExpression(screen.checks.visible.map(v => t.stringLiteral(v)))
+      ));
+    }
+    
+    // checks.hidden
+    if (screen.checks.hidden && screen.checks.hidden.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('hidden'),
+        t.arrayExpression(screen.checks.hidden.map(h => t.stringLiteral(h)))
+      ));
+    }
+    
+    // checks.text
+    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(
+          t.identifier(key),
+          t.stringLiteral(value)
+        )
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('text'),
+        t.objectExpression(textProps)
+      ));
+    }
+    
+    if (checkProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('checks'),
+        t.objectExpression(checkProps)
+      ));
+    }
+  }
+  
+  return t.objectExpression(props);
+}
+/**
+ * Helper: Build AST for UI data
+ */
+function buildUIAst(uiData) {
+  const platformProps = Object.entries(uiData).map(([platformName, platformData]) => {
+    const screenArray = t.arrayExpression(
+      platformData.screens.map(screen => buildScreenAst(screen))
+    );
+    
+    const screenNameKey = Object.keys(platformData.screens[0]?.screen ? { screen: 1 } : {})[0] || 
+                          platformData.screens[0]?.name || 
+                          'unknownScreen';
+    
+    return t.objectProperty(
+      t.identifier(screenNameKey),
+      screenArray
+    );
+  });
+  
+  return t.objectExpression(platformProps);
+}
+
+/**
+ * Helper: Build AST for screen object
+ */
+function buildScreenAst(screen) {
+  const props = [];
+  
+  // Add each property
+  if (screen.name) {
+    props.push(t.objectProperty(t.identifier('name'), t.stringLiteral(screen.name)));
+  }
+  
+  if (screen.description) {
+    props.push(t.objectProperty(t.identifier('description'), t.stringLiteral(screen.description)));
+  }
+  
+  if (screen.visible && screen.visible.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('visible'),
+      t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
+    ));
+  }
+  
+  if (screen.hidden && screen.hidden.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('hidden'),
+      t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
+    ));
+  }
+  
+  if (screen.checks) {
+    const checkProps = [];
+    
+    if (screen.checks.visible && screen.checks.visible.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('visible'),
+        t.arrayExpression(screen.checks.visible.map(v => t.stringLiteral(v)))
+      ));
+    }
+    
+    if (screen.checks.hidden && screen.checks.hidden.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('hidden'),
+        t.arrayExpression(screen.checks.hidden.map(h => t.stringLiteral(h)))
+      ));
+    }
+    
+    if (screen.checks.text) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(value))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('text'),
+        t.objectExpression(textProps)
+      ));
+    }
+    
+    if (checkProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('checks'),
+        t.objectExpression(checkProps)
+      ));
+    }
+  }
+  
+  return t.objectExpression(props);
+}
+
 export default router;

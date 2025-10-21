@@ -509,3 +509,69 @@ Edit statusCode → Save → Full Project Scan (10s) → Update Everything
 ### Optimized Flow (Fast)
 ```
 Edit statusCode → Save → Re-parse Single File (100ms) → Update Just That Node
+
+## UI Screen Editor (Phase 5 Part 1)
+
+### Overview
+Visual editor for mirrorsOn.UI sections, allowing inline editing of screen validations across all platforms.
+
+### Features
+
+**View UI Coverage**
+```
+1. Click any state in graph
+2. Scroll to "UI Screen Editor" section
+3. See platforms (Web, Dancer, Club App)
+4. Expand platforms to view screens
+5. Expand screens to view elements
+```
+
+**Edit Screens**
+```
+1. Click "Edit UI" button
+2. Make changes:
+   - Add element: Click ➕ → type name → Enter
+   - Remove element: Hover → click ✕
+   - Add text check: Click ➕ → enter key & value
+   - Edit text check: Click ✏️ → modify → ✓
+   - Remove text check: Hover → click ✕
+3. Unsaved changes badge appears
+4. Click "Save Changes"
+5. Green notification confirms save
+```
+
+**Keyboard Shortcuts**
+- **Enter** - Save inline edit
+- **Escape** - Cancel inline edit
+- **Tab** - Navigate between fields (text checks)
+
+### Structure
+
+**Platforms:**
+- 🌐 Web (blue)
+- 💃 Dancer (pink)
+- 📱 Club App (purple)
+
+**Screen Sections:**
+- ✅ Visible (top-level)
+- ✅ Visible (checks)
+- ❌ Hidden (top-level)
+- ❌ Hidden (checks)
+- 📝 Text Checks
+
+### Safety Features
+- **Auto-Backup:** Timestamped backup before every save
+- **Smart Preservation:** Only modified screens regenerated
+- **Structure Preservation:** Platform nesting maintained
+- **Unsaved Warning:** Yellow badge when changes pending
+- **Discard Confirmation:** Warns before losing changes
+- **Fast Refresh:** Updates in 0.5s (vs 10s full scan)
+
+### Coming Soon (Part 2)
+- Add new screens
+- Delete screens
+- Copy screens between platforms
+- Screen templates
+- Bulk operations
+
+---

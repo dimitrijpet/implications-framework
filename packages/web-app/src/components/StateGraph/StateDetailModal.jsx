@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import { useSuggestions } from '../../hooks/useSuggestions';  // ✅ FIXED: Named export
+import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
 
 export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
   // Edit mode state
@@ -428,19 +429,96 @@ const handleSave = async () => {
               </div>
             )}
             
-            {/* UI Coverage */}
-            {currentState.uiCoverage && currentState.uiCoverage.total > 0 && (
-              <div className="mb-8">
-                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.pink }}>
-                  🖥️ UI Coverage ({currentState.uiCoverage.total} screens)
-                </h3>
-                
-                <UICoverageSection 
-                  platforms={currentState.uiCoverage.platforms}
-                  theme={theme}
-                />
+           {/* UI Coverage Section - UPDATE THIS */}
+{currentState.uiCoverage && currentState.uiCoverage.total > 0 && (
+  <div className="mb-8">
+    <UIScreenEditor
+      state={currentState}
+     onSave={async (updatedUI) => {
+  console.log('💾 Saving UI changes to file...');
+  
+  try {
+    // ✅ FIX: Don't wrap in object, just send the platforms
+    const response = await fetch('http://localhost:3000/api/implications/update-ui', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath: currentState.files.implication,
+        uiData: updatedUI  // ✅ This should be { dancer: {...}, web: {...} }
+      })
+    });
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(result.error || 'Failed to save UI changes');
+          }
+
+          console.log('✅ UI changes saved!');
+          
+          // ✅ Update the current state with new UI data
+          const updatedState = {
+            ...currentState,
+            uiCoverage: {
+              ...currentState.uiCoverage,
+              platforms: updatedUI
+            }
+          };
+          
+          // Update both state and editedState
+          Object.assign(state, updatedState);
+          if (editedState) {
+            setEditedState(JSON.parse(JSON.stringify(updatedState)));
+          }
+          
+          // Show success notification
+          const notification = document.createElement('div');
+          notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            font-weight: bold;
+            z-index: 99999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          `;
+          notification.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 24px;">✅</span>
+              <div>
+                <div style="font-size: 14px; font-weight: bold;">UI Changes Saved!</div>
+                <div style="font-size: 11px; opacity: 0.9; margin-top: 4px;">Backup: ${result.backup?.split('/').pop() || 'created'}</div>
               </div>
-            )}
+            </div>
+          `;
+          document.body.appendChild(notification);
+          
+          setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(100%)';
+            notification.style.transition = 'all 0.3s ease-out';
+            setTimeout(() => notification.remove(), 300);
+          }, 3000);
+          
+          // Trigger fast refresh
+          if (window.refreshSingleState) {
+            setTimeout(() => {
+              window.refreshSingleState(currentState.files.implication);
+            }, 500);
+          }
+          
+        } catch (error) {
+          console.error('❌ Save UI changes failed:', error);
+          alert(`❌ Failed to save: ${error.message}`);
+          throw error; // Re-throw so UIScreenEditor knows it failed
+        }
+      }}
+      theme={theme}
+    />
+  </div>
+)}
             
           </div>
         </div>
@@ -869,106 +947,228 @@ function PlatformCard({ platformName, data, theme }) {
     </div>
   );
 }
-
-function ScreenCard({ screen, theme }) {
-  const visibleElements = [...(screen.visible || []), ...(screen.checks?.visible || [])];
-  const hiddenElements = [...(screen.hidden || []), ...(screen.checks?.hidden || [])];
-  const textChecks = screen.checks?.text || {};
+// Screen Card Component - FIXED (properly propagates changes)
+function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModified, theme }) {
   
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // ✅ CORRECT: Combine top-level + checks arrays
+  const topLevelVisible = screen.visible || [];
+  const checksVisible = screen.checks?.visible || [];
+  const allVisible = [...topLevelVisible, ...checksVisible];
+
+  const topLevelHidden = screen.hidden || [];
+  const checksHidden = screen.checks?.hidden || [];
+  const allHidden = [...topLevelHidden, ...checksHidden];
+
+  const textChecks = screen.checks?.text || {};
+
+  // ✅ Helper to call onChange with updated screen
+ const updateScreen = (updates) => {
+    const updatedScreen = { ...screen, ...updates };
+    console.log('🔄 Screen updated:', updatedScreen);
+    onChange(updatedScreen);
+    
+    // ✅ Mark this screen as modified
+    if (onMarkModified) {
+      const screenId = `${screen.platformName || 'unknown'}.${screen.originalName || screen.name}.${index}`;
+      onMarkModified(screenId);
+    }
+  };
+
   return (
-    <div className="glass-light p-4 rounded-lg border" style={{ borderColor: theme.colors.border }}>
-      <div className="font-semibold text-lg mb-1" style={{ color: theme.colors.accents.blue }}>
-        {screen.name}
-      </div>
-      
-      {screen.description && (
-        <div className="text-sm mb-3 italic" style={{ color: theme.colors.text.secondary }}>
-          {screen.description}
+    <div 
+      className="rounded-lg border"
+      style={{ 
+        background: theme.colors.background.secondary,
+        borderColor: theme.colors.border
+      }}
+    >
+      {/* Screen Header */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full p-3 flex items-center justify-between hover:bg-white/5 transition"
+      >
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: '18px' }}>📄</span>
+          <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
+            {screen.name}
+          </div>
+          {screen.description && (
+            <div 
+              className="text-xs italic px-2 py-0.5 rounded max-w-md truncate"
+              style={{ 
+                background: `${theme.colors.accents.blue}20`,
+                color: theme.colors.accents.blue
+              }}
+              title={screen.description}
+            >
+              {screen.description}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Quick Stats */}
+          <div className="flex gap-2 text-xs">
+            {allVisible.length > 0 && (
+              <span 
+                className="px-2 py-1 rounded font-semibold"
+                style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+              >
+                ✅ {allVisible.length}
+              </span>
+            )}
+            {allHidden.length > 0 && (
+              <span 
+                className="px-2 py-1 rounded font-semibold"
+                style={{ background: `${theme.colors.accents.red}20`, color: theme.colors.accents.red }}
+              >
+                ❌ {allHidden.length}
+              </span>
+            )}
+            {Object.keys(textChecks).length > 0 && (
+              <span 
+                className="px-2 py-1 rounded font-semibold"
+                style={{ background: `${theme.colors.accents.yellow}20`, color: theme.colors.accents.yellow }}
+              >
+                📝 {Object.keys(textChecks).length}
+              </span>
+            )}
+          </div>
+
+          <span 
+            className="text-lg transition-transform"
+            style={{ 
+              transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              color: theme.colors.text.tertiary
+            }}
+          >
+            ▼
+          </span>
+        </div>
+      </button>
+
+      {/* Screen Details */}
+      {isExpanded && (
+        <div className="p-3 pt-0 space-y-3">
+          {/* Top-Level Visible */}
+          {(topLevelVisible.length > 0 || editMode) && (
+            <ElementSection
+              title="✅ Visible (top-level)"
+              elements={topLevelVisible}
+              color={theme.colors.accents.green}
+              editMode={editMode}
+              onChange={(newElements) => {
+                console.log('✅ Updating top-level visible:', newElements);
+                updateScreen({ visible: newElements });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Checks Visible */}
+          {(checksVisible.length > 0 || editMode) && (
+            <ElementSection
+              title="✅ Visible (checks)"
+              elements={checksVisible}
+              color={theme.colors.accents.green}
+              editMode={editMode}
+              onChange={(newElements) => {
+                console.log('✅ Updating checks.visible:', newElements);
+                updateScreen({ 
+                  checks: { 
+                    ...screen.checks, 
+                    visible: newElements 
+                  } 
+                });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Top-Level Hidden */}
+          {(topLevelHidden.length > 0 || editMode) && (
+            <ElementSection
+              title="❌ Hidden (top-level)"
+              elements={topLevelHidden}
+              color={theme.colors.accents.red}
+              editMode={editMode}
+              onChange={(newElements) => {
+                console.log('❌ Updating top-level hidden:', newElements);
+                updateScreen({ hidden: newElements });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Checks Hidden */}
+          {(checksHidden.length > 0 || editMode) && (
+            <ElementSection
+              title="❌ Hidden (checks)"
+              elements={checksHidden}
+              color={theme.colors.accents.red}
+              editMode={editMode}
+              onChange={(newElements) => {
+                console.log('❌ Updating checks.hidden:', newElements);
+                updateScreen({ 
+                  checks: { 
+                    ...screen.checks, 
+                    hidden: newElements 
+                  } 
+                });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Text Checks */}
+          {(Object.keys(textChecks).length > 0 || editMode) && (
+            <TextChecksSection
+              textChecks={textChecks}
+              editMode={editMode}
+              onChange={(newTextChecks) => {
+                console.log('📝 Updating checks.text:', newTextChecks);
+                updateScreen({ 
+                  checks: { 
+                    ...screen.checks, 
+                    text: newTextChecks 
+                  } 
+                });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Edit Actions */}
+          {editMode && (
+            <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
+              <button
+                onClick={onDelete}
+                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
+                style={{ 
+                  background: `${theme.colors.accents.red}20`,
+                  color: theme.colors.accents.red,
+                  border: `1px solid ${theme.colors.accents.red}40`
+                }}
+              >
+                🗑️ Delete Screen
+              </button>
+              <button
+                onClick={() => console.log('Copy screen')}
+                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
+                style={{ 
+                  background: theme.colors.background.tertiary,
+                  color: theme.colors.text.primary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
+              >
+                📋 Copy to Platform
+              </button>
+            </div>
+          )}
         </div>
       )}
-      
-      <div className="space-y-2 text-sm">
-        {visibleElements.length > 0 && (
-          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.green}10` }}>
-            <span className="font-semibold" style={{ color: theme.colors.accents.green }}>
-              ✅ Visible ({visibleElements.length}):
-            </span>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {visibleElements.slice(0, 10).map((e, i) => (
-                <span 
-                  key={i}
-                  className="font-mono px-2 py-0.5 rounded text-xs"
-                  style={{ 
-                    background: theme.colors.background.tertiary,
-                    color: theme.colors.text.primary
-                  }}
-                >
-                  {e}
-                </span>
-              ))}
-              {visibleElements.length > 10 && (
-                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  +{visibleElements.length - 10} more
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-        
-        {hiddenElements.length > 0 && (
-          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.red}10` }}>
-            <span className="font-semibold" style={{ color: theme.colors.accents.red }}>
-              ❌ Hidden ({hiddenElements.length}):
-            </span>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {hiddenElements.slice(0, 10).map((e, i) => (
-                <span 
-                  key={i}
-                  className="font-mono px-2 py-0.5 rounded text-xs"
-                  style={{ 
-                    background: theme.colors.background.tertiary,
-                    color: theme.colors.text.primary
-                  }}
-                >
-                  {e}
-                </span>
-              ))}
-              {hiddenElements.length > 10 && (
-                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  +{hiddenElements.length - 10} more
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-        
-        {Object.keys(textChecks).length > 0 && (
-          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.yellow}10` }}>
-            <span className="font-semibold" style={{ color: theme.colors.accents.yellow }}>
-              📝 Text Checks ({Object.keys(textChecks).length}):
-            </span>
-            <div className="mt-1 space-y-1 ml-2">
-              {Object.entries(textChecks).slice(0, 5).map(([el, val], i) => (
-                <div key={i} className="text-xs flex items-center gap-2">
-                  <span 
-                    className="font-mono px-2 py-0.5 rounded"
-                    style={{ background: theme.colors.background.tertiary }}
-                  >
-                    {el}
-                  </span>
-                  <span style={{ color: theme.colors.text.tertiary }}>→</span>
-                  <span style={{ color: theme.colors.accents.yellow }}>"{val}"</span>
-                </div>
-              ))}
-              {Object.keys(textChecks).length > 5 && (
-                <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  +{Object.keys(textChecks).length - 5} more
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
