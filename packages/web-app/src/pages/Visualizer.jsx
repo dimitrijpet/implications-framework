@@ -79,51 +79,51 @@ const handleNodeClick = (nodeData) => {
         }));
       
       // Build state object
-      const state = {
-        name: nodeData.id,
-        displayName: metadata.status || nodeData.label,
-        meta: {
-          // Basic info
-          status: metadata.status,
-          triggerAction: metadata.triggerAction,
-          triggerButton: metadata.triggerButton,
-          afterButton: metadata.afterButton,
-          previousButton: metadata.previousButton,
-          notificationKey: metadata.notificationKey,
-          
-          // Status info
-          statusCode: metadata.statusCode,
-          statusNumber: metadata.statusNumber,
-          
-          // Platform
-          platform: metadata.platform || 'unknown',
-          
-          // Required fields
-          requiredFields: metadata.requiredFields || [],
-          
-          // Prerequisites
-          requires: metadata.requires || {},
-          
-          // Setup
-          setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
-          allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
-          
-          // Action info
-          actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
-        },
-        transitions: stateTransitions,
-        files: {
-          implication: implication.path,
-          test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-        },
-        uiCoverage: {
-          total: 0,
-          platforms: {}
-        }
-      };
-      
-      console.log('✅ Selected state with full metadata:', state);
-      setSelectedState(state);
+      // Build state object
+const state = {
+  name: nodeData.id,
+  displayName: metadata.status || nodeData.label,
+  meta: {
+    // Basic info
+    status: metadata.status,
+    triggerAction: metadata.triggerAction,
+    triggerButton: metadata.triggerButton,
+    afterButton: metadata.afterButton,
+    previousButton: metadata.previousButton,
+    notificationKey: metadata.notificationKey,
+    
+    // Status info
+    statusCode: metadata.statusCode,
+    statusNumber: metadata.statusNumber,
+    
+    // Platform
+    platform: metadata.platform || 'unknown',
+    
+    // Required fields
+    requiredFields: metadata.requiredFields || [],
+    
+    // Prerequisites
+    requires: metadata.requires || {},
+    
+    // Setup
+    setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
+    allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
+    
+    // Action info
+    actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
+  },
+  transitions: stateTransitions,
+  files: {
+    implication: implication.path,
+    test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
+  },
+  // ✅ ADD UI COVERAGE HERE!
+  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+};
+
+console.log('✅ Selected state with full metadata:', state);
+console.log('🖥️ UI Coverage:', state.uiCoverage);  // ✅ Add this debug log
+setSelectedState(state);
     } else {
       console.warn('⚠️ Implication not found for:', nodeData.id);
     }

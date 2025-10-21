@@ -361,3 +361,268 @@ function extractValueFromNode(node) {
       return null;
   }
 }
+
+export function extractUIImplications(content) {
+  console.log('🔍 Extracting UI implications...');
+  
+  const uiData = {
+    total: 0,
+    platforms: {}
+  };
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
+          console.log('✅ Found mirrorsOn!');
+          
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            console.log('✅ mirrorsOn is an object');
+            
+            // Find UI property
+            const uiProperty = value.properties.find(
+              p => p.key?.name === 'UI'
+            );
+            
+            if (uiProperty) {
+              console.log('✅ Found UI property');
+              
+              if (uiProperty.value?.type === 'ObjectExpression') {
+                console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
+                
+                // Extract platforms
+                uiProperty.value.properties.forEach(platformProp => {
+                  const platformName = platformProp.key?.name;
+                  console.log('  📱 Platform:', platformName);
+                  
+                  if (!platformName) return;
+                  
+                  const screens = [];
+                  
+                 if (platformProp.value?.type === 'ObjectExpression') {
+  console.log('    Platform has', platformProp.value.properties.length, 'screens');
+  
+  platformProp.value.properties.forEach(screenProp => {
+    const screenName = screenProp.key?.name;
+    console.log('    📺 Screen:', screenName);
+    
+    if (!screenName) return;
+    
+    // ✅ FIX: Handle ArrayExpression (multiple validation objects per screen)
+    if (screenProp.value?.type === 'ArrayExpression') {
+      console.log('      Screen is an array with', screenProp.value.elements.length, 'validation objects');
+      
+      // Parse each validation object in the array
+      screenProp.value.elements.forEach((validationNode, idx) => {
+        const screenData = parseScreenValidation(validationNode);
+        console.log('      Validation', idx, 'data:', screenData);
+        
+        if (screenData) {
+          // If multiple validations, add index to name
+          const fullName = screenProp.value.elements.length > 1 
+            ? `${screenName}_${idx + 1}`
+            : screenName;
+            
+          screens.push({
+            name: fullName,
+            originalName: screenName,
+            ...screenData
+          });
+        }
+      });
+    } else {
+      // Fallback: single object (rare case)
+      const screenData = parseScreenValidation(screenProp.value);
+      console.log('      Screen data:', screenData);
+      
+      if (screenData) {
+        screens.push({
+          name: screenName,
+          ...screenData
+        });
+      }
+    }
+  });
+}
+                  
+                  console.log('  📊 Platform', platformName, 'has', screens.length, 'parsed screens');
+                  
+                  if (screens.length > 0) {
+                    uiData.platforms[platformName] = {
+                      count: screens.length,
+                      screens: screens
+                    };
+                    uiData.total += screens.length;
+                  }
+                });
+              } else {
+                console.log('⚠️ UI is not an object, type:', uiProperty.value?.type);
+              }
+            } else {
+              console.log('⚠️ No UI property found');
+            }
+          }
+        }
+      },
+    });
+    
+    console.log('📊 Final UI data:', uiData);
+    
+  } catch (error) {
+    console.error('❌ Error extracting UI implications:', error.message);
+  }
+  
+  return uiData;
+}
+
+/**
+ * Parse a screen validation object (simplified - handle any structure)
+ */
+function parseScreenValidation(node) {
+  console.log('      🔍 Parsing screen validation, node type:', node?.type);
+  
+  // Handle any type - just extract what we can
+  const screenData = {
+    description: '',
+    visible: [],
+    hidden: [],
+    checks: {
+      visible: [],
+      hidden: [],
+      text: {}
+    }
+  };
+  
+  // If it's a function call (like mergeWithBase), we can't parse it easily
+  // Just return basic data so the screen shows up
+  if (node?.type === 'CallExpression') {
+    console.log('      ⚠️ Screen uses function call (like mergeWithBase), showing basic info');
+    return {
+      description: 'Screen validation defined',
+      visible: [],
+      hidden: [],
+      checks: { visible: [], hidden: [], text: {} }
+    };
+  }
+  
+  if (!node || node.type !== 'ObjectExpression') {
+    console.log('      ⚠️ Not a parseable type');
+    // Still return something so screen shows up
+    return {
+      description: 'Screen validation detected',
+      visible: [],
+      hidden: [],
+      checks: { visible: [], hidden: [], text: {} }
+    };
+  }
+  
+  console.log('      Found', node.properties.length, 'properties');
+  
+  // Parse each property
+  node.properties.forEach(prop => {
+    if (!prop.key) return;
+    
+    const key = prop.key.name;
+    console.log('        Property:', key);
+    
+    const value = prop.value;
+    
+    switch (key) {
+      case 'description':
+        if (value.type === 'StringLiteral') {
+          screenData.description = value.value;
+          console.log('          Description:', screenData.description);
+        }
+        break;
+        
+      case 'visible':
+        if (value.type === 'ArrayExpression') {
+          screenData.visible = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Visible:', screenData.visible.length);
+        }
+        break;
+        
+      case 'hidden':
+        if (value.type === 'ArrayExpression') {
+          screenData.hidden = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Hidden:', screenData.hidden.length);
+        }
+        break;
+        
+      case 'checks':
+        if (value.type === 'ObjectExpression') {
+          screenData.checks = parseChecksObject(value);
+          console.log('          Checks:', screenData.checks);
+        }
+        break;
+    }
+  });
+  
+  return screenData;
+}
+/**
+ * Parse the checks object (visible, hidden, text)
+ */
+function parseChecksObject(node) {
+  const checks = {
+    visible: [],
+    hidden: [],
+    text: {}
+  };
+  
+  if (!node || node.type !== 'ObjectExpression') {
+    return checks;
+  }
+  
+  node.properties.forEach(prop => {
+    if (!prop.key) return;
+    
+    const key = prop.key.name;
+    const value = prop.value;
+    
+    switch (key) {
+      case 'visible':
+        if (value.type === 'ArrayExpression') {
+          checks.visible = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+        }
+        break;
+        
+      case 'hidden':
+        if (value.type === 'ArrayExpression') {
+          checks.hidden = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+        }
+        break;
+        
+      case 'text':
+        if (value.type === 'ObjectExpression') {
+          value.properties.forEach(textProp => {
+            if (textProp.key && textProp.value) {
+              const elementName = textProp.key.name || textProp.key.value;
+              const expectedText = extractValueFromNode(textProp.value);
+              if (elementName && expectedText) {
+                checks.text[elementName] = expectedText;
+              }
+            }
+          });
+        }
+        break;
+    }
+  });
+  
+  return checks;
+}

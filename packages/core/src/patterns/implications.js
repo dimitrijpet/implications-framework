@@ -19,7 +19,7 @@ export function isImplication(parsed) {
 /**
  * Extract metadata from an Implication class
  */
-export function extractImplicationMetadata(parsed, extractXStateMetadata = null) {
+export function extractImplicationMetadata(parsed, extractXStateMetadata = null, extractUIImplications = null) {
   const metadata = {
     className: null,
     isStateful: false,
@@ -41,6 +41,12 @@ export function extractImplicationMetadata(parsed, extractXStateMetadata = null)
     requiredFields: [],
     requires: null,
     setup: null,
+    
+    // ✅ ADD: UI implications
+    uiCoverage: {
+      total: 0,
+      platforms: {}
+    }
   };
   
   // Use the simplified structure from parseFile
@@ -71,7 +77,7 @@ export function extractImplicationMetadata(parsed, extractXStateMetadata = null)
   if (hasXStateConfig) {
     metadata.hasXStateConfig = true;
     
-    // ✅ Use the extractXStateMetadata function if provided
+    // Extract meta from content
     if (parsed.content && extractXStateMetadata) {
       const xstateMetadata = extractXStateMetadata(parsed.content);
       Object.assign(metadata, xstateMetadata);
@@ -80,9 +86,22 @@ export function extractImplicationMetadata(parsed, extractXStateMetadata = null)
   
   // Check for mirrorsOn
   const hasMirrorsOn = implClass.staticProperties.some(p => p.name === 'mirrorsOn');
-  if (hasMirrorsOn) {
-    metadata.hasMirrorsOn = true;
+if (hasMirrorsOn) {
+  metadata.hasMirrorsOn = true;
+  
+  console.log('🔍 Has mirrorsOn, extracting UI...', {
+    hasContent: !!parsed.content,
+    hasExtractor: !!extractUIImplications
+  });
+  
+  // Extract UI implications
+  if (parsed.content && extractUIImplications) {
+    metadata.uiCoverage = extractUIImplications(parsed.content);
+    console.log('✅ Extracted UI coverage:', metadata.uiCoverage);
+  } else {
+    console.log('⚠️ Cannot extract UI - missing content or extractor');
   }
+}
   
   return metadata;
 }

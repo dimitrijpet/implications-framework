@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useState } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 
 export default function StateDetailModal({ state, onClose, theme = defaultTheme }) {
@@ -59,182 +60,81 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
               </button>
             </div>
             
-            {/* Metadata Grid */}
+            {/* ✅ DYNAMIC Metadata Grid */}
             <div className="mb-8">
               <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.blue }}>
                 📋 Metadata
               </h3>
               
-
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-  
-  <MetadataField 
-    label="Status" 
-    value={state.meta.status || 'N/A'} 
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Trigger Action" 
-    value={state.meta.triggerAction || 'N/A'} 
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Trigger Button" 
-    value={state.meta.triggerButton || 'N/A'}
-    mono
-    color={theme.colors.accents.blue}
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="After Button" 
-    value={state.meta.afterButton || 'null'}
-    mono
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Previous Button" 
-    value={state.meta.previousButton || 'null'}
-    mono
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Platform" 
-    value={
-      state.meta.platform && state.meta.platform !== 'unknown' ? (
-        <span>
-          {platformStyle.icon} {state.meta.platform}
-        </span>
-      ) : (
-        'N/A'
-      )
-    }
-    color={state.meta.platform !== 'unknown' ? platformStyle.color : theme.colors.text.tertiary}
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Notification Key" 
-    value={state.meta.notificationKey || 'N/A'}
-    mono
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Status Code" 
-    value={state.meta.statusCode || 'N/A'}
-    mono
-    theme={theme}
-  />
-  
-  <MetadataField 
-    label="Status Number" 
-    value={state.meta.statusNumber || 'N/A'}
-    mono
-    theme={theme}
-  />
-  
-  {state.meta.actionName && (
-    <MetadataField 
-      label="Action Name" 
-      value={state.meta.actionName}
-      mono
-      theme={theme}
-    />
-  )}
-  
-</div>
-              
-              {/* Required Fields */}
-              {state.meta.requiredFields && state.meta.requiredFields.length > 0 && (
-                <div className="mt-4 glass p-4 rounded-lg">
-                  <div className="text-sm mb-2" style={{ color: theme.colors.text.tertiary }}>
-                    Required Fields ({state.meta.requiredFields.length})
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {state.meta.requiredFields.map((field, i) => (
-                      <span 
-                        key={i}
-                        className="px-3 py-1 rounded font-mono text-sm"
-                        style={{ 
-                          background: `${theme.colors.accents.purple}60`,
-                          color: theme.colors.text.primary
-                        }}
-                      >
-                        {field}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <DynamicMetadataGrid 
+                metadata={state.meta} 
+                theme={theme}
+                platformStyle={platformStyle}
+              />
             </div>
             
             {/* Files */}
-            <div className="mb-8">
-              <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
-                📂 Files
-              </h3>
-              
-              <div className="space-y-3">
-                <FileCard 
-                  label="Implication File" 
-                  path={state.files.implication}
-                  theme={theme}
-                />
-                {state.files.test && (
+            {state.files && (
+              <div className="mb-8">
+                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
+                  📂 Files
+                </h3>
+                
+                <div className="space-y-3">
                   <FileCard 
-                    label="Test File" 
-                    path={state.files.test}
+                    label="Implication File" 
+                    path={state.files.implication}
                     theme={theme}
                   />
-                )}
-              </div>
-            </div>
-            
-            {/* Transitions */}
-            <div className="mb-8">
-              <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.yellow }}>
-                🔄 Transitions ({state.transitions.length})
-              </h3>
-              
-              <div className="space-y-3">
-                {state.transitions.length > 0 ? (
-                  state.transitions.map((t, i) => (
-                    <TransitionCard 
-                      key={i}
-                      transition={t}
+                  {state.files.test && (
+                    <FileCard 
+                      label="Test File" 
+                      path={state.files.test}
                       theme={theme}
                     />
-                  ))
-                ) : (
-                  <div className="glass p-4 rounded-lg text-center" style={{ color: theme.colors.text.tertiary }}>
-                    No transitions
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
+            
+            {/* Transitions */}
+            {state.transitions && (
+              <div className="mb-8">
+                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.yellow }}>
+                  🔄 Transitions ({state.transitions.length})
+                </h3>
+                
+                <div className="space-y-3">
+                  {state.transitions.length > 0 ? (
+                    state.transitions.map((t, i) => (
+                      <TransitionCard 
+                        key={i}
+                        transition={t}
+                        theme={theme}
+                      />
+                    ))
+                  ) : (
+                    <div className="glass p-4 rounded-lg text-center" style={{ color: theme.colors.text.tertiary }}>
+                      No transitions
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             
             {/* UI Coverage */}
-            <div className="mb-8">
-              <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.pink }}>
-                🖥️ UI Coverage ({state.uiCoverage.total} screens)
-              </h3>
-              
-              {state.uiCoverage.total > 0 ? (
+            {state.uiCoverage && state.uiCoverage.total > 0 && (
+              <div className="mb-8">
+                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.pink }}>
+                  🖥️ UI Coverage ({state.uiCoverage.total} screens)
+                </h3>
+                
                 <UICoverageSection 
                   platforms={state.uiCoverage.platforms}
                   theme={theme}
                 />
-              ) : (
-                <div className="glass p-4 rounded-lg text-center" style={{ color: theme.colors.text.tertiary }}>
-                  No UI coverage defined
-                </div>
-              )}
-            </div>
+              </div>
+            )}
             
           </div>
         </div>
@@ -243,23 +143,286 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
   );
 }
 
-// Helper Components
+// ============================================
+// ✅ NEW: Dynamic Metadata Grid
+// ============================================
 
-function MetadataField({ label, value, mono, color, theme }) {
+function DynamicMetadataGrid({ metadata, theme, platformStyle }) {
+  if (!metadata || Object.keys(metadata).length === 0) {
+    return (
+      <div className="glass p-4 rounded-lg text-center" style={{ color: theme.colors.text.tertiary }}>
+        No metadata available
+      </div>
+    );
+  }
+  
+  // ✅ Group fields by category for better organization
+  const fieldGroups = categorizeFields(metadata);
+  
+  return (
+    <div className="space-y-6">
+      {Object.entries(fieldGroups).map(([category, fields]) => (
+        <div key={category}>
+          <h4 className="text-sm font-semibold uppercase tracking-wide mb-3" style={{ color: theme.colors.text.tertiary }}>
+            {category}
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {fields.map(([key, value]) => (
+              <DynamicMetadataField 
+                key={key}
+                fieldName={key}
+                value={value}
+                theme={theme}
+                platformStyle={platformStyle}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================
+// ✅ Categorize fields for better organization
+// ============================================
+
+function categorizeFields(metadata) {
+  const groups = {
+    'Core': [],
+    'Buttons': [],
+    'Platform': [],
+    'Setup': [],
+    'Other': []
+  };
+  
+  // Known field categories
+  const coreFields = ['status', 'triggerAction', 'statusCode', 'statusNumber'];
+  const buttonFields = ['triggerButton', 'afterButton', 'previousButton'];
+  const platformFields = ['platform', 'platforms', 'notificationKey'];
+  const setupFields = ['setup', 'allSetups', 'actionName', 'requires', 'requiredFields'];
+  
+  Object.entries(metadata).forEach(([key, value]) => {
+    // ✅ CHANGED: Don't skip null/undefined - we want to show them as warnings!
+    // Only skip these system fields
+    if (key === 'uiCoverage') return;
+    
+    // Skip empty arrays and empty objects (but NOT null/undefined)
+    if (Array.isArray(value) && value.length === 0) return;
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0) return;
+    
+    // Categorize
+    if (coreFields.includes(key)) {
+      groups['Core'].push([key, value]);
+    } else if (buttonFields.includes(key)) {
+      groups['Buttons'].push([key, value]);
+    } else if (platformFields.includes(key)) {
+      groups['Platform'].push([key, value]);
+    } else if (setupFields.includes(key)) {
+      groups['Setup'].push([key, value]);
+    } else {
+      groups['Other'].push([key, value]);
+    }
+  });
+  
+  // Remove empty groups
+  Object.keys(groups).forEach(key => {
+    if (groups[key].length === 0) delete groups[key];
+  });
+  
+  return groups;
+}
+
+// ============================================
+// ✅ Dynamic Field Renderer
+// ============================================
+
+function DynamicMetadataField({ fieldName, value, theme, platformStyle }) {
+  // Format field name for display
+  const displayName = fieldName
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, str => str.toUpperCase())
+    .trim();
+  
+  // Render based on value type
+  const renderedValue = renderValue(value, fieldName, theme, platformStyle);
+  
   return (
     <div className="glass p-4 rounded-lg">
       <div className="text-sm mb-1" style={{ color: theme.colors.text.tertiary }}>
-        {label}
+        {displayName}
       </div>
-      <div 
-        className={`font-semibold ${mono ? 'font-mono' : ''}`}
-        style={{ color: color || theme.colors.text.primary }}
-      >
-        {value}
+      <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
+        {renderedValue}
       </div>
     </div>
   );
 }
+
+// ============================================
+// ✅ Smart Value Renderer
+// ============================================
+
+function renderValue(value, fieldName, theme, platformStyle) {
+  // Handle null/undefined - RED warning
+  if (value === null || value === undefined) {
+    return (
+      <span 
+        className="px-2 py-1 rounded text-sm font-semibold"
+        style={{ 
+          background: `${theme.colors.accents.red}20`,
+          color: theme.colors.accents.red
+        }}
+      >
+        ⚠️ Not Set
+      </span>
+    );
+  }
+  
+  // Handle arrays
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return (
+        <span 
+          className="px-2 py-1 rounded text-sm"
+          style={{ 
+            background: `${theme.colors.accents.red}15`,
+            color: theme.colors.accents.red
+          }}
+        >
+          Empty Array
+        </span>
+      );
+    }
+    
+    // Special case: requiredFields
+    if (fieldName === 'requiredFields') {
+      return (
+        <div className="flex flex-wrap gap-2">
+          {value.map((field, i) => (
+            <span 
+              key={i}
+              className="px-2 py-1 rounded text-xs font-mono"
+              style={{ 
+                background: `${theme.colors.accents.purple}40`,
+                color: theme.colors.accents.purple
+              }}
+            >
+              {field}
+            </span>
+          ))}
+        </div>
+      );
+    }
+    
+    // Default array rendering - show as badges
+    return (
+      <div className="flex flex-wrap gap-2">
+        {value.map((item, i) => (
+          <span 
+            key={i}
+            className="px-2 py-1 rounded text-xs font-mono"
+            style={{ 
+              background: `${theme.colors.background.tertiary}`,
+              color: theme.colors.text.primary
+            }}
+          >
+            {typeof item === 'object' ? JSON.stringify(item) : String(item)}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  
+  // Handle objects - IMPROVED
+  if (typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (entries.length === 0) {
+      return (
+        <span 
+          className="px-2 py-1 rounded text-sm"
+          style={{ 
+            background: `${theme.colors.accents.red}15`,
+            color: theme.colors.accents.red
+          }}
+        >
+          Empty Object
+        </span>
+      );
+    }
+    
+    return (
+      <div 
+        className="text-xs space-y-1 mt-1 p-3 rounded font-mono"
+        style={{ 
+          background: theme.colors.background.tertiary,
+          maxHeight: '200px',
+          overflowY: 'auto'
+        }}
+      >
+        {entries.map(([k, v], i) => (
+          <div key={i} className="flex gap-2">
+            <span 
+              className="font-semibold"
+              style={{ color: theme.colors.accents.blue }}
+            >
+              {k}:
+            </span>
+            <span style={{ color: theme.colors.text.primary }}>
+              {typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  
+  // Handle empty strings
+  if (value === '') {
+    return (
+      <span 
+        className="px-2 py-1 rounded text-sm"
+        style={{ 
+          background: `${theme.colors.accents.red}15`,
+          color: theme.colors.accents.red
+        }}
+      >
+        Empty String
+      </span>
+    );
+  }
+  
+  // Special rendering for specific fields
+  if (fieldName === 'platform' && platformStyle) {
+    return (
+      <span style={{ color: platformStyle.color }}>
+        {platformStyle.icon} {value}
+      </span>
+    );
+  }
+  
+  // Special styling for button fields
+  if (fieldName.toLowerCase().includes('button')) {
+    return (
+      <span 
+        className="font-mono px-2 py-1 rounded"
+        style={{ 
+          background: `${theme.colors.accents.blue}20`,
+          color: theme.colors.accents.blue
+        }}
+      >
+        {value}
+      </span>
+    );
+  }
+  
+  // Default: convert to string
+  return String(value);
+}
+
+// ============================================
+// Helper Components (unchanged)
+// ============================================
 
 function FileCard({ label, path, theme }) {
   return (
@@ -309,30 +472,53 @@ function UICoverageSection({ platforms, theme }) {
   );
 }
 
+
+
 function PlatformCard({ platformName, data, theme }) {
+  const [isExpanded, setIsExpanded] = useState(true);  // ✅ Collapsible state
   const platformStyle = getPlatformStyle(platformName, theme);
   
   return (
     <div className="glass-light rounded-lg border" style={{ borderColor: theme.colors.border }}>
-      <div className="p-4 flex items-center justify-between">
+      
+      {/* ✅ Clickable Header */}
+      <div 
+        className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/5 transition rounded-t-lg"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
         <div className="flex items-center gap-3">
           <span className="text-2xl">{platformStyle.icon}</span>
           <span className="font-bold text-xl">{platformStyle.name}</span>
           <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>
-            ({data.count} screens)
+            ({data.count} screen{data.count !== 1 ? 's' : ''})
           </span>
         </div>
+        
+        {/* ✅ Expand/Collapse Icon */}
+        <span 
+          className="text-2xl transition-transform"
+          style={{ 
+            transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+            color: theme.colors.text.tertiary
+          }}
+        >
+          ▼
+        </span>
       </div>
       
-      <div className="p-4 pt-0 space-y-3">
-        {data.screens.map((screen, idx) => (
-          <ScreenCard 
-            key={idx}
-            screen={screen}
-            theme={theme}
-          />
-        ))}
-      </div>
+      {/* ✅ Collapsible Content */}
+      {isExpanded && (
+        <div className="p-4 pt-0 space-y-3">
+          {data.screens.map((screen, idx) => (
+            <ScreenCard 
+              key={idx}
+              screen={screen}
+              theme={theme}
+            />
+          ))}
+        </div>
+      )}
+      
     </div>
   );
 }
@@ -344,85 +530,108 @@ function ScreenCard({ screen, theme }) {
   
   return (
     <div className="glass-light p-4 rounded-lg border" style={{ borderColor: theme.colors.border }}>
-      <div className="font-semibold mb-1" style={{ color: theme.colors.accents.blue }}>
+      
+      {/* Screen Name */}
+      <div className="font-semibold text-lg mb-1" style={{ color: theme.colors.accents.blue }}>
         {screen.name}
       </div>
-      <div className="text-sm mb-2" style={{ color: theme.colors.text.tertiary }}>
-        {screen.description}
-      </div>
       
-      <div className="space-y-2 text-xs">
+      {/* Description */}
+      {screen.description && (
+        <div className="text-sm mb-3 italic" style={{ color: theme.colors.text.secondary }}>
+          {screen.description}
+        </div>
+      )}
+      
+      {/* Validation Details */}
+      <div className="space-y-2 text-sm">
+        
+        {/* Visible Elements */}
         {visibleElements.length > 0 && (
-          <div>
+          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.green}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.green }}>
               ✅ Visible ({visibleElements.length}):
-            </span>{' '}
-            {visibleElements.slice(0, 5).map((e, i) => (
-              <span 
-                key={i}
-                className="font-mono px-1 rounded ml-1"
-                style={{ background: theme.colors.background.tertiary }}
-              >
-                {e}
-              </span>
-            ))}
-            {visibleElements.length > 5 && (
-              <span className="ml-1" style={{ color: theme.colors.text.tertiary }}>
-                +{visibleElements.length - 5} more
-              </span>
-            )}
+            </span>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {visibleElements.slice(0, 10).map((e, i) => (
+                <span 
+                  key={i}
+                  className="font-mono px-2 py-0.5 rounded text-xs"
+                  style={{ 
+                    background: theme.colors.background.tertiary,
+                    color: theme.colors.text.primary
+                  }}
+                >
+                  {e}
+                </span>
+              ))}
+              {visibleElements.length > 10 && (
+                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                  +{visibleElements.length - 10} more
+                </span>
+              )}
+            </div>
           </div>
         )}
         
+        {/* Hidden Elements */}
         {hiddenElements.length > 0 && (
-          <div>
+          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.red}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.red }}>
               ❌ Hidden ({hiddenElements.length}):
-            </span>{' '}
-            {hiddenElements.slice(0, 5).map((e, i) => (
-              <span 
-                key={i}
-                className="font-mono px-1 rounded ml-1"
-                style={{ background: theme.colors.background.tertiary }}
-              >
-                {e}
-              </span>
-            ))}
-            {hiddenElements.length > 5 && (
-              <span className="ml-1" style={{ color: theme.colors.text.tertiary }}>
-                +{hiddenElements.length - 5} more
-              </span>
-            )}
+            </span>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {hiddenElements.slice(0, 10).map((e, i) => (
+                <span 
+                  key={i}
+                  className="font-mono px-2 py-0.5 rounded text-xs"
+                  style={{ 
+                    background: theme.colors.background.tertiary,
+                    color: theme.colors.text.primary
+                  }}
+                >
+                  {e}
+                </span>
+              ))}
+              {hiddenElements.length > 10 && (
+                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                  +{hiddenElements.length - 10} more
+                </span>
+              )}
+            </div>
           </div>
         )}
         
+        {/* Text Checks */}
         {Object.keys(textChecks).length > 0 && (
-          <div>
+          <div className="p-2 rounded" style={{ background: `${theme.colors.accents.yellow}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.yellow }}>
               📝 Text Checks ({Object.keys(textChecks).length}):
             </span>
-            <div className="mt-1 space-y-1 ml-4">
-              {Object.entries(textChecks).slice(0, 3).map(([el, val], i) => (
-                <div key={i} className="text-xs">
+            <div className="mt-1 space-y-1 ml-2">
+              {Object.entries(textChecks).slice(0, 5).map(([el, val], i) => (
+                <div key={i} className="text-xs flex items-center gap-2">
                   <span 
-                    className="font-mono px-1 rounded"
+                    className="font-mono px-2 py-0.5 rounded"
                     style={{ background: theme.colors.background.tertiary }}
                   >
                     {el}
                   </span>
-                  {' → '}
+                  <span style={{ color: theme.colors.text.tertiary }}>→</span>
                   <span style={{ color: theme.colors.accents.yellow }}>"{val}"</span>
                 </div>
               ))}
-              {Object.keys(textChecks).length > 3 && (
-                <div style={{ color: theme.colors.text.tertiary }}>
-                  +{Object.keys(textChecks).length - 3} more
+              {Object.keys(textChecks).length > 5 && (
+                <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                  +{Object.keys(textChecks).length - 5} more
                 </div>
               )}
             </div>
           </div>
         )}
+        
       </div>
+      
     </div>
   );
 }

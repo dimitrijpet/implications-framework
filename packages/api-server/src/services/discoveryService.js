@@ -1,6 +1,6 @@
 import { glob } from 'glob';
 import path from 'path';
-import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata } from './astParser.js';  // ✅ ADD extractXStateMetadata
+import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata, extractUIImplications } from './astParser.js';
 import { isImplication, extractImplicationMetadata } from '../../../core/src/patterns/implications.js';
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
@@ -99,7 +99,7 @@ async function classifyFile(parsed, result) {
   
   // Check for Implication
   if (isImplication(parsed)) {
-    const metadata = extractImplicationMetadata(parsed, extractXStateMetadata);  // ✅ Pass the function
+    const metadata = extractImplicationMetadata(parsed, extractXStateMetadata, extractUIImplications);  // ✅ Pass both extractors
     result.files.implications.push(new DiscoveredFile({
       path: relativePath,
       type: 'implication',
