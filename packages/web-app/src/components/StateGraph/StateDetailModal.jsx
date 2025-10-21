@@ -151,14 +151,6 @@ const handleEditToggle = () => {
 const handleSave = async () => {
   setIsSaving(true);
   
-  // ✅ ADD THIS DEBUG
-  console.log('💾 Saving metadata:', {
-    statusCode: editedState.meta.statusCode,
-    statusNumber: editedState.meta.statusNumber,
-    triggerButton: editedState.meta.triggerButton,
-    fullMeta: editedState.meta
-  });
-  
   try {
     const response = await fetch('http://localhost:3000/api/implications/update-metadata', {
       method: 'POST',
@@ -175,27 +167,21 @@ const handleSave = async () => {
     if (!response.ok) {
       throw new Error(result.error || 'Failed to save');
     }
-
-    console.log('✅ Changes saved successfully');
     
-    // ✅ Update BOTH state and editedState with saved data
+    // Update BOTH state and editedState with saved data
     const updatedState = {
       ...state,
       meta: { ...editedState.meta },
       transitions: [...editedState.transitions]
     };
     
-    // Update parent state (this updates the prop)
     Object.assign(state, updatedState);
-    
-    // Update local edited state
     setEditedState(JSON.parse(JSON.stringify(updatedState)));
     
-    // Clear dirty flags and exit edit mode
     setHasChanges(false);
     setIsEditMode(false);
     
-    // Show success notification (better than alert)
+    // Show success notification
     const notification = document.createElement('div');
     notification.style.cssText = `
       position: fixed;
@@ -208,7 +194,6 @@ const handleSave = async () => {
       font-weight: bold;
       z-index: 99999;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      animation: slideIn 0.3s ease-out;
     `;
     notification.innerHTML = `
       <div style="display: flex; align-items: center; gap: 12px;">
@@ -228,9 +213,14 @@ const handleSave = async () => {
       setTimeout(() => notification.remove(), 300);
     }, 3000);
     
-    // ✅ Trigger background refresh (updates graph if state name changed)
-    if (window.refreshDiscovery) {
-      console.log('🔄 Refreshing discovery in background...');
+    // ✅ NEW: Use fast refresh instead of full scan
+    if (window.refreshSingleState) {
+      console.log('⚡ Using fast refresh...');
+      setTimeout(() => {
+        window.refreshSingleState(state.files.implication);
+      }, 500);
+    } else if (window.refreshDiscovery) {
+      console.log('🔄 Fallback to full refresh...');
       setTimeout(() => {
         window.refreshDiscovery();
       }, 1000);

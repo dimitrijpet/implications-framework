@@ -1,13 +1,11 @@
 import { glob } from 'glob';
 import path from 'path';
+import fs from 'fs-extra';
 import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata, extractUIImplications } from './astParser.js';
 import { isImplication, extractImplicationMetadata } from '../../../core/src/patterns/implications.js';
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
 import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discovery.js';
-
-// ❌ REMOVE THIS LINE - it's out of place
-// const uiData = await extractUIImplications(fileContent, projectPath);
 
 /**
  * Discover all patterns in a project
@@ -59,7 +57,7 @@ export async function discoverProject(projectPath) {
           const metadata = await extractImplicationMetadata(
             parsed,
             extractXStateMetadata,
-            (content) => extractUIImplications(content, projectPath, cache)  // ✅ Pass cache
+            (content) => extractUIImplications(content, projectPath, cache)
           );
           
           if (metadata.hasXStateConfig) {
@@ -88,16 +86,13 @@ export async function discoverProject(projectPath) {
     // Calculate statistics
     result.statistics = calculateStatistics(result);
     
-    // ✅ Log cache performance
     console.log(`✅ Discovery complete`);
     console.log(`   - Implications: ${result.files.implications.length}`);
     console.log(`   - Sections: ${result.files.sections.length}`);
     console.log(`   - Screens: ${result.files.screens.length}`);
     console.log(`   - Project Type: ${result.projectType}`);
     console.log(`   - Transitions: ${result.transitions.length}`);
-    console.log(`   💾 Cache Performance:`);
-    console.log(`      - Base files cached: ${Object.keys(cache.baseFiles).length}`);
-    console.log(`      - Cache entries: ${JSON.stringify(Object.keys(cache.baseFiles), null, 2)}`);
+    console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`);
     
     return result;
     
@@ -108,18 +103,65 @@ export async function discoverProject(projectPath) {
 }
 
 /**
+ * ✅ Parse a single implication file (for fast refresh)
+ * @param {string} filePath - Absolute path to file
+ * @param {string} projectPath - Project root path
+ * @returns {Object} Parsed implication data
+ */
+export async function parseImplicationFile(filePath, projectPath) {
+  try {
+    console.log(`⚡ Parsing single file: ${path.basename(filePath)}`);
+    
+    const parsed = await parseFile(filePath);
+    
+    if (parsed.error) {
+      throw new Error(`Parse error: ${parsed.error}`);
+    }
+    
+    if (!isImplication(parsed)) {
+      throw new Error('File is not an implication');
+    }
+    
+    // Create cache for this single parse
+    const cache = { baseFiles: {} };
+    
+    // Extract metadata with UI implications
+    const metadata = await extractImplicationMetadata(
+      parsed,
+      extractXStateMetadata,
+      (content) => extractUIImplications(content, projectPath, cache)
+    );
+    
+    const relativePath = path.relative(projectPath, filePath);
+    
+    console.log(`✅ Parsed: ${metadata.className}`);
+    
+    return {
+      path: relativePath,
+      type: 'implication',
+      fileName: path.basename(filePath),
+      className: metadata.className,
+      metadata
+    };
+    
+  } catch (error) {
+    console.error(`❌ Error parsing ${path.basename(filePath)}:`, error.message);
+    throw error;
+  }
+}
+
+/**
  * Classify a parsed file
  */
-async function classifyFile(parsed, result, projectPath, cache) {  // ✅ Add cache param
+async function classifyFile(parsed, result, projectPath, cache) {
   const relativePath = path.relative(result.projectPath, parsed.path);
   
   // Check for Implication
   if (isImplication(parsed)) {
-    // ✅ Pass cache to extractUIImplications
     const metadata = await extractImplicationMetadata(
       parsed, 
       extractXStateMetadata, 
-      (content) => extractUIImplications(content, projectPath, cache)  // ✅ Pass cache
+      (content) => extractUIImplications(content, projectPath, cache)
     );
     
     result.files.implications.push(new DiscoveredFile({

@@ -108,9 +108,68 @@ export default function Visualizer() {
     }
   };
 
+  const handleRefreshSingleState = async (filePath) => {
+  console.log('⚡ Fast refresh for:', filePath.split('/').pop());
+  
+  try {
+    // Re-parse just this one file
+    const response = await fetch('http://localhost:3000/api/discovery/parse-single-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath })
+    });
+
+    if (!response.ok) {
+      console.error('Fast refresh failed, falling back to full scan');
+      handleScan();
+      return;
+    }
+
+    const updatedImplication = await response.json();
+    
+    // Update the specific implication in discoveryResult
+    setDiscoveryResult(prev => {
+      if (!prev?.files?.implications) return prev;
+      
+      const updatedImplications = prev.files.implications.map(imp => {
+        if (imp.path === updatedImplication.path) {
+          return updatedImplication;
+        }
+        return imp;
+      });
+      
+      const updated = {
+        ...prev,
+        files: {
+          ...prev.files,
+          implications: updatedImplications
+        }
+      };
+      
+      // Update graph data with new node info
+      const graph = buildGraphFromDiscovery(updated);
+      setGraphData(graph);
+      
+      // Save to localStorage
+      localStorage.setItem('lastDiscoveryResult', JSON.stringify(updated));
+      localStorage.setItem('lastGraphData', JSON.stringify(graph));
+      
+      console.log('✅ Fast refresh complete');
+      return updated;
+    });
+    
+  } catch (error) {
+    console.error('❌ Fast refresh error:', error);
+    // Fallback to full scan
+    handleScan();
+  }
+};
+
   // ✅ Expose refresh function globally for StateDetailModal
-  useEffect(() => {
-    window.refreshDiscovery = handleScan;
+useEffect(() => {
+  // Expose refresh functions globally
+  window.refreshDiscovery = handleScan;
+  window.refreshSingleState = handleRefreshSingleState; // 
     
     return () => {
       delete window.refreshDiscovery;

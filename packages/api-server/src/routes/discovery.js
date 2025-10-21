@@ -1,7 +1,9 @@
-// packages/api-server/src/routes/discovery.js (FIX)
+// packages/api-server/src/routes/discovery.js
 
 import express from 'express';
-import { discoverProject } from '../services/discoveryService.js';
+import path from 'path';
+import fs from 'fs-extra';
+import { discoverProject, parseImplicationFile } from '../services/discoveryService.js';
 import { ProjectAnalyzer } from '../../../analyzer/src/index.js';
 import { StateRegistry } from '../../../core/src/index.js';
 import { loadConfig } from '../services/configService.js';
@@ -64,6 +66,52 @@ router.post('/scan', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Discovery error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/discovery/parse-single-file
+ * Re-parse a single implication file (for fast refresh)
+ */
+router.post('/parse-single-file', async (req, res) => {
+  try {
+    const { filePath } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`⚡ Fast parsing: ${path.basename(filePath)}`);
+    
+    // Check if file exists
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    // Get project path from the last scanned project
+    const lastScannedProject = req.app.get('lastScannedProject');
+    const projectPath = lastScannedProject || path.dirname(path.dirname(path.dirname(filePath)));
+    
+    console.log(`   Project path: ${projectPath}`);
+    
+    // Parse the single file
+    const implication = await parseImplicationFile(filePath, projectPath);
+    
+    if (!implication) {
+      return res.status(400).json({ error: 'Failed to parse file' });
+    }
+    
+    console.log(`✅ File parsed: ${implication.className}`);
+    
+    res.json(implication);
+    
+  } catch (error) {
+    console.error('❌ Parse single file error:', error);
     res.status(500).json({ 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
