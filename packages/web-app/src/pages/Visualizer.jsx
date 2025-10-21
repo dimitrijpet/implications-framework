@@ -4,6 +4,7 @@ import StateDetailModal from '../components/StateGraph/StateDetailModal';
 import apiClient from '../api/client';
 import { buildGraphFromDiscovery, buildSampleGraph } from '../utils/graphBuilder';  // ✅ ADD buildSampleGraph
 import { defaultTheme } from '../config/visualizerTheme';
+import StatsPanel from '../components/StatsPanel/StatsPanel';
 
 export default function Visualizer() {
   const [graphData, setGraphData] = useState(null);
@@ -212,8 +213,20 @@ setSelectedState(state);
         </div>
       </header>
       
+
+
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
+
+              {/* Stats Panel */}
+{discoveryResult && (
+  <div className="mb-6">
+    <StatsPanel 
+      discoveryResult={discoveryResult}
+      theme={defaultTheme}
+    />
+  </div>
+)}
         
         {/* Graph */}
         <div 

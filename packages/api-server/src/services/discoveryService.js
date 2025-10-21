@@ -21,6 +21,11 @@ export async function discoverProject(projectPath) {
   // Add transitions array
   result.transitions = [];
   
+  // ✅ CREATE CACHE OBJECT
+  const cache = {
+    baseFiles: {}
+  };
+  
   try {
     // Find all JavaScript files
     const jsFiles = await glob('**/*.js', {
@@ -45,16 +50,16 @@ export async function discoverProject(projectPath) {
           continue;
         }
         
-        // Check what type of file this is
-        await classifyFile(parsed, result, projectPath);
+        // Check what type of file this is - PASS CACHE
+        await classifyFile(parsed, result, projectPath, cache);
         
         // NEW: Extract transitions if it's an implication
         if (isImplication(parsed)) {
-          // ✅ AWAIT the metadata extraction!
+          // PASS CACHE to metadata extraction
           const metadata = await extractImplicationMetadata(
             parsed,
             extractXStateMetadata,
-            (content) => extractUIImplications(content, projectPath)
+            (content) => extractUIImplications(content, projectPath, cache)  // ✅ Pass cache
           );
           
           if (metadata.hasXStateConfig) {
@@ -83,12 +88,16 @@ export async function discoverProject(projectPath) {
     // Calculate statistics
     result.statistics = calculateStatistics(result);
     
+    // ✅ Log cache performance
     console.log(`✅ Discovery complete`);
     console.log(`   - Implications: ${result.files.implications.length}`);
     console.log(`   - Sections: ${result.files.sections.length}`);
     console.log(`   - Screens: ${result.files.screens.length}`);
     console.log(`   - Project Type: ${result.projectType}`);
-    console.log(`   - Transitions: ${result.transitions.length}`);  // ✅ Log this!
+    console.log(`   - Transitions: ${result.transitions.length}`);
+    console.log(`   💾 Cache Performance:`);
+    console.log(`      - Base files cached: ${Object.keys(cache.baseFiles).length}`);
+    console.log(`      - Cache entries: ${JSON.stringify(Object.keys(cache.baseFiles), null, 2)}`);
     
     return result;
     
@@ -101,16 +110,16 @@ export async function discoverProject(projectPath) {
 /**
  * Classify a parsed file
  */
-async function classifyFile(parsed, result, projectPath) {
+async function classifyFile(parsed, result, projectPath, cache) {  // ✅ Add cache param
   const relativePath = path.relative(result.projectPath, parsed.path);
   
   // Check for Implication
   if (isImplication(parsed)) {
-    // ✅ AWAIT the async function!
+    // ✅ Pass cache to extractUIImplications
     const metadata = await extractImplicationMetadata(
       parsed, 
       extractXStateMetadata, 
-      (content) => extractUIImplications(content, projectPath)
+      (content) => extractUIImplications(content, projectPath, cache)  // ✅ Pass cache
     );
     
     result.files.implications.push(new DiscoveredFile({

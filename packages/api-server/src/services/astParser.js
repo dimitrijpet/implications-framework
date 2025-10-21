@@ -276,10 +276,15 @@ function extractValueFromNode(node) {
 
 /**
  * Extract UI implications from mirrorsOn.UI
- * NOW ASYNC to support base file resolution
+ * NOW with caching support
  */
-export async function extractUIImplications(content, projectPath) {
+export async function extractUIImplications(content, projectPath, cache = {}) {
   console.log('🔍 Extracting UI implications...');
+  
+  // Initialize base file cache if not provided
+  if (!cache.baseFiles) {
+    cache.baseFiles = {};
+  }
   
   const uiData = {
     total: 0,
@@ -318,11 +323,12 @@ export async function extractUIImplications(content, projectPath) {
                 if (platformProp.value?.type === 'ObjectExpression') {
                   console.log('    Platform has', platformProp.value.properties.length, 'screens');
                   
-                  // Process this platform (async)
+                  // Process this platform (async) - PASS CACHE
                   const platformPromise = processPlatform(
                     platformName,
                     platformProp.value,
-                    projectPath
+                    projectPath,
+                    cache  // ✅ Pass cache
                   ).then(platformData => {
                     if (platformData && platformData.screens.length > 0) {
                       uiData.platforms[platformName] = platformData;
@@ -344,6 +350,13 @@ export async function extractUIImplications(content, projectPath) {
     
     console.log('📊 Final UI data:', uiData);
     
+    // ✅ Log cache stats
+    if (cache.baseFiles) {
+      const cacheKeys = Object.keys(cache.baseFiles);
+      console.log(`💾 Cache stats: ${cacheKeys.length} base files cached`);
+      console.log(`   Files:`, cacheKeys);
+    }
+    
   } catch (error) {
     console.error('❌ Error extracting UI implications:', error.message);
   }
@@ -353,8 +366,9 @@ export async function extractUIImplications(content, projectPath) {
 
 /**
  * Process a single platform's screens (async)
+ * NOW with caching support
  */
-async function processPlatform(platformName, platformNode, projectPath) {
+async function processPlatform(platformName, platformNode, projectPath, cache) {
   const screens = [];
   const screenPromises = [];
   
@@ -373,7 +387,7 @@ async function processPlatform(platformName, platformNode, projectPath) {
       for (let idx = 0; idx < screenProp.value.elements.length; idx++) {
         const validationNode = screenProp.value.elements[idx];
         
-        const screenPromise = parseScreenValidation(validationNode, projectPath)
+        const screenPromise = parseScreenValidation(validationNode, projectPath, cache)  // ✅ Pass cache
           .then(screenData => {
             if (screenData) {
               // If multiple validations, add index to name
@@ -393,7 +407,7 @@ async function processPlatform(platformName, platformNode, projectPath) {
       }
     } else {
       // Fallback: single object (rare case)
-      const screenPromise = parseScreenValidation(screenProp.value, projectPath)
+      const screenPromise = parseScreenValidation(screenProp.value, projectPath, cache)  // ✅ Pass cache
         .then(screenData => {
           if (screenData) {
             screens.push({
@@ -419,12 +433,12 @@ async function processPlatform(platformName, platformNode, projectPath) {
 }
 
 /**
- * Parse a screen validation object (NOW ASYNC)
+ * Parse a screen validation object (NOW ASYNC with caching)
  */
-async function parseScreenValidation(node, projectPath) {
+async function parseScreenValidation(node, projectPath, cache) {
   console.log('      🔍 Parsing screen validation, node type:', node?.type);
   
-  // ✅ STEP 1 & 2: Check if this is a mergeWithBase call
+  // ✅ Check if this is a mergeWithBase call
   if (node?.type === 'CallExpression') {
     // Check if it's specifically ImplicationHelper.mergeWithBase()
     if (node.callee?.type === 'MemberExpression' &&
@@ -436,8 +450,8 @@ async function parseScreenValidation(node, projectPath) {
       const mergeData = parseMergeWithBaseCall(node);
       
       if (mergeData && mergeData.baseInfo) {
-        // ✅ STEP 3: Resolve base file and merge
-        const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath);
+        // ✅ Resolve base file and merge (with cache)
+        const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath, cache);
         const merged = mergeScreenData(baseData, mergeData.overrides);
         
         return merged;
@@ -465,7 +479,7 @@ async function parseScreenValidation(node, projectPath) {
   // Handle object literals
   return parseScreenValidationObject(node);
 }
-
+ 
 /**
  * Parse mergeWithBase call and extract arguments
  */
@@ -703,10 +717,19 @@ function extractStaticPropertyFromContent(content, platform, screenName) {
 
 /**
  * Resolve base implication and return base data
+ * NOW with caching!
  */
-async function resolveBaseImplication(baseInfo, projectPath) {
+async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
   if (!baseInfo || !baseInfo.className) {
     return null;
+  }
+  
+  const cacheKey = `${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`;
+  
+  // ✅ Check cache first
+  if (cache.baseFiles && cache.baseFiles[cacheKey]) {
+    console.log(`    💾 Cache HIT: ${cacheKey}`);
+    return cache.baseFiles[cacheKey];
   }
   
   console.log(`    🔗 Resolving base: ${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`);
@@ -734,6 +757,13 @@ async function resolveBaseImplication(baseInfo, projectPath) {
       alwaysVisible: baseData.alwaysVisible?.length || 0,
       description: baseData.description ? 'yes' : 'no'
     });
+    
+    // ✅ Store in cache
+    if (!cache.baseFiles) {
+      cache.baseFiles = {};
+    }
+    cache.baseFiles[cacheKey] = baseData;
+    console.log(`    💾 Cached: ${cacheKey}`);
   }
   
   return baseData;
