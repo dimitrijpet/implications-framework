@@ -44,22 +44,29 @@ export class StateRegistry {
   }
   
   /**
-   * Auto-discover mappings from class names
-   */
-  buildAuto(discoveryResult) {
-    const implications = discoveryResult.files?.implications || [];
+ * Auto-discover mappings from class names
+ */
+buildAuto(discoveryResult) {
+  const implications = discoveryResult.files?.implications || [];
+  
+  implications.forEach(impl => {
+    const className = impl.metadata?.className;
+    if (!className) return;
     
-    implications.forEach(impl => {
-      const className = impl.metadata?.className;
-      if (!className) return;
-      
-      const shortName = this.extractShortName(className);
-      
-      if (shortName) {
-        this.register(shortName, className);
-      }
-    });
-  }
+    const shortName = this.extractShortName(className);
+    
+    if (shortName) {
+      this.register(shortName, className);
+    }
+  });
+  
+  // ✅ NEW: Also include explicit mappings as overrides
+  const explicitMappings = this.config.mappings || {};
+  Object.entries(explicitMappings).forEach(([short, full]) => {
+    console.log(`  🔧 Adding explicit override: "${short}" → "${full}"`);
+    this.register(short, full);
+  });
+}
   
   /**
    * Use explicit mappings from config

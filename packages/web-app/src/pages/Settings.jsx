@@ -1,14 +1,128 @@
-// packages/web-app/src/pages/Settings.jsx (FIX THE IMPORT)
+// packages/web-app/src/pages/Settings.jsx (FIX - add null checks)
 
 import { useState, useEffect } from 'react';
-import { defaultTheme } from '../config/visualizerTheme'; // FIXED: use visualizerTheme instead
+import { defaultTheme } from '../config/visualizerTheme';
 
 export default function Settings() {
+  const [projectPath, setProjectPath] = useState('/home/dimitrij/Projects/cxm/PolePosition-TESTING');
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-  const theme = defaultTheme; // FIXED: use defaultTheme
+  const [configExists, setConfigExists] = useState(false);
+  const theme = defaultTheme;
+
+  // Load config when component mounts
+  useEffect(() => {
+    if (projectPath) {
+      loadConfig();
+    }
+  }, []);
+
+  const loadConfig = async () => {
+    if (!projectPath.trim()) {
+      setMessage({ type: 'error', text: 'Please enter a project path' });
+      return;
+    }
+
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const encodedPath = encodeURIComponent(projectPath);
+      const response = await fetch(`http://localhost:3000/api/config/${encodedPath}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // ✅ ENSURE stateRegistry exists
+      const loadedConfig = {
+        ...data.config,
+        stateRegistry: data.config.stateRegistry || {
+          strategy: 'auto',
+          caseSensitive: false,
+          statusPrefixes: [],
+          pattern: '{Status}BookingImplications',
+          mappings: {}
+        }
+      };
+      
+      setConfig(loadedConfig);
+      setConfigExists(data.exists);
+      
+      setMessage({ 
+        type: data.exists ? 'success' : 'info', 
+        text: data.exists 
+          ? '✅ Config loaded successfully!' 
+          : 'ℹ️ No config file found. Using defaults. Save to create one.'
+      });
+    } catch (error) {
+      console.error('Load config error:', error);
+      setMessage({ type: 'error', text: `❌ Error loading config: ${error.message}` });
+      
+      // ✅ Set default config on error
+      setConfig({
+        projectName: 'My Project',
+        projectType: 'generic',
+        stateRegistry: {
+          strategy: 'auto',
+          caseSensitive: false,
+          statusPrefixes: [
+            'Accepted', 'Rejected', 'Pending', 'Standby',
+            'Created', 'CheckedIn', 'CheckedOut', 'Completed',
+            'Cancelled', 'Missed', 'Invited'
+          ],
+          pattern: '{Status}BookingImplications',
+          mappings: {}
+        }
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+// packages/web-app/src/pages/Settings.jsx (UPDATE handleSave - add logging)
+
+const handleSave = async () => {
+  setSaving(true);
+  setMessage(null);
+  
+  // ✅ ADD DEBUG LOGGING
+  console.log('💾 Saving config:', JSON.stringify(config, null, 2));
+  console.log('📋 State Registry mappings:', config.stateRegistry?.mappings);
+  
+  try {
+    const response = await fetch('http://localhost:3000/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectPath: projectPath.trim(),
+        config
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    setMessage({ 
+      type: 'success', 
+      text: `✅ Settings saved successfully!${data.backup ? ' (Backup created)' : ''}` 
+    });
+    setConfigExists(true);
+    
+  } catch (error) {
+    console.error('Save config error:', error);
+    setMessage({ type: 'error', text: `❌ Error: ${error.message}` });
+  } finally {
+    setSaving(false);
+  }
+};
 
   const handleStrategyChange = (strategy) => {
     setConfig({
@@ -98,44 +212,16 @@ export default function Settings() {
     });
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    setMessage(null);
-    
-    try {
-      // In a real implementation, this would save to the config file
-      // For now, we'll just simulate it
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setMessage({ type: 'success', text: '✅ Settings saved successfully!' });
-    } catch (error) {
-      setMessage({ type: 'error', text: `❌ Error: ${error.message}` });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Initialize with default config
-  useEffect(() => {
-    setConfig({
-      projectName: 'My Project',
-      projectType: 'booking',
-      stateRegistry: {
-        strategy: 'auto',
-        caseSensitive: false,
-        statusPrefixes: [
-          'Accepted', 'Rejected', 'Pending', 'Standby',
-          'Created', 'CheckedIn', 'CheckedOut', 'Completed',
-          'Cancelled', 'Missed', 'Invited'
-        ],
-        pattern: '{Status}BookingImplications',
-        mappings: {}
-      }
-    });
-  }, []);
-
+  // ✅ Show loading state while config is null
   if (!config) {
-    return <div>Loading...</div>;
+    return (
+      <div className="min-h-screen p-8 flex items-center justify-center" style={{ background: theme.colors.background.primary }}>
+        <div className="text-center">
+          <div className="text-4xl mb-4">⏳</div>
+          <h2 className="text-2xl font-bold mb-4" style={{ color: theme.colors.text.primary }}>Loading Settings...</h2>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -151,13 +237,46 @@ export default function Settings() {
           </p>
         </div>
 
+        {/* Project Path Input */}
+        <div className="mb-6 p-6 rounded-xl" style={{ background: theme.colors.background.secondary }}>
+          <label className="block text-sm font-medium mb-2" style={{ color: theme.colors.text.secondary }}>
+            Project Path
+          </label>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={projectPath}
+              onChange={(e) => setProjectPath(e.target.value)}
+              className="flex-1 px-4 py-2 rounded-lg border"
+              style={{ 
+                background: theme.colors.background.tertiary,
+                borderColor: theme.colors.border,
+                color: theme.colors.text.primary
+              }}
+            />
+            <button
+              onClick={loadConfig}
+              disabled={loading}
+              className="px-6 py-2 rounded-lg font-bold text-white transition-all disabled:opacity-50"
+              style={{ background: theme.colors.accents.blue }}
+            >
+              {loading ? '⏳ Loading...' : '📂 Load'}
+            </button>
+          </div>
+          {configExists && (
+            <p className="mt-2 text-sm" style={{ color: theme.colors.accents.green }}>
+              ✅ Config file exists
+            </p>
+          )}
+        </div>
+
         {/* Message */}
         {message && (
           <div 
             className="mb-6 p-4 rounded-lg"
             style={{ 
-              background: message.type === 'success' ? '#d4edda' : '#f8d7da',
-              color: message.type === 'success' ? '#155724' : '#721c24'
+              background: message.type === 'success' ? '#d4edda' : message.type === 'info' ? '#d1ecf1' : '#f8d7da',
+              color: message.type === 'success' ? '#155724' : message.type === 'info' ? '#0c5460' : '#721c24'
             }}
           >
             {message.text}
@@ -179,7 +298,7 @@ export default function Settings() {
               Strategy
             </label>
             <select
-              value={config.stateRegistry.strategy}
+              value={config.stateRegistry?.strategy || 'auto'}
               onChange={(e) => handleStrategyChange(e.target.value)}
               className="w-full px-4 py-2 rounded-lg border"
               style={{ 
@@ -193,21 +312,21 @@ export default function Settings() {
               <option value="explicit">Explicit Mappings</option>
             </select>
             <p className="mt-2 text-sm" style={{ color: theme.colors.text.secondary }}>
-              {config.stateRegistry.strategy === 'auto' && 'Automatically extract state names from class names'}
-              {config.stateRegistry.strategy === 'pattern' && 'Use a regex pattern to extract state names'}
-              {config.stateRegistry.strategy === 'explicit' && 'Manually define all state name mappings'}
+              {config.stateRegistry?.strategy === 'auto' && 'Automatically extract state names from class names'}
+              {config.stateRegistry?.strategy === 'pattern' && 'Use a regex pattern to extract state names'}
+              {config.stateRegistry?.strategy === 'explicit' && 'Manually define all state name mappings'}
             </p>
           </div>
 
           {/* Pattern (only for pattern strategy) */}
-          {config.stateRegistry.strategy === 'pattern' && (
+          {config.stateRegistry?.strategy === 'pattern' && (
             <div className="mb-6">
               <label className="block text-sm font-medium mb-2" style={{ color: theme.colors.text.secondary }}>
                 Pattern
               </label>
               <input
                 type="text"
-                value={config.stateRegistry.pattern}
+                value={config.stateRegistry?.pattern || ''}
                 onChange={(e) => handlePatternChange(e.target.value)}
                 placeholder="{Status}BookingImplications"
                 className="w-full px-4 py-2 rounded-lg border font-mono"
@@ -228,7 +347,7 @@ export default function Settings() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={config.stateRegistry.caseSensitive}
+                checked={config.stateRegistry?.caseSensitive || false}
                 onChange={(e) => handleCaseSensitiveChange(e.target.checked)}
                 className="w-5 h-5"
               />
@@ -242,7 +361,7 @@ export default function Settings() {
           </div>
 
           {/* Status Prefixes (for auto strategy) */}
-          {config.stateRegistry.strategy === 'auto' && (
+          {config.stateRegistry?.strategy === 'auto' && (
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium" style={{ color: theme.colors.text.secondary }}>
@@ -260,7 +379,7 @@ export default function Settings() {
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {(config.stateRegistry.statusPrefixes || []).map((prefix, index) => (
+                {(config.stateRegistry?.statusPrefixes || []).map((prefix, index) => (
                   <div
                     key={index}
                     className="flex items-center gap-2 px-3 py-1 rounded-full"
@@ -282,7 +401,7 @@ export default function Settings() {
           )}
 
           {/* Explicit Mappings (for explicit strategy) */}
-          {config.stateRegistry.strategy === 'explicit' && (
+          {config.stateRegistry?.strategy === 'explicit' && (
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-medium" style={{ color: theme.colors.text.secondary }}>
@@ -300,7 +419,7 @@ export default function Settings() {
                 </button>
               </div>
               <div className="space-y-2">
-                {Object.entries(config.stateRegistry.mappings || {}).map(([shortName, fullName]) => (
+                {Object.entries(config.stateRegistry?.mappings || {}).map(([shortName, fullName]) => (
                   <div
                     key={shortName}
                     className="flex items-center gap-3 p-3 rounded-lg"
@@ -321,7 +440,7 @@ export default function Settings() {
                     </button>
                   </div>
                 ))}
-                {Object.keys(config.stateRegistry.mappings || {}).length === 0 && (
+                {Object.keys(config.stateRegistry?.mappings || {}).length === 0 && (
                   <div className="text-center py-4" style={{ color: theme.colors.text.secondary }}>
                     No mappings defined
                   </div>
