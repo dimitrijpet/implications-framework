@@ -1,28 +1,150 @@
-import { useEffect } from 'react';
-import { useState } from 'react';
+// packages/web-app/src/components/StateGraph/StateDetailModal.jsx (COMPLETE REPLACEMENT)
+
+import { useEffect, useState } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 
-export default function StateDetailModal({ state, onClose, theme = defaultTheme }) {
+export default function StateDetailModal({ state, onClose, theme = defaultTheme, onSave }) {
+  const [editMode, setEditMode] = useState(false);
+  const [editedState, setEditedState] = useState(state);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
+  // Reset when state changes
+  useEffect(() => {
+    setEditedState(state);
+    setEditMode(false);
+    setHasChanges(false);
+  }, [state]);
+  
   // Close on ESC key
   useEffect(() => {
     const handleEsc = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (hasChanges && !window.confirm('You have unsaved changes. Close anyway?')) {
+          return;
+        }
+        onClose();
+      }
     };
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose]);
+  }, [onClose, hasChanges]);
   
   if (!state) return null;
   
   const statusColor = getStatusColor(state.name, theme);
   const statusIcon = getStatusIcon(state.name, theme);
-  const platformStyle = getPlatformStyle(state.meta.platform, theme);
+  const platformStyle = getPlatformStyle(editedState.meta.platform, theme);
+  
+  // Handle metadata field change
+  const handleMetadataChange = (field, value) => {
+    setEditedState(prev => ({
+      ...prev,
+      meta: {
+        ...prev.meta,
+        [field]: value
+      }
+    }));
+    setHasChanges(true);
+  };
+  
+  // Handle transition add
+  const handleAddTransition = (event, target) => {
+    setEditedState(prev => ({
+      ...prev,
+      transitions: [
+        ...prev.transitions,
+        { event, target }
+      ]
+    }));
+    setHasChanges(true);
+  };
+  
+  // Handle transition remove
+  const handleRemoveTransition = (index) => {
+    setEditedState(prev => ({
+      ...prev,
+      transitions: prev.transitions.filter((_, i) => i !== index)
+    }));
+    setHasChanges(true);
+  };
+  
+  // Save changes
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch('http://localhost:3000/api/implications/update-metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: editedState.files.implication,
+          metadata: editedState.meta,
+          transitions: editedState.transitions
+        })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Save successful:', result);
+      
+      // Show success notification
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #10b981;
+        color: white;
+        padding: 16px 24px;
+        border-radius: 8px;
+        font-weight: bold;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      `;
+      notification.textContent = '✅ Changes saved! Backup created: ' + result.backup.split('/').pop();
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.remove();
+      }, 5000);
+      
+      setHasChanges(false);
+      setEditMode(false);
+      
+      if (onSave) onSave(editedState);
+      
+    } catch (error) {
+      console.error('❌ Save failed:', error);
+      alert(`Failed to save: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  // Cancel editing
+  const handleCancel = () => {
+    if (hasChanges && !window.confirm('Discard unsaved changes?')) {
+      return;
+    }
+    setEditedState(state);
+    setEditMode(false);
+    setHasChanges(false);
+  };
   
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-80 z-50 overflow-y-auto backdrop-blur-sm detail-panel-enter"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) {
+          if (hasChanges && !window.confirm('You have unsaved changes. Close anyway?')) {
+            return;
+          }
+          onClose();
+        }
       }}
     >
       <div className="min-h-screen px-4 py-12">
@@ -30,7 +152,7 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
           <div 
             className="glass rounded-2xl p-8 border"
             style={{ 
-              borderColor: theme.colors.border,
+              borderColor: hasChanges ? theme.colors.accents.yellow : theme.colors.border,
               boxShadow: '0 24px 64px rgba(0, 0, 0, 0.5)'
             }}
           >
@@ -50,31 +172,88 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
                   >
                     {state.name}
                   </span>
+                  
+                  {hasChanges && (
+                    <span 
+                      className="ml-3 px-3 py-1 rounded text-sm font-bold"
+                      style={{ 
+                        background: `${theme.colors.accents.yellow}20`,
+                        color: theme.colors.accents.yellow
+                      }}
+                    >
+                      ⚠️ Unsaved Changes
+                    </span>
+                  )}
                 </div>
               </div>
-              <button 
-                onClick={onClose}
-                className="text-red-400 hover:text-red-300 text-3xl font-bold px-4 py-2 rounded-lg hover:bg-red-900/20 transition"
-              >
-                ✕
-              </button>
+              
+              {/* Action Buttons */}
+              <div className="flex gap-2">
+                {!editMode ? (
+                  <>
+                    <button 
+                      onClick={() => setEditMode(true)}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                      style={{ 
+                        background: theme.colors.accents.blue,
+                        color: 'white'
+                      }}
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button 
+                      onClick={onClose}
+                      className="text-red-400 hover:text-red-300 text-3xl font-bold px-4 py-2 rounded-lg hover:bg-red-900/20 transition"
+                    >
+                      ✕
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button 
+                      onClick={handleSave}
+                      disabled={!hasChanges || saving}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ 
+                        background: theme.colors.accents.green,
+                        color: 'white'
+                      }}
+                    >
+                      {saving ? '⏳ Saving...' : '💾 Save'}
+                    </button>
+                    <button 
+                      onClick={handleCancel}
+                      disabled={saving}
+                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110 disabled:opacity-50"
+                      style={{ 
+                        background: theme.colors.background.tertiary,
+                        color: theme.colors.text.primary
+                      }}
+                    >
+                      ❌ Cancel
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             
-            {/* ✅ DYNAMIC Metadata Grid */}
+            {/* Metadata Grid */}
             <div className="mb-8">
               <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.blue }}>
                 📋 Metadata
               </h3>
               
               <DynamicMetadataGrid 
-                metadata={state.meta} 
+                metadata={editedState.meta} 
                 theme={theme}
                 platformStyle={platformStyle}
+                editable={editMode}
+                onChange={handleMetadataChange}
               />
             </div>
             
             {/* Files */}
-            {state.files && (
+            {editedState.files && (
               <div className="mb-8">
                 <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
                   📂 Files
@@ -83,13 +262,13 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
                 <div className="space-y-3">
                   <FileCard 
                     label="Implication File" 
-                    path={state.files.implication}
+                    path={editedState.files.implication}
                     theme={theme}
                   />
-                  {state.files.test && (
+                  {editedState.files.test && (
                     <FileCard 
                       label="Test File" 
-                      path={state.files.test}
+                      path={editedState.files.test}
                       theme={theme}
                     />
                   )}
@@ -98,19 +277,42 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
             )}
             
             {/* Transitions */}
-            {state.transitions && (
+            {editedState.transitions && (
               <div className="mb-8">
-                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.yellow }}>
-                  🔄 Transitions ({state.transitions.length})
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-2xl font-bold" style={{ color: theme.colors.accents.yellow }}>
+                    🔄 Transitions ({editedState.transitions.length})
+                  </h3>
+                  
+                  {editMode && (
+                    <button
+                      onClick={() => {
+                        const event = prompt('Enter event name (e.g., ACCEPT, REJECT):');
+                        if (!event) return;
+                        const target = prompt('Enter target state name:');
+                        if (!target) return;
+                        handleAddTransition(event.toUpperCase(), target);
+                      }}
+                      className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
+                      style={{ 
+                        background: theme.colors.accents.green,
+                        color: 'white'
+                      }}
+                    >
+                      ➕ Add Transition
+                    </button>
+                  )}
+                </div>
                 
                 <div className="space-y-3">
-                  {state.transitions.length > 0 ? (
-                    state.transitions.map((t, i) => (
+                  {editedState.transitions.length > 0 ? (
+                    editedState.transitions.map((t, i) => (
                       <TransitionCard 
                         key={i}
                         transition={t}
                         theme={theme}
+                        editable={editMode}
+                        onRemove={() => handleRemoveTransition(i)}
                       />
                     ))
                   ) : (
@@ -123,14 +325,14 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
             )}
             
             {/* UI Coverage */}
-            {state.uiCoverage && state.uiCoverage.total > 0 && (
+            {editedState.uiCoverage && editedState.uiCoverage.total > 0 && (
               <div className="mb-8">
                 <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.pink }}>
-                  🖥️ UI Coverage ({state.uiCoverage.total} screens)
+                  🖥️ UI Coverage ({editedState.uiCoverage.total} screens)
                 </h3>
                 
                 <UICoverageSection 
-                  platforms={state.uiCoverage.platforms}
+                  platforms={editedState.uiCoverage.platforms}
                   theme={theme}
                 />
               </div>
@@ -144,10 +346,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme 
 }
 
 // ============================================
-// ✅ NEW: Dynamic Metadata Grid
+// Dynamic Metadata Grid (with edit support)
 // ============================================
 
-function DynamicMetadataGrid({ metadata, theme, platformStyle }) {
+function DynamicMetadataGrid({ metadata, theme, platformStyle, editable, onChange }) {
   if (!metadata || Object.keys(metadata).length === 0) {
     return (
       <div className="glass p-4 rounded-lg text-center" style={{ color: theme.colors.text.tertiary }}>
@@ -156,7 +358,6 @@ function DynamicMetadataGrid({ metadata, theme, platformStyle }) {
     );
   }
   
-  // ✅ Group fields by category for better organization
   const fieldGroups = categorizeFields(metadata);
   
   return (
@@ -168,12 +369,14 @@ function DynamicMetadataGrid({ metadata, theme, platformStyle }) {
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {fields.map(([key, value]) => (
-              <DynamicMetadataField 
+              <EditableMetadataField 
                 key={key}
                 fieldName={key}
                 value={value}
                 theme={theme}
                 platformStyle={platformStyle}
+                editable={editable}
+                onChange={(newValue) => onChange(key, newValue)}
               />
             ))}
           </div>
@@ -184,7 +387,94 @@ function DynamicMetadataGrid({ metadata, theme, platformStyle }) {
 }
 
 // ============================================
-// ✅ Categorize fields for better organization
+// Editable Metadata Field
+// ============================================
+
+function EditableMetadataField({ fieldName, value, theme, platformStyle, editable, onChange }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value);
+  
+  const displayName = fieldName
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, str => str.toUpperCase())
+    .trim();
+  
+  const handleSave = () => {
+    onChange(editValue);
+    setIsEditing(false);
+  };
+  
+  const handleCancel = () => {
+    setEditValue(value);
+    setIsEditing(false);
+  };
+  
+  // Editable fields (simple string fields only)
+  const editableFields = ['status', 'triggerAction', 'triggerButton', 'afterButton', 'previousButton', 'notificationKey', 'statusCode', 'statusNumber', 'platform', 'actionName'];
+  const canEdit = editable && editableFields.includes(fieldName) && !isEditing;
+  
+  return (
+    <div className="glass p-4 rounded-lg relative group">
+      <div className="text-sm mb-1" style={{ color: theme.colors.text.tertiary }}>
+        {displayName}
+      </div>
+      
+      {isEditing ? (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={editValue || ''}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') handleSave();
+              if (e.key === 'Escape') handleCancel();
+            }}
+            autoFocus
+            className="flex-1 px-2 py-1 rounded"
+            style={{
+              background: theme.colors.background.tertiary,
+              border: `2px solid ${theme.colors.accents.blue}`,
+              color: theme.colors.text.primary
+            }}
+          />
+          <button
+            onClick={handleSave}
+            className="px-2 py-1 rounded font-semibold transition hover:brightness-110"
+            style={{ background: theme.colors.accents.green, color: 'white' }}
+          >
+            ✓
+          </button>
+          <button
+            onClick={handleCancel}
+            className="px-2 py-1 rounded font-semibold transition hover:brightness-110"
+            style={{ background: theme.colors.accents.red, color: 'white' }}
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
+            {renderValue(value, fieldName, theme, platformStyle)}
+          </div>
+          
+          {canEdit && (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
+              style={{ background: theme.colors.accents.blue, color: 'white' }}
+            >
+              ✏️
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// Helper Functions (unchanged)
 // ============================================
 
 function categorizeFields(metadata) {
@@ -196,22 +486,16 @@ function categorizeFields(metadata) {
     'Other': []
   };
   
-  // Known field categories
   const coreFields = ['status', 'triggerAction', 'statusCode', 'statusNumber'];
   const buttonFields = ['triggerButton', 'afterButton', 'previousButton'];
   const platformFields = ['platform', 'platforms', 'notificationKey'];
   const setupFields = ['setup', 'allSetups', 'actionName', 'requires', 'requiredFields'];
   
   Object.entries(metadata).forEach(([key, value]) => {
-    // ✅ CHANGED: Don't skip null/undefined - we want to show them as warnings!
-    // Only skip these system fields
     if (key === 'uiCoverage') return;
-    
-    // Skip empty arrays and empty objects (but NOT null/undefined)
     if (Array.isArray(value) && value.length === 0) return;
     if (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0) return;
     
-    // Categorize
     if (coreFields.includes(key)) {
       groups['Core'].push([key, value]);
     } else if (buttonFields.includes(key)) {
@@ -225,7 +509,6 @@ function categorizeFields(metadata) {
     }
   });
   
-  // Remove empty groups
   Object.keys(groups).forEach(key => {
     if (groups[key].length === 0) delete groups[key];
   });
@@ -233,38 +516,7 @@ function categorizeFields(metadata) {
   return groups;
 }
 
-// ============================================
-// ✅ Dynamic Field Renderer
-// ============================================
-
-function DynamicMetadataField({ fieldName, value, theme, platformStyle }) {
-  // Format field name for display
-  const displayName = fieldName
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, str => str.toUpperCase())
-    .trim();
-  
-  // Render based on value type
-  const renderedValue = renderValue(value, fieldName, theme, platformStyle);
-  
-  return (
-    <div className="glass p-4 rounded-lg">
-      <div className="text-sm mb-1" style={{ color: theme.colors.text.tertiary }}>
-        {displayName}
-      </div>
-      <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
-        {renderedValue}
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// ✅ Smart Value Renderer
-// ============================================
-
 function renderValue(value, fieldName, theme, platformStyle) {
-  // Handle null/undefined - RED warning
   if (value === null || value === undefined) {
     return (
       <span 
@@ -279,7 +531,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Handle arrays
   if (Array.isArray(value)) {
     if (value.length === 0) {
       return (
@@ -295,7 +546,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
       );
     }
     
-    // Special case: requiredFields
     if (fieldName === 'requiredFields') {
       return (
         <div className="flex flex-wrap gap-2">
@@ -315,7 +565,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
       );
     }
     
-    // Default array rendering - show as badges
     return (
       <div className="flex flex-wrap gap-2">
         {value.map((item, i) => (
@@ -334,7 +583,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Handle objects - IMPROVED
   if (typeof value === 'object') {
     const entries = Object.entries(value);
     if (entries.length === 0) {
@@ -377,7 +625,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Handle empty strings
   if (value === '') {
     return (
       <span 
@@ -392,7 +639,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Special rendering for specific fields
   if (fieldName === 'platform' && platformStyle) {
     return (
       <span style={{ color: platformStyle.color }}>
@@ -401,7 +647,6 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Special styling for button fields
   if (fieldName.toLowerCase().includes('button')) {
     return (
       <span 
@@ -416,13 +661,8 @@ function renderValue(value, fieldName, theme, platformStyle) {
     );
   }
   
-  // Default: convert to string
   return String(value);
 }
-
-// ============================================
-// Helper Components (unchanged)
-// ============================================
 
 function FileCard({ label, path, theme }) {
   return (
@@ -437,9 +677,9 @@ function FileCard({ label, path, theme }) {
   );
 }
 
-function TransitionCard({ transition, theme }) {
+function TransitionCard({ transition, theme, editable, onRemove }) {
   return (
-    <div className="glass p-4 rounded-lg flex items-center gap-4">
+    <div className="glass p-4 rounded-lg flex items-center gap-4 group relative">
       <span 
         className="font-mono font-bold px-4 py-2 rounded-lg"
         style={{ background: theme.colors.accents.blue }}
@@ -453,6 +693,16 @@ function TransitionCard({ transition, theme }) {
       >
         {getStatusIcon(transition.target)} {transition.target}
       </span>
+      
+      {editable && onRemove && (
+        <button
+          onClick={onRemove}
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
+          style={{ background: theme.colors.accents.red, color: 'white' }}
+        >
+          🗑️ Remove
+        </button>
+      )}
     </div>
   );
 }
@@ -472,16 +722,12 @@ function UICoverageSection({ platforms, theme }) {
   );
 }
 
-
-
 function PlatformCard({ platformName, data, theme }) {
-  const [isExpanded, setIsExpanded] = useState(true);  // ✅ Collapsible state
+  const [isExpanded, setIsExpanded] = useState(true);
   const platformStyle = getPlatformStyle(platformName, theme);
   
   return (
     <div className="glass-light rounded-lg border" style={{ borderColor: theme.colors.border }}>
-      
-      {/* ✅ Clickable Header */}
       <div 
         className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/5 transition rounded-t-lg"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -494,7 +740,6 @@ function PlatformCard({ platformName, data, theme }) {
           </span>
         </div>
         
-        {/* ✅ Expand/Collapse Icon */}
         <span 
           className="text-2xl transition-transform"
           style={{ 
@@ -506,7 +751,6 @@ function PlatformCard({ platformName, data, theme }) {
         </span>
       </div>
       
-      {/* ✅ Collapsible Content */}
       {isExpanded && (
         <div className="p-4 pt-0 space-y-3">
           {data.screens.map((screen, idx) => (
@@ -518,7 +762,6 @@ function PlatformCard({ platformName, data, theme }) {
           ))}
         </div>
       )}
-      
     </div>
   );
 }
@@ -530,23 +773,17 @@ function ScreenCard({ screen, theme }) {
   
   return (
     <div className="glass-light p-4 rounded-lg border" style={{ borderColor: theme.colors.border }}>
-      
-      {/* Screen Name */}
       <div className="font-semibold text-lg mb-1" style={{ color: theme.colors.accents.blue }}>
         {screen.name}
       </div>
       
-      {/* Description */}
       {screen.description && (
         <div className="text-sm mb-3 italic" style={{ color: theme.colors.text.secondary }}>
           {screen.description}
         </div>
       )}
       
-      {/* Validation Details */}
       <div className="space-y-2 text-sm">
-        
-        {/* Visible Elements */}
         {visibleElements.length > 0 && (
           <div className="p-2 rounded" style={{ background: `${theme.colors.accents.green}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.green }}>
@@ -574,7 +811,6 @@ function ScreenCard({ screen, theme }) {
           </div>
         )}
         
-        {/* Hidden Elements */}
         {hiddenElements.length > 0 && (
           <div className="p-2 rounded" style={{ background: `${theme.colors.accents.red}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.red }}>
@@ -602,7 +838,6 @@ function ScreenCard({ screen, theme }) {
           </div>
         )}
         
-        {/* Text Checks */}
         {Object.keys(textChecks).length > 0 && (
           <div className="p-2 rounded" style={{ background: `${theme.colors.accents.yellow}10` }}>
             <span className="font-semibold" style={{ color: theme.colors.accents.yellow }}>
@@ -629,9 +864,7 @@ function ScreenCard({ screen, theme }) {
             </div>
           </div>
         )}
-        
       </div>
-      
     </div>
   );
 }

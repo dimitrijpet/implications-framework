@@ -134,32 +134,32 @@ export default function Visualizer() {
             target: t.to
           }));
         
-        const state = {
-          name: nodeData.id,
-          displayName: metadata.status || nodeData.label,
-          meta: {
-            status: metadata.status,
-            triggerAction: metadata.triggerAction,
-            triggerButton: metadata.triggerButton,
-            afterButton: metadata.afterButton,
-            previousButton: metadata.previousButton,
-            notificationKey: metadata.notificationKey,
-            statusCode: metadata.statusCode,
-            statusNumber: metadata.statusNumber,
-            platform: metadata.platform || 'unknown',
-            requiredFields: metadata.requiredFields || [],
-            requires: metadata.requires || {},
-            setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
-            allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
-            actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
-          },
-          transitions: stateTransitions,
-          files: {
-            implication: implication.path,
-            test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-          },
-          uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
-        };
+       const state = {
+  name: nodeData.id,
+  displayName: metadata.status || nodeData.label,
+  meta: {
+    status: metadata.status,
+    triggerAction: metadata.triggerAction,
+    triggerButton: metadata.triggerButton,
+    afterButton: metadata.afterButton,
+    previousButton: metadata.previousButton,
+    notificationKey: metadata.notificationKey,
+    statusCode: metadata.statusCode,
+    statusNumber: metadata.statusNumber,
+    platform: metadata.platform || 'unknown',
+    requiredFields: metadata.requiredFields || [],
+    requires: metadata.requires || {},
+    setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
+    allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
+    actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
+  },
+  transitions: stateTransitions,
+  files: {
+    implication: `${projectPath}/${implication.path}`,  // ← FIX HERE
+    test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
+  },
+  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+};
         
         console.log('✅ Selected state with full metadata:', state);
         setSelectedState(state);

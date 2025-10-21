@@ -1,4 +1,4 @@
-// packages/api-server/src/routes/implications.js (COMPLETE FIX)
+// packages/api-server/src/routes/implications.js (COMPLETE FILE)
 
 import express from 'express';
 import path from 'path';
@@ -26,7 +26,6 @@ router.post('/use-base-directly', async (req, res) => {
     
     console.log(`📝 Attempting to remove override: ${platform}.${screen} in ${path.basename(filePath)}`);
     
-    // Read the file
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
       return res.status(404).json({ error: 'File not found: ' + filePath });
@@ -34,7 +33,6 @@ router.post('/use-base-directly', async (req, res) => {
     
     const originalContent = await fs.readFile(filePath, 'utf-8');
     
-    // Quick check: does file even contain mergeWithBase?
     if (!originalContent.includes('mergeWithBase')) {
       return res.status(400).json({ 
         error: 'This file does not use mergeWithBase pattern',
@@ -42,7 +40,6 @@ router.post('/use-base-directly', async (req, res) => {
       });
     }
     
-    // Parse the file
     const ast = parser.parse(originalContent, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'decorators-legacy']
@@ -52,15 +49,12 @@ router.post('/use-base-directly', async (req, res) => {
     let baseClassName = null;
     let foundMirrorsOn = false;
     
-    // Traverse and modify
     traverse.default(ast, {
       ClassDeclaration(classPath) {
-        // Get the base class name
         if (classPath.node.superClass && classPath.node.superClass.name) {
           baseClassName = classPath.node.superClass.name;
         }
         
-        // Find the mirrorsOn static property
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -69,14 +63,12 @@ router.post('/use-base-directly', async (req, res) => {
             foundMirrorsOn = true;
             console.log('  ✓ Found mirrorsOn property');
             
-            // Navigate: mirrorsOn.UI.{platform}.{screen}
             const mirrorsOnValue = member.value;
             
             if (!t.isObjectExpression(mirrorsOnValue)) {
               return;
             }
             
-            // Find UI property
             const uiProp = mirrorsOnValue.properties.find(
               p => t.isObjectProperty(p) && p.key.name === 'UI'
             );
@@ -88,7 +80,6 @@ router.post('/use-base-directly', async (req, res) => {
             
             console.log(`  ✓ Found UI property, looking for platform: ${platform}`);
             
-            // Find platform property (dancer, web, clubApp, etc.)
             const platformProp = uiProp.value.properties.find(
               p => t.isObjectProperty(p) && p.key.name === platform
             );
@@ -100,7 +91,6 @@ router.post('/use-base-directly', async (req, res) => {
             
             console.log(`  ✓ Found platform "${platform}", looking for screen: ${screen}`);
             
-            // Find screen property
             const screenProp = platformProp.value.properties.find(
               p => t.isObjectProperty(p) && p.key.name === screen
             );
@@ -112,7 +102,6 @@ router.post('/use-base-directly', async (req, res) => {
             
             console.log(`  ✓ Found screen "${screen}"`);
             
-            // Check if it's an array with mergeWithBase
             if (!t.isArrayExpression(screenProp.value)) {
               console.log('  ✗ Screen value is not an array');
               return;
@@ -125,13 +114,11 @@ router.post('/use-base-directly', async (req, res) => {
             
             const firstElement = screenProp.value.elements[0];
             
-            // Check if it's a mergeWithBase call
             if (!t.isCallExpression(firstElement)) {
               console.log('  ✗ First element is not a function call');
               return;
             }
             
-            // Check if it's ImplicationHelper.mergeWithBase or just mergeWithBase
             const isMergeWithBase = 
               (t.isMemberExpression(firstElement.callee) && 
                firstElement.callee.property?.name === 'mergeWithBase') ||
@@ -145,7 +132,6 @@ router.post('/use-base-directly', async (req, res) => {
             
             console.log('  ✓ Found mergeWithBase call!');
             
-            // Get the base reference (first argument)
             if (!firstElement.arguments || firstElement.arguments.length === 0) {
               console.log('  ✗ mergeWithBase has no arguments');
               return;
@@ -153,7 +139,6 @@ router.post('/use-base-directly', async (req, res) => {
             
             const baseRef = firstElement.arguments[0];
             
-            // Replace the array with just the base reference
             screenProp.value = baseRef;
             modified = true;
             
@@ -182,18 +167,15 @@ router.post('/use-base-directly', async (req, res) => {
       });
     }
     
-    // Generate new code
     const output = generate.default(ast, {
       retainLines: true,
       comments: true
     }, originalContent);
     
-    // Create backup
     const backupPath = `${filePath}.backup.${Date.now()}`;
     await fs.copy(filePath, backupPath);
     console.log('📦 Backup created:', backupPath);
     
-    // Write modified file
     await fs.writeFile(filePath, output.code, 'utf-8');
     
     console.log('✅ File modified successfully');
@@ -229,7 +211,6 @@ router.post('/remove-state', async (req, res) => {
     
     console.log(`🗑️ Commenting out state file: ${path.basename(filePath)}`);
     
-    // Read the file
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
       return res.status(404).json({ error: 'File not found' });
@@ -237,12 +218,10 @@ router.post('/remove-state', async (req, res) => {
     
     const originalContent = await fs.readFile(filePath, 'utf-8');
     
-    // Create backup
     const backupPath = `${filePath}.backup.${Date.now()}`;
     await fs.copy(filePath, backupPath);
     console.log('📦 Backup created:', backupPath);
     
-    // Add comment block around entire file
     const commentedContent = `/*
  * COMMENTED OUT BY IMPLICATIONS FRAMEWORK
  * Reason: Isolated state with no transitions
@@ -257,7 +236,6 @@ ${originalContent}
 */
 `;
     
-    // Write commented file
     await fs.writeFile(filePath, commentedContent, 'utf-8');
     
     console.log('✅ File commented out successfully');
@@ -271,6 +249,127 @@ ${originalContent}
   } catch (error) {
     console.error('❌ Error commenting out file:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/update-metadata
+ * Update state metadata and transitions in implication file
+ */
+router.post('/update-metadata', async (req, res) => {
+  try {
+    const { filePath, metadata, transitions } = req.body;
+    
+    if (!filePath || !metadata) {
+      return res.status(400).json({ 
+        error: 'filePath and metadata are required' 
+      });
+    }
+    
+    console.log(`📝 Updating metadata in: ${path.basename(filePath)}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse.default(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const metaProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'meta'
+              );
+              
+              if (metaProp && t.isObjectExpression(metaProp.value)) {
+                Object.entries(metadata).forEach(([key, value]) => {
+                  const existingProp = metaProp.value.properties.find(
+                    p => t.isObjectProperty(p) && p.key.name === key
+                  );
+                  
+                  if (existingProp) {
+                    if (typeof value === 'string') {
+                      existingProp.value = t.stringLiteral(value);
+                    } else if (typeof value === 'number') {
+                      existingProp.value = t.numericLiteral(value);
+                    } else if (Array.isArray(value)) {
+                      existingProp.value = t.arrayExpression(
+                        value.map(v => typeof v === 'string' ? t.stringLiteral(v) : t.identifier(String(v)))
+                      );
+                    }
+                    modified = true;
+                  }
+                });
+              }
+              
+              if (transitions) {
+                const onProp = member.value.properties.find(
+                  p => t.isObjectProperty(p) && p.key.name === 'on'
+                );
+                
+                if (onProp) {
+                  onProp.value = t.objectExpression(
+                    transitions.map(trans => 
+                      t.objectProperty(
+                        t.identifier(trans.event),
+                        t.stringLiteral(trans.target)
+                      )
+                    )
+                  );
+                  modified = true;
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!modified) {
+      return res.status(400).json({ 
+        error: 'Could not update metadata - no xstateConfig found'
+      });
+    }
+    
+    const output = generate.default(ast, {
+      retainLines: true,
+      comments: true
+    }, originalContent);
+    
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    console.log('📦 Backup created:', backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Metadata updated successfully');
+    
+    res.json({
+      success: true,
+      filePath,
+      backup: backupPath,
+      modified: { metadata: Object.keys(metadata), transitions: transitions?.length || 0 }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating metadata:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
