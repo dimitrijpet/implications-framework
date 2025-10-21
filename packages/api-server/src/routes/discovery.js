@@ -1,61 +1,45 @@
 import express from 'express';
 import { discoverProject } from '../services/discoveryService.js';
-import path from 'path';
+import { Analyzer } from '../../../analyzer/src/index.js';  // ← ADD
 
 const router = express.Router();
 
-/**
- * POST /api/discovery/scan
- * Scan a project directory
- */
-router.post('/scan', async (req, res, next) => {
+// Create analyzer instance
+const analyzer = new Analyzer();  // ← ADD
+
+router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
     if (!projectPath) {
-      return res.status(400).json({
-        error: 'projectPath is required',
-      });
+      return res.status(400).json({ error: 'projectPath is required' });
     }
     
-    // Validate path exists
-    const absolutePath = path.resolve(projectPath);
+    console.log(`📡 Received scan request for: ${projectPath}`);
     
-    console.log(`📡 API: Starting discovery for ${absolutePath}`);
+    // Run discovery
+    const discoveryResult = await discoverProject(projectPath);
     
-    const result = await discoverProject(absolutePath);
+    // ✅ NEW: Run analysis
+    const analysisResult = analyzer.analyze(discoveryResult);
     
-    res.json({
-      success: true,
-      result,
-    });
+    // ✅ NEW: Add analysis to response
+    const response = {
+      ...discoveryResult,
+      analysis: analysisResult  // ← ADD
+    };
+    
+    console.log(`✅ Scan complete with analysis`);
+    
+    res.json(response);  // ← Changed from discoveryResult to response
     
   } catch (error) {
-    next(error);
+    console.error('❌ Scan failed:', error);
+    res.status(500).json({ 
+      error: 'Discovery failed', 
+      message: error.message 
+    });
   }
-});
-
-/**
- * GET /api/discovery/patterns
- * Get list of known patterns
- */
-router.get('/patterns', (req, res) => {
-  res.json({
-    patterns: {
-      implications: {
-        description: 'XState-based or stateless implications',
-        markers: ['xstateConfig', 'mirrorsOn', '*Implications.js'],
-      },
-      sections: {
-        description: 'EnhancedBaseSection children',
-        markers: ['extends EnhancedBaseSection', 'SCENARIOS', '*Section.js'],
-      },
-      screens: {
-        description: 'Page Object Model screens',
-        markers: ['*Screen.js', 'constructor(page)'],
-      },
-    },
-  });
 });
 
 export default router;
