@@ -1,7 +1,9 @@
 // packages/web-app/src/components/UIScreenEditor/UIScreenEditor.jsx
-
 import { useState } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
+import AddScreenModal from './AddScreenModal';
+import CopyScreenDialog from './CopyScreenDialog';
+import DeleteConfirmDialog from './DeleteConfirmDialog';
 
 export default function UIScreenEditor({ state, onSave, onCancel, theme = defaultTheme }) {
   const [editMode, setEditMode] = useState(false);
@@ -9,17 +11,124 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
   const [hasChanges, setHasChanges] = useState(false);
   const [modifiedScreens, setModifiedScreens] = useState(new Set());
 
+  // Modal state for Add Screen
+  const [addScreenModal, setAddScreenModal] = useState({
+    isOpen: false,
+    platformName: '',
+    platformDisplayName: ''
+  });
+
+  // Modal state for Copy Screen
+  const [copyScreenDialog, setCopyScreenDialog] = useState({
+    isOpen: false,
+    screen: null,
+    platformName: '',
+    platformDisplayName: ''
+  });
+
+  // Modal state for Delete Confirmation
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState({
+    isOpen: false,
+    screen: null,
+    platformName: '',
+    platformDisplayName: '',
+    screenIndex: -1
+  });
+
   // Initialize edited state
   const initializeEditedUI = () => {
     if (!state?.uiCoverage?.platforms) return null;
-    
-    // Deep clone the platforms data
     return JSON.parse(JSON.stringify(state.uiCoverage.platforms));
   };
 
   const handleEnterEditMode = () => {
     setEditedUI(initializeEditedUI());
     setEditMode(true);
+  };
+
+  // ✅ FIXED: Add null check for editedUI
+  const getAllScreens = () => {
+    if (!editedUI) return [];
+    
+    const screens = [];
+    Object.entries(editedUI).forEach(([platformName, platformData]) => {
+      if (platformData.screens) {
+        platformData.screens.forEach(screen => {
+          screens.push({
+            ...screen,
+            platform: platformName
+          });
+        });
+      }
+    });
+    return screens;
+  };
+
+  // Get available platforms for copy dialog
+  const getAvailablePlatforms = () => {
+    if (!editedUI) return [];
+    
+    return Object.entries(editedUI).map(([name, data]) => ({
+      name,
+      displayName: data.displayName || name
+    }));
+  };
+
+  // Handler: Add Screen
+  const handleAddScreen = (platformName, newScreen) => {
+    setEditedUI(prev => {
+      const platform = prev[platformName];
+      return {
+        ...prev,
+        [platformName]: {
+          ...platform,
+          screens: [...(platform.screens || []), newScreen],
+          count: (platform.count || 0) + 1
+        }
+      };
+    });
+    setHasChanges(true);
+    console.log('✅ Screen added:', newScreen.originalName);
+  };
+
+  // Handler: Delete Screen
+  const handleDeleteScreen = (platformName, screenIndex) => {
+    setEditedUI(prev => {
+      const platform = prev[platformName];
+      return {
+        ...prev,
+        [platformName]: {
+          ...platform,
+          screens: platform.screens.filter((_, i) => i !== screenIndex),
+          count: platform.count - 1
+        }
+      };
+    });
+    setHasChanges(true);
+    console.log('🗑️ Screen deleted');
+  };
+
+  // Handler: Copy Screen
+  const handleCopyScreen = (sourcePlatform, sourceScreen, targetPlatform, newName) => {
+    const newScreen = {
+      ...JSON.parse(JSON.stringify(sourceScreen)),
+      name: newName,
+      originalName: newName
+    };
+
+    setEditedUI(prev => {
+      const platform = prev[targetPlatform];
+      return {
+        ...prev,
+        [targetPlatform]: {
+          ...platform,
+          screens: [...(platform.screens || []), newScreen],
+          count: (platform.count || 0) + 1
+        }
+      };
+    });
+    setHasChanges(true);
+    console.log(`📋 Screen copied: ${sourceScreen.originalName} → ${newName}`);
   };
 
   const handleCancelEdit = () => {
@@ -31,23 +140,22 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
     setHasChanges(false);
   };
 
-const handleSaveChanges = async () => {
-  console.log('💾 Saving UI changes:', editedUI);
-  
-  try {
-    if (onSave) {
-      // ✅ Just pass editedUI directly (not wrapped)
-      await onSave(editedUI);
+  const handleSaveChanges = async () => {
+    console.log('💾 Saving UI changes:', editedUI);
+    
+    try {
+      if (onSave) {
+        await onSave(editedUI);
+      }
+      
+      setEditMode(false);
+      setHasChanges(false);
+      setEditedUI(null);
+      
+    } catch (error) {
+      console.error('❌ Save failed, staying in edit mode');
     }
-    
-    setEditMode(false);
-    setHasChanges(false);
-    setEditedUI(null);
-    
-  } catch (error) {
-    console.error('❌ Save failed, staying in edit mode');
-  }
-};
+  };
 
   // Get platforms data
   const platforms = editMode ? editedUI : state?.uiCoverage?.platforms || {};
@@ -150,35 +258,113 @@ const handleSaveChanges = async () => {
           </span>
         </div>
       )}
+{/* Platform Sections */}
+<div className="space-y-4">
+  {platformNames.map(platformName => (
+    <PlatformSection
+      key={platformName}
+      platformName={platformName}
+      platformData={platforms[platformName]}
+      editMode={editMode}
+      onChange={(newData) => {
+        console.log('🔄 Platform data changed:', platformName, newData);
+        setEditedUI(prev => ({
+          ...prev,
+          [platformName]: newData
+        }));
+        setHasChanges(true);
+        console.log('✅ hasChanges set to true');
+      }}
+      onOpenAddScreen={() => {
+        setAddScreenModal({
+          isOpen: true,
+          platformName,
+          platformDisplayName: platforms[platformName].displayName || platformName
+        });
+      }}
+      // ✅ ADD THESE TWO:
+      onOpenCopyDialog={(screen) => {
+        setCopyScreenDialog({
+          isOpen: true,
+          screen,
+          platformName,
+          platformDisplayName: platforms[platformName].displayName || platformName
+        });
+      }}
+      onOpenDeleteDialog={(screen, screenIndex) => {
+        setDeleteConfirmDialog({
+          isOpen: true,
+          screen,
+          platformName,
+          platformDisplayName: platforms[platformName].displayName || platformName,
+          screenIndex
+        });
+      }}
+      theme={theme}
+    />
+  ))}
+</div>
 
-      {/* Platform Sections */}
-      <div className="space-y-4">
-        {platformNames.map(platformName => (
-          <PlatformSection
-            key={platformName}
-            platformName={platformName}
-            platformData={platforms[platformName]}
-            editMode={editMode}
-          onChange={(newData) => {
-  console.log('🔄 Platform data changed:', platformName, newData);
-  setEditedUI(prev => ({
-    ...prev,
-    [platformName]: newData
-  }));
-  setHasChanges(true); // ✅ This should fire!
-  console.log('✅ hasChanges set to true');
-}}
-            theme={theme}
-          />
-        ))}
-      </div>
+      {/* ✅ ADD MODALS HERE */}
+      <AddScreenModal
+        isOpen={addScreenModal.isOpen}
+        onClose={() => setAddScreenModal({ 
+          isOpen: false, 
+          platformName: '', 
+          platformDisplayName: '' 
+        })}
+        onAdd={handleAddScreen}
+        platformName={addScreenModal.platformName}
+        platformDisplayName={addScreenModal.platformDisplayName}
+        existingScreens={getAllScreens()}
+      />
+
+      <CopyScreenDialog
+        isOpen={copyScreenDialog.isOpen}
+        onClose={() => setCopyScreenDialog({ 
+          isOpen: false, 
+          screen: null, 
+          platformName: '', 
+          platformDisplayName: '' 
+        })}
+        onCopy={handleCopyScreen}
+        screen={copyScreenDialog.screen}
+        sourcePlatformName={copyScreenDialog.platformName}
+        sourcePlatformDisplayName={copyScreenDialog.platformDisplayName}
+        availablePlatforms={getAvailablePlatforms()}
+        allScreens={getAllScreens()}
+      />
+
+      <DeleteConfirmDialog
+        isOpen={deleteConfirmDialog.isOpen}
+        onClose={() => setDeleteConfirmDialog({ 
+          isOpen: false, 
+          screen: null, 
+          platformName: '', 
+          platformDisplayName: '', 
+          screenIndex: -1 
+        })}
+        onConfirm={() => handleDeleteScreen(
+          deleteConfirmDialog.platformName, 
+          deleteConfirmDialog.screenIndex
+        )}
+        screenName={deleteConfirmDialog.screen?.originalName}
+        platformDisplayName={deleteConfirmDialog.platformDisplayName}
+      />
     </div>
   );
 }
-
 // Platform Section Component
-// Platform Section Component - FIXED (no nested buttons)
-function PlatformSection({ platformName, platformData, editMode, onChange, theme }) {
+function PlatformSection({ 
+  platformName, 
+  platformData, 
+  editMode, 
+  onChange, 
+  onOpenAddScreen,
+  onOpenCopyDialog,     // ✅ ADD THIS
+  onOpenDeleteDialog,   // ✅ ADD THIS
+  theme 
+}) {
   const [isExpanded, setIsExpanded] = useState(true);
   
   const getPlatformIcon = (name) => {
@@ -214,7 +400,7 @@ function PlatformSection({ platformName, platformData, editMode, onChange, theme
         borderWidth: isExpanded ? '2px' : '1px'
       }}
     >
-      {/* Platform Header - FIXED: Separated button and header */}
+      {/* Platform Header */}
       <div 
         className="p-4 flex items-center justify-between"
         style={{ background: `${color}10` }}
@@ -244,10 +430,12 @@ function PlatformSection({ platformName, platformData, editMode, onChange, theme
           </span>
         </button>
 
-        {/* Add Screen Button - OUTSIDE the collapse button */}
         {editMode && (
           <button
-            onClick={() => console.log('Add screen to', platformName)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenAddScreen();
+            }}
             className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110 ml-2"
             style={{ background: color, color: 'white' }}
           >
@@ -264,6 +452,8 @@ function PlatformSection({ platformName, platformData, editMode, onChange, theme
               key={index}
               screen={screen}
               index={index}
+              platformName={platformName}
+              platformDisplayName={platformData.displayName || platformName}
               editMode={editMode}
               onChange={(newScreen) => {
                 const newScreens = [...platformData.screens];
@@ -276,6 +466,9 @@ function PlatformSection({ platformName, platformData, editMode, onChange, theme
                   onChange({ ...platformData, screens: newScreens });
                 }
               }}
+              // ✅ FIXED: Use the props passed down from parent
+              onCopy={(screen) => onOpenCopyDialog(screen)}
+              onDeleteConfirm={() => onOpenDeleteDialog(screen, index)}
               theme={theme}
             />
           ))}
@@ -284,11 +477,24 @@ function PlatformSection({ platformName, platformData, editMode, onChange, theme
     </div>
   );
 }
-// Screen Card Component - FIXED (properly propagates changes)
-function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModified, theme }) {
+
+// Screen Card Component
+// Screen Card Component
+function ScreenCard({ 
+  screen, 
+  index, 
+  platformName,
+  platformDisplayName,
+  editMode, 
+  onChange, 
+  onDelete,
+  onCopy,              // ← ADD THIS
+  onDeleteConfirm,     // ← ADD THIS
+  onMarkModified, 
+  theme 
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // ✅ CORRECT: Combine top-level + checks arrays
   const topLevelVisible = screen.visible || [];
   const checksVisible = screen.checks?.visible || [];
   const allVisible = [...topLevelVisible, ...checksVisible];
@@ -299,15 +505,13 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
 
   const textChecks = screen.checks?.text || {};
 
-  // ✅ Helper to call onChange with updated screen
- const updateScreen = (updates) => {
+  const updateScreen = (updates) => {
     const updatedScreen = { ...screen, ...updates };
     console.log('🔄 Screen updated:', updatedScreen);
     onChange(updatedScreen);
     
-    // ✅ Mark this screen as modified
     if (onMarkModified) {
-      const screenId = `${screen.platformName || 'unknown'}.${screen.originalName || screen.name}.${index}`;
+      const screenId = `${platformName}.${screen.originalName || screen.name}.${index}`;
       onMarkModified(screenId);
     }
   };
@@ -372,7 +576,6 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               </span>
             )}
           </div>
-
           <span 
             className="text-lg transition-transform"
             style={{ 
@@ -388,7 +591,7 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
       {/* Screen Details */}
       {isExpanded && (
         <div className="p-3 pt-0 space-y-3">
-          {/* Top-Level Visible */}
+          {/* Element sections... (keeping your existing code) */}
           {(topLevelVisible.length > 0 || editMode) && (
             <ElementSection
               title="✅ Visible (top-level)"
@@ -396,14 +599,12 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               color={theme.colors.accents.green}
               editMode={editMode}
               onChange={(newElements) => {
-                console.log('✅ Updating top-level visible:', newElements);
                 updateScreen({ visible: newElements });
               }}
               theme={theme}
             />
           )}
 
-          {/* Checks Visible */}
           {(checksVisible.length > 0 || editMode) && (
             <ElementSection
               title="✅ Visible (checks)"
@@ -411,7 +612,6 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               color={theme.colors.accents.green}
               editMode={editMode}
               onChange={(newElements) => {
-                console.log('✅ Updating checks.visible:', newElements);
                 updateScreen({ 
                   checks: { 
                     ...screen.checks, 
@@ -423,7 +623,6 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
             />
           )}
 
-          {/* Top-Level Hidden */}
           {(topLevelHidden.length > 0 || editMode) && (
             <ElementSection
               title="❌ Hidden (top-level)"
@@ -431,14 +630,12 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               color={theme.colors.accents.red}
               editMode={editMode}
               onChange={(newElements) => {
-                console.log('❌ Updating top-level hidden:', newElements);
                 updateScreen({ hidden: newElements });
               }}
               theme={theme}
             />
           )}
 
-          {/* Checks Hidden */}
           {(checksHidden.length > 0 || editMode) && (
             <ElementSection
               title="❌ Hidden (checks)"
@@ -446,7 +643,6 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               color={theme.colors.accents.red}
               editMode={editMode}
               onChange={(newElements) => {
-                console.log('❌ Updating checks.hidden:', newElements);
                 updateScreen({ 
                   checks: { 
                     ...screen.checks, 
@@ -458,13 +654,11 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
             />
           )}
 
-          {/* Text Checks */}
           {(Object.keys(textChecks).length > 0 || editMode) && (
             <TextChecksSection
               textChecks={textChecks}
               editMode={editMode}
               onChange={(newTextChecks) => {
-                console.log('📝 Updating checks.text:', newTextChecks);
                 updateScreen({ 
                   checks: { 
                     ...screen.checks, 
@@ -479,8 +673,32 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
           {/* Edit Actions */}
           {editMode && (
             <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
+              {/* Copy Button */}
               <button
-                onClick={onDelete}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onCopy) {
+                    onCopy(screen);  // ← Use onCopy prop
+                  }
+                }}
+                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
+                style={{ 
+                  background: theme.colors.background.tertiary,
+                  color: theme.colors.text.primary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
+              >
+                📋 Copy Screen
+              </button>
+              
+              {/* Delete Button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onDeleteConfirm) {
+                    onDeleteConfirm();  // ← Use onDeleteConfirm prop
+                  }
+                }}
                 className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
                 style={{ 
                   background: `${theme.colors.accents.red}20`,
@@ -490,17 +708,6 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
               >
                 🗑️ Delete Screen
               </button>
-              <button
-                onClick={() => console.log('Copy screen')}
-                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
-                style={{ 
-                  background: theme.colors.background.tertiary,
-                  color: theme.colors.text.primary,
-                  border: `1px solid ${theme.colors.border}`
-                }}
-              >
-                📋 Copy to Platform
-              </button>
             </div>
           )}
         </div>
@@ -509,8 +716,7 @@ function ScreenCard({ screen, index, editMode, onChange, onDelete, onMarkModifie
   );
 }
 
-// Element Section Component
-// Element Section Component - WITH INLINE EDITING
+// Element Section Component (keep your existing code)
 function ElementSection({ title, elements, color, editMode, onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newElement, setNewElement] = useState('');
@@ -553,7 +759,6 @@ function ElementSection({ title, elements, color, editMode, onChange, theme }) {
         )}
       </div>
 
-      {/* Element List */}
       <div className="flex flex-wrap gap-2">
         {elements.map((element, i) => (
           <div
@@ -568,21 +773,20 @@ function ElementSection({ title, elements, color, editMode, onChange, theme }) {
             {element}
             
             {editMode && (
-  <button
-    onClick={(e) => {
-      e.stopPropagation(); // ✅ Prevent parent click
-      handleRemoveElement(i);
-    }}
-    className="opacity-0 group-hover:opacity-100 transition ml-1 text-red-400 hover:text-red-300"
-    title="Remove"
-  >
-    ✕
-  </button>
-)}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemoveElement(i);
+                }}
+                className="opacity-0 group-hover:opacity-100 transition ml-1 text-red-400 hover:text-red-300"
+                title="Remove"
+              >
+                ✕
+              </button>
+            )}
           </div>
         ))}
         
-        {/* Add Input */}
         {isAdding && (
           <div className="flex gap-1">
             <input
@@ -636,8 +840,7 @@ function ElementSection({ title, elements, color, editMode, onChange, theme }) {
   );
 }
 
-// Text Checks Section Component
-// Text Checks Section Component - WITH INLINE EDITING
+// Text Checks Section Component (keep your existing code)
 function TextChecksSection({ textChecks, editMode, onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newKey, setNewKey] = useState('');
@@ -718,7 +921,6 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
         )}
       </div>
 
-      {/* Text Check List */}
       <div className="space-y-2">
         {Object.entries(textChecks).map(([key, value], i) => (
           <div 
@@ -798,7 +1000,6 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
           </div>
         ))}
         
-        {/* Add Input */}
         {isAdding && (
           <div className="flex items-center gap-2">
             <input
@@ -875,7 +1076,6 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
   );
 }
 
-// Helper function
 function getTotalScreenCount(platforms) {
   return Object.values(platforms).reduce(
     (sum, platform) => sum + (platform?.screens?.length || 0),
