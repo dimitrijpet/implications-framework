@@ -1,9 +1,11 @@
-// packages/web-app/src/components/StateGraph/StateDetailModal.jsx (REFACTORED WITH CONTEXT)
+// packages/web-app/src/components/StateGraph/StateDetailModal.jsx (COMPLETE REFACTORED)
+
 import { useEffect, useState } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import { useSuggestions } from '../../hooks/useSuggestions';
 import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
+import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 
 export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
   // Edit mode state
@@ -11,6 +13,11 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   const [editedState, setEditedState] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Context state
+  const [contextData, setContextData] = useState(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [contextChanges, setContextChanges] = useState({});
   
   // Get suggestions
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
@@ -40,6 +47,13 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     return () => window.removeEventListener('keydown', handleEsc);
   }, [onClose, hasChanges]);
 
+  // Load context data when modal opens
+  useEffect(() => {
+    if (state?.files?.implication) {
+      loadContextData();
+    }
+  }, [state?.files?.implication]);
+
   if (!state) return null;
   
   const currentState = isEditMode ? editedState : state;
@@ -49,7 +63,70 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   const statusIcon = getStatusIcon(currentState.name, theme);
   const platformStyle = getPlatformStyle(currentState.meta?.platform, theme);
 
-  // Handle edit mode toggle
+  // ========================================
+  // CONTEXT HANDLERS
+  // ========================================
+
+  const loadContextData = async () => {
+    setLoadingContext(true);
+    try {
+      const response = await fetch(
+        `http://localhost:3000/api/implications/context-schema?filePath=${encodeURIComponent(state.files.implication)}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('📋 Loaded context data:', data.context);
+        setContextData(data.context);
+      } else {
+        console.error('Failed to load context:', await response.text());
+        setContextData({}); // Set empty to show "no context" message
+      }
+    } catch (error) {
+      console.error('❌ Error loading context:', error);
+      setContextData({}); // Set empty on error
+    } finally {
+      setLoadingContext(false);
+    }
+  };
+
+const handleContextChange = (fieldName, newValue) => {
+  console.log('=================================');
+  console.log('🔄 handleContextChange called');
+  console.log('Field:', fieldName);
+  console.log('New value:', newValue);
+  console.log('Type:', typeof newValue);
+  console.log('=================================');
+  
+  // Update local context data
+  setContextData(prev => {
+    const updated = {
+      ...prev,
+      [fieldName]: newValue
+    };
+    console.log('📦 Updated contextData:', updated);
+    return updated;
+  });
+  
+  // Track changes for save
+  setContextChanges(prev => {
+    const updated = {
+      ...prev,
+      [fieldName]: newValue
+    };
+    console.log('📝 Updated contextChanges:', updated);
+    return updated;
+  });
+  
+  // Mark as having changes
+  setHasChanges(true);
+  console.log('✅ hasChanges set to true');
+};
+
+  // ========================================
+  // EDIT MODE HANDLERS
+  // ========================================
+
   const handleEditToggle = () => {
     if (isEditMode) {
       if (hasChanges) {
@@ -58,6 +135,7 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
         }
       }
       setEditedState(JSON.parse(JSON.stringify(state)));
+      setContextChanges({});
       setHasChanges(false);
     } else {
       if (!editedState) {
@@ -67,7 +145,6 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setIsEditMode(!isEditMode);
   };
 
-  // Handle metadata field change
   const handleMetadataChange = (field, value) => {
     setEditedState(prev => ({
       ...prev,
@@ -79,7 +156,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setHasChanges(true);
   };
 
-  // Handle transition changes
+  // ========================================
+  // TRANSITION HANDLERS
+  // ========================================
+
   const handleAddTransition = () => {
     const event = prompt('Enter event name (e.g., CANCEL):');
     if (!event) return;
@@ -102,7 +182,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setHasChanges(true);
   };
 
-  // Handle suggestion applies
+  // ========================================
+  // SUGGESTION HANDLERS
+  // ========================================
+
   const handleSuggestionApply = (actionType, value) => {
     console.log('🎯 Suggestion apply:', actionType, value);
     
@@ -135,87 +218,146 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-  // Handle save
-  const handleSave = async () => {
-    setIsSaving(true);
+const handleSave = async () => {
+  setIsSaving(true);
+  
+  try {
+    console.log('💾 Starting save process...');
+    console.log('📦 Context changes to save:', contextChanges);
+    console.log('🔢 Number of context changes:', Object.keys(contextChanges).length);
     
-    try {
-      const response = await fetch('http://localhost:3001/api/implications/update-metadata', {
+    // 1. Save metadata
+    console.log('1️⃣ Saving metadata...');
+    const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath: state.files.implication,
+        metadata: editedState.meta,
+        transitions: editedState.transitions
+      })
+    });
+
+    if (!metadataResponse.ok) {
+      const result = await metadataResponse.json();
+      throw new Error(result.error || 'Failed to save metadata');
+    }
+    
+    const metadataResult = await metadataResponse.json();
+    console.log('✅ Metadata saved:', metadataResult);
+    
+    // 2. Save context changes (if any)
+    if (Object.keys(contextChanges).length > 0) {
+      console.log('2️⃣ Saving context changes...');
+      console.log('📝 Sending updates:', contextChanges);
+      
+      const contextResponse = await fetch('http://localhost:3000/api/implications/update-context', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           filePath: state.files.implication,
-          metadata: editedState.meta,
-          transitions: editedState.transitions
+          contextUpdates: contextChanges
         })
       });
-
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to save');
+      
+      console.log('📡 Context response status:', contextResponse.status);
+      
+      if (!contextResponse.ok) {
+        const result = await contextResponse.json();
+        console.error('❌ Context save failed:', result);
+        throw new Error(result.error || 'Failed to save context');
       }
       
-      const updatedState = {
-        ...state,
-        meta: { ...editedState.meta },
-        transitions: [...editedState.transitions]
-      };
-      
-      Object.assign(state, updatedState);
-      setEditedState(JSON.parse(JSON.stringify(updatedState)));
-      
-      setHasChanges(false);
-      setIsEditMode(false);
-      
-      // Show success notification
-      const notification = document.createElement('div');
-      notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: #10b981;
-        color: white;
-        padding: 16px 24px;
-        border-radius: 8px;
-        font-weight: bold;
-        z-index: 99999;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      `;
-      notification.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <span style="font-size: 24px;">✅</span>
-          <div>
-            <div style="font-size: 14px; font-weight: bold;">Changes Saved!</div>
-            <div style="font-size: 11px; opacity: 0.9; margin-top: 4px;">Backup: ${result.backup.split('/').pop()}</div>
+      const contextResult = await contextResponse.json();
+      console.log('✅ Context saved successfully:', contextResult);
+    } else {
+      console.log('⏭️ No context changes to save');
+    }
+    
+    // 3. Update state
+    console.log('3️⃣ Updating local state...');
+    const updatedState = {
+      ...state,
+      meta: { ...editedState.meta },
+      transitions: [...editedState.transitions],
+      xstateContext: { ...contextData }
+    };
+    
+    Object.assign(state, updatedState);
+    setEditedState(JSON.parse(JSON.stringify(updatedState)));
+    
+    // 4. Clear changes
+    console.log('4️⃣ Clearing change tracking...');
+    setContextChanges({});
+    setHasChanges(false);
+    setIsEditMode(false);
+    
+    // 5. Show success notification
+    console.log('5️⃣ Showing success notification...');
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #10b981;
+      color: white;
+      padding: 16px 24px;
+      border-radius: 8px;
+      font-weight: bold;
+      z-index: 99999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    notification.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 24px;">✅</span>
+        <div>
+          <div style="font-size: 14px; font-weight: bold;">Changes Saved!</div>
+          <div style="font-size: 11px; opacity: 0.9; margin-top: 4px;">
+            ${Object.keys(contextChanges).length > 0 ? 
+              `Updated ${Object.keys(contextChanges).length} context field(s) • ` : ''}
+            Backup: ${metadataResult.backup.split('/').pop()}
           </div>
         </div>
-      `;
-      document.body.appendChild(notification);
-      
+      </div>
+    `;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.style.opacity = '0';
+      notification.style.transform = 'translateX(100%)';
+      notification.style.transition = 'all 0.3s ease-out';
+      setTimeout(() => notification.remove(), 300);
+    }, 3000);
+    
+    // 6. Refresh data
+    console.log('6️⃣ Refreshing data...');
+    if (window.refreshSingleState) {
       setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transform = 'translateX(100%)';
-        notification.style.transition = 'all 0.3s ease-out';
-        setTimeout(() => notification.remove(), 300);
-      }, 3000);
-      
-      if (window.refreshSingleState) {
-        setTimeout(() => {
-          window.refreshSingleState(state.files.implication);
-        }, 500);
-      } else if (window.refreshDiscovery) {
-        setTimeout(() => {
-          window.refreshDiscovery();
-        }, 1000);
-      }
-      
-    } catch (error) {
-      console.error('❌ Save failed:', error);
-      alert(`❌ Failed to save: ${error.message}`);
-    } finally {
-      setIsSaving(false);
+        window.refreshSingleState(state.files.implication);
+      }, 500);
+    } else if (window.refreshDiscovery) {
+      setTimeout(() => {
+        window.refreshDiscovery();
+      }, 1000);
     }
-  };
+    
+    console.log('🎉 Save complete!');
+    
+  } catch (error) {
+    console.error('❌ Save failed:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack
+    });
+    alert(`❌ Failed to save: ${error.message}`);
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+  // ========================================
+  // RENDER
+  // ========================================
 
   return (
     <div 
@@ -245,7 +387,9 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
             }}
           >
             
-            {/* Header */}
+            {/* ========================================
+                HEADER
+                ======================================== */}
             <div className="flex items-start justify-between mb-8">
               <div className="flex items-center gap-4">
                 <div className="text-6xl">{statusIcon}</div>
@@ -317,7 +461,9 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               </div>
             </div>
 
-            {/* Show Suggestions Panel in Edit Mode */}
+            {/* ========================================
+                SUGGESTIONS PANEL
+                ======================================== */}
             {isEditMode && !suggestionsLoading && analysis && (
               <div className="mb-8">
                 <SuggestionsPanel
@@ -330,35 +476,85 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               </div>
             )}
             
-            {/* ✅ NEW: Context Fields Section */}
-            {currentState.xstateContext && Object.keys(currentState.xstateContext).length > 0 && (
+            {/* ========================================
+                🆕 CONTEXT FIELDS SECTION - EDITABLE
+                ======================================== */}
+            {(contextData || loadingContext) && (
               <div className="mb-8">
-                <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.purple }}>
-                  📦 Context Fields
-                </h3>
-                <div className="text-sm mb-3" style={{ color: theme.colors.text.secondary }}>
-                  Data accumulated through workflow (from xstateConfig.context)
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-2xl font-bold flex items-center gap-2" style={{ color: theme.colors.accents.purple }}>
+                      📦 Context Fields
+                      {contextData && Object.keys(contextData).length > 0 && (
+                        <span 
+                          className="text-sm font-normal px-2 py-1 rounded"
+                          style={{ 
+                            background: `${theme.colors.accents.purple}20`,
+                            color: theme.colors.accents.purple
+                          }}
+                        >
+                          {Object.keys(contextData).length} fields
+                        </span>
+                      )}
+                    </h3>
+                    <div className="text-sm mt-1" style={{ color: theme.colors.text.secondary }}>
+                      Data accumulated through workflow (from xstateConfig.context)
+                    </div>
+                  </div>
+                  
+                  {loadingContext && (
+                    <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>
+                      Loading context...
+                    </span>
+                  )}
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {Object.entries(currentState.xstateContext).map(([key, value]) => (
-                    <ContextFieldCard 
-                      key={key}
-                      fieldName={key}
-                      value={value}
-                      isRequired={currentState.meta?.requiredFields?.includes(key)}
-                      theme={theme}
-                    />
-                  ))}
-                </div>
+                {/* Dynamic Context Fields Component */}
+                {loadingContext ? (
+                  <div 
+                    className="glass p-8 rounded-lg text-center"
+                    style={{ color: theme.colors.text.tertiary }}
+                  >
+                    <div className="text-4xl mb-2">⏳</div>
+                    <div>Loading context fields...</div>
+                  </div>
+                ) : contextData && Object.keys(contextData).length > 0 ? (
+                  <DynamicContextFields
+                    contextData={contextData}
+                    onFieldChange={handleContextChange}
+                    theme={theme}
+                    editable={isEditMode}
+                    compact={false}
+                  />
+                ) : (
+                  <div 
+                    className="glass p-8 rounded-lg text-center"
+                    style={{ color: theme.colors.text.tertiary }}
+                  >
+                    <div className="text-4xl mb-2">📭</div>
+                    <div className="font-semibold mb-1">No Context Fields</div>
+                    <div className="text-sm">This state machine has no context defined</div>
+                  </div>
+                )}
               </div>
             )}
             
-            {/* Metadata Grid */}
-            <div className="mb-8">
-              <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.blue }}>
-                📋 Metadata
-              </h3>
+            {/* ========================================
+                METADATA SECTION - COLLAPSIBLE
+                ======================================== */}
+            <details className="mb-8" open={!contextData || Object.keys(contextData || {}).length === 0}>
+              <summary 
+                className="cursor-pointer text-2xl font-bold mb-4 flex items-center gap-2 hover:opacity-80 transition"
+                style={{ color: theme.colors.accents.blue }}
+              >
+                ⚙️ Advanced Metadata
+                <span 
+                  className="text-sm font-normal"
+                  style={{ color: theme.colors.text.tertiary }}
+                >
+                  (Legacy fields from previous project)
+                </span>
+              </summary>
               
               <DynamicMetadataGrid 
                 metadata={currentState.meta} 
@@ -367,9 +563,11 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
                 editable={isEditMode}
                 onChange={handleMetadataChange}
               />
-            </div>
+            </details>
             
-            {/* Files */}
+            {/* ========================================
+                FILES SECTION
+                ======================================== */}
             {currentState.files && (
               <div className="mb-8">
                 <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
@@ -393,7 +591,9 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               </div>
             )}
             
-            {/* Transitions */}
+            {/* ========================================
+                TRANSITIONS SECTION
+                ======================================== */}
             {currentState.transitions && (
               <div className="mb-8">
                 <div className="flex items-center justify-between mb-4">
@@ -434,54 +634,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
                 </div>
               </div>
             )}
-
-            {/* ✅ Context Fields Section */}
-{state.meta?.xstateContext && Object.keys(state.meta.xstateContext).length > 0 && (
-  <div className="glass p-6 rounded-lg">
-    <h3 
-      className="text-lg font-semibold mb-4 flex items-center gap-2"
-      style={{ color: theme.colors.text.primary }}
-    >
-      <span>📦</span>
-      Context Fields ({Object.keys(state.meta.xstateContext).length})
-    </h3>
-    
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {Object.entries(state.meta.xstateContext).map(([key, value]) => (
-        <div key={key} className="glass p-4 rounded-lg">
-          <div 
-            className="text-sm mb-1 font-mono"
-            style={{ color: theme.colors.text.tertiary }}
-          >
-            {key}
-          </div>
-          <div 
-            className="font-semibold font-mono text-sm"
-            style={{ color: theme.colors.text.primary }}
-          >
-            {value === null ? (
-              <span style={{ color: theme.colors.accents.yellow }}>null</span>
-            ) : value === undefined ? (
-              <span style={{ color: theme.colors.accents.red }}>undefined</span>
-            ) : typeof value === 'string' ? (
-              <span style={{ color: theme.colors.accents.green }}>"{value}"</span>
-            ) : typeof value === 'number' ? (
-              <span style={{ color: theme.colors.accents.blue }}>{value}</span>
-            ) : typeof value === 'boolean' ? (
-              <span style={{ color: theme.colors.accents.purple }}>{String(value)}</span>
-            ) : (
-              <span style={{ color: theme.colors.text.secondary }}>
-                {JSON.stringify(value)}
-              </span>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-)}
             
-            {/* UI Coverage Section */}
+            {/* ========================================
+                UI COVERAGE SECTION
+                ======================================== */}
             {currentState.uiCoverage && currentState.uiCoverage.total > 0 && (
               <div className="mb-8">
                 <UIScreenEditor
@@ -490,7 +646,7 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
                     console.log('💾 Saving UI changes to file...');
                     
                     try {
-                      const response = await fetch('http://localhost:3001/api/implications/update-ui', {
+                      const response = await fetch('http://localhost:3000/api/implications/update-ui', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -575,63 +731,7 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
 }
 
 // ============================================
-// ✅ NEW: Context Field Card Component
-// ============================================
-
-function ContextFieldCard({ fieldName, value, isRequired, theme }) {
-  const hasValue = value !== null && value !== undefined;
-  
-  return (
-    <div 
-      className="glass p-4 rounded-lg border"
-      style={{
-        borderColor: isRequired 
-          ? theme.colors.accents.red + '40'
-          : theme.colors.border
-      }}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-sm font-mono" style={{ color: theme.colors.text.secondary }}>
-          {fieldName}
-        </div>
-        {isRequired && (
-          <span 
-            className="text-xs px-2 py-0.5 rounded font-semibold"
-            style={{ 
-              background: theme.colors.accents.red + '20',
-              color: theme.colors.accents.red
-            }}
-          >
-            REQUIRED
-          </span>
-        )}
-      </div>
-      
-      <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
-        {hasValue ? (
-          <span className="font-mono text-sm">
-            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-          </span>
-        ) : (
-          <span 
-            className="text-sm px-2 py-1 rounded"
-            style={{ 
-              background: theme.colors.accents.yellow + '20',
-              color: theme.colors.accents.yellow
-            }}
-          >
-            Not set
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ============================================
-// Keep all your existing helper components below
-// (DynamicMetadataGrid, EditableMetadataField, categorizeFields, 
-//  renderValue, FileCard, TransitionCard, etc.)
+// HELPER COMPONENTS
 // ============================================
 
 function DynamicMetadataGrid({ metadata, theme, platformStyle, editable, onChange }) {
@@ -772,7 +872,7 @@ function categorizeFields(metadata) {
   const setupFields = ['setup', 'allSetups', 'actionName', 'requires', 'requiredFields'];
   
   Object.entries(metadata).forEach(([key, value]) => {
-    if (key === 'uiCoverage') return;
+    if (key === 'uiCoverage' || key === 'xstateContext') return;
     if (Array.isArray(value) && value.length === 0) return;
     if (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0) return;
     

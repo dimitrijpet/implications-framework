@@ -433,7 +433,7 @@ router.post('/use-base-directly', async (req, res) => {
       });
     }
     
-    const output = generate.default(ast, {
+    const output = babelGenerate.default(ast, {
       retainLines: true,
       comments: true
     }, originalContent);
@@ -668,7 +668,7 @@ router.post('/update-metadata', async (req, res) => {
     }
     
     // Generate code with better formatting
-    const output = generate.default(ast, {
+    const output = babelGenerate.default(ast, {
       retainLines: false,  // ✅ Better formatting
       compact: false,
       comments: true,
@@ -946,7 +946,7 @@ router.post('/update-ui', async (req, res) => {
     }
     
     // Generate code
-    const output = generate.default(ast, {
+    const output = babelGenerate.default(ast, {
       retainLines: false,
       compact: false,
       comments: true,
@@ -1418,6 +1418,128 @@ function buildScreenAst(screen) {
   return t.objectExpression(props);
 }
 
+/**
+ * Extract complete XState structure
+ * Returns: { context, states, meta, transitions }
+ */
+function extractCompleteXStateConfig(content) {
+  const result = {
+    context: {},
+    states: {},
+    initial: null,
+    meta: {}
+  };
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            value.properties.forEach(prop => {
+              const key = prop.key?.name;
+              
+              if (key === 'context' && prop.value?.type === 'ObjectExpression') {
+                // Extract context
+                prop.value.properties.forEach(contextProp => {
+                  if (contextProp.key) {
+                    const fieldName = contextProp.key.name;
+                    const fieldValue = extractValueFromNode(contextProp.value);
+                    result.context[fieldName] = fieldValue;
+                  }
+                });
+              } else if (key === 'initial') {
+                // Extract initial state
+                result.initial = extractValueFromNode(prop.value);
+              } else if (key === 'states' && prop.value?.type === 'ObjectExpression') {
+                // Extract states (basic - just names for now)
+                prop.value.properties.forEach(stateProp => {
+                  if (stateProp.key) {
+                    const stateName = stateProp.key.name;
+                    result.states[stateName] = {
+                      name: stateName,
+                    };
+                  }
+                });
+              } else if (key === 'meta' && prop.value?.type === 'ObjectExpression') {
+                // Extract top-level meta
+                prop.value.properties.forEach(metaProp => {
+                  if (metaProp.key) {
+                    const metaKey = metaProp.key.name;
+                    const metaValue = extractValueFromNode(metaProp.value);
+                    result.meta[metaKey] = metaValue;
+                  }
+                });
+              }
+            });
+          }
+        }
+      },
+    });
+    
+  } catch (error) {
+    console.error('Error extracting complete XState config:', error.message);
+  }
+  
+  return result;
+}
+
+function extractValueFromNode(node) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+      return node.value;
+      
+    case 'NullLiteral':
+      return null;
+      
+    case 'Identifier':
+      if (node.name === 'undefined') return undefined;
+      if (node.name === 'null') return null;
+      return node.name;
+      
+    case 'ArrayExpression':
+      return node.elements
+        .map(el => extractValueFromNode(el))
+        .filter(v => v !== null && v !== undefined);
+      
+    case 'ObjectExpression':
+      const obj = {};
+      node.properties.forEach(prop => {
+        if (prop.key) {
+          const key = prop.key.name || prop.key.value;
+          const value = extractValueFromNode(prop.value);
+          if (value !== undefined) {
+            obj[key] = value;
+          }
+        }
+      });
+      return obj;
+      
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+      return '<function>';
+      
+    case 'CallExpression':
+      if (node.callee?.name === 'assign') {
+        return '<assign>';
+      }
+      return '<call>';
+      
+    default:
+      return null;
+  }
+}
+
 // Add this to packages/api-server/src/routes/implications.js
 
 /**
@@ -1520,10 +1642,11 @@ router.post('/add-transition', async (req, res) => {
     }
     
     // Generate updated code
-const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
+const output = babelGenerate.default(ast, {
   retainLines: true,
   comments: true
-});
+}, originalContent);
+
     // Create backup
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = `${sourceFile}.backup-${timestamp}`;
@@ -1552,5 +1675,236 @@ const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
     });
   }
 });
+
+// ============================================
+// COMPLETE BACKEND ENDPOINT FOR CONTEXT
+// Add to: packages/api-server/src/routes/implications.js
+// Location: BEFORE "export default router;"
+// ============================================
+
+// Make sure these imports are at the top of your file:
+// import * as t from '@babel/types';
+// import * as babelGenerate from '@babel/generator';
+
+/**
+ * GET /api/implications/context-schema
+ * Extract context fields from an xstate implication file
+ */
+router.get('/context-schema', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`📋 Extracting context schema from: ${filePath}`);
+    
+    // Read the file
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    // Extract complete xstate config
+    const xstateConfig = extractCompleteXStateConfig(originalContent);
+    
+    // Detect types for each context field
+    const contextWithTypes = {};
+    
+    Object.entries(xstateConfig.context).forEach(([fieldName, value]) => {
+      contextWithTypes[fieldName] = {
+        value,
+        type: detectFieldType(value),
+        editable: true
+      };
+    });
+    
+    console.log(`✅ Extracted ${Object.keys(contextWithTypes).length} context fields:`, xstateConfig.context);
+    
+    res.json({
+      success: true,
+      context: xstateConfig.context,
+      contextWithTypes,
+      initial: xstateConfig.initial,
+      states: Object.keys(xstateConfig.states)
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to extract context schema:', error);
+    res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+
+/**
+ * POST /api/implications/update-context
+ * Update context field values in an xstate implication file
+ */
+router.post('/update-context', async (req, res) => {
+  try {
+    const { filePath, contextUpdates } = req.body;
+    
+    if (!filePath || !contextUpdates) {
+      return res.status(400).json({ 
+        error: 'filePath and contextUpdates are required' 
+      });
+    }
+    
+    console.log(`💾 Updating context in: ${filePath}`);
+    console.log(`📝 Updates:`, contextUpdates);
+    
+    // Read the file
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    // Parse with Babel
+    const ast = parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    let contextFound = false;
+    let updatedCount = 0;
+    
+    // Traverse and update context values
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            // Find context property
+            const contextProperty = value.properties.find(
+              p => p.key?.name === 'context'
+            );
+            
+            if (contextProperty?.value?.type === 'ObjectExpression') {
+              contextFound = true;
+              
+              // Update each field
+              contextProperty.value.properties.forEach(prop => {
+                const fieldName = prop.key?.name;
+                
+                if (fieldName && contextUpdates.hasOwnProperty(fieldName)) {
+                  const newValue = contextUpdates[fieldName];
+                  
+                  // Replace the value node
+                  prop.value = createValueNode(newValue);
+                  updatedCount++;
+                  
+                  console.log(`  ✓ Updated ${fieldName}: ${JSON.stringify(newValue)}`);
+                }
+              });
+            }
+          }
+        }
+      }
+    });
+    
+    if (!contextFound) {
+      return res.status(400).json({ 
+        error: 'No xstateConfig.context found in file' 
+      });
+    }
+    
+    if (updatedCount === 0) {
+      return res.status(400).json({ 
+        error: 'No matching context fields found to update' 
+      });
+    }
+    
+    // Generate updated code
+const output = babelGenerate.default(ast, {
+  retainLines: true,
+  comments: true
+}, originalContent);
+    
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log(`✅ Updated ${updatedCount} context fields`);
+    console.log(`💾 Backup saved: ${backupPath}`);
+    
+    res.json({
+      success: true,
+      updatedFields: updatedCount,
+      backup: backupPath,
+      updates: contextUpdates
+    });
+    
+  } catch (error) {
+    console.error('❌ Update context failed:', error);
+    res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Detect the type of a value for proper input rendering
+ */
+function detectFieldType(value) {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean') return 'boolean';
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'string') return 'string';
+  if (Array.isArray(value)) return 'array';
+  if (typeof value === 'object') return 'object';
+  return 'unknown';
+}
+
+/**
+ * Create a Babel AST node from a JavaScript value
+ */
+function createValueNode(value) {
+  if (value === null) {
+    return t.nullLiteral();
+  }
+  
+  if (value === undefined) {
+    return t.identifier('undefined');
+  }
+  
+  if (typeof value === 'boolean') {
+    return t.booleanLiteral(value);
+  }
+  
+  if (typeof value === 'number') {
+    return t.numericLiteral(value);
+  }
+  
+  if (typeof value === 'string') {
+    return t.stringLiteral(value);
+  }
+  
+  if (Array.isArray(value)) {
+    return t.arrayExpression(
+      value.map(item => createValueNode(item))
+    );
+  }
+  
+  if (typeof value === 'object') {
+    const properties = Object.entries(value).map(([key, val]) =>
+      t.objectProperty(
+        t.identifier(key),
+        createValueNode(val)
+      )
+    );
+    return t.objectExpression(properties);
+  }
+  
+  // Fallback
+  return t.stringLiteral(String(value));
+}
 
 export default router;
