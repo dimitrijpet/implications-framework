@@ -27,6 +27,9 @@ importers:
 
   packages/api-server:
     dependencies:
+      '@babel/generator':
+        specifier: ^7.28.3
+        version: 7.28.3
       '@babel/parser':
         specifier: ^7.28.4
         version: 7.28.4

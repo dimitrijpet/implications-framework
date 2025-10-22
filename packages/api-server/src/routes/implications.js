@@ -4,7 +4,9 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs-extra';
 import * as parser from '@babel/parser';
-import generate from '@babel/generator';
+import { parse } from '@babel/parser';
+
+import babelGenerate from '@babel/generator';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import Handlebars from 'handlebars';
@@ -695,111 +697,6 @@ router.post('/update-metadata', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error updating metadata:', error);
-    res.status(500).json({ 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-/**
- * POST /api/implications/add-transition
- * Add a transition to an existing implication file
- */
-router.post('/add-transition', async (req, res) => {
-  try {
-    const { filePath, event, target } = req.body;
-    
-    if (!filePath || !event || !target) {
-      return res.status(400).json({ 
-        error: 'filePath, event, and target are required' 
-      });
-    }
-    
-    console.log(`🔗 Adding transition: ${event} → ${target} in ${path.basename(filePath)}`);
-    
-    const fileExists = await fs.pathExists(filePath);
-    if (!fileExists) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-    
-    const originalContent = await fs.readFile(filePath, 'utf-8');
-    
-    const ast = parser.parse(originalContent, {
-      sourceType: 'module',
-      plugins: ['jsx', 'classProperties']
-    });
-    
-    let modified = false;
-    
-    traverse.default(ast, {
-      ClassDeclaration(classPath) {
-        classPath.node.body.body.forEach((member) => {
-          if (t.isClassProperty(member) && 
-              member.static && 
-              member.key.name === 'xstateConfig') {
-            
-            if (t.isObjectExpression(member.value)) {
-              const onProp = member.value.properties.find(
-                p => t.isObjectProperty(p) && p.key.name === 'on'
-              );
-              
-              if (onProp && t.isObjectExpression(onProp.value)) {
-                // Check if transition already exists
-                const existingTransition = onProp.value.properties.find(
-                  p => t.isObjectProperty(p) && p.key.name === event
-                );
-                
-                if (existingTransition) {
-                  return res.status(409).json({ 
-                    error: `Transition "${event}" already exists`
-                  });
-                }
-                
-                // Add new transition
-                onProp.value.properties.push(
-                  t.objectProperty(
-                    t.identifier(event),
-                    t.stringLiteral(target)
-                  )
-                );
-                
-                modified = true;
-                console.log(`✅ Added transition: ${event} → ${target}`);
-              }
-            }
-          }
-        });
-      }
-    });
-    
-    if (!modified) {
-      return res.status(400).json({ 
-        error: 'Could not add transition - no xstateConfig found'
-      });
-    }
-    
-    const output = generate.default(ast, {
-      retainLines: true,
-      comments: true
-    }, originalContent);
-    
-    const backupPath = `${filePath}.backup.${Date.now()}`;
-    await fs.copy(filePath, backupPath);
-    console.log('📦 Backup created:', backupPath);
-    
-    await fs.writeFile(filePath, output.code, 'utf-8');
-    
-    console.log('✅ Transition added successfully');
-    
-    res.json({
-      success: true,
-      filePath,
-      backup: backupPath,
-      transition: { event, target }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error adding transition:', error);
     res.status(500).json({ 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
@@ -1520,5 +1417,140 @@ function buildScreenAst(screen) {
   
   return t.objectExpression(props);
 }
+
+// Add this to packages/api-server/src/routes/implications.js
+
+/**
+ * POST /api/implications/add-transition
+ * Add a transition between two states
+ */
+router.post('/add-transition', async (req, res) => {
+  try {
+    const { sourceFile, targetFile, event } = req.body;
+    
+    console.log('➕ Adding transition:', { sourceFile, targetFile, event });
+    
+    // Validate inputs
+    if (!sourceFile || !targetFile || !event) {
+      return res.status(400).json({ 
+        error: 'sourceFile, targetFile, and event are required' 
+      });
+    }
+    
+    // Read source file
+    const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    
+    // Parse with Babel
+    const ast = parse(sourceContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread'],
+    });
+    
+    // Extract target state name from file path
+    const targetStateName = path.basename(targetFile, '.js')
+      .replace(/Implications$/, '')
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '');
+    
+    console.log('🎯 Target state name:', targetStateName);
+    
+    let xstateConfigFound = false;
+    let transitionAdded = false;
+    
+    // Traverse and add transition
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          xstateConfigFound = true;
+          const configValue = path.node.value;
+          
+          if (configValue?.type === 'ObjectExpression') {
+            // Look for 'on' property
+            let onProperty = configValue.properties.find(
+              p => p.key?.name === 'on'
+            );
+            
+            // If no 'on' property, create it
+            if (!onProperty) {
+              console.log('📝 Creating new "on" property');
+              onProperty = {
+                type: 'ObjectProperty',
+                key: { type: 'Identifier', name: 'on' },
+                value: { type: 'ObjectExpression', properties: [] }
+              };
+              configValue.properties.push(onProperty);
+            }
+            
+            // Check if transition already exists
+            const existingTransition = onProperty.value.properties.find(
+              p => p.key?.name === event || p.key?.value === event
+            );
+            
+            if (existingTransition) {
+              return res.status(400).json({ 
+                error: `Transition ${event} already exists` 
+              });
+            }
+            
+            // Add new transition
+            console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
+            onProperty.value.properties.push({
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: event },
+              value: { type: 'StringLiteral', value: targetStateName }
+            });
+            
+            transitionAdded = true;
+          }
+        }
+      }
+    });
+    
+    if (!xstateConfigFound) {
+      return res.status(400).json({ 
+        error: 'Could not add transition - no xstateConfig found' 
+      });
+    }
+    
+    if (!transitionAdded) {
+      return res.status(400).json({ 
+        error: 'Could not add transition - failed to modify xstateConfig' 
+      });
+    }
+    
+    // Generate updated code
+const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
+  retainLines: true,
+  comments: true
+});
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, backupPath);
+    
+    // Write updated file
+    await fs.writeFile(sourceFile, newCode, 'utf-8');
+    
+    console.log('✅ Transition added successfully');
+    
+    res.json({
+      success: true,
+      transition: {
+        event,
+        from: path.basename(sourceFile),
+        to: targetStateName
+      },
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Add transition failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
 
 export default router;

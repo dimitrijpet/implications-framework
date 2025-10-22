@@ -9,6 +9,9 @@ import StatsPanel from '../components/StatsPanel/StatsPanel';
 import IssuePanel from '../components/IssuePanel/IssuePanel';
 import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
+const API_URL = 'http://localhost:3000';
+
+
 
 export default function Visualizer() {
   // Load from localStorage on mount
@@ -39,6 +42,7 @@ export default function Visualizer() {
   const [mode, setMode] = useState('view'); // 'view', 'add-transition'
   const [transitionSource, setTransitionSource] = useState(null);
   const [showAddStateModal, setShowAddStateModal] = useState(false);
+  const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
   
   // Clear cache and reset state
   const handleClearCache = () => {
@@ -63,8 +67,8 @@ export default function Visualizer() {
     
     try {
       console.log('🔍 Starting discovery scan...');
-      
-      const response = await fetch('http://localhost:3000/api/discovery/scan', {
+
+      const response = await fetch(`${API_URL}/api/discovery/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectPath })
@@ -113,7 +117,7 @@ export default function Visualizer() {
   
   try {
     // Re-parse just this one file
-    const response = await fetch('http://localhost:3000/api/discovery/parse-single-file', {
+    const response = await fetch(`${API_URL}/api/discovery/parse-single-file`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filePath })
@@ -250,7 +254,7 @@ useEffect(() => {
   // Handler for creating state
   const handleCreateState = async (formData) => {
     try {
-      const response = await fetch('http://localhost:3000/api/implications/create-state', {
+      const response = await fetch(`${API_URL}/api/implications/create-state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
@@ -293,92 +297,84 @@ useEffect(() => {
     }
   };
 
-  // Handler for transition mode clicks
-  const handleTransitionModeClick = async (nodeData) => {
-    if (mode !== 'add-transition') {
-      return handleNodeClick(nodeData); // Normal click in view mode
+
+  // ADD THIS DEBUG CODE to your Visualizer.jsx handleTransitionModeClick function
+const handleTransitionModeClick = async (nodeData) => {
+  if (!transitionMode.enabled) return;
+  
+  if (!transitionMode.source) {
+    // First click - select source
+    console.log('📍 Source selected:', nodeData.id);
+    console.log('🔍 Source data:', nodeData);
+    
+    setTransitionMode({ 
+      enabled: true, 
+      source: { id: nodeData.id, files: nodeData.files } 
+    });
+    
+  } else {
+    // Second click - select target
+    console.log('👉 Target selected:', nodeData.id);
+    console.log('🔍 Target data:', nodeData);
+    
+    const sourceFile = transitionMode.source.files?.implication;
+    const targetFile = nodeData.files?.implication;
+    
+    console.log('📤 Files:', { sourceFile, targetFile });
+    
+    if (!sourceFile || !targetFile) {
+      alert('❌ Could not find file paths for states');
+      setTransitionMode({ enabled: false, source: null });
+      return;
     }
     
-    // Transition mode logic
-    if (!transitionSource) {
-      // First click - select source
-      setTransitionSource(nodeData);
-      console.log('📍 Source selected:', nodeData.id);
-    } else {
-      // Second click - select target and create transition
-      if (transitionSource.id === nodeData.id) {
-        alert('❌ Source and target cannot be the same');
-        return;
-      }
-      
-      const event = prompt(`Add transition from "${transitionSource.id}" to "${nodeData.id}".\n\nEnter event name (e.g., ACCEPT, REJECT):`);
-      
-      if (!event) {
-        setTransitionSource(null);
-        return;
-      }
-      
-      try {
-        // Find source implication file
-        const sourceImplication = discoveryResult.files.implications.find(
-          imp => extractStateName(imp.metadata.className) === transitionSource.id
-        );
-        
-        if (!sourceImplication) {
-          throw new Error(`Could not find implication for ${transitionSource.id}`);
-        }
-        
-        const filePath = `${projectPath}/${sourceImplication.path}`;
-        
-        const response = await fetch('http://localhost:3000/api/implications/add-transition', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filePath,
-            event: event.toUpperCase(),
-            target: nodeData.id
-          })
-        });
-        
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || `HTTP ${response.status}`);
-        }
-        
-        const result = await response.json();
-        console.log('✅ Transition added:', result);
-        
-        // Show success
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-          position: fixed;
-          top: 20px;
-          right: 20px;
-          background: #10b981;
-          color: white;
-          padding: 16px 24px;
-          border-radius: 8px;
-          font-weight: bold;
-          z-index: 9999;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        `;
-        notification.textContent = `✅ Added ${event} → ${nodeData.id}! Re-scan to see it.`;
-        document.body.appendChild(notification);
-        
-        setTimeout(() => {
-          notification.remove();
-        }, 5000);
-        
-        setTransitionSource(null);
-        setMode('view');
-        
-      } catch (error) {
-        console.error('❌ Add transition failed:', error);
-        alert(`Failed: ${error.message}`);
-        setTransitionSource(null);
-      }
+    const event = prompt(
+      `Create transition from ${transitionMode.source.id} to ${nodeData.id}.\n\n` +
+      `Enter event name (e.g., LOGIN_COMPLETE, START_FILLING):`
+    );
+    
+    if (!event) {
+      setTransitionMode({ enabled: false, source: null });
+      return;
     }
-  };
+    
+    try {
+      const response = await fetch(`${API_URL}/api/implications/add-transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceFile, targetFile, event })
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to add transition');
+      }
+      
+      alert(`✅ Transition added: ${event}`);
+      
+      // Re-scan to update graph
+      handleScan();
+      
+    } catch (error) {
+      console.error('❌ Add transition failed:', error);
+      alert(`❌ ${error.message}`);
+    }
+    
+    setTransitionMode({ enabled: false, source: null });
+  }
+};
+
+// 3. ADD THESE HELPER FUNCTIONS
+const enableTransitionMode = () => {
+  setTransitionMode({ enabled: true, source: null });
+  console.log('🔗 Transition mode enabled - click two nodes to connect');
+};
+
+const disableTransitionMode = () => {
+  setTransitionMode({ enabled: false, source: null });
+  console.log('👁️ View mode enabled');
+};
   
   return (
     <div 
@@ -549,6 +545,42 @@ useEffect(() => {
             />
           </div>
         )}
+
+        <div className="mode-controls" style={{ marginBottom: '16px' }}>
+  <button
+    onClick={enableTransitionMode}
+    disabled={transitionMode.enabled}
+    style={{
+      padding: '8px 16px',
+      marginRight: '8px',
+      background: transitionMode.enabled ? '#3b82f6' : '#6b7280',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: transitionMode.enabled ? 'default' : 'pointer'
+    }}
+  >
+    🔗 Add Transition Mode
+    {transitionMode.enabled && transitionMode.source && ' (Select target)'}
+    {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
+  </button>
+  
+  {transitionMode.enabled && (
+    <button
+      onClick={disableTransitionMode}
+      style={{
+        padding: '8px 16px',
+        background: '#ef4444',
+        color: 'white',
+        border: 'none',
+        borderRadius: '4px',
+        cursor: 'pointer'
+      }}
+    >
+      ❌ Cancel
+    </button>
+  )}
+</div>
         
         {/* Graph */}
         <div 
@@ -606,14 +638,18 @@ useEffect(() => {
           </div>
           
           {graphData ? (
-            <StateGraph 
-              graphData={graphData}
-              onNodeClick={handleTransitionModeClick}
-              selectedNode={transitionSource?.id || selectedNodeId}
-              theme={defaultTheme}
-              transitionMode={mode === 'add-transition'}
-              transitionSource={transitionSource?.id}
-            />
+            <StateGraph
+  graphData={graphData}
+  onNodeClick={(nodeData) => {
+    if (transitionMode.enabled) {
+      handleTransitionModeClick(nodeData);
+    } else {
+      handleNodeClick(nodeData);
+    }
+  }}
+  selectedNodeId={selectedNodeId}
+  theme={defaultTheme}
+/>
           ) : (
             <div 
               className="flex items-center justify-center"
@@ -685,6 +721,7 @@ useEffect(() => {
       )}
     </div>
   );
+
 }
 
 // Helper function
@@ -698,3 +735,4 @@ function extractStateName(className) {
       return offset > 0 ? '_' + p1.toLowerCase() : p1.toLowerCase();
     });
 }
+

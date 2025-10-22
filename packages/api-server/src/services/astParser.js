@@ -225,54 +225,6 @@ export function extractXStateMetadata(content) {
   return metadata;
 }
 
-/**
- * Extract value from AST node
- */
-function extractValueFromNode(node) {
-  if (!node) return null;
-  
-  switch (node.type) {
-    case 'StringLiteral':
-    case 'NumericLiteral':
-    case 'BooleanLiteral':
-      return node.value;
-      
-    case 'NullLiteral':
-      return null;
-      
-    case 'Identifier':
-      if (node.name === 'undefined') return undefined;
-      if (node.name === 'null') return null;
-      return node.name;
-      
-    case 'ArrayExpression':
-      return node.elements
-        .map(el => extractValueFromNode(el))
-        .filter(v => v !== null && v !== undefined);
-      
-    case 'ObjectExpression':
-      const obj = {};
-      node.properties.forEach(prop => {
-        if (prop.key) {
-          const key = prop.key.name || prop.key.value;
-          const value = extractValueFromNode(prop.value);
-          if (value !== undefined) {
-            obj[key] = value;
-          }
-        }
-      });
-      return obj;
-      
-    case 'TemplateLiteral':
-      if (node.quasis && node.quasis.length === 1) {
-        return node.quasis[0].value.cooked;
-      }
-      return null;
-      
-    default:
-      return null;
-  }
-}
 
 /**
  * Extract UI implications from mirrorsOn.UI
@@ -841,3 +793,206 @@ function mergeScreenData(baseData, overrides) {
   
   return merged;
 }
+
+// Enhanced astParser.js additions
+// Add these new functions to extract XState context
+
+/**
+ * ✅ NEW: Extract context fields from xstateConfig
+ */
+export function extractXStateContext(content) {
+  const contextFields = {};
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            // Find context property
+            const contextProperty = value.properties.find(
+              p => p.key?.name === 'context'
+            );
+            
+            if (contextProperty?.value?.type === 'ObjectExpression') {
+              // Extract all context fields
+              contextProperty.value.properties.forEach(prop => {
+                if (!prop.key) return;
+                
+                const key = prop.key.name;
+                const extractedValue = extractValueFromNode(prop.value);
+                
+                // Store the field (even if null - that's the default!)
+                contextFields[key] = extractedValue;
+              });
+            }
+          }
+        }
+      },
+    });
+    
+  } catch (error) {
+    console.error('Error extracting XState context:', error.message);
+  }
+  
+  return contextFields;
+}
+
+/**
+ * ✅ ENHANCED: Extract complete XState structure
+ * Returns: { context, states, meta, transitions }
+ */
+export function extractCompleteXStateConfig(content) {
+  const result = {
+    context: {},
+    states: {},
+    initial: null,
+    meta: {}
+  };
+  
+  try {
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const value = path.node.value;
+          
+          if (value?.type === 'ObjectExpression') {
+            value.properties.forEach(prop => {
+              const key = prop.key?.name;
+              
+              if (key === 'context' && prop.value?.type === 'ObjectExpression') {
+                // Extract context
+                prop.value.properties.forEach(contextProp => {
+                  if (contextProp.key) {
+                    const fieldName = contextProp.key.name;
+                    const fieldValue = extractValueFromNode(contextProp.value);
+                    result.context[fieldName] = fieldValue;
+                  }
+                });
+              } else if (key === 'initial') {
+                // Extract initial state
+                result.initial = extractValueFromNode(prop.value);
+              } else if (key === 'states' && prop.value?.type === 'ObjectExpression') {
+                // Extract states (basic - just names for now)
+                prop.value.properties.forEach(stateProp => {
+                  if (stateProp.key) {
+                    const stateName = stateProp.key.name;
+                    result.states[stateName] = {
+                      name: stateName,
+                      // Could extract more here if needed
+                    };
+                  }
+                });
+              } else if (key === 'meta' && prop.value?.type === 'ObjectExpression') {
+                // Extract top-level meta
+                prop.value.properties.forEach(metaProp => {
+                  if (metaProp.key) {
+                    const metaKey = metaProp.key.name;
+                    const metaValue = extractValueFromNode(metaProp.value);
+                    result.meta[metaKey] = metaValue;
+                  }
+                });
+              }
+            });
+          }
+        }
+      },
+    });
+    
+  } catch (error) {
+    console.error('Error extracting complete XState config:', error.message);
+  }
+  
+  return result;
+}
+
+// ============================================
+// Helper function (already exists in astParser, shown here for reference)
+// ============================================
+
+function extractValueFromNode(node) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+      return node.value;
+      
+    case 'NullLiteral':
+      return null;
+      
+    case 'Identifier':
+      if (node.name === 'undefined') return undefined;
+      if (node.name === 'null') return null;
+      return node.name;
+      
+    case 'ArrayExpression':
+      return node.elements
+        .map(el => extractValueFromNode(el))
+        .filter(v => v !== null && v !== undefined);
+      
+    case 'ObjectExpression':
+      const obj = {};
+      node.properties.forEach(prop => {
+        if (prop.key) {
+          const key = prop.key.name || prop.key.value;
+          const value = extractValueFromNode(prop.value);
+          if (value !== undefined) {
+            obj[key] = value;
+          }
+        }
+      });
+      return obj;
+      
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+      return '<function>';
+      
+    case 'CallExpression':
+      // Handle assign() calls
+      if (node.callee?.name === 'assign') {
+        return '<assign>';
+      }
+      return '<call>';
+      
+    default:
+      return null;
+  }
+}
+
+// ============================================
+// USAGE in discoveryService.js:
+// ============================================
+
+/*
+import { extractXStateContext, extractCompleteXStateConfig } from './astParser.js';
+
+// When parsing an implication file:
+if (isImplication(parsed)) {
+  const metadata = extractImplicationMetadata(parsed);
+  
+  if (metadata.hasXStateConfig) {
+    // ✅ Extract context
+    const context = extractXStateContext(parsed.content);
+    metadata.xstateContext = context;
+    
+    // OR use complete extraction:
+    const xstateConfig = extractCompleteXStateConfig(parsed.content);
+    metadata.xstateContext = xstateConfig.context;
+    metadata.xstateInitial = xstateConfig.initial;
+    metadata.xstateStates = xstateConfig.states;
+  }
+}
+*/

@@ -9,6 +9,7 @@ import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '.
 export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
   const implications = files.implications || [];
+  const projectPath = discoveryResult.projectPath;
   
   const nodes = [];
   const edges = [];
@@ -52,14 +53,22 @@ statefulImplications.forEach(imp => {
     const isMultiPlatform = allPlatforms.length > 1;
     
     nodes.push({
-      data: {
-        id: stateName.toLowerCase(),
-        label: stateName,
-        type: 'state',
-        isStateful: metadata.isStateful,
-        pattern: metadata.pattern,
-        hasXState: metadata.hasXStateConfig,
-        metadata: metadata,
+  data: {
+    id: stateName.toLowerCase(),
+    label: stateName,
+    type: 'state',
+    isStateful: metadata.isStateful,
+    pattern: metadata.pattern,
+    hasXState: metadata.hasXStateConfig,
+    metadata: metadata,
+    
+    // ✅ ADD THIS - File paths!
+    files: {
+     implication: projectPath + '/' + imp.path,  // Make absolute!
+  test: projectPath + '/' + (Array.isArray(metadata.setup) 
+    ? metadata.setup[0]?.testFile 
+    : metadata.setup?.testFile)
+},
         
         // Visual styling data
         color: statusColor,
