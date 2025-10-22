@@ -20,7 +20,7 @@ export function isImplication(parsed) {
  * Extract metadata from an Implication class
  * NOW ASYNC to support async UI extraction
  */
-export async function extractImplicationMetadata(parsed, extractXStateMetadata = null, extractUIImplications = null) {
+export async function extractImplicationMetadata(parsed, extractXStateMetadata = null, extractUIImplications = null, extractXStateContext = null) {
   const metadata = {
     className: null,
     isStateful: false,
@@ -43,11 +43,14 @@ export async function extractImplicationMetadata(parsed, extractXStateMetadata =
     requires: null,
     setup: null,
     
-    // ✅ ADD: UI implications
+    // ✅ UI implications
     uiCoverage: {
       total: 0,
       platforms: {}
-    }
+    },
+    
+    // ✅ Context fields
+    xstateContext: {}
   };
   
   // Use the simplified structure from parseFile
@@ -82,6 +85,13 @@ export async function extractImplicationMetadata(parsed, extractXStateMetadata =
     if (parsed.content && extractXStateMetadata) {
       const xstateMetadata = extractXStateMetadata(parsed.content);
       Object.assign(metadata, xstateMetadata);
+    }
+    
+    // ✅ Extract context fields
+    if (parsed.content && extractXStateContext) {
+      const contextFields = extractXStateContext(parsed.content);
+      metadata.xstateContext = contextFields;
+      console.log(`📦 Extracted ${Object.keys(contextFields).length} context fields for ${metadata.className}`);
     }
   }
   

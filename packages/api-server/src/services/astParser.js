@@ -797,8 +797,11 @@ function mergeScreenData(baseData, overrides) {
 // Enhanced astParser.js additions
 // Add these new functions to extract XState context
 
+// Add this function to packages/api-server/src/services/astParser.js
+// Place it right after extractXStateMetadata()
+
 /**
- * ✅ NEW: Extract context fields from xstateConfig
+ * Extract context fields from xstateConfig
  */
 export function extractXStateContext(content) {
   const contextFields = {};
@@ -834,7 +837,7 @@ export function extractXStateContext(content) {
             }
           }
         }
-      },
+      }
     });
     
   } catch (error) {

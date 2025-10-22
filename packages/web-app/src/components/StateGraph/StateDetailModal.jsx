@@ -434,6 +434,52 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
                 </div>
               </div>
             )}
+
+            {/* ✅ Context Fields Section */}
+{state.meta?.xstateContext && Object.keys(state.meta.xstateContext).length > 0 && (
+  <div className="glass p-6 rounded-lg">
+    <h3 
+      className="text-lg font-semibold mb-4 flex items-center gap-2"
+      style={{ color: theme.colors.text.primary }}
+    >
+      <span>📦</span>
+      Context Fields ({Object.keys(state.meta.xstateContext).length})
+    </h3>
+    
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {Object.entries(state.meta.xstateContext).map(([key, value]) => (
+        <div key={key} className="glass p-4 rounded-lg">
+          <div 
+            className="text-sm mb-1 font-mono"
+            style={{ color: theme.colors.text.tertiary }}
+          >
+            {key}
+          </div>
+          <div 
+            className="font-semibold font-mono text-sm"
+            style={{ color: theme.colors.text.primary }}
+          >
+            {value === null ? (
+              <span style={{ color: theme.colors.accents.yellow }}>null</span>
+            ) : value === undefined ? (
+              <span style={{ color: theme.colors.accents.red }}>undefined</span>
+            ) : typeof value === 'string' ? (
+              <span style={{ color: theme.colors.accents.green }}>"{value}"</span>
+            ) : typeof value === 'number' ? (
+              <span style={{ color: theme.colors.accents.blue }}>{value}</span>
+            ) : typeof value === 'boolean' ? (
+              <span style={{ color: theme.colors.accents.purple }}>{String(value)}</span>
+            ) : (
+              <span style={{ color: theme.colors.text.secondary }}>
+                {JSON.stringify(value)}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
             
             {/* UI Coverage Section */}
             {currentState.uiCoverage && currentState.uiCoverage.total > 0 && (

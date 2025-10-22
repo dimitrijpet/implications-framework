@@ -1,7 +1,7 @@
 import { glob } from 'glob';
 import path from 'path';
 import fs from 'fs-extra';
-import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata, extractUIImplications } from './astParser.js';
+import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata, extractUIImplications, extractXStateContext } from './astParser.js';
 import { isImplication, extractImplicationMetadata } from '../../../core/src/patterns/implications.js';
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
@@ -57,7 +57,8 @@ export async function discoverProject(projectPath) {
           const metadata = await extractImplicationMetadata(
             parsed,
             extractXStateMetadata,
-            (content) => extractUIImplications(content, projectPath, cache)
+            (content) => extractUIImplications(content, projectPath, cache),
+            extractXStateContext
           );
           
           if (metadata.hasXStateConfig) {
@@ -129,7 +130,8 @@ export async function parseImplicationFile(filePath, projectPath) {
     const metadata = await extractImplicationMetadata(
       parsed,
       extractXStateMetadata,
-      (content) => extractUIImplications(content, projectPath, cache)
+      (content) => extractUIImplications(content, projectPath, cache),
+      extractXStateContext
     );
     
     const relativePath = path.relative(projectPath, filePath);
@@ -161,7 +163,8 @@ async function classifyFile(parsed, result, projectPath, cache) {
     const metadata = await extractImplicationMetadata(
       parsed, 
       extractXStateMetadata, 
-      (content) => extractUIImplications(content, projectPath, cache)
+      (content) => extractUIImplications(content, projectPath, cache),
+      extractXStateContext
     );
     
     result.files.implications.push(new DiscoveredFile({
