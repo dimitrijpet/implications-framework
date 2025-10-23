@@ -5,7 +5,6 @@ import path from 'path';
 import fs from 'fs-extra';
 import * as parser from '@babel/parser';
 import { parse } from '@babel/parser';
-
 import babelGenerate from '@babel/generator';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
@@ -1676,6 +1675,310 @@ const output = babelGenerate.default(ast, {
   }
 });
 
+// ========================================
+// POST /api/implications/add-context-field
+// ========================================
+router.post('/add-context-field', async (req, res) => {
+  try {
+    const { filePath, fieldName, initialValue, fieldType } = req.body;
+    
+    console.log('➕ Adding context field:', { filePath, fieldName, initialValue, fieldType });
+    
+    // Validation
+    if (!filePath || !fieldName) {
+      return res.status(400).json({ error: 'Missing required fields: filePath and fieldName' });
+    }
+    
+    // Validate field name (must be valid JS identifier)
+    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(fieldName)) {
+      return res.status(400).json({ 
+        error: 'Invalid field name - must be valid JavaScript identifier' 
+      });
+    }
+    
+    // Reserved keywords
+    const reserved = ['break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield'];
+    if (reserved.includes(fieldName)) {
+      return res.status(400).json({ error: `"${fieldName}" is a reserved JavaScript keyword` });
+    }
+    
+    // Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // Parse AST
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'classStaticBlock']
+    });
+    
+    let contextFound = false;
+    let fieldAdded = false;
+    
+    // Find xstateConfig.context and add field
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.static && path.node.key.name === 'xstateConfig') {
+          console.log('✅ Found xstateConfig');
+          
+          // Find context property
+          let contextProp = path.node.value.properties.find(
+            p => (p.key?.name === 'context' || p.key?.value === 'context')
+          );
+          
+          if (!contextProp) {
+            console.log('⚠️ No context property found, creating one');
+            // Create context if it doesn't exist
+            contextProp = {
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: 'context' },
+              value: { type: 'ObjectExpression', properties: [] }
+            };
+            // Add context as first property
+            path.node.value.properties.unshift(contextProp);
+          }
+          
+          contextFound = true;
+          
+          // Check if field already exists
+          const existingField = contextProp.value.properties.find(
+            p => (p.key?.name === fieldName || p.key?.value === fieldName)
+          );
+          
+          if (existingField) {
+            throw new Error(`Field "${fieldName}" already exists in context`);
+          }
+          
+          // Add new field
+          contextProp.value.properties.push({
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: fieldName },
+            value: valueToAST(initialValue)
+          });
+          
+          console.log('✅ Field added to AST');
+          fieldAdded = true;
+        }
+      }
+    });
+    
+    if (!contextFound) {
+      return res.status(400).json({ 
+        error: 'No xstateConfig found in file',
+        hint: 'Make sure the file contains a class with static xstateConfig property'
+      });
+    }
+    
+    if (!fieldAdded) {
+      return res.status(500).json({ error: 'Failed to add field to AST' });
+    }
+    
+    // Generate code
+    const output = babelGenerate.default(ast, {
+      retainLines: true,
+      comments: true
+    }, content);
+    
+    console.log('✅ Code generated');
+    
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.writeFile(backupPath, content);
+    console.log('✅ Backup created:', backupPath);
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code);
+    console.log('✅ File written');
+    
+    res.json({ 
+      success: true, 
+      backup: backupPath,
+      message: `Field "${fieldName}" added to context`
+    });
+    
+  } catch (error) {
+    console.error('❌ Add context field error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// ========================================
+// POST /api/implications/delete-context-field
+// ========================================
+router.post('/delete-context-field', async (req, res) => {
+  try {
+    const { filePath, fieldName } = req.body;
+    
+    console.log('🗑️ Deleting context field:', { filePath, fieldName });
+    
+    if (!filePath || !fieldName) {
+      return res.status(400).json({ error: 'Missing required fields: filePath and fieldName' });
+    }
+    
+    // Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // Parse AST
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'classStaticBlock']
+    });
+    
+    let fieldDeleted = false;
+    
+    // Find and remove field from context
+    traverse.default(ast, {
+      ClassProperty(path) {
+        if (path.node.static && path.node.key.name === 'xstateConfig') {
+          const contextProp = path.node.value.properties.find(
+            p => (p.key?.name === 'context' || p.key?.value === 'context')
+          );
+          
+          if (contextProp && contextProp.value.type === 'ObjectExpression') {
+            const fieldIndex = contextProp.value.properties.findIndex(
+              p => (p.key?.name === fieldName || p.key?.value === fieldName)
+            );
+            
+            if (fieldIndex !== -1) {
+              contextProp.value.properties.splice(fieldIndex, 1);
+              fieldDeleted = true;
+              console.log('✅ Field removed from AST');
+            }
+          }
+        }
+      }
+    });
+    
+    if (!fieldDeleted) {
+      return res.status(404).json({ 
+        error: `Field "${fieldName}" not found in context`
+      });
+    }
+    
+    // Generate code
+    const output = babelGenerate.default(ast, {
+      retainLines: true,
+      comments: true
+    }, content);
+    
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.writeFile(backupPath, content);
+    console.log('✅ Backup created:', backupPath);
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code);
+    console.log('✅ File written');
+    
+    res.json({ 
+      success: true, 
+      backup: backupPath,
+      message: `Field "${fieldName}" deleted from context`
+    });
+    
+  } catch (error) {
+    console.error('❌ Delete context field error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// ========================================
+// GET /api/implications/extract-mirrorson-variables
+// ========================================
+router.get('/extract-mirrorson-variables', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    console.log('💡 Extracting mirrorsOn variables from:', filePath);
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'Missing filePath parameter' });
+    }
+    
+    // Read and parse file
+    const content = await fs.readFile(filePath, 'utf-8');
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'classStaticBlock']
+    });
+    
+    let contextFields = [];
+    let mirrorsOnVariables = new Set();
+    
+    // Extract context and mirrorsOn
+    traverse.default(ast, {
+      ClassProperty(path) {
+        // Get context fields
+        if (path.node.static && path.node.key.name === 'xstateConfig') {
+          const contextProp = path.node.value.properties.find(
+            p => (p.key?.name === 'context' || p.key?.value === 'context')
+          );
+          
+          if (contextProp && contextProp.value.type === 'ObjectExpression') {
+            contextFields = contextProp.value.properties.map(
+              p => p.key.name || p.key.value
+            );
+          }
+        }
+        
+        // Extract from mirrorsOn
+        if (path.node.static && path.node.key.name === 'mirrorsOn') {
+          // Traverse the entire mirrorsOn object
+          traverse.default(path.node.value, {
+            TemplateLiteral(tPath) {
+              // Find {{variable}} patterns in template literals
+              tPath.node.quasis.forEach(quasi => {
+                const text = quasi.value.cooked || quasi.value.raw;
+                const matches = text.matchAll(/\{\{(\w+)\}\}/g);
+                for (const match of matches) {
+                  mirrorsOnVariables.add(match[1]);
+                }
+              });
+            },
+            StringLiteral(tPath) {
+              // Also check string literals for {{variable}} patterns
+              const matches = tPath.node.value.matchAll(/\{\{(\w+)\}\}/g);
+              for (const match of matches) {
+                mirrorsOnVariables.add(match[1]);
+              }
+            }
+          }, path.scope, path);
+        }
+      }
+    });
+    
+    // Find missing fields (in mirrorsOn but not in context)
+    const missingFromContext = Array.from(mirrorsOnVariables)
+      .filter(v => !contextFields.includes(v));
+    
+    console.log('✅ Extracted:', {
+      contextFields: contextFields.length,
+      mirrorsOnVariables: mirrorsOnVariables.size,
+      missingFromContext: missingFromContext.length
+    });
+    
+    res.json({
+      contextFields,
+      mirrorsOnVariables: Array.from(mirrorsOnVariables),
+      missingFromContext
+    });
+    
+  } catch (error) {
+    console.error('❌ Extract mirrorsOn variables error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 // ============================================
 // COMPLETE BACKEND ENDPOINT FOR CONTEXT
 // Add to: packages/api-server/src/routes/implications.js
@@ -1732,6 +2035,323 @@ router.get('/context-schema', async (req, res) => {
     res.status(500).json({
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+router.post('/add-context-field', async (req, res) => {
+  const { filePath, fieldName, initialValue, fieldType } = req.body;
+  
+  console.log('➕ Adding context field:', { filePath, fieldName, fieldType });
+  
+  if (!filePath || !fieldName) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'filePath and fieldName are required' 
+    });
+  }
+  
+  try {
+    // 1. Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // 2. Parse to AST
+    const ast = babelParser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread']
+    });
+    
+    // 3. Find and update xstateConfig.context
+    let contextUpdated = false;
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        const node = path.node;
+        
+        // Find: static xstateConfig = { ... }
+        if (
+          node.static &&
+          node.key.name === 'xstateConfig' &&
+          t.isObjectExpression(node.value)
+        ) {
+          // Find context property
+          const contextProp = node.value.properties.find(
+            prop => prop.key && prop.key.name === 'context'
+          );
+          
+          if (contextProp && t.isObjectExpression(contextProp.value)) {
+            // Check if field already exists
+            const existingField = contextProp.value.properties.find(
+              prop => prop.key && prop.key.name === fieldName
+            );
+            
+            if (existingField) {
+              throw new Error(`Field "${fieldName}" already exists in context`);
+            }
+            
+            // Add new field
+            const newProperty = t.objectProperty(
+              t.identifier(fieldName),
+              createValueNode(initialValue)
+            );
+            
+            contextProp.value.properties.push(newProperty);
+            contextUpdated = true;
+            
+            console.log(`✅ Added field "${fieldName}" to context`);
+          } else {
+            // Context doesn't exist, create it
+            node.value.properties.push(
+              t.objectProperty(
+                t.identifier('context'),
+                t.objectExpression([
+                  t.objectProperty(
+                    t.identifier(fieldName),
+                    createValueNode(initialValue)
+                  )
+                ])
+              )
+            );
+            contextUpdated = true;
+            
+            console.log(`✅ Created context with field "${fieldName}"`);
+          }
+        }
+      }
+    });
+    
+    if (!contextUpdated) {
+      return res.status(404).json({
+        success: false,
+        error: 'Could not find xstateConfig in file'
+      });
+    }
+    
+    // 4. Generate updated code
+    const output = babelGenerate.default(ast, {
+      retainLines: true,
+      retainFunctionParens: true
+    }, content);
+    
+    // 5. Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.writeFile(backupPath, content);
+    
+    // 6. Write updated file
+    await fs.writeFile(filePath, output.code);
+    
+    console.log('✅ Context field added successfully');
+    
+    res.json({
+      success: true,
+      fieldName,
+      initialValue,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding context field:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================
+// 2. DELETE CONTEXT FIELD
+// ============================================
+
+router.post('/delete-context-field', async (req, res) => {
+  const { filePath, fieldName } = req.body;
+  
+  console.log('🗑️ Deleting context field:', { filePath, fieldName });
+  
+  if (!filePath || !fieldName) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'filePath and fieldName are required' 
+    });
+  }
+  
+  try {
+    // 1. Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // 2. Parse to AST
+    const ast = babelParser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread']
+    });
+    
+    // 3. Find and remove from xstateConfig.context
+    let contextUpdated = false;
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        const node = path.node;
+        
+        // Find: static xstateConfig = { ... }
+        if (
+          node.static &&
+          node.key.name === 'xstateConfig' &&
+          t.isObjectExpression(node.value)
+        ) {
+          // Find context property
+          const contextProp = node.value.properties.find(
+            prop => prop.key && prop.key.name === 'context'
+          );
+          
+          if (contextProp && t.isObjectExpression(contextProp.value)) {
+            // Find and remove field
+            const fieldIndex = contextProp.value.properties.findIndex(
+              prop => prop.key && prop.key.name === fieldName
+            );
+            
+            if (fieldIndex === -1) {
+              throw new Error(`Field "${fieldName}" not found in context`);
+            }
+            
+            contextProp.value.properties.splice(fieldIndex, 1);
+            contextUpdated = true;
+            
+            console.log(`✅ Removed field "${fieldName}" from context`);
+          }
+        }
+      }
+    });
+    
+    if (!contextUpdated) {
+      return res.status(404).json({
+        success: false,
+        error: 'Could not find field in xstateConfig.context'
+      });
+    }
+    
+    // 4. Generate updated code
+    const output = babelGenerate.default(ast, {
+      retainLines: true,
+      retainFunctionParens: true
+    }, content);
+    
+    // 5. Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.writeFile(backupPath, content);
+    
+    // 6. Write updated file
+    await fs.writeFile(filePath, output.code);
+    
+    console.log('✅ Context field deleted successfully');
+    
+    res.json({
+      success: true,
+      fieldName,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting context field:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================
+// 3. EXTRACT MIRRORSON VARIABLES
+// ============================================
+
+router.get('/extract-mirrorson-variables', async (req, res) => {
+  const { filePath } = req.query;
+  
+  console.log('🔍 Extracting mirrorsOn variables from:', filePath);
+  
+  if (!filePath) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'filePath is required' 
+    });
+  }
+  
+  try {
+    // 1. Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // 2. Parse to AST
+    const ast = babelParser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread']
+    });
+    
+    // 3. Find mirrorsOn and extract variables
+    const variables = new Set();
+    let contextFields = {};
+    
+    traverse.default(ast, {
+      ClassProperty(path) {
+        const node = path.node;
+        
+        // Find mirrorsOn
+        if (node.static && node.key.name === 'mirrorsOn') {
+          // Convert to JSON to search for {{variable}} patterns
+          const code = babelGenerate.default(node.value).code;
+          
+          // Match {{variableName}} patterns
+          const matches = code.matchAll(/\{\{(\w+)\}\}/g);
+          for (const match of matches) {
+            variables.add(match[1]);
+          }
+        }
+        
+        // Also get existing context fields
+        if (
+          node.static &&
+          node.key.name === 'xstateConfig' &&
+          t.isObjectExpression(node.value)
+        ) {
+          const contextProp = node.value.properties.find(
+            prop => prop.key && prop.key.name === 'context'
+          );
+          
+          if (contextProp && t.isObjectExpression(contextProp.value)) {
+            contextProp.value.properties.forEach(prop => {
+              if (prop.key) {
+                contextFields[prop.key.name] = true;
+              }
+            });
+          }
+        }
+      }
+    });
+    
+    // 4. Filter out variables that already exist in context
+    const missingVariables = Array.from(variables).filter(
+      varName => !contextFields[varName]
+    );
+    
+    console.log('📋 Found variables:', Array.from(variables));
+    console.log('📦 Existing context fields:', Object.keys(contextFields));
+    console.log('⚠️ Missing variables:', missingVariables);
+    
+    res.json({
+      success: true,
+      allVariables: Array.from(variables),
+      existingInContext: Object.keys(contextFields),
+      missingFromContext: missingVariables.map(name => ({
+        name,
+        reason: `Used in mirrorsOn checks but not in context`,
+        from: 'mirrorsOn'
+      }))
+    });
+    
+  } catch (error) {
+    console.error('❌ Error extracting mirrorsOn variables:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -1905,6 +2525,105 @@ function createValueNode(value) {
   
   // Fallback
   return t.stringLiteral(String(value));
+}
+
+// ========================================
+// HELPER FUNCTIONS FOR CONTEXT MANAGEMENT
+// ========================================
+
+/**
+ * Convert JavaScript value to AST node
+ */
+function valueToAST(value) {
+  if (value === null) {
+    return { type: 'NullLiteral' };
+  }
+  
+  if (value === undefined) {
+    return { type: 'Identifier', name: 'undefined' };
+  }
+  
+  if (typeof value === 'string') {
+    return { type: 'StringLiteral', value };
+  }
+  
+  if (typeof value === 'number') {
+    return { type: 'NumericLiteral', value };
+  }
+  
+  if (typeof value === 'boolean') {
+    return { type: 'BooleanLiteral', value };
+  }
+  
+  if (Array.isArray(value)) {
+    return {
+      type: 'ArrayExpression',
+      elements: value.map(v => valueToAST(v))
+    };
+  }
+  
+  if (typeof value === 'object') {
+    return {
+      type: 'ObjectExpression',
+      properties: Object.entries(value).map(([k, v]) => ({
+        type: 'ObjectProperty',
+        key: { type: 'Identifier', name: k },
+        value: valueToAST(v)
+      }))
+    };
+  }
+  
+  return { type: 'Identifier', name: 'undefined' };
+}
+
+/**
+ * Extract JavaScript value from AST node
+ * (You might already have this - if so, skip it)
+ */
+function extractValueFromAST(node) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+      return node.value;
+      
+    case 'NullLiteral':
+      return null;
+      
+    case 'Identifier':
+      if (node.name === 'undefined') return undefined;
+      if (node.name === 'null') return null;
+      return node.name;
+      
+    case 'ArrayExpression':
+      return node.elements
+        .filter(el => el !== null)
+        .map(el => extractValueFromAST(el));
+      
+    case 'ObjectExpression':
+      const obj = {};
+      node.properties.forEach(prop => {
+        if (prop.key) {
+          const key = prop.key.name || prop.key.value;
+          const value = extractValueFromAST(prop.value);
+          if (value !== undefined) {
+            obj[key] = value;
+          }
+        }
+      });
+      return obj;
+      
+    case 'TemplateLiteral':
+      if (node.quasis && node.quasis.length === 1 && node.expressions.length === 0) {
+        return node.quasis[0].value.cooked;
+      }
+      return null;
+      
+    default:
+      return null;
+  }
 }
 
 export default router;

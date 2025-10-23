@@ -215,39 +215,41 @@ useEffect(() => {
   name: nodeData.id,
   displayName: metadata.status || nodeData.label,
   meta: {
-    status: metadata.status,
-    triggerAction: metadata.triggerAction,
-    triggerButton: metadata.triggerButton,
-    afterButton: metadata.afterButton,
-    previousButton: metadata.previousButton,
-    notificationKey: metadata.notificationKey,
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    platform: metadata.platform || 'unknown',
-    requiredFields: metadata.requiredFields || [],
-    requires: metadata.requires || {},
-    setup: Array.isArray(metadata.setup) ? metadata.setup[0] : metadata.setup,
-    allSetups: Array.isArray(metadata.setup) ? metadata.setup : (metadata.setup ? [metadata.setup] : []),
-    actionName: (Array.isArray(metadata.setup) ? metadata.setup[0]?.actionName : metadata.setup?.actionName) || '',
-    
-    // ✅ ADD THIS:
-    xstateContext: metadata.xstateContext || {}
-  },
-  transitions: stateTransitions,
-  files: {
-    implication: `${projectPath}/${implication.path}`,
-    test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-  },
-  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+  status: metadata.status,
+  triggerAction: metadata.triggerAction,
+  triggerButton: metadata.triggerButton,
+  afterButton: metadata.afterButton,
+  previousButton: metadata.previousButton,
+  platform: metadata.platform,
+  platforms: metadata.platforms,
+  notificationKey: metadata.notificationKey,
+  statusCode: metadata.statusCode,
+  statusNumber: metadata.statusNumber,
+  requiredFields: metadata.requiredFields,
+  requires: metadata.requires,
+  setup: metadata.setup,
+  xstateContext: metadata.xstateContext || {},
+  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }  // ← MOVE HERE!
+},
+transitions: stateTransitions,
+files: {
+  implication: `${projectPath}/${implication.path}`,
+  test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
+},
 };
         
         console.log('✅ Selected state with full metadata:', state);
+        console.log('✅ Selected state with full metadata:', state);
+console.log('🔍 meta.uiCoverage:', state.meta.uiCoverage);
+console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
         setSelectedState(state);
       } else {
         console.warn('⚠️ Implication not found for:', nodeData.id);
       }
     }
   };
+
+
   
   const closeDetail = () => {
     setSelectedState(null);

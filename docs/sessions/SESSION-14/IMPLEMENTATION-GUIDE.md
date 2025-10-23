@@ -284,47 +284,130 @@ static xstateConfig = {
 ## ✅ Testing Checklist
 
 ### Context Field Editing (StateDetailModal)
-- [ ] Can view existing context fields
-- [ ] Can edit field values (click to edit, save/cancel)
-- [ ] Edit mode shows add/delete buttons
-- [ ] View mode hides add/delete buttons
-
+- [ x] Can view existing context fields
+- [ ] Can edit field values (click to edit, save/cancel) - yes on field but can't save modal - ❌ Failed to save: Could not update metadata - no xstateConfig found
+- [x ] Edit mode shows add/delete buttons
+- [ x] View mode hides add/delete buttons
+❌ Failed to delete field: babelParser is not defined
 ### Add New Field
-- [ ] Click "➕ Add Context Field" button shows form
-- [ ] Can enter field name (validates JS identifier)
-- [ ] Can select type (null, string, number, boolean, array, object)
-- [ ] Shows error for invalid names (duplicates, reserved keywords)
-- [ ] Enter key adds field, Escape cancels
-- [ ] Field appears immediately after adding
-- [ ] Creates backup file
+- [x ] Click "➕ Add Context Field" button shows form
+- [x ] Can enter field name (validates JS identifier)
+- [x ] Can select type (null, string, number, boolean, array, object)
+- [ x] Shows error for invalid names (duplicates, reserved keywords)
+- [x ] Enter key adds field, Escape cancels
+- [ ] Field appears immediately after adding - ❌ Failed to delete field: babelParser is not defined
+- [ ] Creates backup file - ❌ Failed to delete field: babelParser is not defined
 
 ### Delete Field
-- [ ] Hover over field shows "🗑️" button
-- [ ] Click delete shows confirmation dialog
-- [ ] Confirm removes field immediately
-- [ ] Cancel keeps field
-- [ ] Creates backup file
+- [x ] Hover over field shows "🗑️" button
+- [x ] Click delete shows confirmation dialog
+- [ ] Confirm removes field immediately - ❌ Failed to delete field: babelParser is not defined
+- [ x] Cancel keeps field
+- [ ] Creates backup file - ❌ Failed to delete field: babelParser is not defined
 
 ### Auto-Suggestions from mirrorsOn
-- [ ] Suggestions banner appears when fields missing
-- [ ] Shows fields used in UI checks but not in context
-- [ ] Shows reason (e.g., "Used in mirrorsOn checks")
-- [ ] Click individual field adds that field
-- [ ] Click "Add All" adds all suggested fields
-- [ ] Suggestions disappear after adding fields
+- [ ] Suggestions banner appears when fields missing - doesn't show UI implications anymore, no mirrorsOn
+- [ ] Shows fields used in UI checks but not in context - - doesn't show UI implications anymore, no mirrorsOn
+- [ ] Shows reason (e.g., "Used in mirrorsOn checks") - - doesn't show UI implications anymore, no mirrorsOn
+- [ ] Click individual field adds that field - - doesn't show UI implications anymore, no mirrorsOn
+- [ ] Click "Add All" adds all suggested fields - - doesn't show UI implications anymore, no mirrorsOn
+- [ ] Suggestions disappear after adding fields - - doesn't show UI implications anymore, no mirrorsOn
+I get smart suggestions on add state (without context fields)..
+💡 Suggestions
+Hide
+💡
+Smart Suggestions
+Based on 3 states
+
+🔘 Button Naming
+▼
+Detected Pattern: SINGLE_VERB
+Confidence: 100%
+Examples: S&#x27;IDENTIFIER
+Most Common:
+S&#x27;IDENTIFIER (100%)
+
+📋 Required Fields
+▼
+Required Fields:
+From meta.requiredFields
+No highly common required fields detected
+All Required Fields:
+dancerName (33%)
+clubName (33%)
+bookingTime (33%)
+Common Combinations:
+bookingTime + clubName + dancerName (33%)
+
+⚙️ Setup Actions
+▼
+No highly common setup actions detected
+All Setup Actions:
+{testFile: ...} (33%)
+Platform Distribution: unknown (67%), web (33%)
+
+but that's not it
 
 ### Pattern-Based Suggestions (AddStateModal)
-- [ ] Shows common fields from existing states
-- [ ] Shows usage percentage
-- [ ] Can add suggested fields
-- [ ] Suggestions update when pattern analysis loads
+- [ x] Shows common fields from existing states
+- [ x] Shows usage percentage
+- [ ] Can add suggested fields - can't add now not sure it's clickable
+- [ ] Suggestions update when pattern analysis loads - not sure
 
 ### State Creation with Context (AddStateModal)
-- [ ] Context section appears in custom/advanced mode
-- [ ] Can add fields before creating state
-- [ ] Can edit/delete fields before creating state
-- [ ] Created state file includes context
-- [ ] Copying state also copies context
+- [ x] Context section appears in custom/advanced mode
+- [ ] Can add fields before creating state - I added context field when creating but it didn't show on context fields, still show no context fields
+- [x ] Can edit/delete fields before creating state
+- [ ] Created state file includes context - i think so - class NotherBookingImplications {
+  
+  static xstateConfig = {
+    meta: {
+      status: "anotherfiled",
+      triggerAction: "notherBooking",
+      
+      requires: {
+        previousStatus: "",
+        data: {}
+      },
+      
+      setup: {
+        testFile: "tests/implications/bookings/status/NotherBooking-UNIT.spec.js",
+        actionName: "notherBooking",
+        platform: "web"
+      },
+      
+      requiredFields: [
+        "dancerName",
+        "clubName",
+        "bookingTime"
+      ],
+      
+      triggerButton: "ANOTHER",
+      afterButton: null,
+      previousButton: null,
+      
+      notificationKey: "nother"
+    },
+    
+    on: {
+      // TODO: Add transitions here
+      // Example: NEXT_STATE: 'next_state_name'
+    },
+    
+    entry: assign({
+      status: "anotherfiled",
+      statusLabel: "anotherfiled",
+      statusLabelUpperCase: "NOTHER",
+      statusCode: "anotherfiled",
+      statusNumber: 1,
+      
+      anotherfiledAt: ({ event }) => event.anotherfiledAt || new Date().toISOString(),
+      anotherfiledBy: ({ event }) => event.userName || event.managerName
+    })
+  };
+  not sure it adds
+
+- [ ] Copying state also copies context - don't think so
 
 ---
 

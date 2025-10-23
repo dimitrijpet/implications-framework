@@ -1,8 +1,10 @@
 // packages/web-app/src/components/AddStateModal/AddStateModal.jsx
+// COMPLETE VERSION with Context Field Management
 
 import React, { useState, useEffect } from 'react';
 import './AddStateModal.css';
 import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
+import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import { useSuggestions } from '../../hooks/useSuggestions';
 
 export default function AddStateModal({ 
@@ -30,12 +32,17 @@ export default function AddStateModal({
     statusNumber: '',
     notificationKey: '',
     setupActions: [],
-    requiredFields: []
+    requiredFields: [],
+    contextFields: {}  // NEW: Context fields for the state
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [showContextHelp, setShowContextHelp] = useState(false);
   const [errors, setErrors] = useState({});
   const [copyPreview, setCopyPreview] = useState(null);
+  
+  // NEW: Context field suggestions from pattern analyzer
+  const [contextSuggestions, setContextSuggestions] = useState([]);
 
   // Get pattern analysis for suggestions
   const { analysis, loading: analysisLoading } = useSuggestions(projectPath);
@@ -60,6 +67,23 @@ export default function AddStateModal({
     }
   }, [formData.copyFrom]);
 
+  // NEW: Extract context suggestions from pattern analysis
+  useEffect(() => {
+    if (analysis?.fields?.context) {
+      // Convert pattern analyzer context fields to suggestions
+      const suggestions = analysis.fields.context
+        .filter(f => parseFloat(f.frequency) > 0.3) // Used in 30%+ of states
+        .map(f => ({
+          name: f.field,
+          reason: `Used in ${f.percentage} of existing states`,
+          from: 'patterns'
+        }));
+      
+      setContextSuggestions(suggestions);
+      console.log('💡 Context suggestions from patterns:', suggestions);
+    }
+  }, [analysis]);
+
   // ========================================
   // HELPER FUNCTIONS
   // ========================================
@@ -77,12 +101,14 @@ export default function AddStateModal({
       statusNumber: '',
       notificationKey: '',
       setupActions: [],
-      requiredFields: []
+      requiredFields: [],
+      contextFields: {}  // Reset context too
     });
     setErrors({});
     setShowAdvanced(false);
     setCopyPreview(null);
     setShowSuggestions(true);
+    setShowContextHelp(false);
   };
 
   const loadCopyPreview = async (stateId) => {
@@ -96,7 +122,7 @@ export default function AddStateModal({
       console.log('✅ Copy preview loaded:', data);
       setCopyPreview(data);
       
-      // Auto-fill form from copied state
+      // Auto-fill form from copied state (including context)
       setFormData(prev => ({
         ...prev,
         platform: data.platform || prev.platform,
@@ -107,7 +133,8 @@ export default function AddStateModal({
         statusNumber: data.statusNumber || '',
         notificationKey: data.notificationKey || '',
         setupActions: data.setupActions || [],
-        requiredFields: data.requiredFields || []
+        requiredFields: data.requiredFields || [],
+        contextFields: data.context || {}  // NEW: Copy context too
       }));
     } catch (error) {
       console.error('❌ Failed to load copy preview:', error);
@@ -195,8 +222,15 @@ export default function AddStateModal({
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
 
-    console.log('✅ Creating state:', { ...formData, displayName });
-    onCreate({ ...formData, displayName });
+    // Include context in the create payload
+    const stateData = {
+      ...formData,
+      displayName,
+      context: formData.contextFields  // Pass context to backend
+    };
+
+    console.log('✅ Creating state with context:', stateData);
+    onCreate(stateData);
   };
 
   const updateField = (field, value) => {
@@ -223,6 +257,66 @@ export default function AddStateModal({
       ...prev,
       setupActions: prev.setupActions.filter(a => a !== action)
     }));
+  };
+
+  // ========================================
+  // NEW: CONTEXT FIELD HANDLERS
+  // ========================================
+
+  const handleAddContextField = (fieldName, initialValue, fieldType) => {
+    console.log('➕ Adding context field to new state:', { fieldName, initialValue, fieldType });
+    
+    setFormData(prev => ({
+      ...prev,
+      contextFields: {
+        ...prev.contextFields,
+        [fieldName]: initialValue
+      }
+    }));
+    
+    // Remove from suggestions
+    setContextSuggestions(prev => 
+      prev.filter(s => s.name !== fieldName)
+    );
+  };
+
+  const handleChangeContextField = (fieldName, newValue) => {
+    console.log('🔄 Changing context field:', { fieldName, newValue });
+    
+    setFormData(prev => ({
+      ...prev,
+      contextFields: {
+        ...prev.contextFields,
+        [fieldName]: newValue
+      }
+    }));
+  };
+
+  const handleDeleteContextField = (fieldName) => {
+    console.log('🗑️ Deleting context field:', fieldName);
+    
+    setFormData(prev => {
+      const updated = { ...prev.contextFields };
+      delete updated[fieldName];
+      
+      return {
+        ...prev,
+        contextFields: updated
+      };
+    });
+    
+    // Add back to suggestions if it came from patterns
+    const wasSuggested = analysis?.fields?.context?.find(f => f.field === fieldName);
+    if (wasSuggested) {
+      setContextSuggestions(prev => [
+        ...prev,
+        {
+          name: fieldName,
+          reason: `Used in ${wasSuggested.percentage} of existing states`,
+          from: 'patterns'
+        }
+      ]);
+    }
   };
 
   // ========================================
@@ -258,44 +352,62 @@ export default function AddStateModal({
         </div>
 
         {/* ========================================
-            MODE TOGGLE
+            MODE TABS
             ======================================== */}
-        <div className="mode-toggle" style={{ marginBottom: '24px' }}>
+        <div className="mode-tabs" style={{ 
+          display: 'flex', 
+          gap: '8px', 
+          marginBottom: '24px',
+          borderBottom: `2px solid ${theme.colors.border}`,
+          paddingBottom: '2px'
+        }}>
           <button
-            className={`mode-button ${mode === 'quick' ? 'active' : ''}`}
+            className={`mode-tab ${mode === 'quick' ? 'active' : ''}`}
             onClick={() => setMode('quick')}
             style={{
+              flex: 1,
+              padding: '12px',
               background: mode === 'quick' ? theme.colors.primary : 'transparent',
-              color: mode === 'quick' ? '#fff' : theme.colors.text.secondary,
-              border: `2px solid ${mode === 'quick' ? theme.colors.primary : theme.colors.border}`
+              color: mode === 'quick' ? 'white' : theme.colors.text.secondary,
+              border: 'none',
+              borderRadius: '8px 8px 0 0',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '14px',
+              transition: 'all 0.2s'
             }}
           >
-            🚀 Quick Copy
+            ⚡ Quick Copy
           </button>
           <button
-            className={`mode-button ${mode === 'custom' ? 'active' : ''}`}
+            className={`mode-tab ${mode === 'custom' ? 'active' : ''}`}
             onClick={() => setMode('custom')}
             style={{
+              flex: 1,
+              padding: '12px',
               background: mode === 'custom' ? theme.colors.primary : 'transparent',
-              color: mode === 'custom' ? '#fff' : theme.colors.text.secondary,
-              border: `2px solid ${mode === 'custom' ? theme.colors.primary : theme.colors.border}`
+              color: mode === 'custom' ? 'white' : theme.colors.text.secondary,
+              border: 'none',
+              borderRadius: '8px 8px 0 0',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '14px',
+              transition: 'all 0.2s'
             }}
           >
-            ✏️ Custom Build
+            🔧 Custom Build
           </button>
         </div>
 
         {/* ========================================
-            FORM BODY
+            FORM CONTENT
             ======================================== */}
-        <div className="modal-body">
-          
-          {/* STATE NAME - Always visible */}
+        <div className="modal-body" style={{ marginTop: '16px' }}>
+          {/* State Name (always visible) */}
           <FormGroup 
             label="State Name" 
             required 
             error={errors.stateName}
-            helper="Use lowercase letters and underscores only"
             theme={theme}
           >
             <input
@@ -306,62 +418,47 @@ export default function AddStateModal({
               style={{
                 background: theme.colors.background.tertiary,
                 color: theme.colors.text.primary,
-                border: `1px solid ${errors.stateName ? theme.colors.accents.red : theme.colors.border}`
+                border: `1px solid ${errors.stateName ? theme.colors.accents.red : theme.colors.border}`,
+                padding: '10px',
+                borderRadius: '6px',
+                width: '100%'
               }}
             />
           </FormGroup>
 
-          {/* SUGGESTIONS PANEL TOGGLE */}
-          {analysis && !analysis.noData && formData.stateName && (
-            <div style={{ marginBottom: '16px' }}>
-              <button
-                type="button"
-                onClick={() => setShowSuggestions(!showSuggestions)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: theme.colors.primary,
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '4px 0'
-                }}
-              >
-                <span style={{ 
-                  transition: 'transform 0.2s',
-                  transform: showSuggestions ? 'rotate(90deg)' : 'rotate(0deg)'
-                }}>
-                  ▶
-                </span>
-                {showSuggestions ? 'Hide' : 'Show'} Smart Suggestions
-              </button>
-            </div>
-          )}
-
-          {/* SUGGESTIONS PANEL */}
-          {showSuggestions && analysis && formData.stateName && (
-            <SuggestionsPanel
-              analysis={analysis}
-              currentInput={formData}
-              onApply={handleApplySuggestion}
-              theme={theme}
+          {/* Display Name (optional) */}
+          <FormGroup 
+            label="Display Name" 
+            helper="Auto-generated if left empty"
+            theme={theme}
+          >
+            <input
+              type="text"
+              value={formData.displayName}
+              onChange={(e) => updateField('displayName', e.target.value)}
+              placeholder="e.g., Reviewing Booking"
+              style={{
+                background: theme.colors.background.tertiary,
+                color: theme.colors.text.primary,
+                border: `1px solid ${theme.colors.border}`,
+                padding: '10px',
+                borderRadius: '6px',
+                width: '100%'
+              }}
             />
-          )}
+          </FormGroup>
 
-          {/* MODE-SPECIFIC CONTENT */}
+          {/* Mode-specific content */}
           {mode === 'quick' ? (
             <QuickCopyMode
               formData={formData}
               updateField={updateField}
+              errors={errors}
               existingStates={existingStates}
               copyPreview={copyPreview}
-              errors={errors}
-              theme={theme}
               onRemoveField={removeField}
               onRemoveSetup={removeSetupAction}
+              theme={theme}
             />
           ) : (
             <CustomBuildMode
@@ -372,34 +469,196 @@ export default function AddStateModal({
               theme={theme}
             />
           )}
+
+          {/* ========================================
+              NEW: CONTEXT FIELDS SECTION
+              ======================================== */}
+          {(mode === 'custom' || showAdvanced) && (
+            <div className="context-section" style={{ marginTop: '24px' }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: '12px'
+              }}>
+                <div>
+                  <h3 style={{ 
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    color: theme.colors.accents.blue,
+                    marginBottom: '4px'
+                  }}>
+                    📦 Context Fields
+                    {Object.keys(formData.contextFields).length > 0 && (
+                      <span style={{ 
+                        fontSize: '14px', 
+                        fontWeight: 'normal',
+                        color: theme.colors.text.tertiary,
+                        marginLeft: '8px'
+                      }}>
+                        ({Object.keys(formData.contextFields).length} {Object.keys(formData.contextFields).length === 1 ? 'field' : 'fields'})
+                      </span>
+                    )}
+                  </h3>
+                  <div style={{ 
+                    fontSize: '13px', 
+                    color: theme.colors.text.secondary 
+                  }}>
+                    Define state data (optional - can add later)
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => setShowContextHelp(!showContextHelp)}
+                  style={{ 
+                    color: theme.colors.accents.blue,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.background = `${theme.colors.accents.blue}15`}
+                  onMouseLeave={(e) => e.target.style.background = 'none'}
+                >
+                  ❓ What are context fields?
+                </button>
+              </div>
+              
+              {/* Context Help */}
+              {showContextHelp && (
+                <div 
+                  style={{
+                    marginBottom: '16px',
+                    padding: '16px',
+                    background: `${theme.colors.accents.blue}15`,
+                    border: `1px solid ${theme.colors.accents.blue}`,
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    color: theme.colors.text.primary
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                    💡 Context Fields:
+                  </div>
+                  <ul style={{ 
+                    margin: '0', 
+                    paddingLeft: '20px',
+                    lineHeight: '1.6'
+                  }}>
+                    <li>Store data that accumulates through the state machine workflow</li>
+                    <li>Used in mirrorsOn checks (e.g., {"{{username}}"} in UI validation)</li>
+                    <li>Can be set by entry actions or copied from testData</li>
+                    <li>Examples: username, status, sessionToken, acceptedAt</li>
+                    <li>Optional now - you can always add them later when editing the state</li>
+                  </ul>
+                </div>
+              )}
+              
+              {/* DynamicContextFields Component */}
+              <DynamicContextFields
+                contextData={formData.contextFields}
+                onFieldChange={handleChangeContextField}
+                onFieldAdd={handleAddContextField}
+                onFieldDelete={handleDeleteContextField}
+                suggestedFields={contextSuggestions}
+                theme={theme}
+                editable={true}
+                compact={false}
+              />
+            </div>
+          )}
+
+          {/* ========================================
+              SUGGESTIONS PANEL
+              ======================================== */}
+          {showSuggestions && analysis && !analysisLoading && (
+            <div style={{ marginTop: '24px' }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '12px'
+              }}>
+                <h3 style={{ 
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  color: theme.colors.accents.yellow
+                }}>
+                  💡 Suggestions
+                </h3>
+                <button
+                  onClick={() => setShowSuggestions(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: theme.colors.text.tertiary,
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    padding: '4px 8px'
+                  }}
+                >
+                  Hide
+                </button>
+              </div>
+              
+              <SuggestionsPanel
+                analysis={analysis}
+                currentState={formData}
+                onApply={handleApplySuggestion}
+                theme={theme}
+              />
+            </div>
+          )}
         </div>
 
         {/* ========================================
-            FOOTER
+            FOOTER ACTIONS
             ======================================== */}
-        <div className="modal-footer">
+        <div className="modal-footer" style={{ 
+          marginTop: '24px',
+          paddingTop: '16px',
+          borderTop: `1px solid ${theme.colors.border}`,
+          display: 'flex',
+          gap: '12px',
+          justifyContent: 'flex-end'
+        }}>
           <button
-            className="button button-secondary"
             onClick={onClose}
             style={{
-              background: 'transparent',
+              padding: '10px 20px',
+              background: theme.colors.background.tertiary,
               color: theme.colors.text.secondary,
-              border: `1px solid ${theme.colors.border}`
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 600
             }}
           >
             Cancel
           </button>
           <button
-            className="button button-primary"
             onClick={handleCreate}
-            disabled={!formData.stateName || (mode === 'quick' && !formData.copyFrom)}
             style={{
+              padding: '10px 20px',
               background: theme.colors.primary,
-              opacity: (!formData.stateName || (mode === 'quick' && !formData.copyFrom)) ? 0.5 : 1,
-              cursor: (!formData.stateName || (mode === 'quick' && !formData.copyFrom)) ? 'not-allowed' : 'pointer'
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 600,
+              transition: 'all 0.2s'
             }}
+            onMouseEnter={(e) => e.target.style.filter = 'brightness(1.1)'}
+            onMouseLeave={(e) => e.target.style.filter = 'brightness(1)'}
           >
-            Create State
+            ✨ Create State
           </button>
         </div>
       </div>
@@ -408,25 +667,41 @@ export default function AddStateModal({
 }
 
 // ========================================
-// SUB-COMPONENTS
+// HELPER COMPONENTS
 // ========================================
 
-function FormGroup({ label, required, error, helper, children, theme }) {
+function FormGroup({ label, required, helper, error, children, theme }) {
   return (
-    <div className="form-group">
-      <label style={{ color: theme?.colors.text.primary || '#fff' }}>
-        {label} {required && <span style={{ color: theme?.colors.accents.red || '#ff4444' }}>*</span>}
+    <div style={{ marginBottom: '20px' }}>
+      <label style={{ 
+        display: 'block',
+        marginBottom: '6px',
+        fontSize: '14px',
+        fontWeight: 600,
+        color: theme.colors.text.primary
+      }}>
+        {label}
+        {required && <span style={{ color: theme.colors.accents.red, marginLeft: '4px' }}>*</span>}
       </label>
       {children}
       {error && (
-        <span className="error-message" style={{ color: theme?.colors.accents.red || '#ff4444' }}>
-          {error}
-        </span>
+        <div style={{ 
+          marginTop: '4px',
+          fontSize: '12px',
+          color: theme.colors.accents.red
+        }}>
+          ⚠️ {error}
+        </div>
       )}
       {helper && !error && (
-        <span className="helper-text" style={{ color: theme?.colors.text.tertiary || '#888' }}>
+        <div style={{ 
+          marginTop: '4px',
+          fontSize: '12px',
+          color: theme.colors.text.tertiary,
+          fontStyle: 'italic'
+        }}>
           {helper}
-        </span>
+        </div>
       )}
     </div>
   );
@@ -435,17 +710,23 @@ function FormGroup({ label, required, error, helper, children, theme }) {
 function QuickCopyMode({ 
   formData, 
   updateField, 
-  existingStates, 
-  copyPreview, 
   errors, 
-  theme,
+  existingStates, 
+  copyPreview,
   onRemoveField,
-  onRemoveSetup
+  onRemoveSetup,
+  theme 
 }) {
   return (
     <>
-      {/* Copy From Dropdown */}
-      <FormGroup label="Copy from" required error={errors.copyFrom} theme={theme}>
+      {/* Copy From Selector */}
+      <FormGroup 
+        label="Copy From" 
+        required
+        error={errors.copyFrom}
+        helper="Select a state to use as template"
+        theme={theme}
+      >
         <select
           value={formData.copyFrom}
           onChange={(e) => updateField('copyFrom', e.target.value)}
@@ -459,90 +740,44 @@ function QuickCopyMode({
             cursor: 'pointer'
           }}
         >
-          <option value="">Select state to copy...</option>
+          <option value="">-- Select a state --</option>
           {existingStates?.map(state => (
             <option key={state.id} value={state.id}>
-              {state.uiCoverage.totalScreens > 0 ? '⭐' : '📋'} {state.id} ({state.platform}, {state.uiCoverage.totalScreens} screens)
+              {state.name} ({state.meta?.platform || 'web'})
             </option>
           ))}
         </select>
       </FormGroup>
 
-      {/* Show editable fields when copied */}
-      {formData.copyFrom && copyPreview && (
+      {/* Preview of copied state */}
+      {copyPreview && (
         <>
-          {/* Success Banner */}
-          <div style={{ 
-            padding: '12px', 
-            background: `${theme.colors.accents.green}15`,
-            border: `1px solid ${theme.colors.accents.green}60`,
-            borderRadius: '8px',
-            marginBottom: '16px'
-          }}>
-            <div style={{ 
-              color: theme.colors.accents.green, 
-              fontWeight: 600, 
-              marginBottom: '4px',
-              fontSize: '14px'
-            }}>
-              ✨ Copied from "{formData.copyFrom}" - Edit any fields below
-            </div>
-          </div>
-
           {/* Platform */}
           <FormGroup label="Platform" theme={theme}>
-            <div className="platform-radio-group" style={{ display: 'flex', gap: '12px' }}>
-              {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
-                <label key={platform} className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    value={platform}
-                    checked={formData.platform === platform}
-                    onChange={(e) => updateField('platform', e.target.value)}
-                  />
-                  <span style={{ color: theme.colors.text.primary }}>
-                    {platform === 'web' ? '🌐' : '📱'} {platform}
-                  </span>
-                </label>
-              ))}
+            <div style={{ 
+              padding: '10px', 
+              background: theme.colors.background.tertiary,
+              borderRadius: '6px',
+              color: theme.colors.text.primary
+            }}>
+              {formData.platform === 'web' ? '🌐' : '📱'} {formData.platform}
             </div>
           </FormGroup>
 
           {/* Trigger Button */}
-          <FormGroup label="Trigger Button" theme={theme}>
-            <input
-              type="text"
-              value={formData.triggerButton}
-              onChange={(e) => updateField('triggerButton', e.target.value.toUpperCase())}
-              placeholder="e.g., REVIEW_BOOKING"
-              style={{
+          {formData.triggerButton && (
+            <FormGroup label="Trigger Button" theme={theme}>
+              <div style={{ 
+                padding: '10px', 
                 background: theme.colors.background.tertiary,
-                color: theme.colors.text.primary,
-                border: `1px solid ${theme.colors.border}`,
-                padding: '10px',
                 borderRadius: '6px',
-                width: '100%'
-              }}
-            />
-          </FormGroup>
-
-          {/* After Button */}
-          <FormGroup label="After Button" theme={theme}>
-            <input
-              type="text"
-              value={formData.afterButton || ''}
-              onChange={(e) => updateField('afterButton', e.target.value)}
-              placeholder="e.g., UNDO"
-              style={{
-                background: theme.colors.background.tertiary,
-                color: theme.colors.text.primary,
-                border: `1px solid ${theme.colors.border}`,
-                padding: '10px',
-                borderRadius: '6px',
-                width: '100%'
-              }}
-            />
-          </FormGroup>
+                fontFamily: 'monospace',
+                color: theme.colors.text.primary
+              }}>
+                {formData.triggerButton}
+              </div>
+            </FormGroup>
+          )}
 
           {/* Required Fields - with remove option */}
           <FormGroup 
@@ -657,6 +892,41 @@ function QuickCopyMode({
               )}
             </div>
           </FormGroup>
+
+          {/* NEW: Context Fields Preview */}
+          {Object.keys(formData.contextFields).length > 0 && (
+            <FormGroup 
+              label="Context Fields" 
+              helper="Fields copied from source"
+              theme={theme}
+            >
+              <div style={{ 
+                padding: '10px', 
+                background: theme.colors.background.tertiary,
+                borderRadius: '6px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px',
+                alignItems: 'center'
+              }}>
+                {Object.keys(formData.contextFields).map((field, idx) => (
+                  <span 
+                    key={idx}
+                    style={{
+                      padding: '4px 8px',
+                      background: theme.colors.accents.purple + '30',
+                      border: `1px solid ${theme.colors.accents.purple}`,
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontFamily: 'monospace'
+                    }}
+                  >
+                    {field}
+                  </span>
+                ))}
+              </div>
+            </FormGroup>
+          )}
         </>
       )}
 
@@ -674,7 +944,7 @@ function QuickCopyMode({
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>👆</div>
           <div>Select a state to copy from above</div>
           <div style={{ fontSize: '12px', marginTop: '8px', opacity: 0.7 }}>
-            All fields will be pre-filled and editable
+            All fields (including context) will be pre-filled and editable
           </div>
         </div>
       )}
@@ -693,9 +963,17 @@ function CustomBuildMode({
     <>
       {/* Platform Selection */}
       <FormGroup label="Platform" required theme={theme}>
-        <div className="platform-radio-group" style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
           {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
-            <label key={platform} className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+            <label 
+              key={platform} 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px', 
+                cursor: 'pointer' 
+              }}
+            >
               <input
                 type="radio"
                 value={platform}
@@ -731,7 +1009,6 @@ function CustomBuildMode({
       {/* Advanced Options Toggle */}
       <button
         type="button"
-        className="advanced-toggle"
         onClick={() => setShowAdvanced(!showAdvanced)}
         style={{ 
           color: theme.colors.primary,
@@ -751,7 +1028,7 @@ function CustomBuildMode({
 
       {/* Advanced Fields */}
       {showAdvanced && (
-        <div className="advanced-section" style={{ 
+        <div style={{ 
           marginTop: '16px',
           padding: '16px',
           background: `${theme.colors.background.tertiary}60`,

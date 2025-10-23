@@ -6,6 +6,13 @@ import CopyScreenDialog from './CopyScreenDialog';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
 
 export default function UIScreenEditor({ state, onSave, onCancel, theme = defaultTheme }) {
+  console.log('🎨 UIScreenEditor received:', { 
+    state, 
+    hasUiCoverage: !!state?.uiCoverage,
+    hasMeta: !!state?.meta,
+    platforms: state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms
+  });
+  
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -36,10 +43,18 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
   });
 
   // Initialize edited state
-  const initializeEditedUI = () => {
-    if (!state?.uiCoverage?.platforms) return null;
-    return JSON.parse(JSON.stringify(state.uiCoverage.platforms));
+ const initializeEditedUI = () => {
+    const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
+    console.log('🔄 initializeEditedUI - platforms:', platforms);
+    if (!platforms) return null;
+    return JSON.parse(JSON.stringify(platforms));
   };
+  
+  // ADD THIS LOG RIGHT HERE:
+  const uiData = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
+  console.log('🖼️ UI Data for rendering:', uiData);
+  console.log('🖼️ Edit mode:', editMode);
+  console.log('🖼️ Edited UI:', editedUI);
 
   const handleEnterEditMode = () => {
     setEditedUI(initializeEditedUI());
@@ -158,7 +173,7 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
   };
 
   // Get platforms data
-  const platforms = editMode ? editedUI : state?.uiCoverage?.platforms || {};
+  const platforms = editMode ? editedUI : (state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms || {});
   const platformNames = Object.keys(platforms);
 
   if (platformNames.length === 0) {
@@ -182,8 +197,9 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
     );
   }
 
-  return (
-    <div>
+ return (
+  <div>
+    {console.log('🎨 RENDERING UIScreenEditor')}
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
