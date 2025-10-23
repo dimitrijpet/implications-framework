@@ -11,6 +11,8 @@ import configRoutes from './routes/config.js';
 import errorHandler from './middleware/errorHandler.js';
 import implicationsRoutes from './routes/implications.js';
 import patternsRoutes from './routes/patterns.js';
+import initRoutes from './routes/init.js';
+
 
 
 dotenv.config();
@@ -31,6 +33,7 @@ app.use('/api/config', configRoutes);
 app.use('/api/implications', implicationsRoutes); // ADD THIS
 
 app.use('/api/patterns', patternsRoutes);
+app.use('/api/init', initRoutes);
 
 // Error handling
 app.use(errorHandler);

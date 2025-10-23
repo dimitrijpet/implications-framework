@@ -43,6 +43,12 @@ export default function Visualizer() {
   const [transitionSource, setTransitionSource] = useState(null);
   const [showAddStateModal, setShowAddStateModal] = useState(false);
   const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
+  const [needsInit, setNeedsInit] = useState(false);
+const [initChecked, setInitChecked] = useState(false);
+const [initLoading, setInitLoading] = useState(false);
+const [initSuccess, setInitSuccess] = useState(false);
+const [initError, setInitError] = useState(null);
+const [createdFiles, setCreatedFiles] = useState([]);
   
   // Clear cache and reset state
   const handleClearCache = () => {
@@ -60,57 +66,206 @@ export default function Visualizer() {
     setSelectedNodeId(null);
   };
 
-  // Scan project and save to localStorage
-  const handleScan = async () => {
-    setLoading(true);  // ✅ FIXED: Use loading, not isScanning
-    setError(null);
+  // ADD THIS FUNCTION after handleClearCache
+const checkInitialization = async (path) => {
+  try {
+    const response = await fetch(`${API_URL}/api/init/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPath: path })
+    });
     
-    try {
-      console.log('🔍 Starting discovery scan...');
-
-      const response = await fetch(`${API_URL}/api/discovery/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Discovery scan failed');
-      }
-
-      const result = await response.json();
-      
-      // ✅ FIXED: Save all data
-      setDiscoveryResult(result);
-      setAnalysisResult(result.analysis || null);  // ✅ FIXED: Was setAnalysis
-      setStateRegistry(result.stateRegistry || null);
-      
-      // ✅ FIXED: Build graph data
-      if (result.files?.implications) {
-        const graph = buildGraphFromDiscovery(result);
-        setGraphData(graph);
-        
-        // Save to localStorage
-        localStorage.setItem('lastProjectPath', projectPath);
-        localStorage.setItem('lastDiscoveryResult', JSON.stringify(result));
-        localStorage.setItem('lastAnalysisResult', JSON.stringify(result.analysis || null));
-        localStorage.setItem('lastStateRegistry', JSON.stringify(result.stateRegistry || null));
-        localStorage.setItem('lastGraphData', JSON.stringify(graph));
-      }
-      
-      console.log('✅ Scan complete');
-      console.log('   - States:', result.files?.implications?.length || 0);
-      console.log('   - Issues:', result.analysis?.issues?.length || 0);
-      console.log('   - Mappings:', result.stateRegistry?.mappings ? Object.keys(result.stateRegistry.mappings).length : 0);
-      
-    } catch (err) {
-      console.error('❌ Scan failed:', err);
-      setError(err.message);
-    } finally {
-      setLoading(false);  // ✅ FIXED: Use loading
+    if (!response.ok) {
+      console.error('Init check failed');
+      setInitChecked(true);
+      setNeedsInit(true);
+      return false;
     }
-  };
+    
+    const result = await response.json();
+    const { initialized, missing } = result;
+    
+    console.log('🔍 Init check:', { initialized, missing });
+    
+    // ✅ If initialized, just return true - don't show banner
+    if (initialized) {
+      setNeedsInit(false);
+      setInitChecked(false);
+      return true;
+    }
+    
+    // ❌ Not initialized - show banner
+    setNeedsInit(true);
+    setInitChecked(true);
+    
+    return false;
+  } catch (error) {
+    console.error('Init check failed:', error);
+    setInitChecked(true);
+    setNeedsInit(true);
+    return false;
+  }
+};
+
+const handleInitialize = async () => {
+  setInitLoading(true);
+  setInitError(null);
+
+  try {
+    console.log('🚀 Initializing project:', projectPath);
+    
+    const response = await fetch(`${API_URL}/api/init/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectPath,
+        force: false
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      
+      // ✅ If already initialized, show the error but don't treat as failure
+      if (error.error?.includes('already initialized')) {
+        setInitError(error.error);
+        setInitLoading(false);
+        return; // Stay on the banner, let user choose
+      }
+      
+      throw new Error(error.error || 'Initialization failed');
+    }
+
+    const result = await response.json();
+    console.log('✅ Initialization complete:', result);
+    
+    setInitSuccess(true);
+    setCreatedFiles(result.files || []);
+    setNeedsInit(false);
+    
+    // Auto-scan after 2 seconds
+    setTimeout(() => {
+      setInitSuccess(false);
+      handleScan();
+    }, 2000);
+
+  } catch (err) {
+    console.error('❌ Initialization failed:', err);
+    setInitError(err.message);
+  } finally {
+    setInitLoading(false);
+  }
+};
+
+const handleReInitialize = async () => {
+  setInitLoading(true);
+  setInitError(null);
+
+  try {
+    console.log('🔄 Re-initializing project with force:', projectPath);
+    
+    const response = await fetch(`${API_URL}/api/init/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectPath,
+        force: true  // ✅ This is the key difference
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Re-initialization failed');
+    }
+
+    const result = await response.json();
+    console.log('✅ Re-initialization complete:', result);
+    
+    setInitSuccess(true);
+    setCreatedFiles(result.files || []);
+    setNeedsInit(false);
+    
+    // Auto-scan after 2 seconds
+    setTimeout(() => {
+      setInitSuccess(false);
+      handleScan();
+    }, 2000);
+
+  } catch (err) {
+    console.error('❌ Re-initialization failed:', err);
+    setInitError(err.message);
+  } finally {
+    setInitLoading(false);
+  }
+};
+
+// REPLACE the entire handleScan function (lines 64-113) with this:
+const handleScan = async () => {
+  setLoading(true);
+  setError(null);
+  setInitChecked(false);
+  setNeedsInit(false);
+  setInitSuccess(false);
+  setInitError(null);
+  
+  try {
+    console.log('🔍 Starting discovery scan...');
+    
+    // First, check if project is initialized
+    const isInitialized = await checkInitialization(projectPath);
+    
+    if (!isInitialized) {
+      console.log('⚠️  Project needs initialization');
+      setLoading(false);
+      return; // Stop here, show init banner
+    }
+    
+    // Pro``ject is initialized, proceed with scan
+    console.log('✅ Project is initialized, scanning...');
+
+    const response = await fetch(`${API_URL}/api/discovery/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPath })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Discovery scan failed');
+    }
+
+    const result = await response.json();
+    
+    // Save all data
+    setDiscoveryResult(result);
+    setAnalysisResult(result.analysis || null);
+    setStateRegistry(result.stateRegistry || null);
+    
+    // Build graph data
+    if (result.files?.implications) {
+      const graph = buildGraphFromDiscovery(result);
+      setGraphData(graph);
+      
+      // Save to localStorage
+      localStorage.setItem('lastProjectPath', projectPath);
+      localStorage.setItem('lastDiscoveryResult', JSON.stringify(result));
+      localStorage.setItem('lastAnalysisResult', JSON.stringify(result.analysis || null));
+      localStorage.setItem('lastStateRegistry', JSON.stringify(result.stateRegistry || null));
+      localStorage.setItem('lastGraphData', JSON.stringify(graph));
+    }
+    
+    console.log('✅ Scan complete');
+    console.log('   - States:', result.files?.implications?.length || 0);
+    console.log('   - Issues:', result.analysis?.issues?.length || 0);
+    console.log('   - Mappings:', result.stateRegistry?.mappings ? Object.keys(result.stateRegistry.mappings).length : 0);
+    
+  } catch (err) {
+    console.error('❌ Scan failed:', err);
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleRefreshSingleState = async (filePath) => {
   console.log('⚡ Fast refresh for:', filePath.split('/').pop());
@@ -528,11 +683,219 @@ const disableTransitionMode = () => {
         </div>
       </header>
 
+
+
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         {/* Stats Panel */}
         {discoveryResult && (
           <div className="mb-6">
+            {/* ADD THIS RIGHT AFTER line 541 (inside <main>, before StatsPanel) */}
+
+{/* Initialization Warning Banner */}
+{initChecked && needsInit && !initSuccess && (
+  <div 
+    className="glass rounded-xl p-6 mb-6 border-2 border-dashed"
+    style={{ 
+      borderColor: initError?.includes('already initialized') 
+        ? defaultTheme.colors.accents.blue 
+        : defaultTheme.colors.accents.yellow,
+      backgroundColor: initError?.includes('already initialized')
+        ? `${defaultTheme.colors.accents.blue}10`
+        : `${defaultTheme.colors.accents.yellow}10`
+    }}
+  >
+    <div className="flex items-start gap-4">
+      <div className="text-4xl">
+        {initError?.includes('already initialized') ? 'ℹ️' : '⚠️'}
+      </div>
+      <div className="flex-1">
+        <h3 
+          className="text-xl font-bold mb-2" 
+          style={{ 
+            color: initError?.includes('already initialized')
+              ? defaultTheme.colors.accents.blue
+              : defaultTheme.colors.accents.yellow 
+          }}
+        >
+          {initError?.includes('already initialized') 
+            ? 'Project Already Initialized' 
+            : 'Project Setup Required'}
+        </h3>
+        
+        {initError?.includes('already initialized') ? (
+          <>
+            <p className="text-sm mb-3" style={{ color: defaultTheme.colors.text.secondary }}>
+              This project already has the core utilities. You can re-initialize to update or reset them.
+            </p>
+            
+            <div className="space-y-2 mb-4">
+              <p className="text-xs font-semibold" style={{ color: defaultTheme.colors.text.primary }}>
+                Existing files will be backed up:
+              </p>
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>✓</span>
+                  <code className="font-mono">tests/implications/utils/TestContext.js</code>
+                </div>
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>✓</span>
+                  <code className="font-mono">tests/implications/utils/ExpectImplication.js</code>
+                </div>
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>✓</span>
+                  <code className="font-mono">ai-testing.config.js</code>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setInitError(null);
+                  setNeedsInit(false);
+                  setInitChecked(false);
+                }}
+                className="px-4 py-2 rounded-lg font-semibold text-sm transition-all"
+                style={{
+                  backgroundColor: defaultTheme.colors.background.tertiary,
+                  color: defaultTheme.colors.text.primary,
+                  border: `1px solid ${defaultTheme.colors.border}`
+                }}
+              >
+                Cancel
+              </button>
+              
+              <button
+                onClick={handleReInitialize}
+                disabled={initLoading}
+                className="px-6 py-3 rounded-lg font-bold text-sm transition-all"
+                style={{
+                  backgroundColor: initLoading 
+                    ? defaultTheme.colors.background.tertiary 
+                    : defaultTheme.colors.accents.orange,
+                  color: 'white',
+                  cursor: initLoading ? 'not-allowed' : 'pointer',
+                  opacity: initLoading ? 0.6 : 1
+                }}
+              >
+                {initLoading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="animate-spin">⏳</span>
+                    Re-initializing...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <span>🔄</span>
+                    Re-Initialize (Overwrite)
+                  </span>
+                )}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm mb-3" style={{ color: defaultTheme.colors.text.secondary }}>
+              This project needs core utilities to support test generation and management.
+            </p>
+            
+            <div className="space-y-2 mb-4">
+              <p className="text-xs font-semibold" style={{ color: defaultTheme.colors.text.primary }}>
+                What will be created:
+              </p>
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>📄</span>
+                  <code className="font-mono">tests/implications/utils/TestContext.js</code>
+                  <span className="text-xs opacity-60">- Data management</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>📄</span>
+                  <code className="font-mono">tests/implications/utils/ExpectImplication.js</code>
+                  <span className="text-xs opacity-60">- Validation engine</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  <span>⚙️</span>
+                  <code className="font-mono">ai-testing.config.js</code>
+                  <span className="text-xs opacity-60">- Configuration</span>
+                </div>
+              </div>
+            </div>
+
+            {initError && !initError.includes('already initialized') && (
+              <div className="mb-4 p-3 rounded" style={{ backgroundColor: `${defaultTheme.colors.accents.red}15` }}>
+                <p className="text-sm" style={{ color: defaultTheme.colors.accents.red }}>
+                  ❌ {initError}
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={handleInitialize}
+              disabled={initLoading}
+              className="px-6 py-3 rounded-lg font-bold text-sm transition-all"
+              style={{
+                backgroundColor: initLoading ? defaultTheme.colors.background.tertiary : defaultTheme.colors.accents.blue,
+                color: 'white',
+                cursor: initLoading ? 'not-allowed' : 'pointer',
+                opacity: initLoading ? 0.6 : 1
+              }}
+            >
+              {initLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin">⏳</span>
+                  Initializing Project...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span>🚀</span>
+                  Initialize Project
+                </span>
+              )}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Success Banner */}
+{initSuccess && (
+  <div 
+    className="glass rounded-xl p-6 mb-6 border-2"
+    style={{ 
+      borderColor: defaultTheme.colors.accents.green,
+      backgroundColor: `${defaultTheme.colors.accents.green}15`
+    }}
+  >
+    <div className="flex items-start gap-4">
+      <div className="text-4xl">✅</div>
+      <div className="flex-1">
+        <h3 className="text-xl font-bold mb-2" style={{ color: defaultTheme.colors.accents.green }}>
+          Setup Complete!
+        </h3>
+        <p className="text-sm mb-3" style={{ color: defaultTheme.colors.text.secondary }}>
+          Your project is now ready for test generation and management.
+        </p>
+        
+        <div className="space-y-1">
+          <p className="text-xs font-semibold mb-2" style={{ color: defaultTheme.colors.text.primary }}>
+            Created Files:
+          </p>
+          {createdFiles.map((file, idx) => (
+            <div key={idx} className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.accents.green }}>
+              <span>✅</span>
+              <code className="font-mono">{file}</code>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* NOW CONTINUE WITH YOUR EXISTING CODE (StatsPanel, etc.) */}
             <StatsPanel 
               discoveryResult={discoveryResult}
               theme={defaultTheme}

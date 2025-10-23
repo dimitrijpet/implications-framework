@@ -1,0 +1,381 @@
+import express from 'express';
+import path from 'path';
+import fs from 'fs-extra';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const router = express.Router();
+
+/**
+ * Helper functions for initialization
+ */
+function analyzeProject(projectPath) {
+  const analysis = {
+    projectName: path.basename(projectPath),
+    domain: 'general',
+    testRunner: 'playwright',
+    testsPath: 'tests',
+    testDataMode: 'stateless',
+    platforms: ['web'],
+    patterns: {
+      screenObjects: [],
+      sections: []
+    }
+  };
+  
+  // Detect test runner
+  const pkgPath = path.join(projectPath, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    
+    if (deps['@playwright/test']) {
+      analysis.testRunner = 'playwright';
+    } else if (deps['cypress']) {
+      analysis.testRunner = 'cypress';
+    } else if (deps['webdriverio']) {
+      analysis.testRunner = 'webdriverio';
+    }
+  }
+  
+  // Detect test directory
+  const commonTestDirs = ['tests', 'test', '__tests__', 'e2e', 'specs'];
+  for (const dir of commonTestDirs) {
+    if (fs.existsSync(path.join(projectPath, dir))) {
+      analysis.testsPath = dir;
+      break;
+    }
+  }
+  
+  return analysis;
+}
+
+function createDirectories(projectPath, analysis) {
+  const dirs = [
+    path.join(projectPath, analysis.testsPath, 'implications'),
+    path.join(projectPath, analysis.testsPath, 'implications', 'utils')
+  ];
+  
+  dirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
+  
+  return dirs.map(d => path.relative(projectPath, d));
+}
+
+async function copyUtilities(projectPath, analysis) {
+  const utilsDir = path.join(projectPath, analysis.testsPath, 'implications', 'utils');
+  
+  // Try multiple possible locations for core package
+  const possibleCorePaths = [
+    // Option 1: Standard monorepo structure
+    path.join(__dirname, '../../../../core/src'),
+    // Option 2: From api-server to packages
+    path.join(__dirname, '../../../core/src'),
+    // Option 3: Relative to project root
+    path.join(process.cwd(), 'packages/core/src'),
+    path.join(process.cwd(), 'core/src'),
+  ];
+  
+  let coreDir = null;
+  
+  // Find the first valid core directory
+  for (const corePath of possibleCorePaths) {
+    console.log('📦 Checking:', corePath);
+    if (fs.existsSync(corePath)) {
+      const testContextPath = path.join(corePath, 'TestContext.js');
+      if (fs.existsSync(testContextPath)) {
+        coreDir = corePath;
+        console.log('✅ Found core package at:', coreDir);
+        break;
+      }
+    }
+  }
+  
+  if (!coreDir) {
+    console.warn('⚠️  Core package not found, creating placeholder files');
+    
+    // Create placeholder TestContext.js
+    const testContextContent = `// TestContext.js
+// Placeholder - replace with actual implementation
+
+class TestContext {
+  constructor(data = {}) {
+    this.data = data;
+    this.changeLog = [];
+  }
+  
+  static load(path, ImplicationClass) {
+    // Load test data from file
+    return new TestContext({});
+  }
+  
+  save(path) {
+    // Save test data to file
+  }
+}
+
+module.exports = TestContext;
+`;
+    
+    // Create placeholder ExpectImplication.js
+    const expectImplicationContent = `// ExpectImplication.js
+// Placeholder - replace with actual implementation
+
+class ExpectImplication {
+  static async validateImplications(ImplicationClass, testData, page) {
+    // Validate UI implications
+  }
+}
+
+module.exports = ExpectImplication;
+`;
+    
+    // Write placeholder files
+    await fs.writeFile(
+      path.join(utilsDir, 'TestContext.js'),
+      testContextContent
+    );
+    
+    await fs.writeFile(
+      path.join(utilsDir, 'ExpectImplication.js'),
+      expectImplicationContent
+    );
+    
+    return [
+      path.relative(projectPath, path.join(utilsDir, 'TestContext.js')),
+      path.relative(projectPath, path.join(utilsDir, 'ExpectImplication.js'))
+    ];
+  }
+  
+  // Core package found, copy the actual files
+  const files = [
+    { src: 'TestContext.js', dest: 'TestContext.js' },
+    { src: 'ExpectImplication.js', dest: 'ExpectImplication.js' }
+  ];
+  
+  const copiedFiles = [];
+  
+  for (const { src, dest } of files) {
+    const srcPath = path.join(coreDir, src);
+    const destPath = path.join(utilsDir, dest);
+    
+    if (fs.existsSync(srcPath)) {
+      await fs.copy(srcPath, destPath);
+      copiedFiles.push(path.relative(projectPath, destPath));
+      console.log(`✅ Copied: ${src}`);
+    } else {
+      console.warn(`⚠️  File not found: ${srcPath}`);
+    }
+  }
+  
+  return copiedFiles;
+}
+
+async function generateConfig(projectPath, analysis) {
+  const configPath = path.join(projectPath, 'ai-testing.config.js');
+  
+  const config = `// ai-testing.config.js
+// Generated by Implications Framework
+
+module.exports = {
+  // === Project Info ===
+  projectName: "${analysis.projectName}",
+  domain: '${analysis.domain}',
+  
+  // === Paths ===
+  paths: {
+    tests: '${analysis.testsPath}',
+    implications: '${analysis.testsPath}/implications',
+    utils: '${analysis.testsPath}/implications/utils',
+    screenObjects: '${analysis.testsPath}/screenObjects'
+  },
+  
+  // === Test Configuration ===
+  testRunner: '${analysis.testRunner}',
+  platforms: ${JSON.stringify(analysis.platforms)},
+  
+  // === Architecture ===
+  testDataMode: '${analysis.testDataMode}', // 'stateless' or 'stateful'
+  
+  // === Patterns ===
+  patterns: {
+    screenObjects: [],
+    sections: [],
+    implications: [
+      '${analysis.testsPath}/implications/**/*Implications.js'
+    ],
+    tests: [
+      '${analysis.testsPath}/**/*.spec.js'
+    ]
+  }
+};
+`;
+  
+  await fs.writeFile(configPath, config);
+  return 'ai-testing.config.js';
+}
+
+async function createReadme(projectPath, analysis) {
+  const readmePath = path.join(
+    projectPath, 
+    analysis.testsPath, 
+    'implications', 
+    'README.md'
+  );
+  
+  const readme = `# Implications Framework
+
+This directory contains auto-generated implications-based tests.
+
+## Structure
+
+\`\`\`
+${analysis.testsPath}/implications/
+├── utils/                    # Utility files (auto-copied)
+│   ├── TestContext.js       # Data management
+│   └── ExpectImplication.js # Validation engine
+│
+├── [domain]/                # Your implications (to be generated)
+│   └── [Type]Implications.js
+│
+└── README.md                # This file
+\`\`\`
+
+## Next Steps
+
+1. **Discover patterns:**
+   \`\`\`bash
+   implications discover
+   \`\`\`
+
+2. **Open web UI:**
+   Open the Implications Framework web interface to visually create and edit implications.
+
+## Documentation
+
+For more information, visit the Implications Framework documentation.
+`;
+  
+  await fs.writeFile(readmePath, readme);
+  return path.relative(projectPath, readmePath);
+}
+
+/**
+ * Check if project is initialized
+ * POST /api/init/check
+ */
+router.post('/check', async (req, res) => {
+  try {
+    const { projectPath } = req.body;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+
+    const checks = {
+      testContext: false,
+      expectImplication: false,
+      config: false
+    };
+
+    // Check for TestContext.js
+    const testContextPath = path.join(projectPath, 'tests/implications/utils/TestContext.js');
+    checks.testContext = fs.existsSync(testContextPath);
+
+    // Check for ExpectImplication.js
+    const expectImplicationPath = path.join(projectPath, 'tests/implications/utils/ExpectImplication.js');
+    checks.expectImplication = fs.existsSync(expectImplicationPath);
+
+    // Check for ai-testing.config.js
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    checks.config = fs.existsSync(configPath);
+
+    const initialized = checks.testContext && checks.expectImplication && checks.config;
+    const missing = [];
+    
+    if (!checks.testContext) missing.push('TestContext.js');
+    if (!checks.expectImplication) missing.push('ExpectImplication.js');
+    if (!checks.config) missing.push('ai-testing.config.js');
+
+    res.json({
+      initialized,
+      checks,
+      missing
+    });
+
+  } catch (error) {
+    console.error('Check failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Initialize a project
+ * POST /api/init/setup
+ */
+router.post('/setup', async (req, res) => {
+  try {
+    const { projectPath, force = false } = req.body;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+
+    console.log('🚀 Initializing project:', projectPath);
+
+    // Check if already initialized
+    if (!force) {
+      const configPath = path.join(projectPath, 'ai-testing.config.js');
+      if (fs.existsSync(configPath)) {
+        return res.status(400).json({ 
+          error: 'Project already initialized. Use force: true to overwrite.' 
+        });
+      }
+    }
+
+    // 1. Analyze project
+    const analysis = analyzeProject(projectPath);
+    console.log('📋 Analysis:', analysis);
+
+    // 2. Create directories
+    const dirs = createDirectories(projectPath, analysis);
+    console.log('📁 Created directories:', dirs);
+
+    // 3. Copy utilities
+    const utilFiles = await copyUtilities(projectPath, analysis);
+    console.log('📄 Copied utilities:', utilFiles);
+
+    // 4. Generate config
+    const configFile = await generateConfig(projectPath, analysis);
+    console.log('⚙️  Generated config:', configFile);
+
+    // 5. Create README
+    const readmeFile = await createReadme(projectPath, analysis);
+    console.log('📖 Created README:', readmeFile);
+
+    // Success!
+    res.json({
+      success: true,
+      analysis,
+      files: [
+        ...utilFiles,
+        configFile,
+        readmeFile
+      ]
+    });
+
+  } catch (error) {
+    console.error('❌ Initialization failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+export default router;
