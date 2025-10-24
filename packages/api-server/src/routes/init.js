@@ -135,6 +135,35 @@ class ExpectImplication {
 module.exports = ExpectImplication;
 `;
     
+    // ✨ NEW: Create placeholder TestPlanner.js
+    const testPlannerContent = `// TestPlanner.js
+// Placeholder - replace with actual implementation
+
+class TestPlanner {
+  static checkOrThrow(ImplicationClass, testData, options = {}) {
+    const verbose = options.verbose ?? true;
+    if (verbose) {
+      console.log('✅ Prerequisites check passed (placeholder)');
+    }
+    return { ready: true };
+  }
+  
+  analyze(ImplicationClass, testData) {
+    return {
+      ready: true,
+      currentStatus: testData.status || 'unknown',
+      targetStatus: 'unknown',
+      missing: [],
+      chain: [],
+      nextStep: null,
+      stepsRemaining: 0
+    };
+  }
+}
+
+module.exports = TestPlanner;
+`;
+    
     // Write placeholder files
     await fs.writeFile(
       path.join(utilsDir, 'TestContext.js'),
@@ -146,17 +175,26 @@ module.exports = ExpectImplication;
       expectImplicationContent
     );
     
+    // ✨ NEW: Write TestPlanner placeholder
+    await fs.writeFile(
+      path.join(utilsDir, 'TestPlanner.js'),
+      testPlannerContent
+    );
+    
     return [
       path.relative(projectPath, path.join(utilsDir, 'TestContext.js')),
-      path.relative(projectPath, path.join(utilsDir, 'ExpectImplication.js'))
+      path.relative(projectPath, path.join(utilsDir, 'ExpectImplication.js')),
+      path.relative(projectPath, path.join(utilsDir, 'TestPlanner.js'))  // ← NEW!
     ];
   }
   
   // Core package found, copy the actual files
-  const files = [
-    { src: 'TestContext.js', dest: 'TestContext.js' },
-    { src: 'ExpectImplication.js', dest: 'ExpectImplication.js' }
-  ];
+  // ✨ ADDED: TestPlanner.js
+const files = [
+  { src: 'TestContext.js', dest: 'TestContext.js' },
+  { src: 'ExpectImplication.js', dest: 'ExpectImplication.js' },
+  { src: 'TestPlanner.js', dest: 'TestPlanner.js' }  // ← ADD THIS LINE!
+];
   
   const copiedFiles = [];
   
@@ -175,6 +213,58 @@ module.exports = ExpectImplication;
   
   return copiedFiles;
 }
+
+// Also update the check endpoint to include TestPlanner
+router.post('/check', async (req, res) => {
+  try {
+    const { projectPath } = req.body;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+
+    const checks = {
+      testContext: false,
+      expectImplication: false,
+      testPlanner: false,  // ← NEW!
+      config: false
+    };
+
+    // Check for TestContext.js
+    const testContextPath = path.join(projectPath, 'tests/implications/utils/TestContext.js');
+    checks.testContext = fs.existsSync(testContextPath);
+
+    // Check for ExpectImplication.js
+    const expectImplicationPath = path.join(projectPath, 'tests/implications/utils/ExpectImplication.js');
+    checks.expectImplication = fs.existsSync(expectImplicationPath);
+
+    // ✨ NEW: Check for TestPlanner.js
+    const testPlannerPath = path.join(projectPath, 'tests/implications/utils/TestPlanner.js');
+    checks.testPlanner = fs.existsSync(testPlannerPath);
+
+    // Check for ai-testing.config.js
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    checks.config = fs.existsSync(configPath);
+
+    const initialized = checks.testContext && checks.expectImplication && checks.testPlanner && checks.config;
+    const missing = [];
+    
+    if (!checks.testContext) missing.push('TestContext.js');
+    if (!checks.expectImplication) missing.push('ExpectImplication.js');
+    if (!checks.testPlanner) missing.push('TestPlanner.js');  // ← NEW!
+    if (!checks.config) missing.push('ai-testing.config.js');
+
+    res.json({
+      initialized,
+      checks,
+      missing
+    });
+
+  } catch (error) {
+    console.error('Check failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 async function generateConfig(projectPath, analysis) {
   const configPath = path.join(projectPath, 'ai-testing.config.js');
@@ -264,55 +354,6 @@ For more information, visit the Implications Framework documentation.
   await fs.writeFile(readmePath, readme);
   return path.relative(projectPath, readmePath);
 }
-
-/**
- * Check if project is initialized
- * POST /api/init/check
- */
-router.post('/check', async (req, res) => {
-  try {
-    const { projectPath } = req.body;
-    
-    if (!projectPath) {
-      return res.status(400).json({ error: 'projectPath is required' });
-    }
-
-    const checks = {
-      testContext: false,
-      expectImplication: false,
-      config: false
-    };
-
-    // Check for TestContext.js
-    const testContextPath = path.join(projectPath, 'tests/implications/utils/TestContext.js');
-    checks.testContext = fs.existsSync(testContextPath);
-
-    // Check for ExpectImplication.js
-    const expectImplicationPath = path.join(projectPath, 'tests/implications/utils/ExpectImplication.js');
-    checks.expectImplication = fs.existsSync(expectImplicationPath);
-
-    // Check for ai-testing.config.js
-    const configPath = path.join(projectPath, 'ai-testing.config.js');
-    checks.config = fs.existsSync(configPath);
-
-    const initialized = checks.testContext && checks.expectImplication && checks.config;
-    const missing = [];
-    
-    if (!checks.testContext) missing.push('TestContext.js');
-    if (!checks.expectImplication) missing.push('ExpectImplication.js');
-    if (!checks.config) missing.push('ai-testing.config.js');
-
-    res.json({
-      initialized,
-      checks,
-      missing
-    });
-
-  } catch (error) {
-    console.error('Check failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 /**
  * Initialize a project
