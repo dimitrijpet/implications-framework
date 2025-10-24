@@ -1,0 +1,2 @@
+We should have an ability to enter a specific part of the process with some other commands..
+So if we have login flow, we should be able to INJECT something between specific steps (maybe have steps somewhere or utilize like that)
