@@ -1,422 +1,459 @@
-import express from 'express';
-import path from 'path';
-import fs from 'fs-extra';
-import { fileURLToPath } from 'url';
+// packages/api-server/src/routes/init.js
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import express from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 
 const router = express.Router();
 
 /**
- * Helper functions for initialization
+ * POST /api/init/check
+ * 
+ * Check if a project is initialized with the ai-testing structure
  */
-function analyzeProject(projectPath) {
-  const analysis = {
-    projectName: path.basename(projectPath),
-    domain: 'general',
-    testRunner: 'playwright',
-    testsPath: 'tests',
-    testDataMode: 'stateless',
-    platforms: ['web'],
-    patterns: {
-      screenObjects: [],
-      sections: []
-    }
-  };
-  
-  // Detect test runner
-  const pkgPath = path.join(projectPath, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    
-    if (deps['@playwright/test']) {
-      analysis.testRunner = 'playwright';
-    } else if (deps['cypress']) {
-      analysis.testRunner = 'cypress';
-    } else if (deps['webdriverio']) {
-      analysis.testRunner = 'webdriverio';
-    }
-  }
-  
-  // Detect test directory
-  const commonTestDirs = ['tests', 'test', '__tests__', 'e2e', 'specs'];
-  for (const dir of commonTestDirs) {
-    if (fs.existsSync(path.join(projectPath, dir))) {
-      analysis.testsPath = dir;
-      break;
-    }
-  }
-  
-  return analysis;
-}
-
-function createDirectories(projectPath, analysis) {
-  const dirs = [
-    path.join(projectPath, analysis.testsPath, 'implications'),
-    path.join(projectPath, analysis.testsPath, 'implications', 'utils')
-  ];
-  
-  dirs.forEach(dir => {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  });
-  
-  return dirs.map(d => path.relative(projectPath, d));
-}
-
-async function copyUtilities(projectPath, analysis) {
-  const utilsDir = path.join(projectPath, analysis.testsPath, 'implications', 'utils');
-  
-  // Try multiple possible locations for core package
-  const possibleCorePaths = [
-    // Option 1: Standard monorepo structure
-    path.join(__dirname, '../../../../core/src'),
-    // Option 2: From api-server to packages
-    path.join(__dirname, '../../../core/src'),
-    // Option 3: Relative to project root
-    path.join(process.cwd(), 'packages/core/src'),
-    path.join(process.cwd(), 'core/src'),
-  ];
-  
-  let coreDir = null;
-  
-  // Find the first valid core directory
-  for (const corePath of possibleCorePaths) {
-    console.log('📦 Checking:', corePath);
-    if (fs.existsSync(corePath)) {
-      const testContextPath = path.join(corePath, 'TestContext.js');
-      if (fs.existsSync(testContextPath)) {
-        coreDir = corePath;
-        console.log('✅ Found core package at:', coreDir);
-        break;
-      }
-    }
-  }
-  
-  if (!coreDir) {
-    console.warn('⚠️  Core package not found, creating placeholder files');
-    
-    // Create placeholder TestContext.js
-    const testContextContent = `// TestContext.js
-// Placeholder - replace with actual implementation
-
-class TestContext {
-  constructor(data = {}) {
-    this.data = data;
-    this.changeLog = [];
-  }
-  
-  static load(path, ImplicationClass) {
-    // Load test data from file
-    return new TestContext({});
-  }
-  
-  save(path) {
-    // Save test data to file
-  }
-}
-
-module.exports = TestContext;
-`;
-    
-    // Create placeholder ExpectImplication.js
-    const expectImplicationContent = `// ExpectImplication.js
-// Placeholder - replace with actual implementation
-
-class ExpectImplication {
-  static async validateImplications(ImplicationClass, testData, page) {
-    // Validate UI implications
-  }
-}
-
-module.exports = ExpectImplication;
-`;
-    
-    // ✨ NEW: Create placeholder TestPlanner.js
-    const testPlannerContent = `// TestPlanner.js
-// Placeholder - replace with actual implementation
-
-class TestPlanner {
-  static checkOrThrow(ImplicationClass, testData, options = {}) {
-    const verbose = options.verbose ?? true;
-    if (verbose) {
-      console.log('✅ Prerequisites check passed (placeholder)');
-    }
-    return { ready: true };
-  }
-  
-  analyze(ImplicationClass, testData) {
-    return {
-      ready: true,
-      currentStatus: testData.status || 'unknown',
-      targetStatus: 'unknown',
-      missing: [],
-      chain: [],
-      nextStep: null,
-      stepsRemaining: 0
-    };
-  }
-}
-
-module.exports = TestPlanner;
-`;
-    
-    // Write placeholder files
-    await fs.writeFile(
-      path.join(utilsDir, 'TestContext.js'),
-      testContextContent
-    );
-    
-    await fs.writeFile(
-      path.join(utilsDir, 'ExpectImplication.js'),
-      expectImplicationContent
-    );
-    
-    // ✨ NEW: Write TestPlanner placeholder
-    await fs.writeFile(
-      path.join(utilsDir, 'TestPlanner.js'),
-      testPlannerContent
-    );
-    
-    return [
-      path.relative(projectPath, path.join(utilsDir, 'TestContext.js')),
-      path.relative(projectPath, path.join(utilsDir, 'ExpectImplication.js')),
-      path.relative(projectPath, path.join(utilsDir, 'TestPlanner.js'))  // ← NEW!
-    ];
-  }
-  
-  // Core package found, copy the actual files
-  // ✨ ADDED: TestPlanner.js
-const files = [
-  { src: 'TestContext.js', dest: 'TestContext.js' },
-  { src: 'ExpectImplication.js', dest: 'ExpectImplication.js' },
-  { src: 'TestPlanner.js', dest: 'TestPlanner.js' }  // ← ADD THIS LINE!
-];
-  
-  const copiedFiles = [];
-  
-  for (const { src, dest } of files) {
-    const srcPath = path.join(coreDir, src);
-    const destPath = path.join(utilsDir, dest);
-    
-    if (fs.existsSync(srcPath)) {
-      await fs.copy(srcPath, destPath);
-      copiedFiles.push(path.relative(projectPath, destPath));
-      console.log(`✅ Copied: ${src}`);
-    } else {
-      console.warn(`⚠️  File not found: ${srcPath}`);
-    }
-  }
-  
-  return copiedFiles;
-}
-
-// Also update the check endpoint to include TestPlanner
 router.post('/check', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
     if (!projectPath) {
-      return res.status(400).json({ error: 'projectPath is required' });
+      return res.status(400).json({ error: 'Project path is required' });
     }
-
-    const checks = {
-      testContext: false,
-      expectImplication: false,
-      testPlanner: false,  // ← NEW!
-      config: false
-    };
-
-    // Check for TestContext.js
-    const testContextPath = path.join(projectPath, 'tests/implications/utils/TestContext.js');
-    checks.testContext = fs.existsSync(testContextPath);
-
-    // Check for ExpectImplication.js
-    const expectImplicationPath = path.join(projectPath, 'tests/implications/utils/ExpectImplication.js');
-    checks.expectImplication = fs.existsSync(expectImplicationPath);
-
-    // ✨ NEW: Check for TestPlanner.js
-    const testPlannerPath = path.join(projectPath, 'tests/implications/utils/TestPlanner.js');
-    checks.testPlanner = fs.existsSync(testPlannerPath);
-
-    // Check for ai-testing.config.js
-    const configPath = path.join(projectPath, 'ai-testing.config.js');
-    checks.config = fs.existsSync(configPath);
-
-    const initialized = checks.testContext && checks.expectImplication && checks.testPlanner && checks.config;
-    const missing = [];
     
-    if (!checks.testContext) missing.push('TestContext.js');
-    if (!checks.expectImplication) missing.push('ExpectImplication.js');
-    if (!checks.testPlanner) missing.push('TestPlanner.js');  // ← NEW!
-    if (!checks.config) missing.push('ai-testing.config.js');
-
+    console.log(`\n🔍 Checking initialization for: ${projectPath}`);
+    
+    // Check for required files in NEW structure
+    const checks = {
+      testContext: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/TestContext.js')),
+      expectImplication: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js')),
+      testPlanner: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js')),
+      config: await fileExists(path.join(projectPath, 'ai-testing.config.js'))
+    };
+    
+    const initialized = Object.values(checks).every(Boolean);
+    const missing = Object.entries(checks)
+      .filter(([_, exists]) => !exists)
+      .map(([name, _]) => name);
+    
+    console.log(`   ${initialized ? '✅' : '⚠️'} Initialized: ${initialized}`);
+    if (!initialized) {
+      console.log(`   Missing: ${missing.join(', ')}`);
+    }
+    
     res.json({
       initialized,
       checks,
-      missing
+      missing,
+      structure: 'tests/ai-testing/'  // New structure!
     });
-
+    
   } catch (error) {
-    console.error('Check failed:', error);
+    console.error('Error checking initialization:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-async function generateConfig(projectPath, analysis) {
-  const configPath = path.join(projectPath, 'ai-testing.config.js');
-  
-  const config = `// ai-testing.config.js
-// Generated by Implications Framework
-
-module.exports = {
-  // === Project Info ===
-  projectName: "${analysis.projectName}",
-  domain: '${analysis.domain}',
-  
-  // === Paths ===
-  paths: {
-    tests: '${analysis.testsPath}',
-    implications: '${analysis.testsPath}/implications',
-    utils: '${analysis.testsPath}/implications/utils',
-    screenObjects: '${analysis.testsPath}/screenObjects'
-  },
-  
-  // === Test Configuration ===
-  testRunner: '${analysis.testRunner}',
-  platforms: ${JSON.stringify(analysis.platforms)},
-  
-  // === Architecture ===
-  testDataMode: '${analysis.testDataMode}', // 'stateless' or 'stateful'
-  
-  // === Patterns ===
-  patterns: {
-    screenObjects: [],
-    sections: [],
-    implications: [
-      '${analysis.testsPath}/implications/**/*Implications.js'
-    ],
-    tests: [
-      '${analysis.testsPath}/**/*.spec.js'
-    ]
-  }
-};
-`;
-  
-  await fs.writeFile(configPath, config);
-  return 'ai-testing.config.js';
-}
-
-async function createReadme(projectPath, analysis) {
-  const readmePath = path.join(
-    projectPath, 
-    analysis.testsPath, 
-    'implications', 
-    'README.md'
-  );
-  
-  const readme = `# Implications Framework
-
-This directory contains auto-generated implications-based tests.
-
-## Structure
-
-\`\`\`
-${analysis.testsPath}/implications/
-├── utils/                    # Utility files (auto-copied)
-│   ├── TestContext.js       # Data management
-│   └── ExpectImplication.js # Validation engine
-│
-├── [domain]/                # Your implications (to be generated)
-│   └── [Type]Implications.js
-│
-└── README.md                # This file
-\`\`\`
-
-## Next Steps
-
-1. **Discover patterns:**
-   \`\`\`bash
-   implications discover
-   \`\`\`
-
-2. **Open web UI:**
-   Open the Implications Framework web interface to visually create and edit implications.
-
-## Documentation
-
-For more information, visit the Implications Framework documentation.
-`;
-  
-  await fs.writeFile(readmePath, readme);
-  return path.relative(projectPath, readmePath);
-}
-
 /**
- * Initialize a project
  * POST /api/init/setup
+ * 
+ * Initialize a project with the ai-testing structure
  */
 router.post('/setup', async (req, res) => {
   try {
     const { projectPath, force = false } = req.body;
     
     if (!projectPath) {
-      return res.status(400).json({ error: 'projectPath is required' });
+      return res.status(400).json({ error: 'Project path is required' });
     }
-
-    console.log('🚀 Initializing project:', projectPath);
-
+    
+    console.log(`\n🚀 Initializing project: ${projectPath}`);
+    console.log(`   Force: ${force}`);
+    
     // Check if already initialized
     if (!force) {
-      const configPath = path.join(projectPath, 'ai-testing.config.js');
-      if (fs.existsSync(configPath)) {
-        return res.status(400).json({ 
-          error: 'Project already initialized. Use force: true to overwrite.' 
+      const existingCheck = await checkIfInitialized(projectPath);
+      if (existingCheck.initialized) {
+        return res.status(400).json({
+          error: 'Project already initialized. Use force=true to overwrite.',
+          existing: existingCheck
         });
       }
     }
-
-    // 1. Analyze project
-    const analysis = analyzeProject(projectPath);
-    console.log('📋 Analysis:', analysis);
-
-    // 2. Create directories
-    const dirs = createDirectories(projectPath, analysis);
-    console.log('📁 Created directories:', dirs);
-
-    // 3. Copy utilities
-    const utilFiles = await copyUtilities(projectPath, analysis);
-    console.log('📄 Copied utilities:', utilFiles);
-
-    // 4. Generate config
-    const configFile = await generateConfig(projectPath, analysis);
-    console.log('⚙️  Generated config:', configFile);
-
-    // 5. Create README
-    const readmeFile = await createReadme(projectPath, analysis);
-    console.log('📖 Created README:', readmeFile);
-
-    // Success!
+    
+    // Perform initialization
+    const result = await initializeProject(projectPath, force);
+    
+    console.log(`   ✅ Initialization complete!`);
+    
     res.json({
       success: true,
-      analysis,
-      files: [
-        ...utilFiles,
-        configFile,
-        readmeFile
-      ]
+      message: 'Project initialized successfully',
+      ...result
     });
-
+    
   } catch (error) {
-    console.error('❌ Initialization failed:', error);
-    res.status(500).json({ 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    console.error('Error during initialization:', error);
+    res.status(500).json({ error: error.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkIfInitialized(projectPath) {
+  const checks = {
+    testContext: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/TestContext.js')),
+    expectImplication: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js')),
+    testPlanner: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js')),
+    config: await fileExists(path.join(projectPath, 'ai-testing.config.js'))
+  };
+  
+  const initialized = Object.values(checks).every(Boolean);
+  
+  return { initialized, checks };
+}
+
+async function initializeProject(projectPath, force) {
+  const createdFiles = [];
+  
+  // 1. Create directory structure
+  console.log('   📁 Creating directories...');
+  const dirsToCreate = [
+    'tests/ai-testing',
+    'tests/ai-testing/utils',
+    'tests/ai-testing/config'
+  ];
+  
+  for (const dir of dirsToCreate) {
+    const dirPath = path.join(projectPath, dir);
+    await fs.mkdir(dirPath, { recursive: true });
+    console.log(`      ✅ ${dir}/`);
+  }
+  
+  // 2. Create TestContext.js
+  console.log('   📝 Creating TestContext.js...');
+  const testContextPath = path.join(projectPath, 'tests/ai-testing/utils/TestContext.js');
+  await fs.writeFile(testContextPath, getTestContextTemplate());
+  createdFiles.push('tests/ai-testing/utils/TestContext.js');
+  console.log(`      ✅ TestContext.js`);
+  
+  // 3. Create ExpectImplication.js
+  console.log('   📝 Creating ExpectImplication.js...');
+  const expectImplicationPath = path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js');
+  await fs.writeFile(expectImplicationPath, getExpectImplicationTemplate());
+  createdFiles.push('tests/ai-testing/utils/ExpectImplication.js');
+  console.log(`      ✅ ExpectImplication.js`);
+  
+  // 4. Create TestPlanner.js
+  console.log('   📝 Creating TestPlanner.js...');
+  const testPlannerPath = path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js');
+  await fs.writeFile(testPlannerPath, getTestPlannerTemplate());
+  createdFiles.push('tests/ai-testing/utils/TestPlanner.js');
+  console.log(`      ✅ TestPlanner.js`);
+  
+  // 5. Create ai-testing.config.js
+  console.log('   ⚙️  Creating ai-testing.config.js...');
+  const configPath = path.join(projectPath, 'ai-testing.config.js');
+  await fs.writeFile(configPath, getConfigTemplate(projectPath));
+  createdFiles.push('ai-testing.config.js');
+  console.log(`      ✅ ai-testing.config.js`);
+  
+  // 6. Create README.md
+  console.log('   📖 Creating README.md...');
+  const readmePath = path.join(projectPath, 'tests/ai-testing/README.md');
+  await fs.writeFile(readmePath, getReadmeTemplate());
+  createdFiles.push('tests/ai-testing/README.md');
+  console.log(`      ✅ README.md`);
+  
+  return {
+    filesCreated: createdFiles,
+    structure: 'tests/ai-testing/'
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// FILE TEMPLATES
+// ═══════════════════════════════════════════════════════════
+
+function getTestContextTemplate() {
+  return `// Auto-generated by Implications Framework
+// Location: tests/ai-testing/utils/TestContext.js
+
+/**
+ * TestContext - Manages test data and state transitions
+ * 
+ * This class handles:
+ * - Loading test data from JSON files
+ * - Tracking state changes (delta)
+ * - Validating prerequisites
+ * - Saving updated state back to disk
+ */
+class TestContext {
+  constructor(ImplicationClass, testData) {
+    this.ImplicationClass = ImplicationClass;
+    this.data = testData;
+    this.changeLog = [];
+  }
+  
+  /**
+   * Load test data from JSON file
+   */
+  static load(ImplicationClass, testDataPath) {
+    const fs = require('fs');
+    const testData = JSON.parse(fs.readFileSync(testDataPath, 'utf8'));
+    return new TestContext(ImplicationClass, testData);
+  }
+  
+  /**
+   * Execute action and save changes
+   */
+  async executeAndSave(label, testFile, deltaFn) {
+    const { delta } = await deltaFn();
+    
+    // Apply delta to data
+    for (const [key, value] of Object.entries(delta)) {
+      this.data[key] = value;
+    }
+    
+    // Log change
+    this.changeLog.push({
+      label,
+      testFile,
+      delta,
+      timestamp: new Date().toISOString()
+    });
+    
+    return this;
+  }
+  
+  /**
+   * Save updated data back to file
+   */
+  save(testDataPath) {
+    const fs = require('fs');
+    fs.writeFileSync(testDataPath, JSON.stringify(this.data, null, 2));
+  }
+}
+
+module.exports = TestContext;
+`;
+}
+
+function getExpectImplicationTemplate() {
+  return `// Auto-generated by Implications Framework
+// Location: tests/ai-testing/utils/ExpectImplication.js
+
+/**
+ * ExpectImplication - Validates UI state against implications
+ * 
+ * This class handles:
+ * - Validating visible elements
+ * - Validating hidden elements
+ * - Checking text content with variable substitution
+ * - Running custom expect functions
+ */
+class ExpectImplication {
+  /**
+   * Validate implications for a screen
+   */
+  static async validateImplications(screenDef, testData, page) {
+    if (!screenDef || screenDef.length === 0) {
+      console.log('   ⚠️  No screen definition to validate');
+      return;
+    }
+    
+    const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
+    
+    // Validate visible elements
+    if (def.visible && def.visible.length > 0) {
+      console.log(\`   ✅ Checking \${def.visible.length} visible elements...\`);
+      for (const element of def.visible) {
+        // TODO: Add your element validation logic
+        console.log(\`      ✓ \${element} should be visible\`);
+      }
+    }
+    
+    // Validate hidden elements
+    if (def.hidden && def.hidden.length > 0) {
+      console.log(\`   ✅ Checking \${def.hidden.length} hidden elements...\`);
+      for (const element of def.hidden) {
+        // TODO: Add your element validation logic
+        console.log(\`      ✓ \${element} should be hidden\`);
+      }
+    }
+    
+    // Run custom expect function
+    if (def.expect && typeof def.expect === 'function') {
+      console.log('   ✅ Running custom expect function...');
+      await def.expect(testData, page);
+    }
+  }
+}
+
+module.exports = ExpectImplication;
+`;
+}
+
+function getTestPlannerTemplate() {
+  return `// Auto-generated by Implications Framework
+// Location: tests/ai-testing/utils/TestPlanner.js
+
+/**
+ * TestPlanner - Validates prerequisites before running tests
+ * 
+ * This class handles:
+ * - Checking if test data is in correct state
+ * - Validating required fields exist
+ * - Throwing helpful errors when prerequisites not met
+ */
+class TestPlanner {
+  /**
+   * Check if prerequisites are met, throw if not
+   */
+  static checkOrThrow(ImplicationClass, testData) {
+    const xstateConfig = ImplicationClass.xstateConfig;
+    const meta = xstateConfig.meta || {};
+    
+    // Check previous status
+    if (meta.requires?.previousStatus) {
+      const expected = meta.requires.previousStatus;
+      const actual = testData.status;
+      
+      if (actual !== expected) {
+        throw new Error(
+          \`❌ Prerequisites not met!\\n\` +
+          \`   Expected status: \${expected}\\n\` +
+          \`   Actual status: \${actual}\\n\\n\` +
+          \`   You need to run the test that induces "\${expected}" state first.\`
+        );
+      }
+    }
+    
+    // Check required fields
+    if (meta.requiredFields && meta.requiredFields.length > 0) {
+      const missing = [];
+      
+      for (const field of meta.requiredFields) {
+        if (!testData.hasOwnProperty(field)) {
+          missing.push(field);
+        }
+      }
+      
+      if (missing.length > 0) {
+        throw new Error(
+          \`❌ Missing required fields: \${missing.join(', ')}\\n\` +
+          \`   Required: \${meta.requiredFields.join(', ')}\`
+        );
+      }
+    }
+    
+    console.log('   ✅ Prerequisites check passed');
+  }
+}
+
+module.exports = TestPlanner;
+`;
+}
+
+function getConfigTemplate(projectPath) {
+  const projectName = path.basename(projectPath);
+  
+  return `// Auto-generated by Implications Framework
+// Location: ai-testing.config.js
+
+module.exports = {
+  // Project info
+  projectName: "${projectName}",
+  projectRoot: __dirname,
+  
+  // Framework paths
+  utilsPath: "tests/ai-testing/utils",
+  outputPath: "tests/implications",
+  
+  // Test configuration
+  testRunner: "playwright", // or "appium", "cypress"
+  platforms: ["web"], // Add your platforms: "web", "mobile-dancer", etc.
+  
+  // Data management
+  testDataMode: "stateful", // or "stateless"
+  testDataPath: "tests/data/shared.json",
+  
+  // Patterns
+  patterns: {
+    implications: [
+      "tests/implications/**/*Implications.js"
+    ],
+    tests: [
+      "tests/**/*.spec.js"
+    ]
+  },
+  
+  // Generation options
+  generation: {
+    skipTestRegistration: false,
+    autoValidateUI: true,
+    extractActions: true
+  }
+};
+`;
+}
+
+function getReadmeTemplate() {
+  return `# AI Testing Framework
+
+This directory contains the auto-generated testing utilities for the Implications Framework.
+
+## Structure
+
+\`\`\`
+tests/ai-testing/
+├── utils/
+│   ├── TestContext.js       # Test data management
+│   ├── ExpectImplication.js # UI validation
+│   └── TestPlanner.js       # Prerequisites checking
+├── config/
+│   └── (future: custom configs)
+└── README.md                # This file
+\`\`\`
+
+## Files
+
+### TestContext.js
+Manages test data and state transitions. Handles loading data from JSON files and saving changes (delta).
+
+### ExpectImplication.js
+Validates UI state against implications. Checks visible/hidden elements and runs custom validations.
+
+### TestPlanner.js
+Validates prerequisites before running tests. Ensures test data is in the correct state.
+
+## Usage
+
+These files are automatically imported in generated tests:
+
+\`\`\`javascript
+const TestContext = require('../ai-testing/utils/TestContext');
+const ExpectImplication = require('../ai-testing/utils/ExpectImplication');
+const TestPlanner = require('../ai-testing/utils/TestPlanner');
+\`\`\`
+
+## Configuration
+
+Main configuration file: \`ai-testing.config.js\` (project root)
+
+## Generated by
+
+Implications Framework - Auto-generated on ${new Date().toISOString()}
+`;
+}
 
 export default router;

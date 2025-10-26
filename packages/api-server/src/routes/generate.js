@@ -1,91 +1,87 @@
 // packages/api-server/src/routes/generate.js
+
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import UnitTestGenerator from '../../../core/src/generators/UnitTestGenerator.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const router = express.Router();
 
+/**
+ * POST /api/generate/unit-test
+ * 
+ * Generate a UNIT test from an Implication file
+ */
 router.post('/unit-test', async (req, res) => {
   try {
-    const { implPath, platform, state, projectPath } = req.body;
+    // ✅ Log everything to debug
+    console.log('🔍 Received request body:', JSON.stringify(req.body, null, 2));
     
-    if (!implPath) {
-      return res.status(400).json({ error: 'implPath is required' });
+    // ✅ Accept ALL possible parameter names!
+    const { 
+      implPath,           // UI sends this
+      filePath,           // Alternate
+      implFilePath,       // Alternate
+      platform = 'web', 
+      state = null, 
+      targetState = null 
+    } = req.body;
+    
+    const implFilePathFinal = implPath || filePath || implFilePath;
+    const stateToUse = state || targetState;
+    
+    console.log('📝 Parsed values:');
+    console.log(`   implFilePath: ${implFilePathFinal}`);
+    console.log(`   platform: ${platform}`);
+    console.log(`   state: ${stateToUse}`);
+    
+    if (!implFilePathFinal) {
+      console.error('❌ Missing file path in request body!');
+      return res.status(400).json({ 
+        error: 'Missing required field: implPath, filePath, or implFilePath',
+        receivedBody: req.body
+      });
     }
     
-    console.log('\n🎯 Generate Unit Test Request:');
-    console.log(`   Implication: ${implPath}`);
-    console.log(`   Platform: ${platform || 'auto'}`);
-    console.log(`   State: ${state || 'all states'}`);
+    console.log('🎯 Generate Unit Test Request:');
+    console.log(`   Implication: ${implFilePathFinal}`);
+    console.log(`   Platform: ${platform}`);
+    console.log(`   State: ${stateToUse || 'all states'}`);
     
-    const outputDir = projectPath || path.dirname(implPath);
-    
-    const templatePath = path.join(__dirname, '../templates/unit-test.hbs');
-    
-    console.log(`📁 Output: ${outputDir}`);
-    console.log(`📝 Template: ${templatePath}`);
-    
+    // ✅ FIX: Don't pass outputDir - let generator auto-detect from implFilePath!
     const generator = new UnitTestGenerator({
-      outputDir,
-      templatePath
+      // outputDir is NOT set here - generator will auto-detect it!
     });
     
-    const result = await generator.generate(implPath, {
-      platform: platform || 'web',
-      state: state || null,
+    const result = generator.generate(implFilePathFinal, {
+      platform,
+      state: stateToUse,
       preview: false
     });
     
-    // Handle array results (multi-state) or single result
+    // Handle both single result and array (multi-state)
     const results = Array.isArray(result) ? result : [result];
     
-    console.log('\n✅ Generated:', results.map(r => r.fileName).join(', '));
+    console.log(`\n✅ Generated ${results.length} test(s)`);
     
-    res.json({
+    return res.json({
       success: true,
-      results: results.map(r => ({
-        code: r.code,
-        fileName: r.fileName,
-        filePath: r.filePath
-      })),
       count: results.length,
-      message: `Generated ${results.length} test(s)`
+      tests: results.map(r => ({
+        fileName: r.fileName,
+        filePath: r.filePath,
+        size: r.code?.length || 0,
+        state: r.state
+      }))
     });
     
   } catch (error) {
-    console.error('\n❌ Error:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post('/preview', async (req, res) => {
-  try {
-    const { implPath, platform, state } = req.body;
+    console.error('❌ Error:', error.message);
+    console.error(error.stack);
     
-    if (!implPath) {
-      return res.status(400).json({ error: 'implPath is required' });
-    }
-    
-    const templatePath = path.join(__dirname, '../templates/unit-test.hbs');
-    const generator = new UnitTestGenerator({ templatePath });
-    
-    const result = await generator.generate(implPath, {
-      platform: platform || 'web',
-      state: state || null,
-      preview: true
+    return res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
-    
-    res.json({
-      success: true,
-      code: result.code,
-      fileName: result.fileName
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 

@@ -5,10 +5,6 @@
 // From: {{implClassName}}
 // Platform: {{platform}}
 // Target Status: {{targetStatus}}
-{{#if usesSection}}
-// Section Type: {{sectionType}}
-// Scenarios: {{scenarios}}
-{{/if}}
 // ═══════════════════════════════════════════════════════════
 
 {{#if isPlaywright}}
@@ -16,24 +12,13 @@ const { test, expect } = require('@playwright/test');
 {{else}}
 const { expect } = require('@wdio/globals');
 {{/if}}
-const TestContext = require('{{{testContextPath}}}');
+const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
-const TestPlanner = require('{{{testPlannerPath}}}');
-{{#if hasValidation}}
-const ExpectImplication = require('{{{expectImplicationPath}}}');
-{{/if}}
+const TestPlanner = require('{{testPlannerPath}}');
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}
 const { {{actionName}} } = require('{{path}}');
 {{/each}}
-{{/if}}
-
-{{#if usesSection}}
-// ✨ Section-based test imports
-const LoginScreen = require('{{{loginScreenPath}}}');
-const AddLandingPageScreen = require('{{{addLandingPagePath}}}');
-const {{sectionClass}} = require('{{{sectionPath}}}');
-const credentials = require('{{{credentialsPath}}}');
 {{/if}}
 
 /**
@@ -41,17 +26,15 @@ const credentials = require('{{{credentialsPath}}}');
  * 
  * This function induces the "{{targetStatus}}" state by:
  * 1. Loading test data and validating prerequisites
- * 2. {{#if usesSection}}Using Section POM to fill content{{else}}Navigating and performing actions{{/if}}
- * 3. Saving the state change with delta
+ * 2. Checking if the test can run (TestPlanner)
+ * 3. Navigating to the correct screen
+ * 4. Performing the state-inducing action
+ * 5. Saving the state change with delta
  * 
  * @param {string} testDataPath - Path to testData JSON file
  * @param {object} options - Options
 {{#if isPlaywright}}
  * @param {Page} options.page - Playwright page object
-{{/if}}
-{{#if usesSection}}
- * @param {string} options.sectionType - Section type ({{sectionTypes}})
- * @param {string} options.scenario - Scenario to use ({{scenarios}})
 {{/if}}
 {{#each optionParams}}
  * @param {{type}} options.{{name}} - {{description}}
@@ -60,7 +43,7 @@ const credentials = require('{{{credentialsPath}}}');
  */
 const {{actionName}} = async (testDataPath, options = {}) => {
   {{#if isPlaywright}}
-  const { page{{#if usesSection}}, sectionType = '{{defaultSectionType}}', scenario = '{{defaultScenario}}'{{/if}} } = options;
+  const { page } = options;
   {{/if}}
   
   // ────────────────────────────────────────────────────────
@@ -69,12 +52,8 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   const ctx = TestContext.load({{implClassName}}, testDataPath);
   
   console.log('\n🎯 Starting: {{actionDescription}}');
-  console.log('   Target Status: {{targetStatus}}');
-  console.log('   Current Status: ' + (ctx.data.status || 'Unknown'));
-  {{#if usesSection}}
-  console.log('   Section Type: ' + sectionType);
-  console.log('   Scenario: ' + scenario);
-  {{/if}}
+  console.log(`   Target Status: {{targetStatus}}`);
+  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
   
   // ────────────────────────────────────────────────────────
   // STEP 2: Prerequisites Check (CRITICAL!)
@@ -85,86 +64,87 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log('ℹ️  No prerequisites required for this state');
   {{/if}}
   
-  {{#if usesSection}}
-  // ────────────────────────────────────────────────────────
-  // STEP 3: Login & Navigate (Section Workflow)
-  // ────────────────────────────────────────────────────────
-  
-  // Login if needed
-  if (!page.url().includes('/admin/')) {
-    const loginScreen = new LoginScreen(page);
-    await page.goto(loginScreen.url, { waitUntil: 'networkidle' });
-    await loginScreen.inputUsername.fill(credentials.{{credentialKey}}.username);
-    await loginScreen.inputPassword.fill(credentials.{{credentialKey}}.password);
-    await Promise.all([
-      loginScreen.btnLogin.click(),
-      page.waitForNavigation({ waitUntil: 'networkidle' })
-    ]);
-  }
-  
-  // Navigate to add page
-  const addLandingPage = new AddLandingPageScreen(page);
-  await page.goto(addLandingPage.url, {
-    waitUntil: 'networkidle',
-    timeout: 30000
-  });
-  
-  // ────────────────────────────────────────────────────────
-  // STEP 4: Fill Page with Section Content
-  // ────────────────────────────────────────────────────────
-  
-  // Determine section class to use
-  const SectionClass = {{sectionClass}};
-  const section = new SectionClass(page, '{{locale}}');
-  
-  // Generate page title
-  const scenarioConfig = section.constructor.SCENARIOS[scenario];
-  const pageTitle = `${sectionType} ${scenarioConfig.titleSuffix} - [REMOVE] ${Date.now().toString().slice(-6)}`;
-  
-  // Fill page heading
-  await addLandingPage.fillField('inputHeadingTitlePanel', pageTitle);
-  
-  // Add section
-  await addLandingPage.clickElement('btnAddSection');
-  await addLandingPage.fillField('inputSectionSearchOptions', section.sectionTitle);
-  await addLandingPage.selectSectionOption(section.sectionTitle);
-  
-  // Execute scenario to fill modules
-  const sectionData = await section.executeScenario(
-    scenario,
-    addLandingPage,
-    { /* strings if needed */ },
-    pageTitle
-  );
-  
-  console.log(`✅ Filled ${sectionData.modules?.length || 0} modules using ${scenario} scenario`);
-  
-  {{else}}
   // ────────────────────────────────────────────────────────
   // STEP 3: Get Target Entities
   // ────────────────────────────────────────────────────────
   {{#if hasEntityLogic}}
-  const {{entityName}} = ctx.data.{{entityName}}s[options.{{entityName}}Index || 0];
+  // TODO: Customize based on your entity (booking, user, etc.)
+  let targets = [];
   
-  if (!{{entityName}}) {
-    throw new Error(`No {{entityName}} found at index ${options.{{entityName}}Index || 0}`);
+  if (options.indices && Array.isArray(options.indices)) {
+    // Multiple entities by indices
+    targets = options.indices.map(i => ctx.data.{{entityName}}s[i]);
+  } else if (options.index !== undefined) {
+    // Single entity by index
+    targets = [ctx.data.{{entityName}}s[options.index]];
+  } else {
+    // Default: first entity matching {{previousStatus}}
+    {{#if previousStatus}}
+    const matchingEntities = ctx.data.{{entityName}}s?.filter(e => e.status === '{{previousStatus}}');
+    if (!matchingEntities || matchingEntities.length === 0) {
+      throw new Error('❌ No {{previousStatus}} {{entityName}}s found');
+    }
+    targets = [matchingEntities[0]];
+    {{else}}
+    targets = [ctx.data.{{entityName}}s?.[0]];
+    {{/if}}
   }
   
-  console.log(`   Working with {{entityName}}: ${ctx.data.{{entityName}}.id}`);
+  console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
   {{/if}}
   
   // ────────────────────────────────────────────────────────
   // STEP 4: Navigate to Screen & Perform Action
   // ────────────────────────────────────────────────────────
   
+  {{#if hasActionDetails}}
+  // ✨ Generated action steps:
+  console.log('\n🎬 Executing action: {{actionDetails.description}}');
+  
+  {{#each actionDetails.steps}}
+  // Step {{@index}}: {{description}}
+  {{#if code}}
+  {{code}}
+  {{else if method}}
+  {{#if screen}}
+  await {{../appObjectName}}.{{screen}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{else}}
+  await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{/if}}
+  {{/if}}
+  
+  {{/each}}
+  {{else if hasTriggeredByAction}}
+  // ✅ FIX #5: Extracted action from mirrorsOn.triggeredBy
+  console.log('\n🎬 Executing action from triggeredBy...');
+  
+  // TODO: Import and initialize {{triggeredByInstanceName}}
+  // Example:
+  // const config = require('../../../../config/local/android.conf.js').config;
+  // const Actions = require('../../../mobile/android/manager/actions/Actions.js');
+  // const {{triggeredByInstanceName}} = new Actions(config, null);
+  
+  {{triggeredByActionCall}}
+  {{else}}
   // TODO: Navigate to the screen where you perform this action
   // Example navigation:
+  {{#if navigationExample}}
   {{{navigationExample}}}
+  {{else}}
+  // await navigateToScreen();
+  {{/if}}
   
   // TODO: Perform the state-inducing action
   // This is where you interact with the UI to trigger the state change
+  {{#if actionExample}}
   // Example:
   {{{actionExample}}}
+  {{else}}
+  {{#if triggerButton}}
+  // Example:
+  // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
+  {{/if}}
+  {{/if}}
   
   console.log('   ⚠️  TODO: Implement action logic');
   console.log('   📝 Add your navigation and action code here');
@@ -182,31 +162,28 @@ const {{actionName}} = async (testDataPath, options = {}) => {
       const delta = {};
       const now = new Date().toISOString();
       
-      {{#if usesSection}}
-      // ✨ Section workflow delta
-      delta['status'] = '{{targetStatus}}';
-      delta['pageTitle'] = pageTitle;
-      delta['sectionType'] = sectionType;
-      delta['scenario'] = scenario;
-      delta['modules'] = sectionData.modules || [];
-      {{else if hasEntityLogic}}
-      // Update specific entity in array
-      delta['{{entityName}}s'] = ctx.data.{{entityName}}s.map((item, index) => {
-        if (index === (options.{{entityName}}Index || 0)) {
-          return {
-            ...item,
-            {{#each deltaFields}}
-            {{name}}: {{{value}}}{{#unless @last}},{{/unless}}
-            {{/each}}
-          };
-        }
-        return item;
-      });
-      {{else}}
+      {{#if hasDeltaLogic}}
       // ✨ Generated delta from entry: assign
+      {{#if hasEntityLogic}}
+      for (const target of targets) {
+        const entityPath = `{{entityName}}s[${target.index || 0}]`;
+        delta[entityPath] = {
       {{#each deltaFields}}
-      delta['{{name}}'] = {{{value}}};
+          {{name}}: {{value}},
       {{/each}}
+        };
+      }
+      {{else}}
+      // Update single entity or root fields
+      {{#each deltaFields}}
+      delta['{{name}}'] = {{value}};
+      {{/each}}
+      {{/if}}
+      {{else}}
+      // TODO: Customize delta based on what changed
+      // Example:
+      // delta['status'] = '{{targetStatus}}';
+      // delta['{{targetStatus}}At'] = now;
       {{/if}}
       
       return { delta };
@@ -214,6 +191,26 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   );
 };
 
+{{#if hasHelperFunctions}}
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+{{#each helperFunctions}}
+/**
+ * {{description}}
+ */
+async function {{name}}({{params}}) {
+  {{#if code}}
+  {{code}}
+  {{else}}
+  // TODO: Implement {{name}}
+  throw new Error('Helper function not implemented: {{name}}');
+  {{/if}}
+}
+
+{{/each}}
+{{/if}}
 
 // ═══════════════════════════════════════════════════════════
 // OPTIONAL TEST REGISTRATION
@@ -230,48 +227,23 @@ if (!shouldSkipRegistration) {
     
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
-    {{#if usesSection}}
-    // ✨ Parameterized tests for all scenarios (DRY!)
-    const SCENARIOS = {{scenariosJson}};
-    
-    SCENARIOS.forEach(scenario => {
-      test(`Execute {{targetStatus}} transition - ${scenario}`, async ({ page }) => {
-        await {{actionName}}(testDataPath, { page, sectionType: '{{defaultSectionType}}', scenario });
-        
-        {{#if hasValidation}}
-        // Validate UI implications (mirrorsOn)
-        await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
-          const ctx = TestContext.load({{implClassName}}, testDataPath);
-          
-          {{#each screenValidations}}
-          // {{comment}}
-          await ExpectImplication.validateImplications(
-            {{../implClassName}}.mirrorsOn.UI.{{../platformUpper}}.{{screenKey}},
-            ctx.data,
-            page
-          );
-          
-          {{/each}}
-        });
-        {{/if}}
-      });
-    });
-    {{else}}
-    test("Execute {{targetStatus}} transition", async ({ page }) => {
-      await {{actionName}}(testDataPath, { 
-        page{{#if hasEntityLogic}},
-        {{entityName}}Index: 0{{/if}}
+    {{#each testCases}}
+    test("{{description}}", async ({ page }) => {
+      await {{../actionName}}(testDataPath, { 
+        page{{#if params}},
+        {{params}}{{/if}}
       });
       
-      {{#if hasValidation}}
-      // Validate UI implications (mirrorsOn)
-      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
-        const ctx = TestContext.load({{implClassName}}, testDataPath);
+      {{#if ../hasUIValidation}}
+      // ✅ FIX #6: Validate UI implications (mirrorsOn)
+      await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
+        const ctx = TestContext.load({{../implClassName}}, testDataPath);
+        const ExpectImplication = require('{{../testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
         
-        {{#each screenValidations}}
-        // {{comment}}
+        {{#each ../validationScreens}}
+        // {{screenKey}}: Visible ({{visible}}), Hidden ({{hidden}})
         await ExpectImplication.validateImplications(
-          {{../implClassName}}.mirrorsOn.UI.{{../platformUpper}}.{{screenKey}},
+          {{../../implClassName}}.mirrorsOn.UI.{{../../platform}}.{{screenKey}},
           ctx.data,
           page
         );
@@ -280,8 +252,8 @@ if (!shouldSkipRegistration) {
       });
       {{/if}}
     });
-    {{/if}}
     
+    {{/each}}
   });
   {{else}}
   describe("UNIT: {{testDescription}}", () => {

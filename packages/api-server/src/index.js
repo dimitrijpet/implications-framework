@@ -36,6 +36,7 @@ app.use('/api/implications', implicationsRoutes); // ADD THIS
 app.use('/api/patterns', patternsRoutes);
 app.use('/api/init', initRoutes);
 
+
 app.use('/api/generate', generateRoutes);
 
 // Error handling

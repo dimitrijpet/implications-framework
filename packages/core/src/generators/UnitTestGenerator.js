@@ -1,105 +1,36 @@
 // packages/core/src/generators/UnitTestGenerator.js
-// ES MODULE VERSION
 
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import TemplateEngine from './TemplateEngine.js';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 
+// Create require for loading user files dynamically
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-// Dynamic import for TemplateEngine
-let TemplateEngine;
 
 /**
- * UnitTestGenerator - Generic Test Generation Framework
+ * UnitTestGenerator
  * 
  * Generates UNIT test files from Implication class definitions.
- * Fully configurable and project-agnostic.
  * 
  * Features:
- * - Configuration-driven (reads ai-testing.config.js)
- * - No hardcoded project structure assumptions
- * - Configurable discovery with metadata override
- * - Support for section-based workflows
- * - Multi-state machine support
- * - Platform-agnostic (web, cms, mobile)
+ * - Reads Implication file and extracts metadata
+ * - Builds template context from xstateConfig, triggeredBy, etc.
+ * - Generates complete UNIT test with prerequisites checking
+ * - Supports both Playwright (web/cms) and Appium (mobile) platforms
+ * - Handles delta calculation from entry: assign
+ * - Creates optional test registration
  */
 class UnitTestGenerator {
   
   constructor(options = {}) {
     this.options = {
-      templatePath: options.templatePath || path.join(__dirname, 'unit-test.hbs'),
+      templatePath: options.templatePath || path.join(__dirname, 'templates/unit-test.hbs'),
       outputDir: options.outputDir || null,
       ...options
-    };
-  }
-
-  /**
-   * Load project configuration file
-   * 
-   * Searches for ai-testing.config.js in:
-   * 1. Explicit path provided in options
-   * 2. Current working directory
-   * 3. Project root (found by looking for package.json)
-   */
-  _loadConfig() {
-    let configPath = this.options.configPath;
-    
-    // If not provided, search for it
-    if (!configPath) {
-      const searchPaths = [
-        path.join(process.cwd(), 'ai-testing.config.js'),
-        path.join(this._findProjectRoot(), 'ai-testing.config.js')
-      ];
-      
-      for (const searchPath of searchPaths) {
-        if (fs.existsSync(searchPath)) {
-          configPath = searchPath;
-          break;
-        }
-      }
-    }
-    
-    // Load config or use defaults
-    if (configPath && fs.existsSync(configPath)) {
-      console.log(`📋 Loading config: ${configPath}`);
-      
-      // Clear require cache to get fresh config
-      delete require.cache[require.resolve(configPath)];
-      
-      return require(configPath);
-    } else {
-      console.warn('⚠️  No ai-testing.config.js found, using defaults');
-      return this._getDefaultConfig();
-    }
-  }
-  
-  /**
-   * Get default configuration when no config file exists
-   */
-  _getDefaultConfig() {
-    return {
-      paths: {
-        tests: 'tests',
-        implications: 'tests/implications',
-        utils: 'tests/utils',
-        screenObjects: 'tests/screenObjects',
-        sections: 'tests/screenObjects/sections',
-        testData: 'test-data',
-        credentials: 'test-data/credentials.json'
-      },
-      conventions: {
-        sectionPattern: '{name}.section.js',
-        screenPattern: '{name}.screen.js',
-        defaultCredentialKey: 'default'
-      },
-      generator: {
-        enableDiscovery: true,
-        onMissingFile: 'error',  // error | warn | skip | template
-        templateDir: null
-      }
     };
   }
   
@@ -113,17 +44,23 @@ class UnitTestGenerator {
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
    */
-  async generate(implFilePath, options = {}) {
+  generate(implFilePath, options = {}) {
     const {
       platform = 'web',
       state = null,
       preview = false
     } = options;
     
-    console.log('\n🎯 UnitTestGenerator.generate()');
+    console.log('\nðŸŽ¯ UnitTestGenerator.generate()');
     console.log(`   Implication: ${implFilePath}`);
     console.log(`   Platform: ${platform}`);
     if (state) console.log(`   State: ${state}`);
+    
+    // ✅ FIX #3: Auto-detect output directory from implication file location
+    if (!this.options.outputDir) {
+      this.options.outputDir = path.dirname(path.resolve(implFilePath));
+      console.log(`   ðŸ" Auto-detected output: ${this.options.outputDir}`);
+    }
     
     // 1. Load Implication class
     const ImplClass = this._loadImplication(implFilePath);
@@ -133,19 +70,19 @@ class UnitTestGenerator {
     
     if (isMultiState && !state) {
       // Generate for ALL states
-      console.log(`   ✨ Multi-state machine detected`);
-      return await this._generateMultiState(ImplClass, implFilePath, platform, preview);
+      console.log(`   âœ¨ Multi-state machine detected`);
+      return this._generateMultiState(ImplClass, implFilePath, platform, preview);
     } else if (isMultiState && state) {
       // Generate for specific state
-      console.log(`   ✨ Generating for state: ${state}`);
-      return await this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
+      console.log(`   âœ¨ Generating for state: ${state}`);
+      return this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
     } else {
       // Single-state machine (original behavior)
-      return await this._generateSingleState(ImplClass, implFilePath, platform, null, preview);
+      return this._generateSingleState(ImplClass, implFilePath, platform, null, preview);
     }
   }
   
-/**
+  /**
    * Check if this is a multi-state machine
    */
   _isMultiStateMachine(ImplClass) {
@@ -159,10 +96,10 @@ class UnitTestGenerator {
   /**
    * Generate tests for all states in a multi-state machine
    */
-  async _generateMultiState(ImplClass, implFilePath, platform, preview) {
+  _generateMultiState(ImplClass, implFilePath, platform, preview) {
     const states = Object.keys(ImplClass.xstateConfig.states);
     
-    console.log(`   📋 Found ${states.length} states: ${states.join(', ')}`);
+    console.log(`   ðŸ“‹ Found ${states.length} states: ${states.join(', ')}`);
     console.log('');
     
     const results = [];
@@ -172,13 +109,13 @@ class UnitTestGenerator {
       
       // Skip states without setup (no test needed)
       if (!stateConfig.meta?.setup || stateConfig.meta.setup.length === 0) {
-        console.log(`   ⏭️  Skipping ${stateName} (no setup defined)`);
+        console.log(`   â­ï¸  Skipping ${stateName} (no setup defined)`);
         continue;
       }
       
-      console.log(`   🎯 Generating for state: ${stateName}`);
+      console.log(`   ðŸŽ¯ Generating for state: ${stateName}`);
       
-      const result = await this._generateSingleState(
+      const result = this._generateSingleState(
         ImplClass, 
         implFilePath, 
         platform, 
@@ -190,7 +127,7 @@ class UnitTestGenerator {
       console.log('');
     }
     
-    console.log(`   ✅ Generated ${results.length} test(s)\n`);
+    console.log(`   âœ… Generated ${results.length} test(s)\n`);
     
     return results;
   }
@@ -198,14 +135,9 @@ class UnitTestGenerator {
   /**
    * Generate test for a single state
    */
-  async _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
+  _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
     // Store implFilePath for smart path calculation
     this.implFilePath = implFilePath;
-    
-    // Load config (needed for path resolution)
-    if (!this.config) {
-      this.config = this._loadConfig();
-    }
     
     // 2. Extract metadata
     const metadata = this._extractMetadata(ImplClass, platform, stateName);
@@ -216,18 +148,8 @@ class UnitTestGenerator {
     // 4. Validate context
     this._validateContext(context);
     
-    // 5. Render template - lazy load TemplateEngine with dynamic import
-    if (!TemplateEngine) {
-      const TemplateEngineModule = await import('./TemplateEngine.js');
-      TemplateEngine = TemplateEngineModule.default || TemplateEngineModule;
-    }
-    
-    // Get template directory from options
-    const templatesDir = this.options.templatePath 
-      ? path.dirname(this.options.templatePath)
-      : path.join(__dirname, '../templates');
-    
-    const engine = new TemplateEngine({ templatesDir });
+    // 5. Render template
+    const engine = new TemplateEngine();
     const code = engine.render('unit-test.hbs', context);
     
     // 6. Generate file name
@@ -238,9 +160,9 @@ class UnitTestGenerator {
     if (!preview && this.options.outputDir) {
       filePath = path.join(this.options.outputDir, fileName);
       fs.writeFileSync(filePath, code);
-      console.log(`      ✅ Written: ${filePath}`);
+      console.log(`      âœ… Written: ${filePath}`);
     } else {
-      console.log(`      ✅ Preview generated (${code.length} chars)`);
+      console.log(`      âœ… Preview generated (${code.length} chars)`);
     }
     
     return {
@@ -252,110 +174,94 @@ class UnitTestGenerator {
     };
   }
   
- /**
+  /**
    * Load Implication class from file
+   * 
+   * CRITICAL: Changes working directory to PROJECT ROOT
+   * before requiring, so non-relative imports work correctly.
+   * 
+   * Handles both:
+   * - Relative: require('../../../something')
+   * - Project-relative: require('tests/mobile/i18n/en.json')
    */
-_loadImplication(implFilePath) {
-  if (!fs.existsSync(implFilePath)) {
-    throw new Error(`Implication file not found: ${implFilePath}`);
-  }
-  
-  console.log(`   📥 Loading implication from: ${implFilePath}`);
-  
-  try {
-    const code = fs.readFileSync(implFilePath, 'utf8');
-    
-    // Extract class name
-    const classMatch = code.match(/class\s+(\w+)/);
-    const className = classMatch ? classMatch[1] : 'UnknownClass';
-    
-    // Extract xstateConfig object - find the static property
-    const configPattern = /static\s+xstateConfig\s*=\s*\{([\s\S]*?)\n  \};/;
-    const configMatch = code.match(configPattern);
-    
-    if (!configMatch) {
-      throw new Error(`Could not find static xstateConfig in ${implFilePath}`);
+  _loadImplication(implFilePath) {
+    if (!fs.existsSync(implFilePath)) {
+      throw new Error(`Implication file not found: ${implFilePath}`);
     }
     
-    const configBody = configMatch[1];
+    // Get absolute path
+    const absolutePath = path.resolve(implFilePath);
     
-    // Extract meta object
-    const metaPattern = /meta:\s*\{([\s\S]*?)\n    \},/;
-    const metaMatch = configBody.match(metaPattern);
+    // Find project root (directory containing tests/)
+    const projectRoot = this._findProjectRoot(absolutePath);
     
-    if (!metaMatch) {
-      throw new Error(`Could not find meta object in xstateConfig`);
-    }
+    // Save current directory
+    const originalCwd = process.cwd();
     
-    // Parse meta fields manually
-    const metaBody = metaMatch[1];
-    const meta = {};
-    
-    // Extract simple fields
-    const statusMatch = metaBody.match(/status:\s*"([^"]+)"/);
-    if (statusMatch) meta.status = statusMatch[1];
-    
-    const triggerActionMatch = metaBody.match(/triggerAction:\s*"([^"]+)"/);
-    if (triggerActionMatch) meta.triggerAction = triggerActionMatch[1];
-    
-    // Extract setup object
-const setupMatch = metaBody.match(/setup:\s*\{([\s\S]*?)\n      \}/);
-if (setupMatch) {
-  const setupBody = setupMatch[1];
-  const setup = {};  // Build single object
-  
-  const testFileMatch = setupBody.match(/testFile:\s*"([^"]+)"/);
-  if (testFileMatch) setup.testFile = testFileMatch[1];
-  
-  const actionNameMatch = setupBody.match(/actionName:\s*"([^"]+)"/);
-  if (actionNameMatch) setup.actionName = actionNameMatch[1];
-  
-  const platformMatch = setupBody.match(/platform:\s*"([^"]+)"/);
-  if (platformMatch) setup.platform = platformMatch[1];
-  
-  meta.setup = [setup];  // ✅ Wrap in array here at the end
-}
-    
-    // Extract requiredFields array
-    const requiredFieldsMatch = metaBody.match(/requiredFields:\s*\[([\s\S]*?)\]/);
-    if (requiredFieldsMatch) {
-      const fields = requiredFieldsMatch[1]
-        .split(',')
-        .map(f => f.trim().replace(/"/g, ''))
-        .filter(f => f.length > 0);
-      meta.requiredFields = fields;
-    }
-    
-    // Extract buttons
-    const triggerButtonMatch = metaBody.match(/triggerButton:\s*"([^"]+)"/);
-    if (triggerButtonMatch) meta.triggerButton = triggerButtonMatch[1];
-    
-    const afterButtonMatch = metaBody.match(/afterButton:\s*"([^"]+)"/);
-    if (afterButtonMatch) meta.afterButton = afterButtonMatch[1];
-    
-    console.log(`   📋 Extracted meta:`, meta);
-    console.log(`   ✅ Loaded via regex (no execution)`);
-    
-    // Return mock class with extracted data
-    return {
-      name: className,
-      xstateConfig: {
-        meta: meta,
-        states: {},
-        on: {},
-        entry: {}
+    try {
+      // Change to PROJECT ROOT so all imports work
+      process.chdir(projectRoot);
+      
+      console.log(`   📁 Changed to project root: ${projectRoot}`);
+      
+      // Clear require cache to get fresh version
+      delete require.cache[require.resolve(absolutePath)];
+      
+      // Require from the project root context
+      const ImplClass = require(absolutePath);
+      
+      if (!ImplClass.xstateConfig) {
+        throw new Error(`Invalid Implication: missing xstateConfig in ${absolutePath}`);
       }
-    };
-    
-  } catch (error) {
-    console.error(`   ❌ Failed to load implication:`);
-    console.error(`      ${error.message}`);
-    throw error;
+      
+      return ImplClass;
+      
+    } finally {
+      // ALWAYS restore original directory
+      process.chdir(originalCwd);
+    }
   }
-}
+  
+  /**
+   * Find project root by looking for tests/ directory
+   * 
+   * Goes up from the implication file until we find a directory
+   * that has 'tests' as a subdirectory.
+   */
+  _findProjectRoot(implFilePath) {
+    let currentDir = path.dirname(implFilePath);
+    
+    // Go up max 10 levels looking for tests/ directory
+    for (let i = 0; i < 10; i++) {
+      const testsDir = path.join(currentDir, 'tests');
+      
+      if (fs.existsSync(testsDir) && fs.statSync(testsDir).isDirectory()) {
+        // Found it! This is the project root
+        return currentDir;
+      }
+      
+      // Go up one level
+      const parentDir = path.dirname(currentDir);
+      
+      // Reached filesystem root?
+      if (parentDir === currentDir) {
+        break;
+      }
+      
+      currentDir = parentDir;
+    }
+    
+    // Fallback: use implication's directory
+    console.warn('   ⚠️  Could not find project root, using implication directory');
+    return path.dirname(implFilePath);
+  }
   
   /**
    * Extract metadata from Implication class
+   * 
+   * @param {object} ImplClass - Implication class
+   * @param {string} platform - Platform
+   * @param {string} stateName - State name (for multi-state machines)
    */
   _extractMetadata(ImplClass, platform, stateName = null) {
     const xstateConfig = ImplClass.xstateConfig;
@@ -375,7 +281,7 @@ if (setupMatch) {
       entry = stateConfig.entry;
       transitions = stateConfig.on || {};
       
-      // Find previous state by looking at ALL transitions
+      // âœ¨ NEW: Find previous state by looking at ALL transitions
       previousStatus = this._findPreviousState(xstateConfig.states, stateName);
       
     } else {
@@ -418,26 +324,11 @@ if (setupMatch) {
       // Triggered by (multi-platform actions)
       triggeredBy: ImplClass.triggeredBy || [],
       
-      // Mirrors on (for validation)
+      // Mirrors on (for validation - Phase 2)
       mirrorsOn: ImplClass.mirrorsOn,
       
       // State name (for multi-state)
-      stateName: stateName,
-      
-      // Section-based workflow info
-      usesSection: meta.usesSection || false,
-      sectionType: meta.sectionType,
-      sectionClass: meta.sectionClass,
-      sectionPath: meta.sectionPath,
-      scenarios: meta.scenarios,
-      requiresOptions: meta.requiresOptions || [],
-      
-      // Additional paths (explicit from metadata)
-      loginScreenPath: meta.loginScreenPath,
-      addPageScreenPath: meta.addPageScreenPath,
-      credentialsPath: meta.credentialsPath,
-      credentialKey: meta.credentialKey,
-      locale: meta.locale || 'en'
+      stateName: stateName
     };
     
     // Filter setup for this platform
@@ -448,6 +339,11 @@ if (setupMatch) {
   
   /**
    * Find the previous state by looking at incoming transitions
+   * 
+   * For example, if we have:
+   *   draft: { on: { PUBLISH: 'published' } }
+   * 
+   * Then 'published' has previousStatus = 'draft'
    */
   _findPreviousState(states, targetStateName) {
     const previousStates = [];
@@ -465,7 +361,7 @@ if (setupMatch) {
     }
     
     // Return the most likely previous state
-    // Priority: draft > filling > empty > pending > created
+    // Priority: draft > filling > empty > others
     const priority = ['draft', 'filling', 'empty', 'pending', 'created'];
     
     for (const preferred of priority) {
@@ -480,14 +376,11 @@ if (setupMatch) {
   
   /**
    * Build template context from metadata
-   * 
-   * This is the main orchestration method that builds the complete
-   * context object for template rendering.
    */
   _buildContext(metadata, platform) {
     const implClassName = metadata.className;
     const targetStatus = metadata.status;
-    const actionName = this._generateActionName(metadata);
+    const actionName = this._generateActionName(targetStatus);
     const testFileName = this._generateFileName(metadata, platform);
     
     // Platform detection
@@ -502,7 +395,7 @@ if (setupMatch) {
     const actionDescription = metadata.actionDetails?.description || 
                               `Transition to ${targetStatus} state`;
     
-    // Entity logic
+    // Entity logic (for things like bookings, users, etc.)
     const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
     const entityName = this._inferEntityName(metadata);
     
@@ -513,32 +406,24 @@ if (setupMatch) {
     // Action details
     const hasActionDetails = !!metadata.actionDetails;
     
-    // ✨ Section-based workflow detection and context building
-    const usesSection = metadata.usesSection || false;
-    let sectionContext = {};
-    
-    if (usesSection) {
-      sectionContext = this._buildSectionContext(metadata);
-    }
-    
     // Test cases
     const testCases = this._generateTestCases(metadata, entityName);
     
-    // ✨ Calculate import paths
+    // âœ¨ NEW: Calculate smart import paths
     const paths = this._calculateImportPaths();
     
-    // Validation info
-    const hasValidation = !!metadata.mirrorsOn;
-    const screenValidations = hasValidation ? 
-      this._extractScreenValidations(metadata.mirrorsOn, platform, targetStatus) : [];
+    // âœ¨ FIX #5: Extract action from triggeredBy
+    const triggeredByAction = this._extractTriggeredByAction(metadata);
     
-    // Build complete context
+    // âœ¨ FIX #6: Extract UI validation screens
+    const uiValidation = this._extractUIValidation(metadata, platform);
+    
+    // Build context
     const context = {
       // Header
       timestamp: new Date().toISOString(),
       implClassName,
       platform,
-      platformUpper: platform.toUpperCase(),
       targetStatus,
       previousStatus: metadata.previousStatus,
       
@@ -546,10 +431,9 @@ if (setupMatch) {
       isPlaywright,
       isMobile,
       
-      // Paths (calculated based on config and structure)
+      // Paths (âœ¨ SMART - calculated based on file location)
       testContextPath: paths.testContext,
       testPlannerPath: paths.testPlanner,
-      expectImplicationPath: paths.expectImplication,
       
       // Function
       actionName,
@@ -560,10 +444,10 @@ if (setupMatch) {
       // Prerequisites
       requiresPrerequisites,
       hasPrerequisites,
-      prerequisiteImports: [],
+      prerequisiteImports: [], // TODO: Extract from triggeredBy
       
       // Options
-      optionParams: this._generateOptionParams(isPlaywright, hasEntityLogic, usesSection),
+      optionParams: this._generateOptionParams(isPlaywright, hasEntityLogic),
       
       // Entity logic
       hasEntityLogic,
@@ -577,333 +461,193 @@ if (setupMatch) {
       actionExample: this._generateActionExample(metadata, platform),
       appObjectName: isMobile ? 'app' : 'page',
       
+      // âœ¨ FIX #5: Extracted action from triggeredBy
+      hasTriggeredByAction: triggeredByAction.hasAction,
+      triggeredByActionCall: triggeredByAction.actionCall,
+      triggeredByInstanceName: triggeredByAction.instanceName,
+      
       // Delta
       hasDeltaLogic,
       deltaFields,
-      
-      // ✨ Section workflow context
-      usesSection,
-      ...sectionContext,
-      
-      // Validation
-      hasValidation,
-      screenValidations,
       
       // Helper functions
       hasHelperFunctions: false,
       helperFunctions: [],
       
+      // âœ¨ FIX #6: UI Validation screens
+      hasUIValidation: uiValidation.hasValidation,
+      validationScreens: uiValidation.screens,
+      
       // Test cases
       testCases,
-      defaultTestDataPath: this._resolvePathFromConfig('testData') + '/shared.json',
+      defaultTestDataPath: 'tests/data/shared.json',
       
       // Change log
-      changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : usesSection ? 'Page' : 'State'}`,
+      changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : 'State'}`,
     };
     
     return context;
   }
   
   /**
-   * Build section-specific context
+   * Calculate smart import paths based on file locations
    * 
-   * Uses configuration-based discovery with metadata override
-   */
-  _buildSectionContext(metadata) {
-    const sectionType = metadata.sectionType;
-    
-    if (!sectionType) {
-      throw new Error('Section-based workflow requires sectionType in metadata');
-    }
-    
-    // Attempt discovery if enabled and explicit path not provided
-    let sectionInfo = null;
-    
-    if (this.config.generator.enableDiscovery && !metadata.sectionPath) {
-      console.log(`   🔍 Discovering section: ${sectionType}`);
-      sectionInfo = this._discoverSection(sectionType);
-      
-      if (!sectionInfo) {
-        return this._handleMissingSection(sectionType, metadata);
-      }
-    } else if (metadata.sectionPath) {
-      // Explicit path provided - analyze that file
-      console.log(`   📍 Using explicit section path: ${metadata.sectionPath}`);
-      sectionInfo = this._analyzeSection(
-        this._resolveRelativePath(metadata.sectionPath),
-        sectionType
-      );
-    } else {
-      // Discovery disabled and no explicit path
-      return this._handleMissingSection(sectionType, metadata);
-    }
-    
-    // Build section context from discovered/explicit info
-    return {
-      sectionType,
-      sectionClass: sectionInfo.className,
-      sectionPath: sectionInfo.relativePath,
-      scenarios: sectionInfo.scenarios.join(', '),
-      scenariosJson: JSON.stringify(sectionInfo.scenarios),
-      defaultScenario: sectionInfo.scenarios[0] || 'DEFAULT',
-      locale: metadata.locale || 'en',
-      
-      // Supporting paths - use explicit from metadata or resolve from config
-      loginScreenPath: metadata.loginScreenPath || this._resolveScreenPath('login'),
-      addPageScreenPath: metadata.addPageScreenPath || this._resolveScreenPath('addPage'),
-      credentialsPath: metadata.credentialsPath || this._resolvePathFromConfig('credentials'),
-      credentialKey: metadata.credentialKey || this.config.conventions.defaultCredentialKey
-    };
-  }
-  
-  /**
-   * Handle missing section based on configuration
-   */
-  _handleMissingSection(sectionType, metadata) {
-    const errorMsg = `Cannot find section: ${sectionType}. ` +
-                     `Provide explicit sectionPath in metadata or check ai-testing.config.js`;
-    
-    switch (this.config.generator.onMissingFile) {
-      case 'error':
-        throw new Error(errorMsg);
-      
-      case 'warn':
-        console.warn(`⚠️  ${errorMsg}`);
-        return this._getFallbackSectionContext(sectionType, metadata);
-      
-      case 'skip':
-        console.log(`⏭️  ${errorMsg} - Skipping`);
-        throw new Error(errorMsg);  // Will be caught by caller
-      
-      case 'template':
-        console.warn(`⚠️  ${errorMsg} - Generating template`);
-        return this._getFallbackSectionContext(sectionType, metadata);
-      
-      default:
-        throw new Error(errorMsg);
-    }
-  }
-  
-  /**
-   * Get fallback section context when discovery fails
-   */
-  _getFallbackSectionContext(sectionType, metadata) {
-    return {
-      sectionType,
-      sectionClass: metadata.sectionClass || 'UnknownSection',
-      sectionPath: '???/MANUALLY-ADD-PATH',
-      scenarios: metadata.scenarios?.join(', ') || 'DEFAULT',
-      scenariosJson: JSON.stringify(metadata.scenarios || ['DEFAULT']),
-      defaultScenario: metadata.scenarios?.[0] || 'DEFAULT',
-      locale: metadata.locale || 'en',
-      loginScreenPath: '???/MANUALLY-ADD-PATH',
-      addPageScreenPath: '???/MANUALLY-ADD-PATH',
-      credentialsPath: '???/MANUALLY-ADD-PATH',
-      credentialKey: 'default'
-    };
-  }
-  
-  /**
-   * Discover section class by scanning configured locations
-   */
-  _discoverSection(sectionType) {
-    // Generate search paths based on configuration
-    const searchPaths = this._generateSectionSearchPaths(sectionType);
-    
-    for (const searchPath of searchPaths) {
-      if (fs.existsSync(searchPath)) {
-        console.log(`   ✅ Found section: ${searchPath}`);
-        return this._analyzeSection(searchPath, sectionType);
-      }
-    }
-    
-    console.warn(`   ⚠️  Section not found. Searched: ${searchPaths.join(', ')}`);
-    return null;
-  }
-  
-  /**
-   * Generate possible section file paths based on configuration
-   */
-  _generateSectionSearchPaths(sectionType) {
-    const projectRoot = this._findProjectRoot();
-    const sectionsDir = this._resolvePathFromConfig('sections');
-    const pattern = this.config.conventions.sectionPattern;
-    
-    // Generate filename variations
-    const filenames = this._applyNamingPattern(pattern, sectionType);
-    
-    // Build full paths
-    const paths = [];
-    for (const filename of filenames) {
-      paths.push(path.join(projectRoot, sectionsDir, filename));
-    }
-    
-    return paths;
-  }
-  
-  /**
-   * Apply naming pattern to generate filename variations
+   * This figures out the correct ../../ paths for imports based on:
+   * - Where the Implication file is (passed to generator)
+   * - Where the generated test will be (same directory as Implication)
+   * - Where the utils folder is (configurable via --utils option)
    * 
-   * Pattern: '{name}.section.js' or '{Name}Section.js'
-   */
-_applyNamingPattern(pattern, name) {
-  const variations = [];
-  
-  // PRESERVE the original casing (for stayCards → stayCards)
-  variations.push(pattern.replace('{name}', name));  // ← THIS LINE ADDED
-  
-  // Also try lowercase
-  variations.push(pattern.replace('{name}', name.toLowerCase()));
-  
-  // PascalCase
-  variations.push(pattern.replace('{Name}', this._toPascalCase(name)));
-  
-  return [...new Set(variations)];
-}
-  
-  /**
-   * Analyze section file to extract metadata
-   */
-  _analyzeSection(sectionPath, sectionType) {
-    try {
-      const content = fs.readFileSync(sectionPath, 'utf-8');
-      
-      // Extract class name
-      const classMatch = content.match(/class\s+(\w+)\s+extends/);
-      const className = classMatch ? classMatch[1] : this._toPascalCase(sectionType) + 'Section';
-      
-      // Extract SCENARIOS
-      const scenariosMatch = content.match(/static\s+SCENARIOS\s*=\s*\{([^}]+)\}/s);
-      let scenarios = ['DEFAULT'];
-      
-      if (scenariosMatch) {
-        const scenarioKeys = scenariosMatch[1].match(/(\w+)\s*:/g);
-        if (scenarioKeys) {
-          scenarios = scenarioKeys.map(key => key.replace(':', '').trim());
-        }
-      }
-      
-      // Calculate relative path from output dir
-      const outputDir = this.options.outputDir || path.dirname(this.implFilePath);
-      const relativePath = path.relative(outputDir, sectionPath);
-      
-      return {
-        className,
-        scenarios,
-        relativePath: relativePath.replace(/\\/g, '/'),  // Normalize separators
-        absolutePath: sectionPath
-      };
-    } catch (error) {
-      console.error(`❌ Error analyzing section ${sectionPath}:`, error.message);
-      return null;
-    }
-  }
-  
-  /**
-   * Resolve screen path from configuration
-   */
-  _resolveScreenPath(screenName) {
-    const projectRoot = this._findProjectRoot();
-    const screenObjectsDir = this._resolvePathFromConfig('screenObjects');
-    const pattern = this.config.conventions.screenPattern;
-    
-    // Apply naming pattern
-    const filename = pattern.replace('{name}', screenName.toLowerCase());
-    
-    const fullPath = path.join(projectRoot, screenObjectsDir, filename);
-    
-    // Calculate relative path from output dir
-    const outputDir = this.options.outputDir || path.dirname(this.implFilePath);
-    return path.relative(outputDir, fullPath).replace(/\\/g, '/');
-  }
-  
-  /**
-   * Resolve path from configuration key
-   */
-  _resolvePathFromConfig(key) {
-    if (!this.config.paths[key]) {
-      throw new Error(`Configuration missing path for: ${key}`);
-    }
-    return this.config.paths[key];
-  }
-  
-  /**
-   * Resolve relative path to absolute
-   */
-  _resolveRelativePath(relativePath) {
-    const outputDir = this.options.outputDir || path.dirname(this.implFilePath);
-    return path.resolve(outputDir, relativePath);
-  }
-  
-  /**
-   * Calculate import paths for utilities
+   * Examples:
+   *   apps/cms/tests/implications/pages/CMSPageImplications.js
+   *   â†’ ../../utils/TestContext (if utils at apps/cms/tests/utils)
+   * 
+   *   tests/implications/bookings/AcceptedBookingImplications.js
+   *   â†’ ../utils/TestContext (if utils at tests/utils)
+   * 
+   * @returns {object} { testContext, testPlanner }
    */
   _calculateImportPaths() {
-    const projectRoot = this._findProjectRoot();
-    const outputDir = this.options.outputDir || path.dirname(this.implFilePath);
-    const utilsDir = this._resolvePathFromConfig('utils');
+    // Get the Implication file path (absolute or relative)
+    const implFilePath = this.implFilePath || '';
     
-    const utilsPath = path.join(projectRoot, utilsDir);
-    
-    return {
-      testContext: path.relative(outputDir, path.join(utilsPath, 'TestContext')).replace(/\\/g, '/'),
-      testPlanner: path.relative(outputDir, path.join(utilsPath, 'TestPlanner')).replace(/\\/g, '/'),
-      expectImplication: path.relative(outputDir, path.join(utilsPath, 'ExpectImplication')).replace(/\\/g, '/')
-    };
-  }
-  
-  /**
-   * Find project root by looking for package.json
-   */
-  _findProjectRoot() {
-    let currentDir = this.implFilePath ? path.dirname(this.implFilePath) : process.cwd();
-    
-    for (let i = 0; i < 10; i++) {
-      if (fs.existsSync(path.join(currentDir, 'package.json'))) {
-        return currentDir;
-      }
-      
-      const parentDir = path.dirname(currentDir);
-      if (parentDir === currentDir) break;  // Reached root
-      currentDir = parentDir;
+    if (!implFilePath) {
+      // Fallback to safe default
+      console.log('   âš ï¸  No implFilePath set, using default paths');
+      return {
+        testContext: '../../ai-testing/utils/TestContext',
+        testPlanner: '../../ai-testing/utils/TestPlanner'
+      };
     }
     
-    // Fallback: use current directory
-    return process.cwd();
+    // Get directory of Implication file (where test will be generated)
+    const implDir = path.dirname(implFilePath);
+    
+    // Utils path - configurable via options or use smart detection
+    let utilsPath = this.options.utilsPath;
+    
+    if (!utilsPath) {
+      // Smart detection: look for 'tests' directory in path
+      if (implDir.includes('/tests/')) {
+        // Extract base tests directory
+        const testsIndex = implDir.indexOf('/tests/');
+        const testsBase = implDir.substring(0, testsIndex + 6); // Keep '/tests'
+        // âœ… FIX #1: Changed from 'utils' to 'ai-testing/utils'
+        utilsPath = path.join(testsBase, 'ai-testing/utils');
+      } else {
+        // Fallback
+        utilsPath = 'tests/ai-testing/utils';
+      }
+    }
+    
+    // Calculate relative path from test location to utils
+    let relativePath = path.relative(implDir, utilsPath);
+    
+    // Normalize for require() - use forward slashes
+    relativePath = relativePath.split(path.sep).join('/');
+    
+    // Ensure it starts with ./ or ../
+    if (!relativePath.startsWith('.')) {
+      relativePath = './' + relativePath;
+    }
+    
+    console.log(`   ðŸ“ Smart paths: ${relativePath}/TestContext`);
+    
+    return {
+      testContext: `${relativePath}/TestContext`,
+      testPlanner: `${relativePath}/TestPlanner`
+    };
   }
   
   /**
    * Extract delta fields from entry: assign
+   * 
+   * This parses the assign object/function to extract ALL fields
+   * that should be included in the delta.
    */
-  _extractDeltaFields(entry, targetStatus) {
-    if (!entry || typeof entry.assignment !== 'object') {
-      return [];
-    }
+  _extractDeltaFields(entryAssign, targetStatus) {
+    if (!entryAssign) return [];
     
     const fields = [];
     
-    for (const [key, value] of Object.entries(entry.assignment)) {
-      // Generate value expression for template
-      let valueExpr;
+    // Get the assignment object
+    let assignmentObj = null;
+    
+    if (entryAssign.assignment) {
+      // XState v5 format: assign({ status: "...", ... })
+      assignmentObj = entryAssign.assignment;
+    } else if (typeof entryAssign === 'object') {
+      // Direct object
+      assignmentObj = entryAssign;
+    }
+    
+    if (!assignmentObj) {
+      console.log('   âš ï¸  Could not extract assignment object from entry');
       
-      if (typeof value === 'function') {
-        // Function: try to infer parameter name
-        const funcStr = value.toString();
+      // Fallback: just add status
+      fields.push({
+        name: 'status',
+        value: `'${targetStatus}'`
+      });
+      
+      return fields;
+    }
+    
+    // Parse each field in the assignment
+    for (const [fieldName, fieldValue] of Object.entries(assignmentObj)) {
+      let value;
+      
+      if (typeof fieldValue === 'string') {
+        // Literal string: status: "published"
+        value = `'${fieldValue}'`;
         
-        if (funcStr.includes('event')) {
-          valueExpr = `options.${key} || new Date().toISOString()`;
+      } else if (typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
+        // Literal number/boolean
+        value = String(fieldValue);
+        
+      } else if (typeof fieldValue === 'function') {
+        // Function: ({event}) => event.publishedAt
+        const fnStr = fieldValue.toString();
+        
+        // Try to extract event fields
+        const eventMatch = fnStr.match(/event\.(\w+)/);
+        if (eventMatch) {
+          const eventField = eventMatch[1];
+          
+          // Check if this is a timestamp field
+          if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
+            // Use 'now' as default, but allow override from event
+            value = `options.${eventField} || now`;
+          } else {
+            // Regular event field
+            value = `options.${eventField}`;
+          }
         } else {
-          valueExpr = `'${targetStatus}'`;
+          // Couldn't parse - check for common patterns
+          if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
+            value = 'now';
+          } else if (fieldName === 'status') {
+            value = `'${targetStatus}'`;
+          } else {
+            value = `undefined  // TODO: Set ${fieldName}`;
+          }
         }
-      } else if (typeof value === 'string') {
-        valueExpr = `'${value}'`;
+        
       } else {
-        valueExpr = JSON.stringify(value);
+        // Unknown type
+        value = 'undefined  // TODO: Set value';
       }
       
       fields.push({
-        name: key,
-        value: valueExpr
+        name: fieldName,
+        value: value
+      });
+    }
+    
+    // Ensure status is always present
+    if (!fields.find(f => f.name === 'status')) {
+      fields.unshift({
+        name: 'status',
+        value: `'${targetStatus}'`
       });
     }
     
@@ -911,92 +655,56 @@ _applyNamingPattern(pattern, name) {
   }
   
   /**
-   * Extract screen validations from mirrorsOn
-   */
-  _extractScreenValidations(mirrorsOn, platform, targetStatus) {
-    if (!mirrorsOn || !mirrorsOn.UI) return [];
-    
-    const platformKey = platform.toUpperCase();
-    const platformMirrors = mirrorsOn.UI[platformKey];
-    
-    if (!platformMirrors) return [];
-    
-    const stateMirrors = platformMirrors[targetStatus];
-    
-    if (!stateMirrors || !Array.isArray(stateMirrors)) return [];
-    
-    return stateMirrors.map((mirror) => {
-      const visibleCount = mirror.visible?.length || 0;
-      const hiddenCount = mirror.hidden?.length || 0;
-      const checksCount = mirror.checks ? Object.keys(mirror.checks).length : 0;
-      
-      return {
-        screenKey: targetStatus,
-        screenName: mirror.screen || 'unknown',
-        comment: `${mirror.description || 'Validation'} - ${visibleCount} visible, ${hiddenCount} hidden, ${checksCount} checks`
-      };
-    });
-  }
-  
-  /**
-   * Should generate entity logic (for arrays like bookings, users)
+   * Should we generate entity logic (e.g., bookings[0])?
    */
   _shouldGenerateEntityLogic(metadata) {
-    // Check if entry assigns to array paths
-    if (metadata.entry && metadata.entry.assignment) {
-      const keys = Object.keys(metadata.entry.assignment);
-      return keys.some(key => key.includes('[') || key.endsWith('s'));
-    }
-    return false;
+    // Heuristic: if entry: assign modifies arrays or has indices
+    const entryStr = metadata.entry?.toString() || '';
+    return entryStr.includes('bookings') || 
+           entryStr.includes('[') ||
+           entryStr.includes('map(');
   }
   
   /**
    * Infer entity name from metadata
    */
   _inferEntityName(metadata) {
-    if (metadata.entry && metadata.entry.assignment) {
-      const keys = Object.keys(metadata.entry.assignment);
-      const arrayKey = keys.find(key => key.includes('[') || key.endsWith('s'));
-      
-      if (arrayKey) {
-        // Extract entity name from array key
-        const match = arrayKey.match(/(\w+)s?\[/);
-        if (match) return match[1];
-        
-        // If ends with 's', remove it
-        if (arrayKey.endsWith('s')) {
-          return arrayKey.slice(0, -1);
-        }
-      }
+    const entryStr = metadata.entry?.toString() || '';
+    
+    // Try to find entity name in entry: assign
+    const matches = entryStr.match(/(\w+):\s*\(\{[^}]*context[^}]*\}\)\s*=>\s*context\.(\w+)/);
+    if (matches && matches[2]) {
+      const pluralName = matches[2];
+      // Remove 's' to get singular
+      return pluralName.endsWith('s') ? pluralName.slice(0, -1) : pluralName;
     }
     
+    // Try to find in className
+    const className = metadata.className;
+    if (className.includes('Booking')) return 'booking';
+    if (className.includes('User')) return 'user';
+    if (className.includes('Event')) return 'event';
+    
+    // Default
     return 'entity';
   }
   
   /**
-   * Generate option parameters for function signature
+   * Generate option parameters for JSDoc
    */
-  _generateOptionParams(isPlaywright, hasEntityLogic, usesSection) {
+  _generateOptionParams(isPlaywright, hasEntityLogic) {
     const params = [];
-    
-    if (usesSection) {
-      params.push({
-        type: 'string',
-        name: 'sectionType',
-        description: 'Type of section to use'
-      });
-      params.push({
-        type: 'string',
-        name: 'scenario',
-        description: 'Scenario to execute'
-      });
-    }
     
     if (hasEntityLogic) {
       params.push({
-        type: 'number',
+        type: '{number}',
         name: 'index',
-        description: 'Index of entity to process'
+        description: 'Single entity index'
+      });
+      params.push({
+        type: '{array}',
+        name: 'indices',
+        description: 'Multiple entity indices [0, 1, 2]'
       });
     }
     
@@ -1009,12 +717,22 @@ _applyNamingPattern(pattern, name) {
   _generateTestCases(metadata, entityName) {
     const testCases = [];
     
-    if (this._shouldGenerateEntityLogic(metadata)) {
+    const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
+    
+    if (hasEntityLogic) {
+      // Test case for single entity
       testCases.push({
         description: `Process first ${entityName}`,
         params: 'index: 0'
       });
+      
+      // Test case for multiple entities
+      testCases.push({
+        description: `Process multiple ${entityName}s`,
+        params: 'indices: [0, 1, 2]'
+      });
     } else {
+      // Simple test case
       testCases.push({
         description: `Execute ${metadata.status} transition`,
         params: null
@@ -1028,33 +746,96 @@ _applyNamingPattern(pattern, name) {
    * Generate navigation example
    */
   _generateNavigationExample(platform, metadata) {
-    // Return generic commented examples
-    const examples = ['// await navigateTo(screen);'];
-    return examples.join('\n');
+    const status = metadata?.status;
+    const examples = [];
+    
+    if (platform === 'cms') {
+      // CMS-specific navigation
+      if (status === 'empty' || status === 'filling') {
+        examples.push(`// await page.goto('/admin/pages/new');`);
+      } else if (status === 'draft' || status === 'published') {
+        examples.push(`// await page.goto(\`/admin/pages/\${ctx.data.pageId}/edit\`);`);
+      } else if (status === 'archived') {
+        examples.push(`// await page.goto('/admin/pages/archived');`);
+      } else {
+        examples.push(`// await page.goto('/admin/pages');`);
+      }
+      
+      examples.push(`// await page.waitForLoadState('networkidle');`);
+      
+    } else if (platform === 'web') {
+      examples.push(`// await webNav.navigateToScreen();`);
+      
+    } else if (platform.startsWith('mobile-')) {
+      examples.push(`// await this.navigateToScreen();`);
+    }
+    
+    // Return as ALREADY COMMENTED lines
+    return examples.length > 0 ? examples.join('\n') : null;
   }
   
   /**
    * Generate action example
    */
   _generateActionExample(metadata, platform) {
+    const examples = [];
+    
+    // Add trigger button example if present
     if (metadata.triggerButton) {
-      return `// await page.getByRole('button', { name: '${metadata.triggerButton}' }).click();`;
+      if (platform === 'web' || platform === 'cms') {
+        examples.push(`// await page.getByRole('button', { name: '${metadata.triggerButton}' }).click();`);
+        examples.push(`// await page.waitForSelector('.success-message');  // Wait for confirmation`);
+      } else {
+        examples.push(`// await app.screen.btn${metadata.triggerButton}.click();`);
+        examples.push(`// await app.screen.successMessage.waitForDisplayed();`);
+      }
     }
-    return '// await performAction();';
+    
+    // Add state-specific examples
+    const status = metadata.status;
+    
+    if (status === 'published' && platform === 'cms') {
+      examples.push(`// // Wait for page to be live`);
+      examples.push(`// await page.waitForURL(/.*\\/published/);`);
+    } else if (status === 'draft' && platform === 'cms') {
+      examples.push(`// // Verify draft saved`);
+      examples.push(`// await expect(page.locator('.draft-indicator')).toBeVisible();`);
+    } else if (status === 'filling' && platform === 'cms') {
+      examples.push(`// // Fill in page content`);
+      examples.push(`// await page.fill('#pageTitle', ctx.data.pageTitle);`);
+    }
+    
+    // Return as ALREADY COMMENTED lines
+    return examples.length > 0 ? examples.join('\n') : null;
   }
   
   /**
-   * Generate action name (GENERIC - uses metadata or conventions)
+   * Generate action name from status
    */
-  _generateActionName(metadata) {
+  /**
+   * Generate action name (GENERIC - uses metadata or conventions)
+   * 
+   * Priority:
+   * 1. Use metadata.actionName if provided
+   * 2. Check meta.setup[0].actionName
+   * 3. Infer from status using conventions
+   * 
+   * NO HARDCODED DOMAIN MAPPINGS!
+   */
+  _generateActionName(statusOrMetadata) {
+    // Handle both old API (string) and new API (metadata object)
+    const metadata = typeof statusOrMetadata === 'string' 
+      ? { status: statusOrMetadata }
+      : statusOrMetadata;
+    
     // 1. Check if explicitly provided
     if (metadata.actionName) {
       return metadata.actionName;
     }
     
-    // 2. Check in setup
-    if (metadata.setup && metadata.setup[0]?.actionName) {
-      return metadata.setup[0].actionName;
+    // 2. Check in platformSetup (not setup[0])
+    if (metadata.platformSetup?.actionName) {
+      return metadata.platformSetup.actionName;
     }
     
     // 3. Infer from status using generic conventions
@@ -1063,6 +844,14 @@ _applyNamingPattern(pattern, name) {
   
   /**
    * Generate file name (GENERIC - uses metadata or conventions)
+   * 
+   * Priority:
+   * 1. Use metadata.testFile if provided
+   * 2. Check meta.setup[0].testFile
+   * 3. Generate from action name + platform
+   * 
+   * Format: ActionName-Platform-UNIT.spec.js
+   * Example: Approve-Web-UNIT.spec.js
    */
   _generateFileName(metadata, platform) {
     // 1. Check if explicitly provided
@@ -1070,16 +859,17 @@ _applyNamingPattern(pattern, name) {
       return metadata.testFile;
     }
     
-    // 2. Check in setup
-    if (metadata.setup && metadata.setup[0]?.testFile) {
-      return metadata.setup[0].testFile;
+    // 2. Check in platformSetup (not setup[0])
+    if (metadata.platformSetup?.testFile) {
+      return path.basename(metadata.platformSetup.testFile);
     }
     
     // 3. Generate from action name
     const actionName = this._generateActionName(metadata);
-    const action = this._toPascalCase(actionName);
+    const action = this._toPascalCase(actionName);  // approve â†’ Approve
     const platformSuffix = this._getPlatformSuffix(platform);
     
+    // Format: Approve-Web-UNIT.spec.js
     return `${action}-${platformSuffix}-UNIT.spec.js`;
   }
   
@@ -1112,17 +902,25 @@ _applyNamingPattern(pattern, name) {
     return true;
   }
   
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // GENERIC HELPERS (NO DOMAIN KNOWLEDGE!)
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   
   /**
    * Convert string to camelCase
+   * Examples:
+   *   approved â†’ approved
+   *   checked_in â†’ checkedIn
+   *   in-review â†’ inReview
+   *   Published â†’ published
    */
   _toCamelCase(str) {
     if (!str) return '';
     
+    // First lowercase
     let result = str.charAt(0).toLowerCase() + str.slice(1);
+    
+    // Replace _X or -X with X
     result = result.replace(/[_-](\w)/g, (_, c) => c.toUpperCase());
     
     return result;
@@ -1130,32 +928,211 @@ _applyNamingPattern(pattern, name) {
   
   /**
    * Convert string to PascalCase
+   * Examples:
+   *   approved â†’ Approved
+   *   checked_in â†’ CheckedIn
+   *   draft â†’ Draft
    */
   _toPascalCase(str) {
     if (!str) return '';
     
+    // First uppercase
     let result = str.charAt(0).toUpperCase() + str.slice(1);
+    
+    // Replace _X or -X with X
     result = result.replace(/[_-](\w)/g, (_, c) => c.toUpperCase());
     
     return result;
   }
   
   /**
-   * Infer action name from status (generic)
+   * Infer action name from status (generic, no domain knowledge)
+   * 
+   * Conventions:
+   * - Remove 'ed' suffix if present: approved â†’ approve
+   * - Convert to camelCase: checked_in â†’ checkIn
+   * - Leave as-is if can't infer: draft â†’ draft
+   * 
+   * Examples:
+   *   approved â†’ approve
+   *   checked_in â†’ checkIn
+   *   draft â†’ draft
+   *   published â†’ publish
    */
   _inferActionName(status) {
     if (!status) return 'action';
     
+    // Convert to camelCase first
     let name = this._toCamelCase(status);
     
     // Remove common suffixes
     if (name.endsWith('ed') && name.length > 3) {
+      // approved â†’ approve, published â†’ publish
       name = name.slice(0, -2);
     } else if (name.endsWith('ing') && name.length > 4) {
+      // filling â†’ fill
       name = name.slice(0, -3);
     }
     
     return name;
+  }
+  
+  /**
+   * Capitalize first letter
+   */
+  _capitalize(str) {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+  
+  /**
+   * âœ¨ FIX #5: Extract action code from triggeredBy
+   * 
+   * Parses mirrorsOn.triggeredBy[0].action to extract the actual action call.
+   * 
+   * Example input:
+   *   triggeredBy: [{
+   *     action: async (testData) => {
+   *       await actionsM.dashboardBooking.updateBookingStatusToRejected(testData);
+   *     }
+   *   }]
+   * 
+   * Example output:
+   *   {
+   *     hasAction: true,
+   *     actionCall: "await actionsM.dashboardBooking.updateBookingStatusToRejected(ctx.data);",
+   *     instanceName: "actionsM"
+   *   }
+   */
+  _extractTriggeredByAction(metadata) {
+    const result = {
+      hasAction: false,
+      actionCall: null,
+      instanceName: null
+    };
+    
+    // Check mirrorsOn.triggeredBy first
+    const triggeredBy = metadata.mirrorsOn?.triggeredBy;
+    
+    if (!triggeredBy || triggeredBy.length === 0) {
+      return result;
+    }
+    
+    const firstTrigger = triggeredBy[0];
+    
+    if (!firstTrigger.action) {
+      return result;
+    }
+    
+    // Convert function to string
+    const actionFnStr = firstTrigger.action.toString();
+    
+    // Extract the action call using regex
+    // Match patterns like: await actionsM.something.method(...)
+    const actionMatch = actionFnStr.match(/await\s+([\w.]+)\((.*?)\);/);
+    
+    if (actionMatch) {
+      const fullCall = actionMatch[1];  // e.g., "actionsM.dashboardBooking.updateBookingStatusToRejected"
+      const params = actionMatch[2];     // e.g., "testData"
+      
+      // Extract instance name (first part before first dot)
+      const instanceName = fullCall.split('.')[0];  // e.g., "actionsM"
+      
+      // Replace testData with ctx.data
+      const newParams = params.replace(/testData/g, 'ctx.data');
+      
+      result.hasAction = true;
+      result.actionCall = `await ${fullCall}(${newParams});`;
+      result.instanceName = instanceName;
+    }
+    
+    return result;
+  }
+  
+  /**
+   * âœ¨ FIX #6: Extract UI validation screens from mirrorsOn
+   * 
+   * Extracts which screens need validation for the given platform.
+   * 
+   * Example input:
+   *   mirrorsOn.UI.web.manageRequestingEntertainers = [{ visible: [...], hidden: [...] }]
+   * 
+   * Example output:
+   *   {
+   *     hasValidation: true,
+   *     screens: [{
+   *       screenKey: "manageRequestingEntertainers",
+   *       visible: 2,
+   *       hidden: 5
+   *     }]
+   *   }
+   */
+  _extractUIValidation(metadata, platform) {
+    const result = {
+      hasValidation: false,
+      screens: []
+    };
+    
+    const mirrorsOn = metadata.mirrorsOn;
+    
+    if (!mirrorsOn || !mirrorsOn.UI) {
+      return result;
+    }
+    
+    // Get platform key (convert web → web, mobile-dancer → dancer, etc.)
+    const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+    
+    const platformUI = mirrorsOn.UI[platformKey];
+    
+    if (!platformUI) {
+      return result;
+    }
+    
+    // Extract each screen
+    for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
+      if (!Array.isArray(screenDefs) || screenDefs.length === 0) {
+        continue;
+      }
+      
+      const screenDef = screenDefs[0];  // Take first definition
+      
+      const visibleCount = screenDef.visible?.length || 0;
+      const hiddenCount = screenDef.hidden?.length || 0;
+      
+      if (visibleCount > 0 || hiddenCount > 0) {
+        result.screens.push({
+          screenKey,
+          visible: visibleCount,
+          hidden: hiddenCount
+        });
+      }
+    }
+    
+    if (result.screens.length > 0) {
+      result.hasValidation = true;
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Get platform key for mirrorsOn.UI lookup
+   * 
+   * Maps platform to mirrorsOn.UI key:
+   *   web → web
+   *   cms → cms  
+   *   mobile-dancer → dancer
+   *   mobile-manager → clubApp (or manager?)
+   */
+  _getPlatformKeyForMirrorsOn(platform) {
+    const mapping = {
+      'web': 'web',
+      'cms': 'cms',
+      'mobile-dancer': 'dancer',
+      'mobile-manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
+    };
+    
+    return mapping[platform] || platform;
   }
 }
 
