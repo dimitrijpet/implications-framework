@@ -1075,29 +1075,58 @@ class UnitTestGenerator {
     
     const mirrorsOn = metadata.mirrorsOn;
     
+    console.log(`   🔍 Extracting UI validation for platform: ${platform}`);
+    
     if (!mirrorsOn || !mirrorsOn.UI) {
+      console.log(`   ⚠️  No mirrorsOn.UI found`);
       return result;
     }
     
     // Get platform key (convert web → web, mobile-dancer → dancer, etc.)
     const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+    console.log(`   📝 Platform key: ${platform} → ${platformKey}`);
     
     const platformUI = mirrorsOn.UI[platformKey];
     
     if (!platformUI) {
+      console.log(`   ⚠️  No mirrorsOn.UI.${platformKey} found`);
+      console.log(`   Available keys: ${Object.keys(mirrorsOn.UI).join(', ')}`);
       return result;
     }
+    
+    console.log(`   ✅ Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformUI).length} screens`);
     
     // Extract each screen
     for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
       if (!Array.isArray(screenDefs) || screenDefs.length === 0) {
+        console.log(`   ⏭️  Skipping ${screenKey} (not an array or empty)`);
         continue;
       }
       
       const screenDef = screenDefs[0];  // Take first definition
       
-      const visibleCount = screenDef.visible?.length || 0;
-      const hiddenCount = screenDef.hidden?.length || 0;
+      // ✅ FIX: Check multiple possible locations for visible/hidden arrays
+      // 1. Direct properties: screenDef.visible, screenDef.hidden
+      // 2. Inside checks: screenDef.checks.visible, screenDef.checks.hidden
+      // 3. Inside override: screenDef.override.visible, screenDef.override.hidden
+      
+      let visibleArray = screenDef.visible || 
+                         screenDef.checks?.visible || 
+                         screenDef.override?.visible || 
+                         [];
+      let hiddenArray = screenDef.hidden || 
+                        screenDef.checks?.hidden || 
+                        screenDef.override?.hidden || 
+                        [];
+      
+      // Ensure they're arrays
+      if (!Array.isArray(visibleArray)) visibleArray = [];
+      if (!Array.isArray(hiddenArray)) hiddenArray = [];
+      
+      const visibleCount = visibleArray.length || 0;
+      const hiddenCount = hiddenArray.length || 0;
+      
+      console.log(`   📊 ${screenKey}: visible=${visibleCount}, hidden=${hiddenCount}`);
       
       if (visibleCount > 0 || hiddenCount > 0) {
         result.screens.push({
@@ -1110,6 +1139,9 @@ class UnitTestGenerator {
     
     if (result.screens.length > 0) {
       result.hasValidation = true;
+      console.log(`   ✅ UI Validation enabled: ${result.screens.length} screens`);
+    } else {
+      console.log(`   ⚠️  No screens with visible/hidden elements found`);
     }
     
     return result;
