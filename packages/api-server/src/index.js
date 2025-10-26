@@ -12,6 +12,7 @@ import errorHandler from './middleware/errorHandler.js';
 import implicationsRoutes from './routes/implications.js';
 import patternsRoutes from './routes/patterns.js';
 import initRoutes from './routes/init.js';
+import generateRoutes from './routes/generate.js';
 
 
 
@@ -34,6 +35,8 @@ app.use('/api/implications', implicationsRoutes); // ADD THIS
 
 app.use('/api/patterns', patternsRoutes);
 app.use('/api/init', initRoutes);
+
+app.use('/api/generate', generateRoutes);
 
 // Error handling
 app.use(errorHandler);

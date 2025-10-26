@@ -252,9 +252,13 @@ class UnitTestGenerator {
     };
   }
   
- /**
-   * Load Implication class from file
-   */
+/**
+ * Load Implication class from file using AST parsing (no execution!)
+ * This avoids running top-level code that instantiates screen objects
+ */
+/**
+ * Load Implication using regex extraction (no execution!)
+ */
 _loadImplication(implFilePath) {
   if (!fs.existsSync(implFilePath)) {
     throw new Error(`Implication file not found: ${implFilePath}`);
@@ -299,22 +303,20 @@ _loadImplication(implFilePath) {
     if (triggerActionMatch) meta.triggerAction = triggerActionMatch[1];
     
     // Extract setup object
-const setupMatch = metaBody.match(/setup:\s*\{([\s\S]*?)\n      \}/);
-if (setupMatch) {
-  const setupBody = setupMatch[1];
-  const setup = {};  // Build single object
-  
-  const testFileMatch = setupBody.match(/testFile:\s*"([^"]+)"/);
-  if (testFileMatch) setup.testFile = testFileMatch[1];
-  
-  const actionNameMatch = setupBody.match(/actionName:\s*"([^"]+)"/);
-  if (actionNameMatch) setup.actionName = actionNameMatch[1];
-  
-  const platformMatch = setupBody.match(/platform:\s*"([^"]+)"/);
-  if (platformMatch) setup.platform = platformMatch[1];
-  
-  meta.setup = [setup];  // ✅ Wrap in array here at the end
-}
+    const setupMatch = metaBody.match(/setup:\s*\{([\s\S]*?)\n      \}/);
+    if (setupMatch) {
+      const setupBody = setupMatch[1];
+      meta.setup = {};
+      
+      const testFileMatch = setupBody.match(/testFile:\s*"([^"]+)"/);
+      if (testFileMatch) meta.setup.testFile = testFileMatch[1];
+      
+      const actionNameMatch = setupBody.match(/actionName:\s*"([^"]+)"/);
+      if (actionNameMatch) meta.setup.actionName = actionNameMatch[1];
+      
+      const platformMatch = setupBody.match(/platform:\s*"([^"]+)"/);
+      if (platformMatch) meta.setup.platform = platformMatch[1];
+    }
     
     // Extract requiredFields array
     const requiredFieldsMatch = metaBody.match(/requiredFields:\s*\[([\s\S]*?)\]/);
@@ -353,7 +355,6 @@ if (setupMatch) {
     throw error;
   }
 }
-  
   /**
    * Extract metadata from Implication class
    */

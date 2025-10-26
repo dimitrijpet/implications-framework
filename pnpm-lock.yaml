@@ -104,6 +104,9 @@ importers:
       fs-extra:
         specifier: ^11.2.0
         version: 11.3.2
+      handlebars:
+        specifier: ^4.7.8
+        version: 4.7.8
       joi:
         specifier: ^17.11.0
         version: 17.13.3

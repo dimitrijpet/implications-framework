@@ -7,6 +7,7 @@ import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import { useSuggestions } from '../../hooks/useSuggestions';
 import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
+import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
 
    function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -750,6 +751,15 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               </div>
             </div>
           )}
+
+          // Inside the modal, add the button section (after transitions section):
+<div className="section">
+  <h3 className="section-title">🧪 Test Generation</h3>
+  <GenerateTestsButton 
+    state={state} 
+    projectPath={projectPath}  // Pass from Visualizer
+  />
+</div>
           
           {/* ========================================
               SUGGESTIONS PANEL

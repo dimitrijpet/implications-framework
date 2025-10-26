@@ -150,7 +150,7 @@ const {{actionName}} = async (testDataPath, options = {}) => {
     throw new Error(`No {{entityName}} found at index ${options.{{entityName}}Index || 0}`);
   }
   
-  console.log(`   Working with {{entityName}}: ${{{entityName}}.id}`);
+  console.log(`   Working with {{entityName}}: ${ctx.data.{{entityName}}.id}`);
   {{/if}}
   
   // ────────────────────────────────────────────────────────

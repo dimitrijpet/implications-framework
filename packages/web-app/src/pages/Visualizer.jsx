@@ -687,12 +687,7 @@ const disableTransitionMode = () => {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
-        {/* Stats Panel */}
-        {discoveryResult && (
-          <div className="mb-6">
-            {/* ADD THIS RIGHT AFTER line 541 (inside <main>, before StatsPanel) */}
-
-{/* Initialization Warning Banner */}
+        {/* Initialization Warning Banner */}
 {initChecked && needsInit && !initSuccess && (
   <div 
     className="glass rounded-xl p-6 mb-6 border-2 border-dashed"
@@ -894,6 +889,12 @@ const disableTransitionMode = () => {
     </div>
   </div>
 )}
+
+        {/* Stats Panel */}
+        {discoveryResult && (
+          <div className="mb-6">
+            {/* ADD THIS RIGHT AFTER line 541 (inside <main>, before StatsPanel) */}
+
 
 {/* NOW CONTINUE WITH YOUR EXISTING CODE (StatsPanel, etc.) */}
             <StatsPanel 

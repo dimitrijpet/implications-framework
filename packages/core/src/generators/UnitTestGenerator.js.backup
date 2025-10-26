@@ -255,104 +255,57 @@ class UnitTestGenerator {
  /**
    * Load Implication class from file
    */
-_loadImplication(implFilePath) {
-  if (!fs.existsSync(implFilePath)) {
-    throw new Error(`Implication file not found: ${implFilePath}`);
-  }
-  
-  console.log(`   📥 Loading implication from: ${implFilePath}`);
-  
-  try {
-    const code = fs.readFileSync(implFilePath, 'utf8');
-    
-    // Extract class name
-    const classMatch = code.match(/class\s+(\w+)/);
-    const className = classMatch ? classMatch[1] : 'UnknownClass';
-    
-    // Extract xstateConfig object - find the static property
-    const configPattern = /static\s+xstateConfig\s*=\s*\{([\s\S]*?)\n  \};/;
-    const configMatch = code.match(configPattern);
-    
-    if (!configMatch) {
-      throw new Error(`Could not find static xstateConfig in ${implFilePath}`);
+  _loadImplication(implFilePath) {
+    if (!fs.existsSync(implFilePath)) {
+      throw new Error(`Implication file not found: ${implFilePath}`);
     }
     
-    const configBody = configMatch[1];
+    console.log(`   📥 Loading implication from: ${implFilePath}`);
     
-    // Extract meta object
-    const metaPattern = /meta:\s*\{([\s\S]*?)\n    \},/;
-    const metaMatch = configBody.match(metaPattern);
-    
-    if (!metaMatch) {
-      throw new Error(`Could not find meta object in xstateConfig`);
-    }
-    
-    // Parse meta fields manually
-    const metaBody = metaMatch[1];
-    const meta = {};
-    
-    // Extract simple fields
-    const statusMatch = metaBody.match(/status:\s*"([^"]+)"/);
-    if (statusMatch) meta.status = statusMatch[1];
-    
-    const triggerActionMatch = metaBody.match(/triggerAction:\s*"([^"]+)"/);
-    if (triggerActionMatch) meta.triggerAction = triggerActionMatch[1];
-    
-    // Extract setup object
-const setupMatch = metaBody.match(/setup:\s*\{([\s\S]*?)\n      \}/);
-if (setupMatch) {
-  const setupBody = setupMatch[1];
-  const setup = {};  // Build single object
-  
-  const testFileMatch = setupBody.match(/testFile:\s*"([^"]+)"/);
-  if (testFileMatch) setup.testFile = testFileMatch[1];
-  
-  const actionNameMatch = setupBody.match(/actionName:\s*"([^"]+)"/);
-  if (actionNameMatch) setup.actionName = actionNameMatch[1];
-  
-  const platformMatch = setupBody.match(/platform:\s*"([^"]+)"/);
-  if (platformMatch) setup.platform = platformMatch[1];
-  
-  meta.setup = [setup];  // ✅ Wrap in array here at the end
-}
-    
-    // Extract requiredFields array
-    const requiredFieldsMatch = metaBody.match(/requiredFields:\s*\[([\s\S]*?)\]/);
-    if (requiredFieldsMatch) {
-      const fields = requiredFieldsMatch[1]
-        .split(',')
-        .map(f => f.trim().replace(/"/g, ''))
-        .filter(f => f.length > 0);
-      meta.requiredFields = fields;
-    }
-    
-    // Extract buttons
-    const triggerButtonMatch = metaBody.match(/triggerButton:\s*"([^"]+)"/);
-    if (triggerButtonMatch) meta.triggerButton = triggerButtonMatch[1];
-    
-    const afterButtonMatch = metaBody.match(/afterButton:\s*"([^"]+)"/);
-    if (afterButtonMatch) meta.afterButton = afterButtonMatch[1];
-    
-    console.log(`   📋 Extracted meta:`, meta);
-    console.log(`   ✅ Loaded via regex (no execution)`);
-    
-    // Return mock class with extracted data
-    return {
-      name: className,
-      xstateConfig: {
-        meta: meta,
-        states: {},
-        on: {},
-        entry: {}
+    try {
+      // Clear require cache to get fresh version
+      delete require.cache[require.resolve(implFilePath)];
+      
+      // Use require() for CommonJS files - preserves static properties!
+      const ImplClass = require(implFilePath);
+      
+      if (!ImplClass) {
+        throw new Error(`No export found in ${implFilePath}`);
       }
-    };
-    
-  } catch (error) {
-    console.error(`   ❌ Failed to load implication:`);
-    console.error(`      ${error.message}`);
-    throw error;
+      
+      console.log(`   📋 ImplClass name: ${ImplClass.name || 'Anonymous'}`);
+      console.log(`   📋 ImplClass type: ${typeof ImplClass}`);
+      
+      // Check for xstateConfig on the class
+      if (!ImplClass.xstateConfig) {
+        const availableProps = Object.getOwnPropertyNames(ImplClass).filter(p => !p.startsWith('_'));
+        throw new Error(
+          `Invalid Implication: missing xstateConfig in ${implFilePath}\n` +
+          `Available static properties: ${availableProps.join(', ') || 'none'}\n` +
+          `Make sure the class has: static xstateConfig = { ... }`
+        );
+      }
+      
+      console.log(`   ✅ Loaded with xstateConfig`);
+      
+      return ImplClass;
+      
+    } catch (error) {
+      console.error(`   ❌ Failed to load implication:`);
+      console.error(`      ${error.message}`);
+      
+      // If it's a syntax error in the guest file, give helpful message
+      if (error.message.includes('assign is not defined')) {
+        throw new Error(
+          `The implication file is missing XState imports.\n` +
+          `Add this at the top of ${path.basename(implFilePath)}:\n` +
+          `const { assign } = require('xstate');`
+        );
+      }
+      
+      throw error;
+    }
   }
-}
   
   /**
    * Extract metadata from Implication class
