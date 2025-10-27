@@ -1675,7 +1675,7 @@ router.post('/add-context-field', async (req, res) => {
           contextProp.value.properties.push({
             type: 'ObjectProperty',
             key: { type: 'Identifier', name: fieldName },
-            value: valueToAST(initialValue)
+            value: createValueNode(initialValue)
           });
           
           console.log('✅ Field added to AST');
