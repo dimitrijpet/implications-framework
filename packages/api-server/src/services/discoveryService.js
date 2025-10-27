@@ -49,23 +49,39 @@ export async function discoverProject(projectPath) {
         }
         
         // Check what type of file this is - PASS CACHE
-        await classifyFile(parsed, result, projectPath, cache);
-        
-        // NEW: Extract transitions if it's an implication
-        if (isImplication(parsed)) {
-          // PASS CACHE to metadata extraction
-          const metadata = await extractImplicationMetadata(
-            parsed,
-            extractXStateMetadata,
-            (content) => extractUIImplications(content, projectPath, cache),
-            extractXStateContext
-          );
-          
-          if (metadata.hasXStateConfig) {
-            const transitions = extractXStateTransitions(parsed, metadata.className);
-            result.transitions.push(...transitions);
-          }
-        }
+       await classifyFile(parsed, result, projectPath, cache);
+
+// NEW: Extract transitions if it's an implication
+if (isImplication(parsed)) {
+  const fileName = path.basename(filePath);
+  console.log(`🔍 Checking transitions for: ${fileName}`);
+  
+  const metadata = await extractImplicationMetadata(
+    parsed,
+    extractXStateMetadata,
+    (content) => extractUIImplications(content, projectPath, cache),
+    extractXStateContext
+  );
+  
+  console.log(`   Class: ${metadata.className}`);
+  console.log(`   hasXStateConfig: ${metadata.hasXStateConfig}`);
+  
+  if (metadata.hasXStateConfig) {
+    console.log(`   📤 Calling extractXStateTransitions...`);
+    const transitions = extractXStateTransitions(parsed, metadata.className);
+    console.log(`   📥 Got ${transitions.length} transition(s)`);
+    
+    if (transitions.length > 0) {
+      transitions.forEach(t => {
+        console.log(`      ✅ ${t.from} → ${t.to} (${t.event})`);
+      });
+    }
+    
+    result.transitions.push(...transitions);
+  } else {
+    console.log(`   ⚠️ No xstateConfig found`);
+  }
+}
         
         // Check for patterns
         if (hasPattern(parsed, 'xstate')) result.patterns.hasXState = true;

@@ -683,33 +683,30 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
 />
           </details>
           
-          {/* ========================================
-              UI SCREENS SECTION
-              ======================================== */}
-          {currentState.meta?.uiCoverage?.platforms && Object.keys(currentState.meta.uiCoverage.platforms).length > 0 && (
-            <div>
-              <h2 
-                className="text-2xl font-bold mb-4"
-                style={{ color: theme.colors.accents.purple }}
-              >
-                📱 UI Screens
-              </h2>
-              
-{console.log('🔍 Passing to UIScreenEditor:', { 
-  state: currentState,
-  hasUiCoverage: !!currentState?.meta?.uiCoverage,
-  platforms: currentState?.meta?.uiCoverage?.platforms
-})}
-<UIScreenEditor
-  state={currentState}
-  theme={theme}
-  onSave={handleUIUpdate}
-  onCancel={() => console.log('UI edit cancelled')}
-/>
-
-
-            </div>
-          )}
+{/* ========================================
+    UI SCREENS SECTION - ALWAYS SHOW
+    ======================================== */}
+<div>
+  <h2 
+    className="text-2xl font-bold mb-4"
+    style={{ color: theme.colors.accents.purple }}
+  >
+    📱 UI Screens
+  </h2>
+  
+  <UIScreenEditor
+    state={{
+      ...currentState,
+      // ✅ Initialize empty structure if missing
+      uiCoverage: currentState.uiCoverage || {
+        platforms: currentState.meta?.uiCoverage?.platforms || {}
+      }
+    }}
+    theme={theme}
+    onSave={handleUIUpdate}
+    onCancel={() => console.log('UI edit cancelled')}
+  />
+</div>
           
           {/* ========================================
               TRANSITIONS SECTION

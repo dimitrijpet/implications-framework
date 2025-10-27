@@ -94,6 +94,7 @@ export function hasPattern(parsed, patternName) {
  * ✅ FIXED: Now looks inside states.idle.on instead of top-level on
  */
 export function extractXStateTransitions(parsed, className) {
+  console.log(`   🔍 [extractXStateTransitions] Starting for ${className}`);
   const transitions = [];
   
   try {
@@ -102,73 +103,94 @@ export function extractXStateTransitions(parsed, className) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
+    console.log(`   🔍 [extractXStateTransitions] AST parsed successfully`);
+    
+    let classPropertyFound = false;
+    let xstateConfigFound = false;
+    let onPropertyFound = false;
+    
     traverse.default(ast, {
       ClassProperty(path) {
+        classPropertyFound = true;
+        const propName = path.node.key?.name;
+        console.log(`   🔍 [extractXStateTransitions] Found ClassProperty: ${propName}, static: ${path.node.static}`);
+        
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          xstateConfigFound = true;
+          console.log(`   ✅ [extractXStateTransitions] Found xstateConfig!`);
+          
           const value = path.node.value;
+          console.log(`   🔍 [extractXStateTransitions] xstateConfig value type: ${value?.type}`);
           
           if (value?.type === 'ObjectExpression') {
-            // ✅ NEW: Find 'states' property first
-            const statesProperty = value.properties.find(
-              p => p.key?.name === 'states'
+            console.log(`   ✅ [extractXStateTransitions] xstateConfig is ObjectExpression`);
+            console.log(`   🔍 [extractXStateTransitions] Properties: ${value.properties.map(p => p.key?.name).join(', ')}`);
+            
+            // Find 'on' property
+            const onProperty = value.properties.find(
+              p => p.key?.name === 'on'
             );
             
-            if (!statesProperty || statesProperty.value?.type !== 'ObjectExpression') {
-              return;
-            }
-            
-            // ✅ NEW: Iterate through all states (idle, active, etc.)
-            statesProperty.value.properties.forEach(stateProp => {
-              const stateName = stateProp.key?.name || stateProp.key?.value;
+            if (onProperty) {
+              onPropertyFound = true;
+              console.log(`   ✅ [extractXStateTransitions] Found 'on' property!`);
+              console.log(`   🔍 [extractXStateTransitions] on.value.type: ${onProperty.value?.type}`);
               
-              if (stateProp.value?.type === 'ObjectExpression') {
-                // ✅ NEW: Find 'on' property INSIDE each state
-                const onProperty = stateProp.value.properties.find(
-                  p => p.key?.name === 'on'
-                );
+              if (onProperty.value?.type === 'ObjectExpression') {
+                console.log(`   ✅ [extractXStateTransitions] 'on' is ObjectExpression`);
+                console.log(`   🔍 [extractXStateTransitions] Number of transitions: ${onProperty.value.properties.length}`);
                 
-                if (onProperty && onProperty.value?.type === 'ObjectExpression') {
-                  // Extract each transition
-                  onProperty.value.properties.forEach(transitionProp => {
-                    const eventName = transitionProp.key?.name || transitionProp.key?.value;
-                    let targetState = null;
-                    
-                    // Handle different formats
-                    if (transitionProp.value?.type === 'StringLiteral') {
-                      // Format: EVENT: 'target_state'
-                      targetState = transitionProp.value.value;
-                    } else if (transitionProp.value?.type === 'ObjectExpression') {
-                      // Format: EVENT: { target: '#target_state' }
-                      const targetProp = transitionProp.value.properties.find(
-                        p => p.key?.name === 'target'
-                      );
-                      if (targetProp?.value?.type === 'StringLiteral') {
-                        targetState = targetProp.value.value;
-                      }
+                // Extract each transition
+                onProperty.value.properties.forEach((transitionProp, i) => {
+                  const eventName = transitionProp.key?.name || transitionProp.key?.value;
+                  console.log(`   🔍 [extractXStateTransitions] Transition ${i}: event = ${eventName}`);
+                  
+                  let targetState = null;
+                  
+                  // Handle different formats
+                  if (transitionProp.value?.type === 'StringLiteral') {
+                    targetState = transitionProp.value.value;
+                  } else if (transitionProp.value?.type === 'ObjectExpression') {
+                    const targetProp = transitionProp.value.properties.find(
+                      p => p.key?.name === 'target'
+                    );
+                    if (targetProp?.value?.type === 'StringLiteral') {
+                      targetState = targetProp.value.value;
                     }
-                    
-                    if (eventName && targetState) {
-                      // Remove '#' prefix if present
-                      const cleanTarget = targetState.replace(/^#/, '');
-                      
-                      transitions.push({
-                        from: className,
-                        to: cleanTarget,
-                        event: eventName,
-                        fromState: stateName  // ✅ NEW: Track which state the transition is from
-                      });
-                    }
-                  });
-                }
+                  }
+                  
+                  console.log(`   🔍 [extractXStateTransitions] Target: ${targetState}`);
+                  
+                  if (eventName && targetState) {
+                    transitions.push({
+                      from: className,
+                      to: targetState,
+                      event: eventName,
+                    });
+                    console.log(`   ✅ [extractXStateTransitions] Added transition!`);
+                  }
+                });
+              } else {
+                console.log(`   ❌ [extractXStateTransitions] 'on' is NOT ObjectExpression`);
               }
-            });
+            } else {
+              console.log(`   ❌ [extractXStateTransitions] 'on' property NOT found`);
+            }
+          } else {
+            console.log(`   ❌ [extractXStateTransitions] xstateConfig is NOT ObjectExpression`);
           }
         }
       },
     });
     
+    console.log(`   📊 [extractXStateTransitions] Summary:`);
+    console.log(`      ClassProperty found: ${classPropertyFound}`);
+    console.log(`      xstateConfig found: ${xstateConfigFound}`);
+    console.log(`      on property found: ${onPropertyFound}`);
+    console.log(`      Transitions extracted: ${transitions.length}`);
+    
   } catch (error) {
-    console.error('Error extracting transitions:', error.message);
+    console.error('   ❌ [extractXStateTransitions] Error:', error.message);
   }
   
   return transitions;

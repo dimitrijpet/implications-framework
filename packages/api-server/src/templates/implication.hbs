@@ -70,15 +70,15 @@ class {{className}} {
     },
     
     {{#if hasEntry}}
-    entry: assign({
-      {{#if meta.status}}
-      status: '{{meta.status}}',
-      statusLabel: '{{meta.statusLabel}}',
-      {{/if}}
-      // TODO: Add dynamic entry assignments here
-      // Example: updatedAt: ({ event }) => event.timestamp
-    })
-    {{/if}}
+entry: {
+  {{#if meta.status}}
+  status: '{{meta.status}}',
+  statusLabel: '{{meta.statusLabel}}',
+  {{/if}}
+  // TODO: Add dynamic entry assignments here
+  // Example: updatedAt: ({ event }) => event.timestamp
+}
+{{/if}}
   };
 
   static mirrorsOn = {

@@ -176,26 +176,46 @@ export default function UIScreenEditor({ state, onSave, onCancel, theme = defaul
   const platforms = editMode ? editedUI : (state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms || {});
   const platformNames = Object.keys(platforms);
 
-  if (platformNames.length === 0) {
-    return (
-      <div 
-        className="p-8 text-center rounded-lg"
+  if (platformNames.length === 0 && !editMode) {
+  return (
+    <div 
+      className="p-8 text-center rounded-lg"
+      style={{ 
+        background: `${theme.colors.background.tertiary}40`,
+        border: `1px dashed ${theme.colors.border}`,
+        color: theme.colors.text.tertiary
+      }}
+    >
+      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🖥️</div>
+      <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>
+        No UI Coverage
+      </div>
+      <div style={{ fontSize: '14px', opacity: 0.8, marginBottom: '24px' }}>
+        This state doesn't have any UI screen validations yet
+      </div>
+      <button
+        onClick={() => {
+          // Initialize with empty web platform
+          setEditedUI({
+            web: {
+              displayName: 'Web',
+              screens: [],
+              count: 0
+            }
+          });
+          setEditMode(true);
+        }}
+        className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
         style={{ 
-          background: `${theme.colors.background.tertiary}40`,
-          border: `1px dashed ${theme.colors.border}`,
-          color: theme.colors.text.tertiary
+          background: theme.colors.accents.blue,
+          color: 'white'
         }}
       >
-        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🖥️</div>
-        <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>
-          No UI Coverage
-        </div>
-        <div style={{ fontSize: '14px', opacity: 0.8 }}>
-          This state doesn't have any UI screen validations yet
-        </div>
-      </div>
-    );
-  }
+        ➕ Start Adding UI Coverage
+      </button>
+    </div>
+  );
+}
 
  return (
   <div>
