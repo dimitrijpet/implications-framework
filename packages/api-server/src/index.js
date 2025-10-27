@@ -13,6 +13,7 @@ import implicationsRoutes from './routes/implications.js';
 import patternsRoutes from './routes/patterns.js';
 import initRoutes from './routes/init.js';
 import generateRoutes from './routes/generate.js';
+import pomsRouter from './routes/poms.js';  // ✅ Add this
 
 
 
@@ -38,6 +39,7 @@ app.use('/api/init', initRoutes);
 
 
 app.use('/api/generate', generateRoutes);
+app.use('/api/poms', pomsRouter);
 
 // Error handling
 app.use(errorHandler);

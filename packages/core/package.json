@@ -12,7 +12,8 @@
     "./patterns/implications": "./src/patterns/implications.js",
     "./patterns/sections": "./src/patterns/sections.js",
     "./patterns/screens": "./src/patterns/screens.js",
-    "./registry": "./src/registry/StateRegistry.js"
+    "./registry": "./src/registry/StateRegistry.js",
+    "./discovery/POMDiscovery": "./src/discovery/POMDiscovery.js"
   },
   "scripts": {
     "build": "echo 'No build needed for core'",

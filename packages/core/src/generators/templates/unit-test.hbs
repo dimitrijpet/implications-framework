@@ -19,7 +19,7 @@ const TestPlanner = require('{{testPlannerPath}}');
 const TestSetup = require('{{testSetupPath}}');
 {{/if}}
 {{#if hasUIValidation}}
-const ExpectImplication = require('{{expectImplicationPath}}');
+const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
 {{/if}}
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}
@@ -103,6 +103,11 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // STEP 4: Navigate to Screen & Perform Action
   // ────────────────────────────────────────────────────────
   
+  {{#if isPlaywright}}
+  // ✅ Navigate to application
+  await TestSetup.navigateToApp(page, ctx.config);
+  {{/if}}
+  
   {{#if hasActionDetails}}
   // ✨ Generated action steps:
   console.log('\n🎬 Executing action: {{actionDetails.description}}');
@@ -120,25 +125,8 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   {{/if}}
   
   {{/each}}
-  {{else if hasTriggeredByAction}}
-  // ✅ FIX #5: Extracted action from mirrorsOn.triggeredBy
-  console.log('\n🎬 Executing action from triggeredBy...');
-  
-  // TODO: Import and initialize {{triggeredByInstanceName}}
-  // Example:
-  // const config = require('../../../../config/local/android.conf.js').config;
-  // const Actions = require('../../../mobile/android/manager/actions/Actions.js');
-  // const {{triggeredByInstanceName}} = new Actions(config, null);
-  
-  {{triggeredByActionCall}}
   {{else}}
   // TODO: Navigate to the screen where you perform this action
-  {{#if testSetupPath}}
-  // ✅ Option 1: Use TestSetup helper (if you've set it up)
-  // await TestSetup.navigateToApp(page, ctx.config);
-  
-  // ✅ Option 2: Manual navigation
-  {{/if}}
   // Example navigation:
   {{#if navigationExample}}
   {{{navigationExample}}}
@@ -240,26 +228,31 @@ if (!shouldSkipRegistration) {
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
     {{#each testCases}}
-  test("{{description}}", async ({ page }) => {
-  const ctx = await {{../actionName}}(testDataPath, {
-    page{{#if params}},
-    {{params}}{{/if}}
-  });
-  
-  {{#if ../hasUIValidation}}
-  await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
-    await ExpectImplication.validateImplications(
-      {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
-      ctx.data,
-      page
-    );
-  });
-  {{/if}}
-  
-  // ✅ Save state after validation
-  ctx.save(testDataPath);
-  console.log('   💾 State saved to:', testDataPath);
-});
+    test("{{description}}", async ({ page }) => {
+      const ctx = await {{../actionName}}(testDataPath, { 
+        page{{#if params}},
+        {{params}}{{/if}}
+      });
+      
+      {{#if ../hasUIValidation}}
+      // ✅ Validate UI implications
+      await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
+        {{#each ../validationScreens}}
+        // {{screenKey}}: Visible ({{visible}}), Hidden ({{hidden}})
+        await ExpectImplication.validateImplications(
+          {{../../implClassName}}.mirrorsOn.UI.{{../../platform}}.{{screenKey}},
+          ctx.data,
+          page
+        );
+        
+        {{/each}}
+      });
+      {{/if}}
+      
+      // ✅ Save state to disk
+      ctx.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
     
     {{/each}}
   });
