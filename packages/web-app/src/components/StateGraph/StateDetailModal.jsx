@@ -8,6 +8,7 @@ import { useSuggestions } from '../../hooks/useSuggestions';
 import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
+import TestDataPanel from '../TestDataPanel/TestDataPanel';
 
    function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -654,6 +655,24 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               )}
             </div>
           )}
+
+          {/* ========================================
+    TEST DATA REQUIREMENTS SECTION - NEW!
+    ======================================== */}
+<div>
+  <h2 
+    className="text-2xl font-bold mb-4"
+    style={{ color: theme.colors.accents.purple }}
+  >
+    📊 Test Data Requirements
+  </h2>
+  
+  <TestDataPanel
+    state={currentState}
+    projectPath={projectPath}
+    theme={theme}
+  />
+</div>
           
           {/* ========================================
               METADATA SECTION - COLLAPSIBLE

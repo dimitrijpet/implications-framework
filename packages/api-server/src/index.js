@@ -14,6 +14,7 @@ import patternsRoutes from './routes/patterns.js';
 import initRoutes from './routes/init.js';
 import generateRoutes from './routes/generate.js';
 import pomsRouter from './routes/poms.js';  // ✅ Add this
+import contextRouter from './routes/context.js';
 
 
 
@@ -36,6 +37,7 @@ app.use('/api/implications', implicationsRoutes); // ADD THIS
 
 app.use('/api/patterns', patternsRoutes);
 app.use('/api/init', initRoutes);
+app.use('/api/context', contextRouter);
 
 
 app.use('/api/generate', generateRoutes);
