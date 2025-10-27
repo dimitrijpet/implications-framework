@@ -33,247 +33,123 @@ Handlebars.registerHelper('camelCase', function(str) {
 router.post('/create-state', async (req, res) => {
   try {
     const { 
-      stateName,
+      projectPath, 
+      stateName, 
       displayName,
-      status,
-      platform,
+      platform, 
+      status,          // ✅ Extract from body
+      description,     // ✅ Extract from body
       copyFrom,
       triggerButton,
       afterButton,
       previousButton,
-      previousStatus,
-      notificationKey,
       statusCode,
       statusNumber,
+      notificationKey,
       setupActions,
-      requiredFields
+      requiredFields,
+      contextFields    // ✅ Use contextFields, not context
     } = req.body;
     
-    // Validate required fields
-    if (!stateName) {
-      return res.status(400).json({ error: 'stateName is required' });
-    }
+    console.log('🎯 Creating state:', stateName);
+    console.log('📦 Received data:', req.body);
     
-    const projectPath = req.app.get('lastScannedProject');
-    if (!projectPath) {
-      return res.status(400).json({ error: 'No project scanned yet' });
-    }
-
-    console.log(`➕ Creating new state: ${stateName}BookingImplications`);
-    
-    // If copying, fetch source state data
-    let copyData = null;
-    if (copyFrom) {
-      console.log(`📋 Copying from: ${copyFrom}`);
-      try {
-        const copyResponse = await fetch(`http://localhost:3000/api/implications/get-state-details?stateId=${copyFrom}`);
-        if (copyResponse.ok) {
-          copyData = await copyResponse.json();
-          console.log(`✅ Loaded copy data from ${copyFrom}`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Failed to fetch copy data:`, error.message);
-      }
-    }
+    // ✅ Filter out Status and Description from context if they exist
+    const cleanContext = contextFields ? 
+      Object.fromEntries(
+        Object.entries(contextFields).filter(([key]) => 
+          key !== 'Status' && key !== 'Description'
+        )
+      ) : null;
     
     // Convert stateName to proper formats
-    const stateNamePascal = stateName
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join('');
+    const className = toPascalCase(stateName) + 'Implications';
+    const stateId = stateName.toLowerCase();
     
-    const stateNameCamel = stateName
-      .split('_')
-      .map((word, i) => i === 0 ? word : word.charAt(0).toUpperCase() + word.slice(1))
-      .join('');
-    
-    // Smart merge: form data takes precedence, fall back to copyData, then defaults
-    const finalData = {
-      // State identification
-      stateName: stateNamePascal,
-      stateId: stateName,
-      
-      // Display info
-      status: status || displayName || copyData?.status || 
-              stateName.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-      statusUpperCase: (status || stateName).toUpperCase().replace(/_/g, '_'),
-      
-      // Platform
-      platform: platform || copyData?.platform || 'mobile-manager',
-      
-      // Buttons
-      triggerButton: triggerButton || copyData?.triggerButton || 
-                     stateName.toUpperCase().replace(/_/g, '_'),
-      afterButton: afterButton || copyData?.afterButton || null,
-      previousButton: previousButton || copyData?.previousButton || null,
-      
-      // Actions and fields
-      setupActions: (setupActions && setupActions.length > 0) 
-        ? setupActions 
-        : (copyData?.setupActions || []),
-      requiredFields: (requiredFields && requiredFields.length > 0)
-        ? requiredFields
-        : (copyData?.requiredFields || ['dancerName', 'clubName', 'bookingTime']),
-      
-      // Other metadata
-      previousStatus: previousStatus || '',
-      notificationKey: notificationKey || copyData?.notificationKey || 
-                       (status || stateName).replace(/_/g, ' '),
-      statusCode: statusCode || copyData?.statusCode || '',
-      statusNumber: statusNumber || copyData?.statusNumber || '',
-      
-      // Action naming
-      actionName: `${stateNameCamel}Booking`,
-      camelCase: stateNameCamel,
-      
-      // Metadata
+    // Build template data
+    const templateData = {
+      className,
+      stateId,
       timestamp: new Date().toISOString(),
-      copiedFrom: copyFrom || null
+      initial: 'idle',
+      status: status || null,                    // ✅ Use status field
+      platform: platform || 'web',
+      description: description || null,           // ✅ Use description field
+      context: cleanContext,                      // ✅ Use cleaned context
+      hasEntry: !!status,
+      
+      meta: {
+        status: status || displayName || toPascalCase(stateName),
+        statusLabel: displayName || toPascalCase(stateName),
+        triggerAction: triggerButton ? toCamelCase(triggerButton) : null,
+        platform: platform || null,
+        triggerButton: triggerButton || null,
+        afterButton: afterButton || null,
+        previousButton: previousButton || null,
+        statusCode: statusCode || null,
+        statusNumber: statusNumber ? parseInt(statusNumber) : null,
+        notificationKey: notificationKey || null,
+        setupActions: setupActions || null,
+        requiredFields: requiredFields || null
+      }
     };
     
-    console.log('📦 Final data for template:', {
-      stateName: finalData.stateName,
-      status: finalData.status,
-      platform: finalData.platform,
-      triggerButton: finalData.triggerButton,
-      setupActions: finalData.setupActions?.length || 0,
-      requiredFields: finalData.requiredFields?.length || 0
-    });
+    console.log('📝 Template data:', templateData);
     
     // Load template
     const templatePath = path.join(__dirname, '../templates/implication.hbs');
     const templateContent = await fs.readFile(templatePath, 'utf-8');
     
-    // Register Handlebars helper for camelCase
-    Handlebars.registerHelper('camelCase', function(str) {
-      return str.split(/[\s_]+/)
-        .map((word, i) => i === 0 ? word.toLowerCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-        .join('');
+    // Register JSON helper for Handlebars
+    Handlebars.registerHelper('json', function(context) {
+      return JSON.stringify(context);
     });
     
     const template = Handlebars.compile(templateContent);
     
     // Generate code
-    const code = template(finalData);
+    const code = template(templateData);
     
-    // Determine file path
-    const fileName = `${finalData.stateName}BookingImplications.js`;
-    const filePath = path.join(
-      projectPath,
-      'tests/implications/bookings/status',
-      fileName
+    // Determine output path
+    const outputPath = path.join(
+      projectPath, 
+      'tests/implications/bookings/status', 
+      `${className}.js`
     );
     
-    // Check if file already exists
-    const exists = await fs.pathExists(filePath);
-    if (exists) {
-      return res.status(409).json({ 
-        error: `File already exists: ${fileName}`,
-        filePath,
-        suggestion: 'Choose a different state name or delete the existing file'
-      });
-    }
-    
     // Ensure directory exists
-    await fs.ensureDir(path.dirname(filePath));
+    await fs.ensureDir(path.dirname(outputPath));
     
     // Write file
-    await fs.writeFile(filePath, code, 'utf-8');
+    await fs.writeFile(outputPath, code, 'utf-8');
     
-    console.log(`✅ Created: ${filePath}`);
-    
-    // Log what was copied (if anything)
-    if (copyFrom && copyData) {
-      console.log(`📋 Copied structure from "${copyFrom}":`);
-      console.log(`   - Platform: ${copyData?.platform} → ${finalData.platform}`);
-      if (copyData?.setupActions?.length > 0) {
-        console.log(`   - Setup Actions: ${copyData.setupActions.join(', ')}`);
-      }
-      if (copyData?.requiredFields?.length > 0) {
-        console.log(`   - Required Fields: ${copyData.requiredFields.join(', ')}`);
-      }
-    }
-    
-    // 🔥 Try to auto-register in state machine
-    let autoRegistered = false;
-    try {
-      const stateMachinePath = path.join(
-        projectPath,
-        'tests/implications/bookings/BookingStateMachine.js'
-      );
-      
-      if (await fs.pathExists(stateMachinePath)) {
-        let machineContent = await fs.readFile(stateMachinePath, 'utf-8');
-        
-        // Add import statement at the top (after existing imports)
-        const importStatement = `const ${finalData.stateName}BookingImplications = require('./status/${finalData.stateName}BookingImplications.js');\n`;
-        
-        if (!machineContent.includes(importStatement)) {
-          // Find the last require statement and add after it
-          const lastRequireIndex = machineContent.lastIndexOf('require(');
-          if (lastRequireIndex !== -1) {
-            const endOfLine = machineContent.indexOf('\n', lastRequireIndex);
-            machineContent = machineContent.slice(0, endOfLine + 1) + 
-                           importStatement + 
-                           machineContent.slice(endOfLine + 1);
-          } else {
-            // No requires found, add at top
-            machineContent = importStatement + machineContent;
-          }
-        }
-        
-        // Add to states object
-        const stateEntry = `    ${stateName}: ${finalData.stateName}BookingImplications.xstateConfig,`;
-        
-        // Find states object and add entry
-        const statesPattern = /states:\s*{/;
-        if (statesPattern.test(machineContent) && !machineContent.includes(stateEntry)) {
-          machineContent = machineContent.replace(
-            statesPattern, 
-            `states: {\n${stateEntry}`
-          );
-          
-          await fs.writeFile(stateMachinePath, machineContent, 'utf-8');
-          console.log(`✅ Auto-registered ${finalData.stateName} in BookingStateMachine`);
-          autoRegistered = true;
-        }
-      }
-    } catch (error) {
-      console.warn(`⚠️ Could not auto-register in state machine:`, error.message);
-    }
+    console.log('✅ State created:', outputPath);
     
     res.json({
       success: true,
-      filePath,
-      fileName,
-      stateName: `${finalData.stateName}BookingImplications`,
-      copiedFrom: copyFrom || null,
-      autoRegistered,
-      summary: {
-        status: finalData.status,
-        platform: finalData.platform,
-        triggerButton: finalData.triggerButton,
-        setupActions: finalData.setupActions?.length || 0,
-        requiredFields: finalData.requiredFields?.length || 0
-      },
-      nextSteps: autoRegistered ? [
-        '✅ State automatically registered in BookingStateMachine',
-        '🔄 Re-scan to see it in the graph'
-      ] : [
-        `📝 Add import: const ${finalData.stateName}BookingImplications = require('./status/${finalData.stateName}BookingImplications.js');`,
-        `📝 Register in BookingStateMachine.js states object: ${stateName}: ${finalData.stateName}BookingImplications.xstateConfig,`,
-        '🔄 Re-scan to see it in the graph'
-      ]
+      filePath: outputPath,
+      fileName: `${className}.js`,
+      className
     });
     
   } catch (error) {
-    console.error('❌ Error creating state:', error);
-    res.status(500).json({ 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    console.error('❌ Create state failed:', error);
+    res.status(500).json({ error: error.message });
   }
 });
+
+// Helper functions
+function toPascalCase(str) {
+  return str
+    .split(/[\s_-]+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+}
+
+function toCamelCase(str) {
+  const pascal = toPascalCase(str);
+  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
 
 /**
  * POST /api/implications/use-base-directly
@@ -1539,12 +1415,9 @@ function extractValueFromNode(node) {
   }
 }
 
-// Add this to packages/api-server/src/routes/implications.js
+// ✅ FIXED VERSION - Add Transition Endpoint
+// Replace lines 1547-1676 in implications.js with this
 
-/**
- * POST /api/implications/add-transition
- * Add a transition between two states
- */
 router.post('/add-transition', async (req, res) => {
   try {
     const { sourceFile, targetFile, event } = req.body;
@@ -1558,29 +1431,54 @@ router.post('/add-transition', async (req, res) => {
       });
     }
     
-    // Read source file
-    const sourceContent = await fs.readFile(sourceFile, 'utf-8');
-    
-    // Parse with Babel
-    const ast = parse(sourceContent, {
-      sourceType: 'module',
-      plugins: ['classProperties', 'objectRestSpread'],
-    });
-    
-    // Extract target state name from file path
-    const targetStateName = path.basename(targetFile, '.js')
-      .replace(/Implications$/, '')
-      .replace(/([A-Z])/g, '_$1')
-      .toLowerCase()
-      .replace(/^_/, '');
-    
-    console.log('🎯 Target state name:', targetStateName);
+   const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+
+const sourceAst = parse(sourceContent, {  // ✅ Renamed to sourceAst
+  sourceType: 'module',
+  plugins: ['classProperties', 'objectRestSpread'],
+});
+
+// ✅ Read target file to extract actual state ID
+const targetContent = await fs.readFile(targetFile, 'utf-8');
+const targetAst = parse(targetContent, {
+  sourceType: 'module',
+  plugins: ['classProperties', 'objectRestSpread']
+});
+
+let targetStateName = null;
+
+// Extract ID from target file's xstateConfig
+traverse.default(targetAst, {
+  ClassProperty(path) {
+    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+      const config = path.node.value;
+      if (config?.type === 'ObjectExpression') {
+        const idProp = config.properties.find(p => p.key?.name === 'id');
+        if (idProp?.value?.value) {
+          targetStateName = idProp.value.value;
+        }
+      }
+    }
+  }
+});
+
+// Fallback: derive from filename
+if (!targetStateName) {
+  targetStateName = path.basename(targetFile, '.js')
+    .replace(/Implications$/, '')
+    .replace(/Booking$/, '')
+    .replace(/([A-Z])/g, '_$1')
+    .toLowerCase()
+    .replace(/^_/, '');
+}
+
+console.log('🎯 Target state name:', targetStateName);
     
     let xstateConfigFound = false;
     let transitionAdded = false;
     
     // Traverse and add transition
-    traverse.default(ast, {
+    traverse.default(sourceAst, {  // ✅ Use sourceAst!
       ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
           xstateConfigFound = true;
@@ -1640,19 +1538,19 @@ router.post('/add-transition', async (req, res) => {
       });
     }
     
-    // Generate updated code
-const output = babelGenerate.default(ast, {
-  retainLines: true,
-  comments: true
-}, originalContent);
-
+    // ✅ FIX #1 & #2: Generate updated code correctly
+    const { code: newCode } = babelGenerate.default(sourceAst, {
+      retainLines: true,
+      comments: true
+    }, sourceContent);  // ✅ Use sourceContent, not originalContent
+    
     // Create backup
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = `${sourceFile}.backup-${timestamp}`;
     await fs.copy(sourceFile, backupPath);
     
     // Write updated file
-    await fs.writeFile(sourceFile, newCode, 'utf-8');
+    await fs.writeFile(sourceFile, newCode, 'utf-8');  // ✅ Now newCode exists!
     
     console.log('✅ Transition added successfully');
     
@@ -2365,36 +2263,29 @@ router.post('/update-context', async (req, res) => {
   try {
     const { filePath, contextUpdates } = req.body;
     
-    if (!filePath || !contextUpdates) {
-      return res.status(400).json({ 
-        error: 'filePath and contextUpdates are required' 
-      });
-    }
+    console.log('💾 Updating context in:', filePath);
+    console.log('📝 Updates:', contextUpdates);
     
-    console.log(`💾 Updating context in: ${filePath}`);
-    console.log(`📝 Updates:`, contextUpdates);
+    // ✅ Read file - keep 'content' in scope
+    const content = await fs.readFile(filePath, 'utf-8');
     
-    // Read the file
-    const originalContent = await fs.readFile(filePath, 'utf-8');
-    
-    // Parse with Babel
-    const ast = parse(originalContent, {
+    // ✅ Parse with Babel - 'content' is available here
+    const ast = parse(content, {
       sourceType: 'module',
-      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+      plugins: ['classProperties', 'objectRestSpread'],
     });
     
     let contextFound = false;
-    let updatedCount = 0;
     
-    // Traverse and update context values
+    // Traverse AST and update context fields
     traverse.default(ast, {
       ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          const value = path.node.value;
+          const configValue = path.node.value;
           
-          if (value?.type === 'ObjectExpression') {
+          if (configValue?.type === 'ObjectExpression') {
             // Find context property
-            const contextProperty = value.properties.find(
+            const contextProperty = configValue.properties.find(
               p => p.key?.name === 'context'
             );
             
@@ -2402,17 +2293,23 @@ router.post('/update-context', async (req, res) => {
               contextFound = true;
               
               // Update each field
-              contextProperty.value.properties.forEach(prop => {
-                const fieldName = prop.key?.name;
+              Object.entries(contextUpdates).forEach(([key, value]) => {
+                const field = contextProperty.value.properties.find(
+                  p => p.key?.name === key
+                );
                 
-                if (fieldName && contextUpdates.hasOwnProperty(fieldName)) {
-                  const newValue = contextUpdates[fieldName];
-                  
-                  // Replace the value node
-                  prop.value = createValueNode(newValue);
-                  updatedCount++;
-                  
-                  console.log(`  ✓ Updated ${fieldName}: ${JSON.stringify(newValue)}`);
+                if (field) {
+                  // Update existing field
+                  field.value = createValueNode(value);
+                  console.log(`  ✓ Updated ${key}: ${JSON.stringify(value)}`);
+                } else {
+                  // Add new field
+                  contextProperty.value.properties.push({
+                    type: 'ObjectProperty',
+                    key: { type: 'Identifier', name: key },
+                    value: createValueNode(value)
+                  });
+                  console.log(`  ✓ Added ${key}: ${JSON.stringify(value)}`);
                 }
               });
             }
@@ -2422,22 +2319,14 @@ router.post('/update-context', async (req, res) => {
     });
     
     if (!contextFound) {
-      return res.status(400).json({ 
-        error: 'No xstateConfig.context found in file' 
-      });
-    }
-    
-    if (updatedCount === 0) {
-      return res.status(400).json({ 
-        error: 'No matching context fields found to update' 
-      });
+      return res.status(400).json({ error: 'No context found in xstateConfig' });
     }
     
     // Generate updated code
-const output = babelGenerate.default(ast, {
-  retainLines: true,
-  comments: true
-}, originalContent);
+    const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
+      retainLines: true,
+      comments: true
+    });
     
     // Create backup
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -2445,30 +2334,23 @@ const output = babelGenerate.default(ast, {
     await fs.copy(filePath, backupPath);
     
     // Write updated file
-    await fs.writeFile(filePath, output.code, 'utf-8');
+    await fs.writeFile(filePath, newCode, 'utf-8');
     
-    console.log(`✅ Updated ${updatedCount} context fields`);
-    console.log(`💾 Backup saved: ${backupPath}`);
+    console.log('✅ Context updated successfully');
+    console.log('📦 Backup created:', backupPath);
     
     res.json({
       success: true,
-      updatedFields: updatedCount,
-      backup: backupPath,
-      updates: contextUpdates
+      updated: Object.keys(contextUpdates),
+      backup: backupPath
     });
     
   } catch (error) {
     console.error('❌ Update context failed:', error);
-    res.status(500).json({
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
 
 /**
  * Detect the type of a value for proper input rendering
@@ -2527,58 +2409,8 @@ function createValueNode(value) {
   return t.stringLiteral(String(value));
 }
 
-// ========================================
-// HELPER FUNCTIONS FOR CONTEXT MANAGEMENT
-// ========================================
-
-/**
- * Convert JavaScript value to AST node
- */
-function valueToAST(value) {
-  if (value === null) {
-    return { type: 'NullLiteral' };
-  }
-  
-  if (value === undefined) {
-    return { type: 'Identifier', name: 'undefined' };
-  }
-  
-  if (typeof value === 'string') {
-    return { type: 'StringLiteral', value };
-  }
-  
-  if (typeof value === 'number') {
-    return { type: 'NumericLiteral', value };
-  }
-  
-  if (typeof value === 'boolean') {
-    return { type: 'BooleanLiteral', value };
-  }
-  
-  if (Array.isArray(value)) {
-    return {
-      type: 'ArrayExpression',
-      elements: value.map(v => valueToAST(v))
-    };
-  }
-  
-  if (typeof value === 'object') {
-    return {
-      type: 'ObjectExpression',
-      properties: Object.entries(value).map(([k, v]) => ({
-        type: 'ObjectProperty',
-        key: { type: 'Identifier', name: k },
-        value: valueToAST(v)
-      }))
-    };
-  }
-  
-  return { type: 'Identifier', name: 'undefined' };
-}
-
 /**
  * Extract JavaScript value from AST node
- * (You might already have this - if so, skip it)
  */
 function extractValueFromAST(node) {
   if (!node) return null;

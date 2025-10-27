@@ -413,50 +413,52 @@ console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
 
   // Handler for creating state
   const handleCreateState = async (formData) => {
-    try {
-      const response = await fetch(`${API_URL}/api/implications/create-state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || `HTTP ${response.status}`);
-      }
-      
-      const result = await response.json();
-      console.log('✅ State created:', result);
-      
-      // Show success notification
-      const notification = document.createElement('div');
-      notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: #10b981;
-        color: white;
-        padding: 16px 24px;
-        border-radius: 8px;
-        font-weight: bold;
-        z-index: 9999;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      `;
-      notification.textContent = `✅ Created ${result.fileName}! Re-scan to see it.`;
-      document.body.appendChild(notification);
-      
-      setTimeout(() => {
-        notification.remove();
-      }, 5000);
-      
-      setShowAddStateModal(false);
-      
-    } catch (error) {
-      console.error('❌ Create failed:', error);
-      throw error;
+  try {
+    const response = await fetch(`${API_URL}/api/implications/create-state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...formData,                        // ✅ All form fields (stateName, status, etc.)
+        projectPath: projectPath            // ✅ Add the project path from state!
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `HTTP ${response.status}`);
     }
-  };
-
+    
+    const result = await response.json();
+    console.log('✅ State created:', result);
+    
+    // Show success notification
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #10b981;
+      color: white;
+      padding: 16px 24px;
+      border-radius: 8px;
+      font-weight: bold;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    notification.textContent = `✅ Created ${result.fileName}! Re-scan to see it.`;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.remove();
+    }, 5000);
+    
+    setShowAddStateModal(false);
+    
+  } catch (error) {
+    console.error('❌ Create failed:', error);
+    throw error;
+  }
+};
 
   // ADD THIS DEBUG CODE to your Visualizer.jsx handleTransitionModeClick function
 const handleTransitionModeClick = async (nodeData) => {

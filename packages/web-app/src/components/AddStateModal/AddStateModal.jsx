@@ -398,6 +398,7 @@ export default function AddStateModal({
             🔧 Custom Build
           </button>
         </div>
+        
 
         {/* ========================================
             FORM CONTENT
@@ -986,6 +987,45 @@ function CustomBuildMode({
             </label>
           ))}
         </div>
+      </FormGroup>
+
+       {/* ✅ ADD THESE NEW FIELDS: */}
+      
+      {/* Status Field */}
+      <FormGroup label="Status" helper="State status (e.g., initial, active, pending)" theme={theme}>
+        <input
+          type="text"
+          value={formData.status || ''}
+          onChange={(e) => updateField('status', e.target.value)}
+          placeholder="e.g., initial"
+          style={{
+            background: theme.colors.background.tertiary,
+            color: theme.colors.text.primary,
+            border: `1px solid ${theme.colors.border}`,
+            padding: '10px',
+            borderRadius: '6px',
+            width: '100%'
+          }}
+        />
+      </FormGroup>
+
+      {/* Description Field */}
+      <FormGroup label="Description" helper="What this state represents" theme={theme}>
+        <textarea
+          rows={3}
+          value={formData.description || ''}
+          onChange={(e) => updateField('description', e.target.value)}
+          placeholder="e.g., Initial landing on flight search page"
+          style={{
+            background: theme.colors.background.tertiary,
+            color: theme.colors.text.primary,
+            border: `1px solid ${theme.colors.border}`,
+            padding: '10px',
+            borderRadius: '6px',
+            width: '100%',
+            resize: 'vertical'
+          }}
+        />
       </FormGroup>
 
       {/* Trigger Button */}

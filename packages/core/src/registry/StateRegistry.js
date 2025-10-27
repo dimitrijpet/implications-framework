@@ -1,26 +1,19 @@
-// packages/core/src/registry/StateRegistry.js (CREATE THIS FILE)
+// packages/core/src/registry/StateRegistry.js (COMPLETE FIX)
+// Replace your current StateRegistry.js with this version
 
 /**
  * State Registry - Maps short state names to full class names
  * 
- * Supports three strategies:
- * 1. Auto-discovery: Extract from class names automatically
- * 2. Pattern-based: Use regex pattern from config
- * 3. Explicit: Use mappings defined in config
+ * ✅ FIXED: Now reads xstateConfig.id as the PRIMARY source!
  */
 export class StateRegistry {
   constructor(config = {}) {
     this.config = config.stateRegistry || {};
-    this.registry = new Map(); // short name → full class name
-    this.reverseRegistry = new Map(); // full class name → short name
+    this.registry = new Map();
+    this.reverseRegistry = new Map();
     this.strategy = this.config.strategy || 'auto';
   }
   
-  /**
-   * Build registry from discovery result
-   * @param {Object} discoveryResult - Result from discovery service
-   * @returns {StateRegistry} - Returns this for chaining
-   */
   async build(discoveryResult) {
     console.log(`🗺️  Building State Registry (strategy: ${this.strategy})...`);
     
@@ -28,11 +21,9 @@ export class StateRegistry {
       case 'explicit':
         this.buildFromExplicitMappings();
         break;
-      
       case 'pattern':
         this.buildFromPattern(discoveryResult);
         break;
-      
       case 'auto':
       default:
         this.buildAuto(discoveryResult);
@@ -44,44 +35,37 @@ export class StateRegistry {
   }
   
   /**
- * Auto-discover mappings from class names
- */
-buildAuto(discoveryResult) {
-  const implications = discoveryResult.files?.implications || [];
-  
-  implications.forEach(impl => {
-    const className = impl.metadata?.className;
-    if (!className) return;
-    
-    const shortName = this.extractShortName(className);
-    
-    if (shortName) {
-      this.register(shortName, className);
-    }
-  });
-  
-  // ✅ NEW: Also include explicit mappings as overrides
-  const explicitMappings = this.config.mappings || {};
-  Object.entries(explicitMappings).forEach(([short, full]) => {
-    console.log(`  🔧 Adding explicit override: "${short}" → "${full}"`);
-    this.register(short, full);
-  });
-}
-  
-  /**
-   * Use explicit mappings from config
+   * ✅ FIXED: Now passes full impl object to extractShortName
    */
+  buildAuto(discoveryResult) {
+    const implications = discoveryResult.files?.implications || [];
+    
+    implications.forEach(impl => {
+      const className = impl.metadata?.className;
+      if (!className) return;
+      
+      // ✅ Pass full impl, not just className!
+      const shortName = this.extractShortName(impl);
+      
+      if (shortName) {
+        this.register(shortName, className);
+      }
+    });
+    
+    // Explicit overrides
+    const explicitMappings = this.config.mappings || {};
+    Object.entries(explicitMappings).forEach(([short, full]) => {
+      this.register(short, full);
+    });
+  }
+  
   buildFromExplicitMappings() {
     const mappings = this.config.mappings || {};
-    
     Object.entries(mappings).forEach(([short, full]) => {
       this.register(short, full);
     });
   }
   
-  /**
-   * Use pattern from config to extract state names
-   */
   buildFromPattern(discoveryResult) {
     const pattern = this.config.pattern;
     if (!pattern) {
@@ -96,20 +80,13 @@ buildAuto(discoveryResult) {
       if (!className) return;
       
       const match = className.match(regex);
-      
       if (match && match[1]) {
-        const shortName = this.config.caseSensitive 
-          ? match[1] 
-          : match[1].toLowerCase();
+        const shortName = this.config.caseSensitive ? match[1] : match[1].toLowerCase();
         this.register(shortName, className);
       }
     });
   }
   
-  /**
-   * Convert pattern to regex
-   * E.g., '{Status}BookingImplications' → /^(\w+)BookingImplications$/
-   */
   patternToRegex(pattern) {
     const escaped = pattern
       .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -118,92 +95,60 @@ buildAuto(discoveryResult) {
   }
   
   /**
-   * Extract short name from class name using various strategies
+   * ✅ THE KEY FIX: Now accepts impl object and reads xstateConfig.id FIRST!
    */
-  extractShortName(className) {
-    const prefixes = this.config.statusPrefixes || [];
+  extractShortName(impl) {
+    // ✅ PRIORITY 1: Use xstateConfig.id if it exists!
+    const xstateId = impl.metadata?.xstateConfig?.id;
+    if (xstateId) {
+      return this.config.caseSensitive ? xstateId : xstateId.toLowerCase();
+    }
     
-    // Try to match known prefixes
+    // Priority 2: Try known prefixes
+    const className = impl.metadata?.className;
+    if (!className) return null;
+    
+    const prefixes = this.config.statusPrefixes || [];
     for (const prefix of prefixes) {
       if (className.startsWith(prefix)) {
-        return this.config.caseSensitive 
-          ? prefix 
-          : prefix.toLowerCase();
+        return this.config.caseSensitive ? prefix : prefix.toLowerCase();
       }
     }
     
-    // Fallback: Remove common suffixes and lowercase
+    // Priority 3: Derive from class name (fallback)
     let shortName = className
       .replace(/Implications$/i, '')
       .replace(/Booking$/i, '')
       .replace(/Application$/i, '')
       .replace(/Status$/i, '');
     
-    // Convert PascalCase to lowercase
-    return this.config.caseSensitive 
-      ? shortName 
-      : shortName.toLowerCase();
+    return this.config.caseSensitive ? shortName : shortName.toLowerCase();
   }
   
-  /**
-   * Register a mapping between short name and full class name
-   */
   register(shortName, fullClassName) {
-    const key = this.config.caseSensitive 
-      ? shortName 
-      : shortName.toLowerCase();
+    const key = this.config.caseSensitive ? shortName : shortName.toLowerCase();
     
-    // Check for conflicts
     if (this.registry.has(key)) {
       const existing = this.registry.get(key);
       if (existing !== fullClassName) {
-        console.warn(
-          `⚠️  State name conflict: "${key}" maps to both "${existing}" and "${fullClassName}". ` +
-          `Using "${fullClassName}".`
-        );
+        console.warn(`⚠️  Conflict: "${key}" → "${existing}" vs "${fullClassName}"`);
       }
     }
     
     this.registry.set(key, fullClassName);
     this.reverseRegistry.set(fullClassName, shortName);
-    
     console.log(`  📌 Mapped: "${key}" → "${fullClassName}"`);
   }
   
-  /**
-   * Resolve a state name to full class name
-   * Handles: short names, full names, different cases
-   */
   resolve(stateName) {
-    if (!stateName || typeof stateName !== 'string') {
-      return null;
-    }
+    if (!stateName || typeof stateName !== 'string') return null;
     
-    const key = this.config.caseSensitive 
-      ? stateName 
-      : stateName.toLowerCase();
+    const key = this.config.caseSensitive ? stateName : stateName.toLowerCase();
     
-    // 1. Check registry first (short name)
-    if (this.registry.has(key)) {
-      return this.registry.get(key);
-    }
+    if (this.registry.has(key)) return this.registry.get(key);
+    if (this.reverseRegistry.has(stateName)) return stateName;
     
-    // 2. Check if it's already a full class name
-    if (this.reverseRegistry.has(stateName)) {
-      return stateName;
-    }
-    
-    // 3. Try capitalized version (Accepted → accepted)
-    const capitalized = stateName.charAt(0).toUpperCase() + stateName.slice(1);
-    const capitalizedLower = this.config.caseSensitive 
-      ? capitalized 
-      : capitalized.toLowerCase();
-    
-    if (this.registry.has(capitalizedLower)) {
-      return this.registry.get(capitalizedLower);
-    }
-    
-    // 4. Case-insensitive search through all mappings
+    // Case-insensitive fallback
     if (!this.config.caseSensitive) {
       for (const [registeredKey, fullName] of this.registry.entries()) {
         if (registeredKey.toLowerCase() === stateName.toLowerCase()) {
@@ -215,16 +160,10 @@ buildAuto(discoveryResult) {
     return null;
   }
   
-  /**
-   * Get short name from full class name
-   */
   getShortName(fullClassName) {
     return this.reverseRegistry.get(fullClassName);
   }
   
-  /**
-   * Get all mappings as array
-   */
   getAllMappings() {
     return Array.from(this.registry.entries()).map(([short, full]) => ({
       shortName: short,
@@ -232,31 +171,19 @@ buildAuto(discoveryResult) {
     }));
   }
   
-  /**
-   * Check if a state exists in registry
-   */
   exists(stateName) {
     return this.resolve(stateName) !== null;
   }
   
-  /**
-   * Get registry size
-   */
   get size() {
     return this.registry.size;
   }
   
-  /**
-   * Clear all mappings
-   */
   clear() {
     this.registry.clear();
     this.reverseRegistry.clear();
   }
   
-  /**
-   * Export registry data for serialization
-   */
   toJSON() {
     return {
       strategy: this.strategy,
