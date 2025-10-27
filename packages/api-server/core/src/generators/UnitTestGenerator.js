@@ -432,8 +432,9 @@ class UnitTestGenerator {
       isMobile,
       
       // Paths (âœ¨ SMART - calculated based on file location)
-      testContextPath: paths.testContext,
-      testPlannerPath: paths.testPlanner,
+     testContextPath: paths.testContext,
+testPlannerPath: paths.testPlanner,
+testSetupPath: paths.testSetup,
       
       // Function
       actionName,
@@ -550,12 +551,21 @@ class UnitTestGenerator {
       relativePath = './' + relativePath;
     }
     
-    console.log(`   ðŸ“ Smart paths: ${relativePath}/TestContext`);
-    
-    return {
-      testContext: `${relativePath}/TestContext`,
-      testPlanner: `${relativePath}/TestPlanner`
-    };
+  console.log(`   📂 Smart paths: ${relativePath}/TestContext`);
+
+// Calculate helpers path (parallel to ai-testing/utils)
+const helpersPath = utilsPath.replace('/ai-testing/utils', '/helpers');
+let helpersRelativePath = path.relative(implDir, helpersPath);
+helpersRelativePath = helpersRelativePath.split(path.sep).join('/');
+if (!helpersRelativePath.startsWith('.')) {
+  helpersRelativePath = './' + helpersRelativePath;
+}
+
+return {
+  testContext: `${relativePath}/TestContext`,
+  testPlanner: `${relativePath}/TestPlanner`,
+  testSetup: `${helpersRelativePath}/TestSetup`
+};
   }
   
   /**

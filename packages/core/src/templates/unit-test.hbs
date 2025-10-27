@@ -15,6 +15,9 @@ const { expect } = require('@wdio/globals');
 const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
 const TestPlanner = require('{{testPlannerPath}}');
+{{#if testSetupPath}}
+const TestSetup = require('{{testSetupPath}}');
+{{/if}}
 {{#if hasUIValidation}}
 const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
 {{/if}}
@@ -130,6 +133,12 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   {{triggeredByActionCall}}
   {{else}}
   // TODO: Navigate to the screen where you perform this action
+  {{#if testSetupPath}}
+  // ✅ Option 1: Use TestSetup helper (if you've set it up)
+  // await TestSetup.navigateToApp(page, ctx.config);
+  
+  // ✅ Option 2: Manual navigation
+  {{/if}}
   // Example navigation:
   {{#if navigationExample}}
   {{{navigationExample}}}

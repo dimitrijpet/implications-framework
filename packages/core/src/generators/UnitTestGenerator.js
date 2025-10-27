@@ -397,6 +397,12 @@ class UnitTestGenerator {
     
     // Entity logic (for things like bookings, users, etc.)
     const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
+  
+  // 🐛 ADD THIS DEBUG:
+  console.log(`\n🐛 DEBUG hasEntityLogic:`);
+  console.log(`   entry: ${JSON.stringify(metadata.entry)}`);
+  console.log(`   entry.toString(): ${metadata.entry?.toString()}`);
+  console.log(`   hasEntityLogic: ${hasEntityLogic}`);
     const entityName = this._inferEntityName(metadata);
     
     // Delta fields (from entry: assign)
@@ -432,8 +438,9 @@ class UnitTestGenerator {
       isMobile,
       
       // Paths (âœ¨ SMART - calculated based on file location)
-      testContextPath: paths.testContext,
-      testPlannerPath: paths.testPlanner,
+ testContextPath: paths.testContext,
+testPlannerPath: paths.testPlanner,
+testSetupPath: paths.testSetup,
       
       // Function
       actionName,
@@ -514,9 +521,10 @@ class UnitTestGenerator {
       // Fallback to safe default
       console.log('   âš ï¸  No implFilePath set, using default paths');
       return {
-        testContext: '../../ai-testing/utils/TestContext',
-        testPlanner: '../../ai-testing/utils/TestPlanner'
-      };
+  testContext: `${relativePath}/TestContext`,
+  testPlanner: `${relativePath}/TestPlanner`,
+  testSetup: `${relativePath.replace('/ai-testing/utils', '/helpers')}/TestSetup`
+};
     }
     
     // Get directory of Implication file (where test will be generated)
@@ -549,13 +557,21 @@ class UnitTestGenerator {
     if (!relativePath.startsWith('.')) {
       relativePath = './' + relativePath;
     }
-    
-    console.log(`   ðŸ“ Smart paths: ${relativePath}/TestContext`);
-    
-    return {
-      testContext: `${relativePath}/TestContext`,
-      testPlanner: `${relativePath}/TestPlanner`
-    };
+console.log(`   📂 Smart paths: ${relativePath}/TestContext`);
+
+// Calculate helpers path (parallel to ai-testing/utils)
+const helpersPath = utilsPath.replace('/ai-testing/utils', '/helpers');
+let helpersRelativePath = path.relative(implDir, helpersPath);
+helpersRelativePath = helpersRelativePath.split(path.sep).join('/');
+if (!helpersRelativePath.startsWith('.')) {
+  helpersRelativePath = './' + helpersRelativePath;
+}
+
+return {
+  testContext: `${relativePath}/TestContext`,
+  testPlanner: `${relativePath}/TestPlanner`,
+  testSetup: `${helpersRelativePath}/TestSetup`
+};
   }
   
   /**
@@ -658,12 +674,19 @@ class UnitTestGenerator {
    * Should we generate entity logic (e.g., bookings[0])?
    */
   _shouldGenerateEntityLogic(metadata) {
-    // Heuristic: if entry: assign modifies arrays or has indices
-    const entryStr = metadata.entry?.toString() || '';
-    return entryStr.includes('bookings') || 
-           entryStr.includes('[') ||
-           entryStr.includes('map(');
-  }
+  // Heuristic: if entry: assign modifies arrays or has indices
+  const entry = metadata.entry;
+  
+  if (!entry) return false;
+  
+  // Use JSON.stringify instead of toString() to avoid "[object Object]" issue
+  const entryStr = JSON.stringify(entry);
+  
+  // Check for entity-specific patterns
+  return entryStr.includes('bookings') || 
+         entryStr.includes('.map(') ||      // Changed: more specific
+         entryStr.includes('context.');      // Check for context.bookings pattern
+}
   
   /**
    * Infer entity name from metadata

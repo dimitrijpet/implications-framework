@@ -15,6 +15,12 @@ const { expect } = require('@wdio/globals');
 const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
 const TestPlanner = require('{{testPlannerPath}}');
+{{#if testSetupPath}}
+const TestSetup = require('{{testSetupPath}}');
+{{/if}}
+{{#if hasUIValidation}}
+const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
+{{/if}}
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}
 const { {{actionName}} } = require('{{path}}');
@@ -127,6 +133,12 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   {{triggeredByActionCall}}
   {{else}}
   // TODO: Navigate to the screen where you perform this action
+  {{#if testSetupPath}}
+  // ✅ Option 1: Use TestSetup helper (if you've set it up)
+  // await TestSetup.navigateToApp(page, ctx.config);
+  
+  // ✅ Option 2: Manual navigation
+  {{/if}}
   // Example navigation:
   {{#if navigationExample}}
   {{{navigationExample}}}
@@ -238,7 +250,6 @@ if (!shouldSkipRegistration) {
       // ✅ FIX #6: Validate UI implications (mirrorsOn)
       await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
         const ctx = TestContext.load({{../implClassName}}, testDataPath);
-        const ExpectImplication = require('{{../testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
         
         {{#each ../validationScreens}}
         // {{screenKey}}: Visible ({{visible}}), Hidden ({{hidden}})
