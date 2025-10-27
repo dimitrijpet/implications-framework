@@ -91,6 +91,7 @@ export function hasPattern(parsed, patternName) {
 
 /**
  * Extract XState transitions from xstateConfig
+ * ✅ FIXED: Now looks inside states.idle.on instead of top-level on
  */
 export function extractXStateTransitions(parsed, className) {
   const transitions = [];
@@ -107,38 +108,60 @@ export function extractXStateTransitions(parsed, className) {
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
-            // Find 'on' property
-            const onProperty = value.properties.find(
-              p => p.key?.name === 'on'
+            // ✅ NEW: Find 'states' property first
+            const statesProperty = value.properties.find(
+              p => p.key?.name === 'states'
             );
             
-            if (onProperty && onProperty.value?.type === 'ObjectExpression') {
-              // Extract each transition
-              onProperty.value.properties.forEach(transitionProp => {
-                const eventName = transitionProp.key?.name || transitionProp.key?.value;
-                let targetState = null;
+            if (!statesProperty || statesProperty.value?.type !== 'ObjectExpression') {
+              return;
+            }
+            
+            // ✅ NEW: Iterate through all states (idle, active, etc.)
+            statesProperty.value.properties.forEach(stateProp => {
+              const stateName = stateProp.key?.name || stateProp.key?.value;
+              
+              if (stateProp.value?.type === 'ObjectExpression') {
+                // ✅ NEW: Find 'on' property INSIDE each state
+                const onProperty = stateProp.value.properties.find(
+                  p => p.key?.name === 'on'
+                );
                 
-                // Handle different formats
-                if (transitionProp.value?.type === 'StringLiteral') {
-                  targetState = transitionProp.value.value;
-                } else if (transitionProp.value?.type === 'ObjectExpression') {
-                  const targetProp = transitionProp.value.properties.find(
-                    p => p.key?.name === 'target'
-                  );
-                  if (targetProp?.value?.type === 'StringLiteral') {
-                    targetState = targetProp.value.value;
-                  }
-                }
-                
-                if (eventName && targetState) {
-                  transitions.push({
-                    from: className,
-                    to: targetState,
-                    event: eventName,
+                if (onProperty && onProperty.value?.type === 'ObjectExpression') {
+                  // Extract each transition
+                  onProperty.value.properties.forEach(transitionProp => {
+                    const eventName = transitionProp.key?.name || transitionProp.key?.value;
+                    let targetState = null;
+                    
+                    // Handle different formats
+                    if (transitionProp.value?.type === 'StringLiteral') {
+                      // Format: EVENT: 'target_state'
+                      targetState = transitionProp.value.value;
+                    } else if (transitionProp.value?.type === 'ObjectExpression') {
+                      // Format: EVENT: { target: '#target_state' }
+                      const targetProp = transitionProp.value.properties.find(
+                        p => p.key?.name === 'target'
+                      );
+                      if (targetProp?.value?.type === 'StringLiteral') {
+                        targetState = targetProp.value.value;
+                      }
+                    }
+                    
+                    if (eventName && targetState) {
+                      // Remove '#' prefix if present
+                      const cleanTarget = targetState.replace(/^#/, '');
+                      
+                      transitions.push({
+                        from: className,
+                        to: cleanTarget,
+                        event: eventName,
+                        fromState: stateName  // ✅ NEW: Track which state the transition is from
+                      });
+                    }
                   });
                 }
-              });
-            }
+              }
+            });
           }
         }
       },

@@ -1431,93 +1431,123 @@ router.post('/add-transition', async (req, res) => {
       });
     }
     
-   const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    const sourceContent = await fs.readFile(sourceFile, 'utf-8');
 
-const sourceAst = parse(sourceContent, {  // ✅ Renamed to sourceAst
-  sourceType: 'module',
-  plugins: ['classProperties', 'objectRestSpread'],
-});
+    const sourceAst = parse(sourceContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread'],
+    });
 
-// ✅ Read target file to extract actual state ID
-const targetContent = await fs.readFile(targetFile, 'utf-8');
-const targetAst = parse(targetContent, {
-  sourceType: 'module',
-  plugins: ['classProperties', 'objectRestSpread']
-});
+    // Read target file to extract actual state ID
+    const targetContent = await fs.readFile(targetFile, 'utf-8');
+    const targetAst = parse(targetContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
 
-let targetStateName = null;
+    let targetStateName = null;
 
-// Extract ID from target file's xstateConfig
-traverse.default(targetAst, {
-  ClassProperty(path) {
-    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-      const config = path.node.value;
-      if (config?.type === 'ObjectExpression') {
-        const idProp = config.properties.find(p => p.key?.name === 'id');
-        if (idProp?.value?.value) {
-          targetStateName = idProp.value.value;
-        }
-      }
-    }
-  }
-});
-
-// Fallback: derive from filename
-if (!targetStateName) {
-  targetStateName = path.basename(targetFile, '.js')
-    .replace(/Implications$/, '')
-    .replace(/Booking$/, '')
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase()
-    .replace(/^_/, '');
-}
-
-console.log('🎯 Target state name:', targetStateName);
-    
-    let xstateConfigFound = false;
-    let transitionAdded = false;
-    
-    // Traverse and add transition
-    traverse.default(sourceAst, {  // ✅ Use sourceAst!
+    // Extract ID from target file's xstateConfig
+    traverse.default(targetAst, {
       ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          xstateConfigFound = true;
+          const config = path.node.value;
+          if (config?.type === 'ObjectExpression') {
+            const idProp = config.properties.find(p => p.key?.name === 'id');
+            if (idProp?.value?.value) {
+              targetStateName = idProp.value.value;
+            }
+          }
+        }
+      }
+    });
+
+    // Fallback: derive from filename
+    if (!targetStateName) {
+      targetStateName = path.basename(targetFile, '.js')
+        .replace(/Implications$/, '')
+        .replace(/Booking$/, '')
+        .replace(/([A-Z])/g, '_$1')
+        .toLowerCase()
+        .replace(/^_/, '');
+    }
+
+    console.log('🎯 Target state name:', targetStateName);
+    
+    let transitionAdded = false;
+    
+    // ✅ FIX: Navigate to states.idle.on instead of top-level on
+    traverse.default(sourceAst, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
           const configValue = path.node.value;
           
           if (configValue?.type === 'ObjectExpression') {
-            // Look for 'on' property
-            let onProperty = configValue.properties.find(
+            // ✅ Find 'states' property
+            let statesProperty = configValue.properties.find(
+              p => p.key?.name === 'states'
+            );
+            
+            if (!statesProperty || statesProperty.value?.type !== 'ObjectExpression') {
+              console.log('❌ No states property found');
+              return;
+            }
+            
+            // ✅ Find 'idle' state (or first state)
+            let idleState = statesProperty.value.properties.find(
+              p => p.key?.name === 'idle'
+            );
+            
+            if (!idleState) {
+              // Use first state if idle doesn't exist
+              idleState = statesProperty.value.properties[0];
+            }
+            
+            if (!idleState || idleState.value?.type !== 'ObjectExpression') {
+              console.log('❌ No idle state found');
+              return;
+            }
+            
+            // ✅ Find or create 'on' property INSIDE idle state
+            let onProperty = idleState.value.properties.find(
               p => p.key?.name === 'on'
             );
             
-            // If no 'on' property, create it
             if (!onProperty) {
-              console.log('📝 Creating new "on" property');
+              console.log('📝 Creating new "on" property inside idle state');
               onProperty = {
                 type: 'ObjectProperty',
                 key: { type: 'Identifier', name: 'on' },
                 value: { type: 'ObjectExpression', properties: [] }
               };
-              configValue.properties.push(onProperty);
+              idleState.value.properties.push(onProperty);
             }
             
             // Check if transition already exists
-            const existingTransition = onProperty.value.properties.find(
+            const existingTransition = onProperty.value.properties?.find(
               p => p.key?.name === event || p.key?.value === event
             );
             
             if (existingTransition) {
-              return res.status(400).json({ 
-                error: `Transition ${event} already exists` 
-              });
+              console.log('⚠️ Transition already exists');
+              return;
             }
             
-            // Add new transition
-            console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
+            // ✅ Add new transition with proper target format
+            console.log(`✅ Adding transition: ${event} → #${targetStateName}`);
             onProperty.value.properties.push({
               type: 'ObjectProperty',
               key: { type: 'Identifier', name: event },
-              value: { type: 'StringLiteral', value: targetStateName }
+              value: {
+                type: 'ObjectExpression',
+                properties: [
+                  {
+                    type: 'ObjectProperty',
+                    key: { type: 'Identifier', name: 'target' },
+                    value: { type: 'StringLiteral', value: `#${targetStateName}` }
+                  }
+                ]
+              }
             });
             
             transitionAdded = true;
@@ -1526,23 +1556,17 @@ console.log('🎯 Target state name:', targetStateName);
       }
     });
     
-    if (!xstateConfigFound) {
-      return res.status(400).json({ 
-        error: 'Could not add transition - no xstateConfig found' 
-      });
-    }
-    
     if (!transitionAdded) {
       return res.status(400).json({ 
-        error: 'Could not add transition - failed to modify xstateConfig' 
+        error: 'Could not add transition - failed to modify xstateConfig.states.idle.on' 
       });
     }
     
-    // ✅ FIX #1 & #2: Generate updated code correctly
-    const { code: newCode } = babelGenerate.default(sourceAst, {
+    // Generate updated code
+    const { code: newCode } = (babelGenerate.default || babelGenerate)(sourceAst, {
       retainLines: true,
       comments: true
-    }, sourceContent);  // ✅ Use sourceContent, not originalContent
+    });
     
     // Create backup
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1550,16 +1574,17 @@ console.log('🎯 Target state name:', targetStateName);
     await fs.copy(sourceFile, backupPath);
     
     // Write updated file
-    await fs.writeFile(sourceFile, newCode, 'utf-8');  // ✅ Now newCode exists!
+    await fs.writeFile(sourceFile, newCode, 'utf-8');
     
     console.log('✅ Transition added successfully');
+    console.log('📦 Backup:', backupPath);
     
     res.json({
       success: true,
       transition: {
         event,
         from: path.basename(sourceFile),
-        to: targetStateName
+        to: `#${targetStateName}`
       },
       backup: backupPath
     });
