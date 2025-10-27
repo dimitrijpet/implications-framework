@@ -702,6 +702,7 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
         platforms: currentState.meta?.uiCoverage?.platforms || {}
       }
     }}
+    projectPath={projectPath}
     theme={theme}
     onSave={handleUIUpdate}
     onCancel={() => console.log('UI edit cancelled')}
