@@ -238,39 +238,57 @@ class POMDiscovery {
   /**
    * Get available paths for a POM (for user guidance)
    */
-  getAvailablePaths(pomName, instanceName = null) {
-    const pom = this.pomCache.get(pomName);
-    if (!pom) return [];
+  /**
+ * Get available paths for a POM (for user guidance)
+ */
+getAvailablePaths(pomName, instanceName = null) {
+  const pom = this.pomCache.get(pomName);
+  if (!pom) return [];
 
-    const paths = [];
-    
-    for (const cls of pom.classes) {
-      // If looking for specific instance
-      if (instanceName) {
-        const instanceProp = cls.properties.find(
-          p => p.name === instanceName && p.type === 'instance'
-        );
-        
-        if (instanceProp) {
-          // Find the instance class
-          const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
-          if (instanceClass) {
-            // Return paths like "oneWayTicket.inputDeparture"
-            for (const getter of instanceClass.getters) {
-              paths.push(`${instanceName}.${getter.name}`);
-            }
+  const paths = [];
+  
+  for (const cls of pom.classes) {
+    // If looking for specific instance
+    if (instanceName) {
+      const instanceProp = cls.properties.find(
+        p => p.name === instanceName && p.type === 'instance'
+      );
+      
+      if (instanceProp) {
+        // Find the instance class
+        const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
+        if (instanceClass) {
+          // Return paths like "oneWayTicket.inputDeparture"
+          for (const getter of instanceClass.getters) {
+            paths.push(`${instanceName}.${getter.name}`);
           }
         }
+      }
+    } else {
+      // ✅ NEW: If no instances, treat as flat POM with direct getters
+      const hasInstances = cls.properties.some(p => p.type === 'instance');
+      
+      if (hasInstances) {
+        // Has instances - don't add direct getters (they're probably helpers)
+        // User should select instance first
       } else {
-        // Return all top-level getters
+        // ✅ No instances - add all getters directly (flat POM)
         for (const getter of cls.getters) {
           paths.push(getter.name);
         }
+        
+        // ✅ Also add constructor properties
+        for (const prop of cls.properties) {
+          if (prop.type === 'property') {
+            paths.push(prop.name);
+          }
+        }
       }
     }
-
-    return paths;
   }
+
+  return paths;
+}
 
   /**
    * Validate a POM path exists

@@ -59,32 +59,45 @@ router.get('/:pomName', async (req, res) => {
   try {
     const projectPath = req.query.projectPath || process.env.GUEST_PROJECT_PATH;
     const { pomName } = req.params;
-    
+
     if (!projectPath) {
       return res.status(400).json({
         error: 'No project path provided'
       });
     }
-    
+
     const discovery = new POMDiscovery(projectPath);
     await discovery.discover();
-    
+
     // Get instances for this POM
     const instances = discovery.getInstances(pomName);
-    
-    // Get available paths for each instance
+
+    // ✅ NEW: Check if this is a flat POM (no instances)
+    const isFlatPOM = instances.length === 0;
+
+    // Get available paths
     const instancePaths = {};
-    for (const instance of instances) {
-      instancePaths[instance.name] = discovery.getAvailablePaths(pomName, instance.name);
-    }
     
+    if (isFlatPOM) {
+      // ✅ Flat POM - add direct getters to "default" instance
+      const directPaths = discovery.getAvailablePaths(pomName);
+      if (directPaths.length > 0) {
+        instancePaths['default'] = directPaths;
+      }
+    } else {
+      // Has instances - get paths for each
+      for (const instance of instances) {
+        instancePaths[instance.name] = discovery.getAvailablePaths(pomName, instance.name); 
+      }
+    }
+
     res.json({
       success: true,
       pomName,
       instances,
       instancePaths
     });
-    
+
   } catch (error) {
     console.error('❌ Failed to get POM details:', error);
     res.status(500).json({
