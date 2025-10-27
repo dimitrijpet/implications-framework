@@ -9,6 +9,7 @@ import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
 import TestDataPanel from '../TestDataPanel/TestDataPanel';
+import TestDataLinker from '../TestDataLinker/TestDataLinker';
 
    function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -462,6 +463,34 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
+  const handleFieldsSelected = async (fields) => {
+  console.log('✅ User selected fields:', fields);
+  
+  // Add each field to context
+  for (const field of fields) {
+    await fetch('/api/implications/add-context-field', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath: state.files.implication,
+        fieldName: field.field,
+        initialValue: null,
+        fieldType: typeof field.value
+      })
+    });
+  }
+  
+  // Reload context
+  await fetchContextData();
+  
+  alert(`✅ Added ${fields.length} fields to context!`);
+};
+
+const handleAnalysisComplete = (analysis) => {
+  console.log('📊 Analysis complete:', analysis);
+  // Optional: Store analysis for later use
+};
+
   // ========================================
   // RENDER
   // ========================================
@@ -583,6 +612,22 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
             CONTENT
             ======================================== */}
         <div className="p-6 space-y-8">
+
+        <div className="mb-6">
+  <h3 className="text-xl font-bold mb-3">
+    🧠 Intelligent Field Suggestions
+  </h3>
+  
+ <TestDataLinker
+    stateName={state.name}
+    projectPath={projectPath}
+    implicationPath={state.files.implication}  // ← ADD THIS!
+    theme={theme}
+    existingContext={contextData}
+    onFieldsSelected={handleFieldsSelected}
+    onAnalysisComplete={handleAnalysisComplete}
+  />
+</div>
           
           {/* ========================================
               CONTEXT SECTION
