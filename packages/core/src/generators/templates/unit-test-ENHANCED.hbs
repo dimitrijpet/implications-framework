@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-// AUTO-GENERATED UNIT TEST (ES MODULE)
+// AUTO-GENERATED UNIT TEST
 // ═══════════════════════════════════════════════════════════
 // Generated at: {{timestamp}}
 // From: {{implClassName}}
@@ -8,22 +8,22 @@
 // ═══════════════════════════════════════════════════════════
 
 {{#if isPlaywright}}
-import { test, expect } from '@playwright/test';
+const { test, expect } = require('@playwright/test');
 {{else}}
-import { expect } from '@wdio/globals';
+const { expect } = require('@wdio/globals');
 {{/if}}
-import TestContext from '{{testContextPath}}';
-import {{implClassName}} from './{{implClassName}}.js';
-import TestPlanner from '{{testPlannerPath}}';
+const TestContext = require('{{testContextPath}}');
+const {{implClassName}} = require('./{{implClassName}}.js');
+const TestPlanner = require('{{testPlannerPath}}');
 {{#if testSetupPath}}
-import TestSetup from '{{testSetupPath}}';
+const TestSetup = require('{{testSetupPath}}');
 {{/if}}
 {{#if hasUIValidation}}
-import ExpectImplication from '{{expectImplicationPath}}';
+const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
 {{/if}}
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}
-import { {{actionName}} } from '{{path}}';
+const { {{actionName}} } = require('{{path}}');
 {{/each}}
 {{/if}}
 
@@ -47,7 +47,7 @@ import { {{actionName}} } from '{{path}}';
 {{/each}}
  * @returns {Promise<TestContext>} Updated context
  */
-export const {{actionName}} = async (testDataPath, options = {}) => {
+const {{actionName}} = async (testDataPath, options = {}) => {
   {{#if isPlaywright}}
   const { page } = options;
   {{/if}}
@@ -74,13 +74,17 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
   // STEP 3: Get Target Entities
   // ────────────────────────────────────────────────────────
   {{#if hasEntityLogic}}
+  // TODO: Customize based on your entity (booking, user, etc.)
   let targets = [];
   
   if (options.indices && Array.isArray(options.indices)) {
+    // Multiple entities by indices
     targets = options.indices.map(i => ctx.data.{{entityName}}s[i]);
   } else if (options.index !== undefined) {
+    // Single entity by index
     targets = [ctx.data.{{entityName}}s[options.index]];
   } else {
+    // Default: first entity matching {{previousStatus}}
     {{#if previousStatus}}
     const matchingEntities = ctx.data.{{entityName}}s?.filter(e => e.status === '{{previousStatus}}');
     if (!matchingEntities || matchingEntities.length === 0) {
@@ -100,10 +104,12 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   
   {{#if isPlaywright}}
+  // ✅ Navigate to application
   await TestSetup.navigateToApp(page, ctx.config);
   {{/if}}
   
   {{#if hasActionDetails}}
+  // ✨ Generated action steps:
   console.log('\n🎬 Executing action: {{actionDetails.description}}');
   
   {{#each actionDetails.steps}}
@@ -120,16 +126,22 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
   
   {{/each}}
   {{else}}
+  // TODO: Navigate to the screen where you perform this action
+  // Example navigation:
   {{#if navigationExample}}
   {{{navigationExample}}}
   {{else}}
   // await navigateToScreen();
   {{/if}}
   
+  // TODO: Perform the state-inducing action
+  // This is where you interact with the UI to trigger the state change
   {{#if actionExample}}
+  // Example:
   {{{actionExample}}}
   {{else}}
   {{#if triggerButton}}
+  // Example:
   // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
   {{/if}}
   {{/if}}
@@ -151,6 +163,7 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
       const now = new Date().toISOString();
       
       {{#if hasDeltaLogic}}
+      // ✨ Generated delta from entry: assign
       {{#if hasEntityLogic}}
       for (const target of targets) {
         const entityPath = `{{entityName}}s[${target.index || 0}]`;
@@ -161,11 +174,14 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
         };
       }
       {{else}}
+      // Update single entity or root fields
       {{#each deltaFields}}
       delta['{{name}}'] = {{value}};
       {{/each}}
       {{/if}}
       {{else}}
+      // TODO: Customize delta based on what changed
+      // Example:
       // delta['status'] = '{{targetStatus}}';
       // delta['{{targetStatus}}At'] = now;
       {{/if}}
@@ -181,10 +197,14 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
 // ═══════════════════════════════════════════════════════════
 
 {{#each helperFunctions}}
+/**
+ * {{description}}
+ */
 async function {{name}}({{params}}) {
   {{#if code}}
   {{code}}
   {{else}}
+  // TODO: Implement {{name}}
   throw new Error('Helper function not implemented: {{name}}');
   {{/if}}
 }
@@ -193,8 +213,10 @@ async function {{name}}({{params}}) {
 {{/if}}
 
 // ═══════════════════════════════════════════════════════════
-// TEST REGISTRATION
+// OPTIONAL TEST REGISTRATION
 // ═══════════════════════════════════════════════════════════
+// Set SKIP_UNIT_TEST_REGISTRATION=true to skip these tests
+// and only use the exported function
 
 const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
 
@@ -213,6 +235,7 @@ if (!shouldSkipRegistration) {
       });
       
       {{#if ../hasUIValidation}}
+      // ✅ Validate UI implications
       await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
         {{#each ../validationScreens}}
         {{#if hasFunctions}}
@@ -271,6 +294,7 @@ if (!shouldSkipRegistration) {
       });
       {{/if}}
       
+      // ✅ Save state to disk
       ctx.save(testDataPath);
       console.log('   💾 State saved to:', testDataPath);
     });
@@ -290,3 +314,9 @@ if (!shouldSkipRegistration) {
   });
   {{/if}}
 }
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════
+
+module.exports = { {{actionName}} };

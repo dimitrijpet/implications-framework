@@ -1,35 +1,34 @@
 // packages/web-app/src/components/UIScreenEditor/POMFieldSelector.jsx
+// ✨ ENHANCED: Screen dropdown + Auto-select current POM!
 
 import { useState, useEffect } from 'react';
-import { ChevronDown, AlertCircle, CheckCircle, Search } from 'lucide-react';
+import { ChevronDown, AlertCircle, CheckCircle } from 'lucide-react';
 
 /**
  * POM Field Selector with autocomplete and validation
  * 
- * Features:
- * - Fetches available POMs from API
- * - Shows POM instances (oneWayTicket, roundTrip, etc.)
- * - Autocomplete dropdown with available fields
- * - Real-time validation (warns if field not in POM)
+ * ENHANCEMENTS:
+ * - Auto-selects POM if screen already has one
+ * - Screen file dropdown (instead of manual typing)
+ * - Better UX flow
  */
 export default function POMFieldSelector({ 
   projectPath,
-  screenName,
-  pomName,
-  instanceName,
+  selectedPOM,       // Initial POM (from screen.screen)
+  selectedInstance,  // Initial instance (from screen.instance)
   onPOMChange,
   onInstanceChange,
-  fieldValue,
-  onFieldChange,
-  onValidationChange
+  editable = true,
+  theme
 }) {
   const [poms, setPoms] = useState([]);
   const [pomDetails, setPomDetails] = useState(null);
-  const [availableFields, setAvailableFields] = useState([]);
-  const [isValid, setIsValid] = useState(null);
+  const [availableScreens, setAvailableScreens] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  
+  // ✨ Initialize with selected values
+  const [currentPOM, setCurrentPOM] = useState(selectedPOM || '');
+  const [currentInstance, setCurrentInstance] = useState(selectedInstance || '');
 
   // Fetch all POMs on mount
   useEffect(() => {
@@ -51,36 +50,51 @@ export default function POMFieldSelector({
     fetchPOMs();
   }, [projectPath]);
 
+  // ✨ Fetch available screen files (OPTIONAL - graceful failure)
+  useEffect(() => {
+    if (!projectPath) return;
+    
+    const fetchScreens = async () => {
+      try {
+        const response = await fetch(`/api/screens?projectPath=${encodeURIComponent(projectPath)}`);
+        
+        // Gracefully handle 404 (endpoint doesn't exist yet)
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.log('ℹ️  /api/screens endpoint not available - screen dropdown disabled');
+          }
+          return;
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setAvailableScreens(data.screens || []);
+          console.log('📋 Loaded', data.screens.length, 'screen files');
+        }
+      } catch (error) {
+        console.log('ℹ️  Screen files not available:', error.message);
+        // Don't show error - this is optional functionality
+      }
+    };
+    
+    fetchScreens();
+  }, [projectPath]);
+
   // Fetch POM details when POM selected
   useEffect(() => {
-    if (!projectPath || !pomName) return;
+    if (!projectPath || !currentPOM) return;
     
     const fetchPOMDetails = async () => {
       setLoading(true);
       try {
         const response = await fetch(
-          `/api/poms/${pomName}?projectPath=${encodeURIComponent(projectPath)}`
+          `/api/poms/${currentPOM}?projectPath=${encodeURIComponent(projectPath)}`
         );
         const data = await response.json();
         
         if (data.success) {
           setPomDetails(data);
-          
-          // If instance selected, get its fields
-          if (instanceName && data.instancePaths[instanceName]) {
-            setAvailableFields(data.instancePaths[instanceName]);
-          } else {
-            // No instance selected - show ALL available fields
-            // Combine top-level getters + all instance paths
-            const allFields = new Set();
-            
-            // Add all instance paths
-            Object.values(data.instancePaths || {}).forEach(paths => {
-              paths.forEach(path => allFields.add(path));
-            });
-            
-            setAvailableFields(Array.from(allFields).sort());
-          }
         }
       } catch (error) {
         console.error('Failed to fetch POM details:', error);
@@ -90,47 +104,46 @@ export default function POMFieldSelector({
     };
     
     fetchPOMDetails();
-  }, [projectPath, pomName]);
+  }, [projectPath, currentPOM]);
 
-  // Update available fields when instance changes
-  useEffect(() => {
-    if (pomDetails && instanceName) {
-      const fields = pomDetails.instancePaths[instanceName] || [];
-      setAvailableFields(fields);
+  const handlePOMChange = (newPOM) => {
+    setCurrentPOM(newPOM);
+    setCurrentInstance('');  // Reset instance when POM changes
+    if (onPOMChange) {
+      onPOMChange(newPOM, '');
     }
-  }, [pomDetails, instanceName]);
+  };
 
-  // Validate field when it changes
-  useEffect(() => {
-    if (!fieldValue || !availableFields.length) {
-      setIsValid(null);
-      return;
+  const handleInstanceChange = (newInstance) => {
+    setCurrentInstance(newInstance);
+    if (onInstanceChange) {
+      onInstanceChange(newInstance);
     }
-    
-    const valid = availableFields.includes(fieldValue);
-    setIsValid(valid);
-    
-    if (onValidationChange) {
-      onValidationChange(valid);
-    }
-  }, [fieldValue, availableFields, onValidationChange]);
+  };
 
-  // Filter fields based on search
-  const filteredFields = availableFields.filter(field =>
-    field.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // ✨ Filter screens that match current POM
+  const matchingScreens = availableScreens.filter(screen => {
+    if (!currentPOM) return true;
+    return screen.name.toLowerCase().includes(currentPOM.toLowerCase());
+  });
 
   return (
     <div className="space-y-3">
       {/* POM Selector */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Page Object Model
+        <label className="block text-sm font-medium mb-1" style={{ color: theme?.colors?.text?.primary || '#000' }}>
+          Page Object Model (POM)
         </label>
         <select
-          value={pomName || ''}
-          onChange={(e) => onPOMChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          value={currentPOM}
+          onChange={(e) => handlePOMChange(e.target.value)}
+          disabled={!editable}
+          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{
+            background: theme?.colors?.background?.primary || '#fff',
+            borderColor: theme?.colors?.border || '#ccc',
+            color: theme?.colors?.text?.primary || '#000'
+          }}
         >
           <option value="">Select POM...</option>
           {poms.map(pom => (
@@ -139,16 +152,58 @@ export default function POMFieldSelector({
         </select>
       </div>
 
+      {/* ✨ NEW: Screen File Dropdown */}
+      {currentPOM && matchingScreens.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium mb-1" style={{ color: theme?.colors?.text?.primary || '#000' }}>
+            Screen File
+            <span className="ml-2 text-xs" style={{ color: theme?.colors?.text?.tertiary || '#999' }}>
+              (optional - for reference)
+            </span>
+          </label>
+          <select
+            value={currentPOM}
+            onChange={(e) => handlePOMChange(e.target.value)}
+            disabled={!editable}
+            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+            style={{
+              background: theme?.colors?.background?.primary || '#fff',
+              borderColor: theme?.colors?.border || '#ccc',
+              color: theme?.colors?.text?.primary || '#000'
+            }}
+          >
+            <option value={currentPOM}>{currentPOM}</option>
+            {matchingScreens
+              .filter(screen => screen.name !== currentPOM)
+              .map(screen => (
+                <option key={screen.name} value={screen.name}>
+                  {screen.name}
+                </option>
+              ))
+            }
+          </select>
+          <p className="mt-1 text-xs" style={{ color: theme?.colors?.text?.tertiary || '#999' }}>
+            {matchingScreens.length} matching screen file(s)
+          </p>
+        </div>
+      )}
+
       {/* Instance Selector - OPTIONAL */}
       {pomDetails && pomDetails.instances && pomDetails.instances.length > 0 && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium mb-1" style={{ color: theme?.colors?.text?.primary || '#000' }}>
             Instance (optional)
           </label>
           <select
-            value={instanceName || ''}
-            onChange={(e) => onInstanceChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            value={currentInstance}
+            onChange={(e) => handleInstanceChange(e.target.value)}
+            disabled={!editable}
+            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+            style={{
+              background: theme?.colors?.background?.primary || '#fff',
+              borderColor: theme?.colors?.border || '#ccc',
+              color: theme?.colors?.text?.primary || '#000'
+            }}
           >
             <option value="">All fields (no filter)</option>
             {pomDetails.instances.map(inst => (
@@ -157,122 +212,15 @@ export default function POMFieldSelector({
               </option>
             ))}
           </select>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-1 text-xs" style={{ color: theme?.colors?.text?.tertiary || '#999' }}>
             Select an instance to filter fields, or leave empty to see all
           </p>
         </div>
       )}
 
-      {/* Field Input with Autocomplete */}
-      {availableFields.length > 0 && (
-        <div className="relative">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Field Path
-            {isValid !== null && (
-              <span className="ml-2">
-                {isValid ? (
-                  <span className="inline-flex items-center text-green-600 text-xs">
-                    <CheckCircle className="w-3 h-3 mr-1" />
-                    Valid
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center text-amber-600 text-xs">
-                    <AlertCircle className="w-3 h-3 mr-1" />
-                    Not found in POM
-                  </span>
-                )}
-              </span>
-            )}
-          </label>
-          
-          <div className="relative">
-            <input
-              type="text"
-              value={fieldValue || ''}
-              onChange={(e) => {
-                onFieldChange(e.target.value);
-                setSearchTerm(e.target.value);
-                setShowDropdown(true);
-              }}
-              onFocus={() => setShowDropdown(true)}
-              onBlur={() => {
-                // Delay to allow click on dropdown items
-                setTimeout(() => setShowDropdown(false), 200);
-              }}
-              placeholder={pomName ? 'Start typing or select from dropdown' : 'Select POM first'}
-              className={`w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                isValid === false ? 'border-amber-400 bg-amber-50' : 'border-gray-300'
-              }`}
-            />
-            
-            <ChevronDown 
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
-            />
-          </div>
-
-          {/* Autocomplete Dropdown */}
-          {showDropdown && filteredFields.length > 0 && (
-            <>
-              <div 
-                className="fixed inset-0 z-10"
-                onClick={() => setShowDropdown(false)}
-              />
-              <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
-                <div className="p-2 border-b border-gray-100">
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                      type="text"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Search fields..."
-                      className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                </div>
-                
-                <div className="py-1">
-                  {filteredFields.map(field => (
-                    <button
-                      key={field}
-                      type="button"  
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        console.log('✅ Field selected:', field);
-                        onFieldChange(field);
-                        setSearchTerm('');
-                        setShowDropdown(false);
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 focus:bg-blue-50 focus:outline-none transition-colors"
-                    >
-                      <span className="font-mono text-gray-900">{field}</span>
-                    </button>
-                  ))}
-                </div>
-                
-                {filteredFields.length === 0 && (
-                  <div className="px-3 py-6 text-center text-sm text-gray-500">
-                    No fields match "{searchTerm}"
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Show field count */}
-      {availableFields.length > 0 && (
-        <div className="text-xs text-gray-500">
-          {availableFields.length} fields available
-        </div>
-      )}
-
       {/* Loading state */}
       {loading && (
-        <div className="text-sm text-gray-500 animate-pulse">
+        <div className="text-sm animate-pulse" style={{ color: theme?.colors?.text?.tertiary || '#999' }}>
           Loading POM details...
         </div>
       )}

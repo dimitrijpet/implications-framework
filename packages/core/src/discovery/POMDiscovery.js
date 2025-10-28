@@ -1,4 +1,5 @@
 // packages/core/src/discovery/POMDiscovery.js
+// ✨ ENHANCED with parameter extraction!
 
 import fs from 'fs/promises';
 import path from 'path';
@@ -10,7 +11,7 @@ const traverseAST = traverse.default || traverse;
 
 /**
  * POMDiscovery - Scans project for Page Object Models
- * Extracts getters, properties, and structure
+ * Extracts getters, properties, methods WITH PARAMETERS
  */
 class POMDiscovery {
   constructor(projectPath) {
@@ -46,7 +47,6 @@ class POMDiscovery {
 
   /**
    * Find all POM files in project
-   * Looks in common locations: screenObjects, pages, pom, pageObjects
    */
   async _findPOMFiles() {
     const searchPaths = [
@@ -92,7 +92,6 @@ class POMDiscovery {
         const fullPath = path.join(dirPath, entry.name);
         
         if (entry.isDirectory()) {
-          // Recurse into subdirectories
           const subFiles = await this._scanDirectory(fullPath);
           files.push(...subFiles);
         } else if (entry.isFile() && entry.name.endsWith('.js')) {
@@ -112,7 +111,6 @@ class POMDiscovery {
   async _extractPOMStructure(filePath) {
     const code = await fs.readFile(filePath, 'utf-8');
     
-    // Parse with Babel
     const ast = parser.parse(code, {
       sourceType: 'module',
       plugins: ['jsx', 'typescript']
@@ -125,7 +123,6 @@ class POMDiscovery {
       exports: null
     };
 
-    // Traverse AST to find classes
     traverseAST(ast, {
       ClassDeclaration: (nodePath) => {
         const classInfo = this._extractClassInfo(nodePath.node);
@@ -133,7 +130,6 @@ class POMDiscovery {
       },
       
       ExportDefaultDeclaration: (nodePath) => {
-        // Track default export
         if (nodePath.node.declaration.type === 'Identifier') {
           structure.exports = nodePath.node.declaration.name;
         } else if (nodePath.node.declaration.type === 'ClassDeclaration') {
@@ -142,7 +138,6 @@ class POMDiscovery {
       },
       
       AssignmentExpression: (nodePath) => {
-        // Handle module.exports = ClassName
         if (
           nodePath.node.left.type === 'MemberExpression' &&
           nodePath.node.left.object.name === 'module' &&
@@ -159,7 +154,8 @@ class POMDiscovery {
   }
 
   /**
-   * Extract class information (getters, properties, methods)
+   * Extract class information (getters, properties, methods WITH PARAMETERS!)
+   * ✨ ENHANCED!
    */
   _extractClassInfo(classNode) {
     const classInfo = {
@@ -167,6 +163,7 @@ class POMDiscovery {
       getters: [],
       properties: [],
       methods: [],
+      functions: [],  // ✨ NEW: Functions with parameters
       constructor: null
     };
 
@@ -181,7 +178,6 @@ class POMDiscovery {
       };
       
       // Extract properties assigned in constructor
-      // Create a simple AST for just the constructor body
       const constructorAST = {
         type: 'File',
         program: {
@@ -199,7 +195,6 @@ class POMDiscovery {
           ) {
             const propName = node.left.property.name;
             
-            // Check if it's a sub-object (like this.oneWayTicket = new OneWayTicket())
             if (node.right.type === 'NewExpression' && node.right.callee.name) {
               classInfo.properties.push({
                 name: propName,
@@ -225,10 +220,25 @@ class POMDiscovery {
           async: member.async || false
         });
       } else if (member.kind === 'method' && member.key.name !== 'constructor') {
+        // ✨ NEW: Extract parameters!
+        const params = this._extractParameters(member.params);
+        
+        // Add to methods array (legacy format)
         classInfo.methods.push({
           name: member.key.name,
           async: member.async || false
         });
+        
+        // ✨ NEW: If has parameters, also add to functions array
+        if (params.length > 0) {
+          classInfo.functions.push({
+            name: member.key.name,
+            async: member.async || false,
+            parameters: params,
+            paramNames: params.map(p => p.name),
+            signature: this._buildSignature(member.key.name, params)
+          });
+        }
       }
     }
 
@@ -236,72 +246,153 @@ class POMDiscovery {
   }
 
   /**
-   * Get available paths for a POM (for user guidance)
+   * ✨ NEW: Extract parameters from method
    */
-  /**
- * Get available paths for a POM (for user guidance)
- */
-getAvailablePaths(pomName, instanceName = null) {
-  const pom = this.pomCache.get(pomName);
-  if (!pom) return [];
-
-  const paths = [];
-  
-  for (const cls of pom.classes) {
-    // If looking for specific instance
-    if (instanceName) {
-      const instanceProp = cls.properties.find(
-        p => p.name === instanceName && p.type === 'instance'
-      );
+  _extractParameters(params) {
+    return params.map(param => {
+      let paramName;
+      let hasDefault = false;
+      let defaultValue = undefined;
       
-      if (instanceProp) {
-        // Find the instance class
-        const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
-        if (instanceClass) {
-          // Return paths like "oneWayTicket.inputDeparture"
-          for (const getter of instanceClass.getters) {
-            paths.push(`${instanceName}.${getter.name}`);
+      if (param.type === 'Identifier') {
+        // Simple: function(name)
+        paramName = param.name;
+      } else if (param.type === 'AssignmentPattern') {
+        // Default: function(name = "default")
+        paramName = param.left.name;
+        hasDefault = true;
+        defaultValue = this._extractDefaultValue(param.right);
+      } else if (param.type === 'RestElement') {
+        // Rest: function(...args)
+        paramName = `...${param.argument.name}`;
+      } else {
+        paramName = 'unknown';
+      }
+      
+      return {
+        name: paramName,
+        hasDefault,
+        defaultValue
+      };
+    });
+  }
+
+  /**
+   * ✨ NEW: Extract default value from AST node
+   */
+  _extractDefaultValue(node) {
+    if (!node) return undefined;
+    
+    switch (node.type) {
+      case 'StringLiteral':
+        return node.value;
+      case 'NumericLiteral':
+        return node.value;
+      case 'BooleanLiteral':
+        return node.value;
+      case 'NullLiteral':
+        return null;
+      case 'ObjectExpression':
+        return {};
+      case 'ArrayExpression':
+        return [];
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * ✨ NEW: Build function signature string
+   */
+  _buildSignature(name, params) {
+    if (params.length === 0) {
+      return `${name}()`;
+    }
+    
+    const paramStrings = params.map(p => {
+      if (p.hasDefault && p.defaultValue !== undefined) {
+        const valueStr = typeof p.defaultValue === 'string' 
+          ? `"${p.defaultValue}"` 
+          : JSON.stringify(p.defaultValue);
+        return `${p.name} = ${valueStr}`;
+      }
+      return p.name;
+    });
+    
+    return `${name}(${paramStrings.join(', ')})`;
+  }
+
+  /**
+   * Get available paths for a POM
+   */
+  getAvailablePaths(pomName, instanceName = null) {
+    const pom = this.pomCache.get(pomName);
+    if (!pom) return [];
+
+    const paths = [];
+    
+    for (const cls of pom.classes) {
+      if (instanceName) {
+        const instanceProp = cls.properties.find(
+          p => p.name === instanceName && p.type === 'instance'
+        );
+        
+        if (instanceProp) {
+          const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
+          if (instanceClass) {
+            for (const getter of instanceClass.getters) {
+              paths.push(`${instanceName}.${getter.name}`);
+            }
           }
         }
-      }
-    } else {
-      // ✅ NEW: If no instances, treat as flat POM with direct getters
-      const hasInstances = cls.properties.some(p => p.type === 'instance');
-      
-      if (hasInstances) {
-        // Has instances - don't add direct getters (they're probably helpers)
-        // User should select instance first
       } else {
-        // ✅ No instances - add all getters directly (flat POM)
-        for (const getter of cls.getters) {
-          paths.push(getter.name);
-        }
+        const hasInstances = cls.properties.some(p => p.type === 'instance');
         
-        // ✅ Also add constructor properties
-        for (const prop of cls.properties) {
-          if (prop.type === 'property') {
-            paths.push(prop.name);
+        if (!hasInstances) {
+          for (const getter of cls.getters) {
+            paths.push(getter.name);
+          }
+          
+          for (const prop of cls.properties) {
+            if (prop.type === 'property') {
+              paths.push(prop.name);
+            }
           }
         }
       }
     }
+
+    return paths;
   }
 
-  return paths;
-}
+  /**
+   * ✨ NEW: Get functions for a POM
+   */
+  getFunctions(pomName) {
+    const pom = this.pomCache.get(pomName);
+    if (!pom) return [];
+    
+    const functions = [];
+    
+    for (const cls of pom.classes) {
+      if (cls.functions) {
+        functions.push(...cls.functions);
+      }
+    }
+    
+    return functions;
+  }
 
   /**
    * Validate a POM path exists
    */
   validatePath(pomName, pathString) {
     const availablePaths = this.getAvailablePaths(pomName);
-    
-    // Check if path exists in available paths
     return availablePaths.includes(pathString);
   }
 
   /**
-   * Get POM instances (like oneWayTicket, roundTrip)
+   * Get POM instances
    */
   getInstances(pomName) {
     const pom = this.pomCache.get(pomName);

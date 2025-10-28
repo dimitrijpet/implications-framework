@@ -1202,6 +1202,80 @@ function buildScreenObjectAst(screen) {
     }
   }
   
+  // ✨ NEW: POM screen property
+  if (screen.screen) {
+    props.push(t.objectProperty(
+      t.identifier('screen'),
+      t.stringLiteral(screen.screen)
+    ));
+  }
+  
+  // ✨ NEW: POM instance property (optional)
+  if (screen.instance) {
+    props.push(t.objectProperty(
+      t.identifier('instance'),
+      t.stringLiteral(screen.instance)
+    ));
+  }
+  
+  // ✨ NEW: Functions object
+  if (screen.functions && Object.keys(screen.functions).length > 0) {
+    const functionProps = [];
+    
+    for (const [funcName, funcData] of Object.entries(screen.functions)) {
+      const funcObjectProps = [];
+      
+      // type
+      if (funcData.type) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('type'),
+          t.stringLiteral(funcData.type)
+        ));
+      }
+      
+      // name
+      if (funcData.name) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('name'),
+          t.stringLiteral(funcData.name)
+        ));
+      }
+      
+      // signature
+      if (funcData.signature) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('signature'),
+          t.stringLiteral(funcData.signature)
+        ));
+      }
+      
+      // parameters object
+      if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
+        const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
+          t.objectProperty(
+            t.identifier(key),
+            t.stringLiteral(String(value))
+          )
+        );
+        
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('parameters'),
+          t.objectExpression(paramProps)
+        ));
+      }
+      
+      functionProps.push(t.objectProperty(
+        t.identifier(funcName),
+        t.objectExpression(funcObjectProps)
+      ));
+    }
+    
+    props.push(t.objectProperty(
+      t.identifier('functions'),
+      t.objectExpression(functionProps)
+    ));
+  }
+  
   return t.objectExpression(props);
 }
 /**

@@ -19,7 +19,7 @@ import TestPlanner from '{{testPlannerPath}}';
 import TestSetup from '{{testSetupPath}}';
 {{/if}}
 {{#if hasUIValidation}}
-import ExpectImplication from '{{expectImplicationPath}}';
+import ExpectImplication from '{{testContextPath}}'.replace('/TestContext', '/ExpectImplication');
 {{/if}}
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}

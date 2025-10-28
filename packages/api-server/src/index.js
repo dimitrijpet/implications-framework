@@ -16,6 +16,7 @@ import generateRoutes from './routes/generate.js';
 import pomsRouter from './routes/poms.js';  // ✅ Add this
 import contextRouter from './routes/context.js';
 import TestDataRouter from './routes/testData.js';  // ✅ Add this
+import screensRouter from './routes/screens.js';
 
 
 
@@ -44,6 +45,7 @@ app.use('/api/context', contextRouter);
 app.use('/api/generate', generateRoutes);
 app.use('/api/poms', pomsRouter);
 app.use('/api/test-data', TestDataRouter);
+app.use('/api/screens', screensRouter);
 
 // Error handling
 app.use(errorHandler);

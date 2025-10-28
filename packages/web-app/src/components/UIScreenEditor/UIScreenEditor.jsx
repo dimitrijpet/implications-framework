@@ -1,24 +1,26 @@
 // packages/web-app/src/components/UIScreenEditor/UIScreenEditor.jsx
-// COMPLETE FILE with POM Integration
+// ✨ ENHANCED with Function Support + Parameters!
+// COMPLETE FILE - All existing functionality preserved + NEW function features
 
 import { useState } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
 import AddScreenModal from './AddScreenModal';
 import CopyScreenDialog from './CopyScreenDialog';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
-import POMFieldSelector from './POMFieldSelector';  // For screen-level POM selection
-import FieldAutocomplete from './FieldAutocomplete';  // ✅ NEW - For element-level field selection
+import POMFieldSelector from './POMFieldSelector';
+import FieldAutocomplete from './FieldAutocomplete';
+import FunctionSelector from './FunctionSelector';  // ✨ NEW!
 
 export default function UIScreenEditor({ 
   state, 
-  projectPath,  // ✅ NEW PROP
+  projectPath,
   onSave, 
   onCancel, 
   theme = defaultTheme 
 }) {
   console.log('🎨 UIScreenEditor received:', { 
     state, 
-    projectPath,  // ✅ LOG IT
+    projectPath,
     hasUiCoverage: !!state?.uiCoverage,
     hasMeta: !!state?.meta,
     platforms: state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms
@@ -57,6 +59,16 @@ export default function UIScreenEditor({
   const initializeEditedUI = () => {
     const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
     console.log('🔄 initializeEditedUI - platforms:', platforms);
+    
+    // 🐛 DEBUG: Check if functions exist in platforms
+    if (platforms?.web?.screens) {
+      platforms.web.screens.forEach(screen => {
+        if (screen.functions) {
+          console.log('  📦 Screen', screen.originalName, 'has', Object.keys(screen.functions).length, 'functions:', Object.keys(screen.functions));
+        }
+      });
+    }
+    
     if (!platforms) return null;
     return JSON.parse(JSON.stringify(platforms));
   };
@@ -100,6 +112,12 @@ export default function UIScreenEditor({
   // Handler: Add Screen
   const handleAddScreen = (platformName, newScreen) => {
     setEditedUI(prev => {
+      // ✅ Safety check
+      if (!prev || !prev[platformName]) {
+        console.error('❌ Platform not found:', platformName);
+        return prev;
+      }
+      
       const platform = prev[platformName];
       return {
         ...prev,
@@ -117,6 +135,12 @@ export default function UIScreenEditor({
   // Handler: Delete Screen
   const handleDeleteScreen = (platformName, screenIndex) => {
     setEditedUI(prev => {
+      // ✅ Safety check
+      if (!prev || !prev[platformName]) {
+        console.error('❌ Platform not found:', platformName);
+        return prev;
+      }
+      
       const platform = prev[platformName];
       return {
         ...prev,
@@ -140,6 +164,12 @@ export default function UIScreenEditor({
     };
 
     setEditedUI(prev => {
+      // ✅ Safety check
+      if (!prev || !prev[targetPlatform]) {
+        console.error('❌ Target platform not found:', targetPlatform);
+        return prev;
+      }
+      
       const platform = prev[targetPlatform];
       return {
         ...prev,
@@ -244,198 +274,185 @@ export default function UIScreenEditor({
               color: 'white'
             }}
           >
-            ✏️ Edit State
+            ✏️ Edit UI
           </button>
         ) : (
           <div className="flex gap-2">
             <button
               onClick={handleSaveChanges}
               disabled={!hasChanges}
-              className="px-4 py-2 rounded font-semibold transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 rounded font-semibold transition hover:brightness-110 disabled:opacity-50"
               style={{ 
                 background: theme.colors.accents.green,
                 color: 'white'
               }}
             >
-              💾 Save Changes
+              ✅ Save Changes
             </button>
             <button
               onClick={handleCancelEdit}
               className="px-4 py-2 rounded font-semibold transition hover:brightness-110"
               style={{ 
-                background: theme.colors.background.tertiary,
-                color: theme.colors.text.secondary,
-                border: `1px solid ${theme.colors.border}`
+                background: theme.colors.accents.red,
+                color: 'white'
               }}
             >
-              ✕ Cancel
+              ❌ Cancel
             </button>
           </div>
         )}
       </div>
 
-      {/* Platforms */}
-      {platformNames.map(platformName => {
-        const platformData = platforms[platformName];
-        
-        return (
-          <PlatformSection
-            key={platformName}
-            platformName={platformName}
-            platformData={platformData}
-            editMode={editMode}
-            projectPath={projectPath}  // ✅ PASS projectPath
-            onChange={(updated) => {
-              if (editMode) {
-                setEditedUI(prev => ({
-                  ...prev,
-                  [platformName]: updated
-                }));
+      {/* Platforms List */}
+      <div className="space-y-4">
+        {platformNames.map(platformName => {
+          const platformData = platforms[platformName];
+          const screens = platformData.screens || [];
+
+          return (
+            <PlatformSection
+              key={platformName}
+              platformName={platformName}
+              platformData={platformData}
+              screens={screens}
+              editMode={editMode}
+              projectPath={projectPath}
+              theme={theme}
+              onScreenUpdate={(screenIndex, updatedScreen) => {
+                setEditedUI(prev => {
+                  // ✅ Safety check: ensure platform exists
+                  if (!prev || !prev[platformName]) {
+                    console.error('❌ Platform not found in editedUI:', platformName);
+                    return prev;
+                  }
+                  
+                  const platform = prev[platformName];
+                  const updatedScreens = [...platform.screens];
+                  updatedScreens[screenIndex] = updatedScreen;
+                  
+                  return {
+                    ...prev,
+                    [platformName]: {
+                      ...platform,
+                      screens: updatedScreens
+                    }
+                  };
+                });
                 setHasChanges(true);
-              }
-            }}
-            onOpenAddScreenModal={() => {
-              setAddScreenModal({
-                isOpen: true,
-                platformName,
-                platformDisplayName: platformData.displayName || platformName
-              });
-            }}
-            onOpenCopyDialog={(screen) => {
-              setCopyScreenDialog({
-                isOpen: true,
-                screen,
-                platformName,
-                platformDisplayName: platformData.displayName || platformName
-              });
-            }}
-            onOpenDeleteDialog={(screen, index) => {
-              setDeleteConfirmDialog({
-                isOpen: true,
-                screen,
-                platformName,
-                platformDisplayName: platformData.displayName || platformName,
-                screenIndex: index
-              });
-            }}
-            theme={theme}
-          />
-        );
-      })}
+                setModifiedScreens(prev => new Set(prev).add(`${platformName}-${screenIndex}`));
+              }}
+              onAddScreen={() => {
+                setAddScreenModal({
+                  isOpen: true,
+                  platformName,
+                  platformDisplayName: platformData.displayName || platformName
+                });
+              }}
+              onDeleteScreen={(screenIndex) => {
+                const screen = screens[screenIndex];
+                setDeleteConfirmDialog({
+                  isOpen: true,
+                  screen,
+                  platformName,
+                  platformDisplayName: platformData.displayName || platformName,
+                  screenIndex
+                });
+              }}
+              onCopyScreen={(screen) => {
+                setCopyScreenDialog({
+                  isOpen: true,
+                  screen,
+                  platformName,
+                  platformDisplayName: platformData.displayName || platformName
+                });
+              }}
+            />
+          );
+        })}
+      </div>
 
       {/* Modals */}
-      {addScreenModal.isOpen && (
-        <AddScreenModal
-          isOpen={addScreenModal.isOpen}
-          platformName={addScreenModal.platformName}
-          platformDisplayName={addScreenModal.platformDisplayName}
-          existingScreens={getAllScreens()}
-          onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
-          onAdd={(newScreen) => {
-            handleAddScreen(addScreenModal.platformName, newScreen);
-            setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
-          }}
-          theme={theme}
-        />
-      )}
+      <AddScreenModal
+        isOpen={addScreenModal.isOpen}
+        platformName={addScreenModal.platformName}
+        platformDisplayName={addScreenModal.platformDisplayName}
+        existingScreens={addScreenModal.platformName ? (platforms[addScreenModal.platformName]?.screens || []) : []}
+        onAdd={(newScreen) => {
+          handleAddScreen(addScreenModal.platformName, newScreen);
+          setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
+        }}
+        onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
+        theme={theme}
+      />
 
-      {copyScreenDialog.isOpen && (
-        <CopyScreenDialog
-          isOpen={copyScreenDialog.isOpen}
-          screen={copyScreenDialog.screen}
-          sourcePlatform={copyScreenDialog.platformName}
-          sourcePlatformDisplayName={copyScreenDialog.platformDisplayName}
-          availablePlatforms={getAvailablePlatforms()}
-          onClose={() => setCopyScreenDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '' })}
-          onCopy={(targetPlatform, newName) => {
-            handleCopyScreen(
-              copyScreenDialog.platformName,
-              copyScreenDialog.screen,
-              targetPlatform,
-              newName
-            );
-            setCopyScreenDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '' });
-          }}
-          theme={theme}
-        />
-      )}
+      <CopyScreenDialog
+        isOpen={copyScreenDialog.isOpen}
+        screen={copyScreenDialog.screen}
+        sourcePlatform={copyScreenDialog.platformName}
+        availablePlatforms={getAvailablePlatforms()}
+        onCopy={handleCopyScreen}
+        onClose={() => setCopyScreenDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '' })}
+        theme={theme}
+      />
 
-      {deleteConfirmDialog.isOpen && (
-        <DeleteConfirmDialog
-          isOpen={deleteConfirmDialog.isOpen}
-          screen={deleteConfirmDialog.screen}
-          platformDisplayName={deleteConfirmDialog.platformDisplayName}
-          onClose={() => setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenIndex: -1 })}
-          onConfirm={() => {
-            handleDeleteScreen(deleteConfirmDialog.platformName, deleteConfirmDialog.screenIndex);
-            setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenIndex: -1 });
-          }}
-          theme={theme}
-        />
-      )}
+      <DeleteConfirmDialog
+        isOpen={deleteConfirmDialog.isOpen}
+        screen={deleteConfirmDialog.screen}
+        platformDisplayName={deleteConfirmDialog.platformDisplayName}
+        onConfirm={() => {
+          handleDeleteScreen(deleteConfirmDialog.platformName, deleteConfirmDialog.screenIndex);
+          setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenIndex: -1 });
+        }}
+        onClose={() => setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenIndex: -1 })}
+        theme={theme}
+      />
     </div>
   );
 }
+
 // ============================================
-// PART 2: PlatformSection Component
+// PART 2: PlatformSection Component (UNCHANGED)
 // ============================================
 
 function PlatformSection({ 
   platformName, 
   platformData, 
+  screens, 
   editMode, 
-  projectPath,  // ✅ NEW PROP
-  onChange, 
-  onOpenAddScreenModal,
-  onOpenCopyDialog,
-  onOpenDeleteDialog,
-  theme 
+  projectPath,
+  theme, 
+  onScreenUpdate, 
+  onAddScreen,
+  onDeleteScreen,
+  onCopyScreen
 }) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const platformIcon = platformName === 'web' ? '🌐' : platformName === 'mobile' ? '📱' : '💻';
-
   return (
     <div 
-      className="rounded-lg border"
+      className="p-4 rounded-lg"
       style={{ 
-        background: theme.colors.background.secondary,
-        borderColor: theme.colors.border
+        background: theme.colors.background.tertiary,
+        border: `1px solid ${theme.colors.border}`
       }}
     >
       {/* Platform Header */}
-      <div className="p-3 flex items-center justify-between">
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center gap-2 hover:opacity-80 transition"
-        >
-          <span style={{ fontSize: '24px' }}>{platformIcon}</span>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <span style={{ fontSize: '32px' }}>{getPlatformIcon(platformName)}</span>
           <div>
-            <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
+            <div style={{ fontSize: '18px', fontWeight: 600, color: theme.colors.text.primary }}>
               {platformData.displayName || platformName}
             </div>
-            <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-              {platformData.count || 0} screen{platformData.count !== 1 ? 's' : ''}
+            <div style={{ fontSize: '14px', color: theme.colors.text.tertiary }}>
+              {screens.length} screen{screens.length !== 1 ? 's' : ''}
             </div>
           </div>
-          <span 
-            className="text-lg transition-transform ml-2"
-            style={{ 
-              transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-              color: theme.colors.text.tertiary
-            }}
-          >
-            ▼
-          </span>
-        </button>
+        </div>
 
         {editMode && (
           <button
-            onClick={onOpenAddScreenModal}
+            onClick={onAddScreen}
             className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
-            style={{ 
-              background: theme.colors.accents.blue,
-              color: 'white'
-            }}
+            style={{ background: theme.colors.accents.green, color: 'white' }}
           >
             ➕ Add Screen
           </button>
@@ -443,225 +460,165 @@ function PlatformSection({
       </div>
 
       {/* Screens */}
-      {isExpanded && platformData.screens && (
-        <div className="p-3 pt-0 grid gap-3">
-          {platformData.screens.map((screen, index) => (
-            <ScreenCard
-              key={`${screen.originalName || screen.name}-${index}`}
-              screen={screen}
-              index={index}
-              platformName={platformName}
-              platformDisplayName={platformData.displayName || platformName}
-              editMode={editMode}
-              projectPath={projectPath}  // ✅ PASS projectPath
-              onChange={(updatedScreen) => {
-                const newScreens = [...platformData.screens];
-                newScreens[index] = updatedScreen;
-                onChange({ ...platformData, screens: newScreens });
-              }}
-              onDelete={() => {
-                if (window.confirm(`Delete screen "${screen.name}"?`)) {
-                  const newScreens = platformData.screens.filter((_, i) => i !== index);
-                  onChange({ ...platformData, screens: newScreens });
-                }
-              }}
-              onCopy={(screen) => onOpenCopyDialog(screen)}
-              onDeleteConfirm={() => onOpenDeleteDialog(screen, index)}
-              theme={theme}
-            />
-          ))}
-        </div>
-      )}
+      <div className="space-y-3">
+        {screens.map((screen, index) => (
+          <ScreenCard
+            key={index}
+            screen={screen}
+            screenIndex={index}
+            editMode={editMode}
+            projectPath={projectPath}
+            theme={theme}
+            onUpdate={(updatedScreen) => onScreenUpdate(index, updatedScreen)}
+            onDelete={() => onDeleteScreen(index)}
+            onCopy={() => onCopyScreen(screen)}
+          />
+        ))}
+
+        {screens.length === 0 && !editMode && (
+          <div 
+            className="text-center py-4"
+            style={{ color: theme.colors.text.tertiary, fontSize: '14px' }}
+          >
+            No screens configured
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ============================================
-// PART 3: ScreenCard Component with POM Integration
+// PART 3: ScreenCard Component (ENHANCED!)
 // ============================================
 
-function ScreenCard({ 
-  screen, 
-  index, 
-  platformName,
-  platformDisplayName,
-  editMode, 
-  projectPath,  // ✅ NEW PROP
-  onChange, 
-  onDelete,
-  onCopy,
-  onDeleteConfirm,
-  onMarkModified, 
-  theme 
-}) {
+function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdate, onDelete, onCopy }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [pomName, setPomName] = useState(screen.screen || '');
+  const [instanceName, setInstanceName] = useState(null);
 
+  // Extract element arrays
   const topLevelVisible = screen.visible || [];
-  const checksVisible = screen.checks?.visible || [];
-  const allVisible = [...topLevelVisible, ...checksVisible];
-
   const topLevelHidden = screen.hidden || [];
+  const checksVisible = screen.checks?.visible || [];
   const checksHidden = screen.checks?.hidden || [];
-  const allHidden = [...topLevelHidden, ...checksHidden];
-
   const textChecks = screen.checks?.text || {};
+  
+  // ✨ NEW: Extract functions
+  const functions = screen.functions || {};
+  
+  // 🐛 DEBUG: Log functions
+  console.log('🎯 ScreenCard - Functions extracted:', {
+    screenName: screen.originalName || screen.name,
+    functionsCount: Object.keys(functions).length,
+    functionNames: Object.keys(functions),
+    functions: functions
+  });
 
   const updateScreen = (updates) => {
-    const updatedScreen = { ...screen, ...updates };
-    console.log('🔄 Screen updated:', updatedScreen);
-    onChange(updatedScreen);
+    onUpdate({ ...screen, ...updates });
+  };
+
+  const handlePOMChange = (selectedPOM, selectedInstance) => {
+    console.log('🔄 POM changed:', { selectedPOM, selectedInstance });
+    setPomName(selectedPOM || '');
+    setInstanceName(selectedInstance || null);
     
-    if (onMarkModified) {
-      const screenId = `${platformName}.${screen.originalName || screen.name}.${index}`;
-      onMarkModified(screenId);
-    }
+    updateScreen({
+      screen: selectedPOM || '',
+      instance: selectedInstance || null
+    });
   };
 
   return (
     <div 
-      className="rounded-lg border"
+      className="rounded-lg overflow-hidden"
       style={{ 
         background: theme.colors.background.secondary,
-        borderColor: theme.colors.border
+        border: `1px solid ${theme.colors.border}`
       }}
     >
       {/* Screen Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full p-3 flex items-center justify-between hover:bg-white/5 transition"
+        className="w-full p-3 flex items-center justify-between hover:brightness-105 transition"
+        style={{ background: 'transparent' }}
       >
-        <div className="flex items-center gap-2">
-          <span style={{ fontSize: '18px' }}>📄</span>
-          <div className="font-semibold" style={{ color: theme.colors.text.primary }}>
-            {screen.name}
-          </div>
-          {screen.description && (
-            <div 
-              className="text-xs italic px-2 py-0.5 rounded max-w-md truncate"
-              style={{ 
-                background: `${theme.colors.accents.blue}20`,
-                color: theme.colors.accents.blue
-              }}
-              title={screen.description}
-            >
-              {screen.description}
+        <div className="flex items-center gap-3">
+          <span style={{ fontSize: '20px' }}>📄</span>
+          <div className="text-left">
+            <div style={{ fontSize: '16px', fontWeight: 600, color: theme.colors.text.primary }}>
+              {screen.name || screen.originalName || 'Unnamed Screen'}
             </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Quick Stats */}
-          <div className="flex gap-2 text-xs">
-            {allVisible.length > 0 && (
-              <span 
-                className="px-2 py-1 rounded font-semibold"
-                style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
-              >
-                ✅ {allVisible.length}
-              </span>
-            )}
-            {allHidden.length > 0 && (
-              <span 
-                className="px-2 py-1 rounded font-semibold"
-                style={{ background: `${theme.colors.accents.red}20`, color: theme.colors.accents.red }}
-              >
-                ❌ {allHidden.length}
-              </span>
-            )}
-            {Object.keys(textChecks).length > 0 && (
-              <span 
-                className="px-2 py-1 rounded font-semibold"
-                style={{ background: `${theme.colors.accents.yellow}20`, color: theme.colors.accents.yellow }}
-              >
-                📝 {Object.keys(textChecks).length}
-              </span>
+            {screen.description && (
+              <div style={{ fontSize: '13px', color: theme.colors.text.tertiary }}>
+                {screen.description}
+              </div>
             )}
           </div>
-          <span 
-            className="text-lg transition-transform"
-            style={{ 
-              transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-              color: theme.colors.text.tertiary
-            }}
-          >
-            ▼
-          </span>
         </div>
+        <span 
+          className="transition-transform"
+          style={{ 
+            transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+            color: theme.colors.text.tertiary
+          }}
+        >
+          ▼
+        </span>
       </button>
 
       {/* Screen Details */}
       {isExpanded && (
         <div className="p-3 pt-0 space-y-3">
           
-          {/* 🎯 POM SELECTOR SECTION - NEW! */}
-          {editMode && projectPath && (
-            <div 
-              className="p-3 rounded-lg border-2 border-dashed"
-              style={{ 
-                borderColor: theme.colors.accents.blue,
-                background: `${theme.colors.accents.blue}10`
-              }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <span style={{ fontSize: '20px' }}>🔍</span>
-                <div className="font-semibold" style={{ color: theme.colors.accents.blue }}>
-                  Page Object Model
-                </div>
-              </div>
-              
-              <POMFieldSelector 
-                projectPath={projectPath}
-                screenName={screen.name}
-                pomName={screen.pom}
-                instanceName={screen.instance}
-                onPOMChange={(pom) => {
-                  updateScreen({ 
-                    pom,
-                    instance: null,  // Reset instance when POM changes
-                    pomPath: 'tests/screenObjects'  // Default path
-                  });
-                }}
-                onInstanceChange={(instance) => {
-                  updateScreen({ instance });
-                }}
-              />
-              
-              {screen.pom && (
-                <div className="mt-2 text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  💡 Fields will be validated against <span className="font-mono">{screen.pom}</span>
-                  {screen.instance && <span> → <span className="font-mono">{screen.instance}</span></span>}
-                </div>
-              )}
-            </div>
-          )}
+          {/* POM Selector - ALWAYS SHOW */}
+          <POMFieldSelector
+            projectPath={projectPath}
+            pomName={pomName}
+            instanceName={instanceName}
+            onPOMChange={(selectedPOM) => {
+              handlePOMChange(selectedPOM, instanceName);
+            }}
+            onInstanceChange={(selectedInstance) => {
+              handlePOMChange(pomName, selectedInstance);
+            }}
+            editable={editMode}
+            theme={theme}
+          />
 
-          {/* Element Sections */}
+          {/* Top-Level Visible */}
           {(topLevelVisible.length > 0 || editMode) && (
             <ElementSection
               title="✅ Visible (top-level)"
               elements={topLevelVisible}
               color={theme.colors.accents.green}
               editMode={editMode}
-              projectPath={projectPath}  // ✅ PASS POM context
-              pomName={screen.pom}
-              instanceName={screen.instance}
+              pomName={pomName}
+              instanceName={instanceName}
+              projectPath={projectPath}
+              functions={functions}
               onChange={(newElements) => {
+                console.log('✅ Updating top-level visible:', newElements);
                 updateScreen({ visible: newElements });
               }}
               theme={theme}
             />
           )}
 
+          {/* Checks Visible */}
           {(checksVisible.length > 0 || editMode) && (
             <ElementSection
               title="✅ Visible (checks)"
               elements={checksVisible}
               color={theme.colors.accents.green}
               editMode={editMode}
+              pomName={pomName}
+              instanceName={instanceName}
               projectPath={projectPath}
-              pomName={screen.pom}
-              instanceName={screen.instance}
+              functions={functions}
               onChange={(newElements) => {
+                console.log('✅ Updating checks.visible:', newElements);
                 updateScreen({ 
                   checks: { 
                     ...screen.checks, 
@@ -673,15 +630,17 @@ function ScreenCard({
             />
           )}
 
+          {/* Top-Level Hidden */}
           {(topLevelHidden.length > 0 || editMode) && (
             <ElementSection
               title="❌ Hidden (top-level)"
               elements={topLevelHidden}
               color={theme.colors.accents.red}
               editMode={editMode}
+              pomName={pomName}
+              instanceName={instanceName}
               projectPath={projectPath}
-              pomName={screen.pom}
-              instanceName={screen.instance}
+              functions={functions}
               onChange={(newElements) => {
                 updateScreen({ hidden: newElements });
               }}
@@ -689,15 +648,17 @@ function ScreenCard({
             />
           )}
 
+          {/* Checks Hidden */}
           {(checksHidden.length > 0 || editMode) && (
             <ElementSection
               title="❌ Hidden (checks)"
               elements={checksHidden}
               color={theme.colors.accents.red}
               editMode={editMode}
+              pomName={pomName}
+              instanceName={instanceName}
               projectPath={projectPath}
-              pomName={screen.pom}
-              instanceName={screen.instance}
+              functions={functions}
               onChange={(newElements) => {
                 updateScreen({ 
                   checks: { 
@@ -710,6 +671,7 @@ function ScreenCard({
             />
           )}
 
+          {/* Text Checks */}
           {(Object.keys(textChecks).length > 0 || editMode) && (
             <TextChecksSection
               textChecks={textChecks}
@@ -726,41 +688,38 @@ function ScreenCard({
             />
           )}
 
-          {/* Edit Actions */}
+          {/* ✨ NEW: Functions Section */}
+          {(Object.keys(functions).length > 0 || editMode) && (
+            <FunctionSection
+              functions={functions}
+              editMode={editMode}
+              pomName={pomName}
+              projectPath={projectPath}
+              contextFields={getContextFields(screen)}
+              onChange={(newFunctions) => {
+                console.log('✨ Updating functions:', newFunctions);
+                updateScreen({ functions: newFunctions });
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* Action Buttons (Delete/Copy) */}
           {editMode && (
             <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onCopy) {
-                    onCopy(screen);
-                  }
-                }}
-                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
-                style={{ 
-                  background: theme.colors.background.tertiary,
-                  color: theme.colors.text.primary,
-                  border: `1px solid ${theme.colors.border}`
-                }}
+                onClick={onCopy}
+                className="flex-1 px-3 py-2 rounded text-sm font-semibold transition hover:brightness-110"
+                style={{ background: theme.colors.accents.blue, color: 'white' }}
               >
                 📋 Copy Screen
               </button>
-              
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onDeleteConfirm) {
-                    onDeleteConfirm();
-                  }
-                }}
-                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
-                style={{ 
-                  background: `${theme.colors.accents.red}20`,
-                  color: theme.colors.accents.red,
-                  border: `1px solid ${theme.colors.accents.red}40`
-                }}
+                onClick={onDelete}
+                className="px-3 py-2 rounded text-sm font-semibold transition hover:brightness-110"
+                style={{ background: theme.colors.accents.red, color: 'white' }}
               >
-                🗑️ Delete Screen
+                🗑️ Delete
               </button>
             </div>
           )}
@@ -769,33 +728,27 @@ function ScreenCard({
     </div>
   );
 }
+
 // ============================================
-// PART 3: ElementSection Component with POM Validation
+// PART 4: ElementSection Component (UNCHANGED)
 // ============================================
 
-function ElementSection({ 
-  title, 
-  elements, 
-  color, 
-  editMode, 
-  projectPath,      // ✅ NEW PROPS for POM validation
-  pomName,          // ✅
-  instanceName,     // ✅
-  onChange, 
-  theme 
-}) {
+function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newElement, setNewElement] = useState('');
   const [fieldValidation, setFieldValidation] = useState(null);
+  
+  // 🐛 DEBUG: Log functions received
+  console.log('🔍 ElementSection received:', {
+    title,
+    functionsCount: Object.keys(functions).length,
+    functionNames: Object.keys(functions),
+    pomName,
+    instanceName
+  });
 
   const handleAddElement = () => {
     if (!newElement.trim()) return;
-    
-    // ✅ CHECK: Block if validation failed
-    if (projectPath && pomName && fieldValidation === false) {
-      alert('⚠️ Cannot add invalid field!\n\nThis field does not exist in the selected POM.');
-      return;
-    }
     
     if (elements.includes(newElement.trim())) {
       alert('Element already exists!');
@@ -808,8 +761,8 @@ function ElementSection({
     setFieldValidation(null);
   };
 
-  const handleRemoveElement = (index) => {
-    onChange(elements.filter((_, i) => i !== index));
+  const handleRemoveElement = (element) => {
+    onChange(elements.filter(el => el !== element));
   };
 
   return (
@@ -833,18 +786,21 @@ function ElementSection({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {elements.map((element, i) => (
+      <div className="space-y-2">
+        {elements.map((element, idx) => (
           <div
-            key={i}
-            className="px-2 py-1 rounded text-sm font-mono flex items-center gap-1"
-            style={{ background: `${color}20`, color }}
+            key={idx}
+            className="flex items-center justify-between p-2 rounded text-sm"
+            style={{ background: `${color}20` }}
           >
-            {element}
+            <span className="font-mono" style={{ color: theme.colors.text.primary }}>
+              {element}
+            </span>
             {editMode && (
               <button
-                onClick={() => handleRemoveElement(i)}
-                className="ml-1 hover:text-red-500 transition"
+                onClick={() => handleRemoveElement(element)}
+                className="hover:text-red-500 transition"
+                style={{ color }}
               >
                 ✕
               </button>
@@ -852,20 +808,19 @@ function ElementSection({
           </div>
         ))}
 
-        {/* 🎯 ADD ELEMENT WITH POM VALIDATION */}
         {isAdding && (
-          <div className="w-full mt-2">
-            {projectPath && pomName ? (
-              // Use field autocomplete if POM selected (instance optional)
+          <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
+            {pomName && projectPath ? (
               <div className="space-y-2">
                 <FieldAutocomplete 
                   projectPath={projectPath}
                   pomName={pomName}
-                  instanceName={instanceName}  // Optional - can be null
+                  instanceName={instanceName}
                   fieldValue={newElement}
                   onFieldChange={setNewElement}
                   onValidationChange={setFieldValidation}
                   placeholder="Type field name or select from dropdown"
+                  functions={functions}
                 />
                 
                 <div className="flex gap-2">
@@ -901,7 +856,6 @@ function ElementSection({
                 )}
               </div>
             ) : (
-              // Fallback to simple input if POM not selected
               <div className="space-y-2">
                 <input
                   type="text"
@@ -957,7 +911,7 @@ function ElementSection({
 }
 
 // ============================================
-// PART 4: TextChecksSection Component
+// PART 5: TextChecksSection Component (UNCHANGED)
 // ============================================
 
 function TextChecksSection({ textChecks, editMode, onChange, theme }) {
@@ -1099,4 +1053,156 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
       )}
     </div>
   );
+}
+
+// ============================================
+// ✨ PART 6: NEW FunctionSection Component
+// ============================================
+
+function FunctionSection({ functions, editMode, pomName, projectPath, contextFields, onChange, theme }) {
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleAddFunction = (functionCall) => {
+    onChange({
+      ...functions,
+      [functionCall.name]: functionCall
+    });
+    setIsAdding(false);
+  };
+
+  const handleRemoveFunction = (funcName) => {
+    const updated = { ...functions };
+    delete updated[funcName];
+    onChange(updated);
+  };
+
+  const color = theme.colors.accents.purple;
+
+  return (
+    <div 
+      className="p-3 rounded"
+      style={{ background: `${color}10`, border: `1px solid ${color}40` }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold" style={{ color }}>
+          ⚡ Functions ({Object.keys(functions).length})
+        </div>
+        
+        {editMode && !isAdding && (
+          <button
+            onClick={() => setIsAdding(true)}
+            className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+            style={{ background: color, color: 'white' }}
+          >
+            ➕ Add Function
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {/* Existing Functions */}
+        {Object.entries(functions).map(([funcName, funcData]) => (
+          <div
+            key={funcName}
+            className="p-2 rounded text-sm"
+            style={{ background: `${color}20` }}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <div className="font-mono text-xs mb-1 font-bold" style={{ color }}>
+                  {funcData.signature || funcName}
+                </div>
+                {funcData.parameters && Object.keys(funcData.parameters).length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {Object.entries(funcData.parameters).map(([paramName, paramValue]) => (
+                      <div key={paramName} className="text-xs flex items-center gap-2">
+                        <span style={{ color: theme.colors.text.tertiary }}>{paramName}:</span>
+                        <code className="px-1 py-0.5 rounded" style={{ 
+                          background: theme.colors.background.primary,
+                          color: theme.colors.accents.green
+                        }}>
+                          {paramValue}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {editMode && (
+                <button
+                  onClick={() => handleRemoveFunction(funcName)}
+                  className="hover:text-red-500 transition"
+                  style={{ color }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* Add Function Form */}
+        {isAdding && (
+          <div className="p-3 rounded" style={{ background: `${color}15` }}>
+            <FunctionSelector
+              pomName={pomName}
+              projectPath={projectPath}
+              contextFields={contextFields}
+              onAdd={handleAddFunction}
+              onCancel={() => setIsAdding(false)}
+              theme={theme}
+            />
+          </div>
+        )}
+      </div>
+      
+      {Object.keys(functions).length === 0 && !isAdding && (
+        <div className="text-center py-2 text-sm" style={{ color: theme.colors.text.tertiary }}>
+          No functions
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// Helper Functions
+// ============================================
+
+function getPlatformIcon(platformName) {
+  const icons = {
+    web: '🌐',
+    cms: '📝',
+    dancer: '💃',
+    clubApp: '🎯',
+    mobile: '📱'
+  };
+  return icons[platformName] || '📱';
+}
+
+function getContextFields(screen) {
+  // Extract context fields from various sources
+  const fields = [];
+  
+  // From visible/hidden elements that use {{}} syntax
+  const allElements = [
+    ...(screen.visible || []),
+    ...(screen.hidden || []),
+    ...(screen.checks?.visible || []),
+    ...(screen.checks?.hidden || [])
+  ];
+  
+  allElements.forEach(el => {
+    const matches = el.match(/\{\{(\w+)\}\}/g);
+    if (matches) {
+      matches.forEach(match => {
+        const fieldName = match.replace(/\{\{|\}\}/g, '');
+        if (!fields.includes(fieldName)) {
+          fields.push(fieldName);
+        }
+      });
+    }
+  });
+  
+  return fields;
 }

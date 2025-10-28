@@ -21,13 +21,14 @@ export async function extractPOMStructure(filePath) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    const result = {
-      className: null,
-      instances: [],          // { name: 'oneWayTicket', className: 'OneWayTicket' }
-      directGetters: [],      // Direct getters on main class
-      constructorFields: [],  // Fields set in constructor
-      instancePaths: {}       // Flattened paths for validation
-    };
+   const result = {
+  className: null,
+  instances: [],
+  directGetters: [],
+  constructorFields: [],
+  functions: [],  // ✨ ADD THIS LINE
+  instancePaths: {}
+};
     
     traverse.default(ast, {
       ClassDeclaration(classPath) {
@@ -84,6 +85,52 @@ export async function extractPOMStructure(filePath) {
             result.directGetters.push(getterName);
             console.log(`    ✨ Getter: ${getterName}`);
           }
+
+         else if (member.type === 'ClassMethod' && member.kind === 'method') {
+  const methodName = member.key.name;
+  const isAsync = member.async || false;
+  
+  // ✨ NEW: Extract parameters
+  const params = member.params.map(param => {
+    // Handle different parameter types
+    let paramName;
+    let hasDefault = false;
+    let defaultValue = undefined;
+    
+    if (param.type === 'Identifier') {
+      // Simple param: function(name)
+      paramName = param.name;
+    } else if (param.type === 'AssignmentPattern') {
+      // Default param: function(name = "default")
+      paramName = param.left.name;
+      hasDefault = true;
+      defaultValue = extractDefaultValue(param.right);
+    } else if (param.type === 'RestElement') {
+      // Rest param: function(...args)
+      paramName = `...${param.argument.name}`;
+    } else {
+      // Other types (destructuring, etc.)
+      paramName = 'unknown';
+    }
+    
+    return {
+      name: paramName,
+      hasDefault,
+      defaultValue
+    };
+  });
+  
+  // ✨ Build signature string
+  const signature = buildMethodSignature(methodName, params);
+  
+  result.methods.push({
+    name: methodName,
+    async: isAsync,
+    parameters: params,
+    paramNames: params.map(p => p.name),  // Quick access
+    signature  // "helperLogin(username, password)"
+  });
+}
         });
       }
     });
@@ -116,9 +163,73 @@ function buildInstancePaths(result) {
     result.instancePaths['default'] = directFields;
     console.log(`  📝 Added ${directFields.length} fields to "default" instance`);
   }
+
+  if (result.functions.length > 0) {
+  console.log(`  🎯 Found ${result.functions.length} functions with parameters`);
+}
   
   // Note: Instance fields will be discovered by recursively parsing instance classes
   // This is handled by the POMDiscovery service
+}
+
+
+/**
+ * Extract default value from AST node
+ */
+function extractDefaultValue(node) {
+  if (!node) return undefined;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+      return node.value;
+    case 'NumericLiteral':
+      return node.value;
+    case 'BooleanLiteral':
+      return node.value;
+    case 'NullLiteral':
+      return null;
+    case 'ObjectExpression':
+      return {}; // Simplified - could parse full object
+    case 'ArrayExpression':
+      return []; // Simplified - could parse full array
+    default:
+      return undefined; // Complex expression
+  }
+}
+
+/**
+ * Build method signature string
+ */
+function buildMethodSignature(name, params) {
+  if (params.length === 0) {
+    return `${name}()`;
+  }
+  
+  const paramStrings = params.map(p => {
+    if (p.hasDefault && p.defaultValue !== undefined) {
+      const valueStr = typeof p.defaultValue === 'string' 
+        ? `"${p.defaultValue}"` 
+        : JSON.stringify(p.defaultValue);
+      return `${p.name} = ${valueStr}`;
+    }
+    return p.name;
+  });
+  
+  return `${name}(${paramStrings.join(', ')})`;
+}
+
+/**
+ * Build function signature string
+ */
+function buildSignature(name, params) {
+  const paramStrings = params.map(p => {
+    if (p.hasDefault && p.defaultValue !== undefined) {
+      return `${p.name} = ${JSON.stringify(p.defaultValue)}`;
+    }
+    return p.name;
+  });
+  
+  return `${name}(${paramStrings.join(', ')})`;
 }
 
 export default { extractPOMStructure };

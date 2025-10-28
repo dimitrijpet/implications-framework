@@ -71,6 +71,7 @@ router.get('/:pomName', async (req, res) => {
 
     // Get instances for this POM
     const instances = discovery.getInstances(pomName);
+    const functions = discovery.getFunctions(pomName);
 
     // ✅ NEW: Check if this is a flat POM (no instances)
     const isFlatPOM = instances.length === 0;
@@ -91,12 +92,13 @@ router.get('/:pomName', async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      pomName,
-      instances,
-      instancePaths
-    });
+  res.json({
+  success: true,
+  pomName,
+  instances,
+  instancePaths,
+  functions  // ✨ ADD THIS
+});
 
   } catch (error) {
     console.error('❌ Failed to get POM details:', error);

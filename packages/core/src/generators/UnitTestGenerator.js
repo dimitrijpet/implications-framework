@@ -5,11 +5,14 @@ import fs from 'fs';
 import TemplateEngine from './TemplateEngine.js';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
+import { prepareValidationScreens, pascalCaseHelper } from './templateHelpers.js';
+import Handlebars from 'handlebars';
 
 // Create require for loading user files dynamically
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
+Handlebars.registerHelper('pascalCase', pascalCaseHelper);
 
 /**
  * UnitTestGenerator
@@ -422,7 +425,27 @@ class UnitTestGenerator {
     const triggeredByAction = this._extractTriggeredByAction(metadata);
     
     // âœ¨ FIX #6: Extract UI validation screens
-    const uiValidation = this._extractUIValidation(metadata, platform);
+    const uiValidation = {
+  hasValidation: false,
+  screens: []
+};
+
+if (metadata.mirrorsOn?.UI) {
+  const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+  
+  if (metadata.mirrorsOn.UI[platformKey]) {
+    const validationScreens = prepareValidationScreens(
+      metadata.mirrorsOn.UI,
+      platformKey,
+      {} // testData resolved at runtime
+    );
+    
+    uiValidation.hasValidation = validationScreens.length > 0;
+    uiValidation.screens = validationScreens;
+    
+    console.log(`   ✅ Function-aware validation: ${validationScreens.length} screens`);
+  }
+}
     
     // Build context
     const context = {
@@ -438,7 +461,8 @@ class UnitTestGenerator {
       isMobile,
       
       // Paths (âœ¨ SMART - calculated based on file location)
- testContextPath: paths.testContext,
+testContextPath: paths.testContext,
+expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
 testPlannerPath: paths.testPlanner,
 testSetupPath: paths.testSetup,
       

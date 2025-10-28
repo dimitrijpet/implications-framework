@@ -124,24 +124,31 @@ class TemplateEngine {
       if (!str) return '';
       return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
     });
-    
-    /**
-     * camelCase to snake_case
-     * Usage: {{snakeCase "helloWorld"}} â†’ "hello_world"
-     */
     hbs.registerHelper('snakeCase', (str) => {
-      if (!str) return '';
-      return str.replace(/([A-Z])/g, '_$1').toLowerCase();
-    });
-    
-    /**
-     * Join array with separator
-     * Usage: {{join array ", "}}
-     */
-    hbs.registerHelper('join', (array, separator) => {
-      if (!Array.isArray(array)) return '';
-      return array.join(separator || ', ');
-    });
+  if (!str) return '';
+  return str.replace(/([A-Z])/g, '_$1').toLowerCase();
+});
+
+/**
+ * Convert to PascalCase
+ * Usage: {{pascalCase "btn_calendar_day"}} → "BtnCalendarDay"
+ */
+hbs.registerHelper('pascalCase', (str) => {
+  if (!str) return '';
+  return str
+    .split(/[-_.\s]/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join('');
+});
+
+/**
+ * Join array with separator
+ * Usage: {{join array ", "}}
+ */
+hbs.registerHelper('join', (array, separator) => {
+  if (!Array.isArray(array)) return '';
+  return array.join(separator || ', ');
+});
     
     /**
      * Split string by separator

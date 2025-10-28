@@ -9,7 +9,7 @@
  * - Real-time validation
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { validateScreenName, suggestCopyName } from '../../utils/screenValidation';
 
 export default function CopyScreenDialog({
@@ -28,6 +28,12 @@ export default function CopyScreenDialog({
   const [validation, setValidation] = useState({ valid: false, errors: [] });
   const [touched, setTouched] = useState(false);
 
+  // ✅ FIX: Memoize allScreens length to prevent infinite loop
+  const allScreensCount = useMemo(() => allScreens.length, [allScreens.length]);
+  
+  // ✅ FIX: Memoize screen name to prevent infinite loop
+  const screenName = screen?.originalName;
+
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen && screen) {
@@ -43,7 +49,7 @@ export default function CopyScreenDialog({
       );
       setNewName(suggested);
     }
-  }, [isOpen, screen, sourcePlatformName, allScreens]);
+  }, [isOpen, screenName, sourcePlatformName]); // ✅ FIX: Use screenName, not screen
 
   // Validate when inputs change
   useEffect(() => {
@@ -63,7 +69,7 @@ export default function CopyScreenDialog({
 
     const result = validateScreenName(newName, targetPlatformName, allScreens);
     setValidation(result);
-  }, [newName, copyMode, targetPlatform, sourcePlatformName, allScreens]);
+  }, [newName, copyMode, targetPlatform, sourcePlatformName, allScreensCount]); // ✅ FIX: Use count, not array
 
   const handleCopyModeChange = (mode) => {
     setCopyMode(mode);
@@ -102,9 +108,12 @@ export default function CopyScreenDialog({
         handleCancel();
       }
     };
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [isOpen]);
+    
+    if (isOpen) {
+      window.addEventListener('keydown', handleEscape);
+      return () => window.removeEventListener('keydown', handleEscape);
+    }
+  }, [isOpen]); // ✅ FIX: Only depend on isOpen
 
   if (!isOpen || !screen) return null;
 

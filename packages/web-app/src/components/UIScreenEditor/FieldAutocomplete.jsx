@@ -1,11 +1,16 @@
 // packages/web-app/src/components/UIScreenEditor/FieldAutocomplete.jsx
+// ✨ ENHANCED: Now shows functions alongside POM fields!
 
 import { useState, useEffect } from 'react';
 import { ChevronDown, AlertCircle, CheckCircle, Search } from 'lucide-react';
 
 /**
- * Simple field autocomplete - just shows fields, no POM/Instance selection
- * Used in ElementSection when POM is already selected at screen level
+ * Field Autocomplete with POM fields + Functions support
+ * 
+ * Shows:
+ * - POM fields (from selected POM/instance)
+ * - Functions (from screen.functions)
+ * - Visual distinction (⚡ for functions)
  */
 export default function FieldAutocomplete({ 
   projectPath,
@@ -14,22 +19,25 @@ export default function FieldAutocomplete({
   fieldValue,
   onFieldChange,
   onValidationChange,
-  placeholder = "Start typing or select field"
+  placeholder = "Type field name or select from dropdown",
+  functions = {}  // ✨ NEW: Functions from screen
 }) {
+  const [pomDetails, setPomDetails] = useState(null);
   const [availableFields, setAvailableFields] = useState([]);
   const [isValid, setIsValid] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch available fields when POM changes
+  // Fetch POM details when POM selected
   useEffect(() => {
     if (!projectPath || !pomName) {
+      setPomDetails(null);
       setAvailableFields([]);
       return;
     }
     
-    const fetchFields = async () => {
+    const fetchPOMDetails = async () => {
       setLoading(true);
       try {
         const response = await fetch(
@@ -38,30 +46,58 @@ export default function FieldAutocomplete({
         const data = await response.json();
         
         if (data.success) {
-          if (instanceName && data.instancePaths[instanceName]) {
-            // Filter by instance
-            setAvailableFields(data.instancePaths[instanceName]);
-          } else {
-            // Show all fields
-            const allFields = new Set();
-            Object.values(data.instancePaths || {}).forEach(paths => {
-              paths.forEach(path => allFields.add(path));
-            });
-            setAvailableFields(Array.from(allFields).sort());
-          }
+          setPomDetails(data);
         }
       } catch (error) {
-        console.error('Failed to fetch fields:', error);
-        setAvailableFields([]);
+        console.error('Failed to fetch POM details:', error);
       } finally {
         setLoading(false);
       }
     };
     
-    fetchFields();
-  }, [projectPath, pomName, instanceName]);
+    fetchPOMDetails();
+  }, [projectPath, pomName]);
 
-  // Validate field
+  // ✨ ENHANCED: Merge POM fields + function names
+  useEffect(() => {
+    if (!pomDetails) {
+      setAvailableFields([]);
+      return;
+    }
+    
+    // Get POM fields
+    let pomFields = [];
+    if (instanceName && pomDetails.instancePaths[instanceName]) {
+      pomFields = pomDetails.instancePaths[instanceName];
+    } else {
+      // No instance selected - show ALL fields
+      const allFields = new Set();
+      Object.values(pomDetails.instancePaths || {}).forEach(paths => {
+        paths.forEach(path => allFields.add(path));
+      });
+      pomFields = Array.from(allFields).sort();
+    }
+    
+    // ✨ Add function names
+    const functionNames = Object.keys(functions);
+    
+    // 🐛 DEBUG: Log what we're merging
+    console.log('🔍 FieldAutocomplete merging:', {
+      pomFields: pomFields.length,
+      functionNames: functionNames.length,
+      functions: functionNames,
+      instanceName
+    });
+    
+    // Combine (functions first for prominence)
+    const allFields = [...functionNames, ...pomFields];
+    
+    setAvailableFields(allFields);
+    
+    console.log('📋 Available fields:', allFields.length, '(', functionNames.length, 'functions +', pomFields.length, 'POM fields)');
+  }, [pomDetails, instanceName, functions]);
+
+  // Validate field when it changes
   useEffect(() => {
     if (!fieldValue || !availableFields.length) {
       setIsValid(null);
@@ -78,128 +114,140 @@ export default function FieldAutocomplete({
   }, [fieldValue, availableFields, onValidationChange]);
 
   // Filter fields based on search
-  const filteredFields = searchTerm 
-    ? availableFields.filter(field =>
-        field.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : availableFields;
+  const filteredFields = availableFields.filter(field =>
+    field.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-  if (!pomName) {
-    return (
-      <input
-        type="text"
-        value={fieldValue || ''}
-        onChange={(e) => onFieldChange(e.target.value)}
-        placeholder="Select POM first"
-        disabled
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 cursor-not-allowed"
-      />
-    );
-  }
+  // Check if a field is a function
+  const isFunction = (field) => Object.keys(functions).includes(field);
 
   return (
-    <div className="relative">
-      {/* Input with validation indicator */}
+    <div className="space-y-2">
       <div className="relative">
-        <input
-          type="text"
-          value={fieldValue || ''}
-          onChange={(e) => {
-            onFieldChange(e.target.value);
-            setSearchTerm(e.target.value);
-            setShowDropdown(true);
-          }}
-          onFocus={() => setShowDropdown(true)}
-          onBlur={() => {
-            // Delay to allow click on dropdown items
-            setTimeout(() => setShowDropdown(false), 200);
-          }}
-          placeholder={placeholder}
-          className={`w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-            isValid === false ? 'border-amber-400 bg-amber-50' : 'border-gray-300'
-          }`}
-        />
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Field or Function
+          {isValid !== null && (
+            <span className="ml-2">
+              {isValid ? (
+                <span className="inline-flex items-center text-green-600 text-xs">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  Valid
+                </span>
+              ) : (
+                <span className="inline-flex items-center text-amber-600 text-xs">
+                  <AlertCircle className="w-3 h-3 mr-1" />
+                  Not found
+                </span>
+              )}
+            </span>
+          )}
+        </label>
         
-        {/* Validation icon */}
-        <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-1">
-          {loading && (
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          )}
-          {!loading && isValid === true && (
-            <CheckCircle className="w-4 h-4 text-green-600" />
-          )}
-          {!loading && isValid === false && fieldValue && (
-            <AlertCircle className="w-4 h-4 text-amber-600" />
-          )}
-          {!loading && availableFields.length > 0 && !fieldValue && (
-            <ChevronDown className="w-4 h-4 text-gray-400" />
-          )}
+        <div className="relative">
+          <input
+            type="text"
+            value={fieldValue || ''}
+            onChange={(e) => {
+              onFieldChange(e.target.value);
+              setSearchTerm(e.target.value);
+              setShowDropdown(true);
+            }}
+            onFocus={() => setShowDropdown(true)}
+            onBlur={() => {
+              setTimeout(() => setShowDropdown(false), 200);
+            }}
+            placeholder={placeholder}
+            className={`w-full px-3 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+              isValid === false ? 'border-amber-400 bg-amber-50' : 'border-gray-300'
+            }`}
+          />
+          
+          <ChevronDown 
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+          />
         </div>
+
+        {/* Autocomplete Dropdown */}
+        {showDropdown && filteredFields.length > 0 && (
+          <>
+            <div 
+              className="fixed inset-0 z-10"
+              onClick={() => setShowDropdown(false)}
+            />
+            <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+              <div className="p-2 border-b border-gray-100">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search..."
+                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+              </div>
+              
+              <div className="py-1">
+                {filteredFields.map(field => {
+                  const isFn = isFunction(field);
+                  return (
+                    <button
+                      key={field}
+                      type="button"  
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('✅ Field selected:', field, isFn ? '(function)' : '(field)');
+                        onFieldChange(field);
+                        setSearchTerm('');
+                        setShowDropdown(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 focus:bg-blue-50 focus:outline-none transition-colors flex items-center gap-2"
+                    >
+                      {isFn && (
+                        <span className="text-amber-500 font-bold" title="Function">⚡</span>
+                      )}
+                      <span className={`font-mono ${isFn ? 'text-amber-700 font-semibold' : 'text-gray-900'}`}>
+                        {field}
+                      </span>
+                      {isFn && (
+                        <span className="ml-auto text-xs text-amber-600 italic">
+                          function
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              {filteredFields.length === 0 && (
+                <div className="px-3 py-6 text-center text-sm text-gray-500">
+                  No fields match "{searchTerm}"
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Autocomplete Dropdown */}
-      {showDropdown && filteredFields.length > 0 && (
-        <>
-          <div 
-            className="fixed inset-0 z-10"
-            onClick={() => setShowDropdown(false)}
-          />
-          <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
-            <div className="p-2 border-b border-gray-100">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search fields..."
-                  className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </div>
-            </div>
-            
-            <div className="py-1">
-              {filteredFields.map(field => (
-                <button
-                  key={field}
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('✅ Field selected:', field);
-                    onFieldChange(field);
-                    setSearchTerm('');
-                    setShowDropdown(false);
-                  }}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 focus:bg-blue-50 focus:outline-none transition-colors"
-                >
-                  <span className="font-mono text-gray-900">{field}</span>
-                </button>
-              ))}
-            </div>
-            
-            {filteredFields.length === 0 && searchTerm && (
-              <div className="px-3 py-4 text-center text-sm text-gray-500">
-                No fields match "{searchTerm}"
-              </div>
-            )}
-          </div>
-        </>
-      )}
-      
-      {/* Field count */}
-      {availableFields.length > 0 && !showDropdown && (
-        <div className="mt-1 text-xs text-gray-500">
-          {availableFields.length} fields available
+      {/* Show field count */}
+      {availableFields.length > 0 && (
+        <div className="text-xs text-gray-500 flex items-center gap-2">
+          <span>{availableFields.length} available</span>
+          {Object.keys(functions).length > 0 && (
+            <span className="text-amber-600">
+              ({Object.keys(functions).length} ⚡ functions)
+            </span>
+          )}
         </div>
       )}
-      
-      {/* Validation message */}
-      {isValid === false && fieldValue && (
-        <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
-          <AlertCircle className="w-3 h-3" />
-          Field not found in {pomName}{instanceName && `.${instanceName}`}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="text-sm text-gray-500 animate-pulse">
+          Loading fields...
         </div>
       )}
     </div>
