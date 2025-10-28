@@ -646,8 +646,15 @@ _findImplicationFile(status, currentFilePath) {
   console.log(`   hasEntityLogic: ${hasEntityLogic}`);
     const entityName = this._inferEntityName(metadata);
     
-    // Delta fields (from entry: assign)
-    const deltaFields = this._extractDeltaFields(metadata.entry, targetStatus);
+
+    
+   // Line 649-651 (BEFORE calling _extractDeltaFields)
+console.log('\n🐛 DEBUG Delta Extraction:');
+console.log(`   metadata.entry:`, metadata.entry);
+console.log(`   typeof:`, typeof metadata.entry);
+const deltaFields = this._extractDeltaFields(metadata.entry, targetStatus);
+console.log(`   deltaFields:`, deltaFields);
+
     const hasDeltaLogic = deltaFields.length > 0;
     
     // Action details

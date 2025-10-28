@@ -1,0 +1,280 @@
+// packages/core/src/generators/UtilsGenerator.js
+
+import fs from 'fs-extra';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Handlebars from 'handlebars';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * UtilsGenerator
+ * 
+ * Generates utility files (TestContext, TestPlanner) for guest projects.
+ * 
+ * Features:
+ * - Generates TestContext.js with delta file system
+ * - Generates TestPlanner.js with auto-chaining
+ * - Generates ExpectImplication.js for validation
+ * - Creates utils directory if needed
+ * - Backs up existing files before overwriting
+ */
+class UtilsGenerator {
+  
+  constructor(options = {}) {
+    this.options = {
+      templatesDir: options.templatesDir || path.join(__dirname, 'templates'),
+      outputDir: options.outputDir || null,
+      backup: options.backup !== false, // Backup by default
+      ...options
+    };
+  }
+  
+  /**
+   * Generate all utility files
+   * 
+   * @param {object} options - Generation options
+   * @param {string} options.projectPath - Path to guest project
+   * @param {boolean} options.preview - Return code without writing files
+   * @returns {object} { files: [...] }
+   */
+  generateAll(options = {}) {
+    const {
+      projectPath,
+      preview = false
+    } = options;
+    
+    console.log('\n🛠️  UtilsGenerator.generateAll()');
+    console.log(`   Project: ${projectPath}`);
+    console.log(`   Preview: ${preview}`);
+    
+    const results = {
+      files: []
+    };
+    
+    // Generate TestContext
+    const testContextResult = this.generateTestContext({
+      projectPath,
+      preview
+    });
+    results.files.push(testContextResult);
+    
+    // Generate TestPlanner
+    const testPlannerResult = this.generateTestPlanner({
+      projectPath,
+      preview
+    });
+    results.files.push(testPlannerResult);
+    
+    // Generate ExpectImplication (if template exists)
+    try {
+      const expectImplicationResult = this.generateExpectImplication({
+        projectPath,
+        preview
+      });
+      results.files.push(expectImplicationResult);
+    } catch (error) {
+      console.warn('   ⚠️  ExpectImplication template not found, skipping');
+    }
+    
+    console.log(`\n   ✅ Generated ${results.files.length} utility file(s)\n`);
+    
+    return results;
+  }
+  
+  /**
+   * Generate TestContext.js
+   */
+  generateTestContext(options = {}) {
+    const { projectPath, preview = false } = options;
+    
+    console.log('\n   🔧 Generating TestContext.js');
+    
+    // Load and compile template
+    const templatePath = path.join(this.options.templatesDir, 'TestContext.hbs');
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found: ${templatePath}`);
+    }
+    
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource, { noEscape: true });
+    
+    const context = {
+      outputPath: 'tests/ai-testing/utils/TestContext.js',
+      timestamp: new Date().toISOString()
+    };
+    
+    const code = template(context);
+    
+    const fileName = 'TestContext.js';
+    const outputDir = path.join(projectPath, 'tests/ai-testing/utils');
+    const filePath = path.join(outputDir, fileName);
+    
+    if (!preview) {
+      // Create directory if needed
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log(`      📁 Created directory: ${outputDir}`);
+      }
+      
+      // Backup existing file
+      if (this.options.backup && fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.backup`;
+        fs.copyFileSync(filePath, backupPath);
+        console.log(`      💾 Backed up existing file to: ${path.basename(backupPath)}`);
+      }
+      
+      // Write file
+      fs.writeFileSync(filePath, code);
+      console.log(`      ✅ Written: ${filePath}`);
+    }
+    
+    return {
+      type: 'TestContext',
+      fileName,
+      filePath: preview ? null : filePath,
+      code,
+      size: code.length
+    };
+  }
+  
+  /**
+   * Generate TestPlanner.js
+   */
+  generateTestPlanner(options = {}) {
+    const { projectPath, preview = false } = options;
+    
+    console.log('\n   🔧 Generating TestPlanner.js');
+    
+    // Load and compile template
+    const templatePath = path.join(this.options.templatesDir, 'TestPlanner.hbs');
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found: ${templatePath}`);
+    }
+    
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource, { noEscape: true });
+    
+    const context = {
+      outputPath: 'tests/ai-testing/utils/TestPlanner.js',
+      timestamp: new Date().toISOString()
+    };
+    
+    const code = template(context);
+    
+    const fileName = 'TestPlanner.js';
+    const outputDir = path.join(projectPath, 'tests/ai-testing/utils');
+    const filePath = path.join(outputDir, fileName);
+    
+    if (!preview) {
+      // Create directory if needed
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log(`      📁 Created directory: ${outputDir}`);
+      }
+      
+      // Backup existing file
+      if (this.options.backup && fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.backup`;
+        fs.copyFileSync(filePath, backupPath);
+        console.log(`      💾 Backed up existing file to: ${path.basename(backupPath)}`);
+      }
+      
+      // Write file
+      fs.writeFileSync(filePath, code);
+      console.log(`      ✅ Written: ${filePath}`);
+    }
+    
+    return {
+      type: 'TestPlanner',
+      fileName,
+      filePath: preview ? null : filePath,
+      code,
+      size: code.length
+    };
+  }
+  
+  /**
+   * Generate ExpectImplication.js
+   */
+  generateExpectImplication(options = {}) {
+    const { projectPath, preview = false } = options;
+    
+    console.log('\n   🔧 Generating ExpectImplication.js');
+    
+    // Load and compile template
+    const templatePath = path.join(this.options.templatesDir, 'ExpectImplication.hbs');
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found: ${templatePath}`);
+    }
+    
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource, { noEscape: true });
+    
+    const context = {
+      outputPath: 'tests/ai-testing/utils/ExpectImplication.js',
+      timestamp: new Date().toISOString()
+    };
+    
+    const code = template(context);
+    
+    const fileName = 'ExpectImplication.js';
+    const outputDir = path.join(projectPath, 'tests/ai-testing/utils');
+    const filePath = path.join(outputDir, fileName);
+    
+    if (!preview) {
+      // Create directory if needed
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log(`      📁 Created directory: ${outputDir}`);
+      }
+      
+      // Backup existing file
+      if (this.options.backup && fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.backup`;
+        fs.copyFileSync(filePath, backupPath);
+        console.log(`      💾 Backed up existing file to: ${path.basename(backupPath)}`);
+      }
+      
+      // Write file
+      fs.writeFileSync(filePath, code);
+      console.log(`      ✅ Written: ${filePath}`);
+    }
+    
+    return {
+      type: 'ExpectImplication',
+      fileName,
+      filePath: preview ? null : filePath,
+      code,
+      size: code.length
+    };
+  }
+  
+  /**
+   * Generate single utility file
+   * 
+   * @param {string} utilName - 'TestContext' | 'TestPlanner' | 'ExpectImplication'
+   * @param {object} options - Generation options
+   */
+  generate(utilName, options = {}) {
+    const methodMap = {
+      'TestContext': 'generateTestContext',
+      'TestPlanner': 'generateTestPlanner',
+      'ExpectImplication': 'generateExpectImplication'
+    };
+    
+    const method = methodMap[utilName];
+    
+    if (!method) {
+      throw new Error(`Unknown utility: ${utilName}. Valid options: ${Object.keys(methodMap).join(', ')}`);
+    }
+    
+    return this[method](options);
+  }
+}
+
+export default UtilsGenerator;

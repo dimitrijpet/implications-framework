@@ -3,6 +3,7 @@
 import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
+import UtilsGenerator from '../../../core/src/generators/UtilsGenerator.js';
 
 const router = express.Router();
 
@@ -139,12 +140,31 @@ async function initializeProject(projectPath, force) {
     console.log(`      ✅ ${dir}/`);
   }
   
-  // 2. Create TestContext.js
-  console.log('   📝 Creating TestContext.js...');
-  const testContextPath = path.join(projectPath, 'tests/ai-testing/utils/TestContext.js');
+ // Replace lines ~142-161 with this:
+console.log('   🛠️  Generating utility files...');
+
+try {
+  const generator = new UtilsGenerator({ backup: false });
+  const results = generator.generateAll({
+    projectPath,
+    preview: false
+  });
+  
+  results.files.forEach(file => {
+    createdFiles.push(file.filePath.replace(projectPath + '/', ''));
+    console.log(`      ✅ ${file.type}.js`);
+  });
+  
+} catch (error) {
+  console.error('   ⚠️  UtilsGenerator failed, using templates:', error.message);
+  
+  // Fallback to old method
   await fs.writeFile(testContextPath, getTestContextTemplate());
   createdFiles.push('tests/ai-testing/utils/TestContext.js');
-  console.log(`      ✅ TestContext.js`);
+  
+  await fs.writeFile(testPlannerPath, getTestPlannerTemplate());
+  createdFiles.push('tests/ai-testing/utils/TestPlanner.js');
+}
   
   // 3. Create ExpectImplication.js (✅ NOW WITH REAL IMPLEMENTATION!)
   console.log('   📝 Creating ExpectImplication.js...');
@@ -153,12 +173,6 @@ async function initializeProject(projectPath, force) {
   createdFiles.push('tests/ai-testing/utils/ExpectImplication.js');
   console.log(`      ✅ ExpectImplication.js`);
   
-  // 4. Create TestPlanner.js
-  console.log('   📝 Creating TestPlanner.js...');
-  const testPlannerPath = path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js');
-  await fs.writeFile(testPlannerPath, getTestPlannerTemplate());
-  createdFiles.push('tests/ai-testing/utils/TestPlanner.js');
-  console.log(`      ✅ TestPlanner.js`);
   
   // 5. Create ai-testing.config.js
   console.log('   ⚙️  Creating ai-testing.config.js...');

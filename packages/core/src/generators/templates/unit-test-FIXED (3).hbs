@@ -65,17 +65,13 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   {{#if isPlaywright}}
   const currentUrl = page.url();
-  // ✅ Check if already on app (adjust pattern for your domain)
-  const needsNavigation = !currentUrl || 
-    (!currentUrl.includes('voyages.leclerc') && 
-     !currentUrl.includes('localhost') &&
-     !currentUrl.includes('127.0.0.1'));
+  const needsNavigation = !currentUrl || !currentUrl.includes('YOUR_APP_URL_PATTERN');
   
   if (needsNavigation) {
     console.log('🚀 Navigating to application...');
     await TestSetup.navigateToApp(page, ctx.config);
   } else {
-    console.log('✅ Already on application, skipping navigation');
+    console.log('✅ Already on correct page, skipping navigation');
   }
   {{/if}}
   
