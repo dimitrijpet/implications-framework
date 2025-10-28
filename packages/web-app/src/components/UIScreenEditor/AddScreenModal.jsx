@@ -53,25 +53,28 @@ export default function AddScreenModal({
     setTouched(true);
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    
-    if (!validation.valid) {
-      setTouched(true);
-      return;
-    }
+const handleSubmit = (e) => {
+  e.preventDefault();
+  
+  if (!validation.valid) {
+    setTouched(true);
+    return;
+  }
 
-    // Create screen from template
-    const newScreen = createScreenFromTemplate(
-      selectedTemplate,
-      screenName.trim(),
-      description.trim()
-    );
+  const trimmedName = screenName.trim();
 
-    onAdd(platformName, newScreen);
-    onClose();
-  };
+  // Create screen from template
+  const newScreen = createScreenFromTemplate(
+    selectedTemplate,
+    trimmedName,
+    description.trim()
+  );
 
+  // ✅ FIX: Pass screen name as second parameter
+  console.log('✅ AddScreenModal: Adding screen', trimmedName, 'to platform', platformName);
+  onAdd(platformName, trimmedName, newScreen);
+  onClose();
+};
   const handleCancel = () => {
     onClose();
   };

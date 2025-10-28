@@ -102,95 +102,40 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
   {{#if isPlaywright}}
   await TestSetup.navigateToApp(page, ctx.config);
   {{/if}}
+  
   {{#if hasActionDetails}}
-// ═══════════════════════════════════════════════════════════
-// 🎬 ACTION LOGIC - Generated from actionDetails
-// ═══════════════════════════════════════════════════════════
-
-{{#if actionDetails.imports}}
-// Initialize screen objects
-{{#each actionDetails.imports}}
-const {{className}} = require('{{relativePath}}');
-const {{varName}} = {{constructor}};
-{{/each}}
-
-{{/if}}
-console.log('\n🎬 Executing action: {{actionDetails.description}}');
-
-{{#each actionDetails.steps}}
-// Step {{addOne @index}}: {{description}}
-{{#if code}}
-{{code}}
-{{else if method}}
-{{#if instance}}
-await {{instance}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
-{{else}}
-await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
-{{/if}}
-{{/if}}
-
-{{/each}}
-
-console.log('✅ Action steps completed');
-{{else}}
-  // ═══════════════════════════════════════════════════════════
-  // 🎬 ACTION LOGIC - TODO: Implement State Transition
-  // ═══════════════════════════════════════════════════════════
-  //
-  {{#if transitionInfo}}
-  // This test induces the transition: '{{transitionInfo.fromState}}' → '{{transitionInfo.toState}}'
-  //
-  {{#if transitionInfo.event}}
-  // Event: {{transitionInfo.event}}
+  console.log('\n🎬 Executing action: {{actionDetails.description}}');
+  
+  {{#each actionDetails.steps}}
+  // Step {{@index}}: {{description}}
+  {{#if code}}
+  {{code}}
+  {{else if method}}
+  {{#if screen}}
+  await {{../appObjectName}}.{{screen}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{else}}
+  await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
   {{/if}}
-  // From State: {{transitionInfo.fromState}}
-  // To State: {{transitionInfo.toState}}
-  //
   {{/if}}
-  {{#if suggestedScreens}}
-  // ──────────────────────────────────────────────────────────
-  // 💡 Suggested Implementation:
-  // ──────────────────────────────────────────────────────────
-  //
-  // Based on mirrorsOn.UI.{{platform}}, you'll need these screen objects:
-  //
-  {{#each suggestedScreens}}
-  //   {{addOne @index}}. Initialize {{className}}:
-  //      const {{className}} = require('../../screenObjects/{{file}}.js');
-  //      const {{instanceName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
-  //
+  
   {{/each}}
-  //   Then perform actions to trigger the state change:
-  //      // TODO: Add your action logic here
-  //      // Example:
+  {{else}}
   {{#if navigationExample}}
   {{{navigationExample}}}
+  {{else}}
+  // await navigateToScreen();
   {{/if}}
+  
   {{#if actionExample}}
   {{{actionExample}}}
   {{else}}
   {{#if triggerButton}}
-  //      await page.getByRole('button', { name: '{{triggerButton}}' }).click();
+  // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
   {{/if}}
   {{/if}}
-  //
-  {{/if}}
-  // ──────────────────────────────────────────────────────────
-  // 📝 Once implemented, update {{implClassName}}.js:
-  // ──────────────────────────────────────────────────────────
-  //
-  //   static triggeredBy = [{
-  //     description: "{{#if transitionInfo.event}}{{transitionInfo.event}}{{else}}Trigger state change{{/if}}",
-  //     platform: "{{platform}}",
-  //     action: async (testDataPath, options = {}) => {
-  //       const { {{actionName}} } = require('./{{testFileName}}');
-  //       return {{actionName}}(testDataPath, options);
-  //     }
-  //   }];
-  //
-  // ═══════════════════════════════════════════════════════════
   
-  console.log('   ⚠️  Action logic not implemented - see comments above');
+  console.log('   ⚠️  TODO: Implement action logic');
+  console.log('   📝 Add your navigation and action code here');
   {{/if}}
   
   console.log('\n✅ Action completed');

@@ -304,6 +304,14 @@ hbs.registerHelper('join', (array, separator) => {
     hbs.registerHelper('inc', (value) => {
       return (value || 0) + 1;
     });
+
+    /**
+ * Add one (for 1-indexed lists)
+ * Usage: {{addOne @index}} → index + 1
+ */
+hbs.registerHelper('addOne', (value) => {
+  return parseInt(value || 0) + 1;
+});
     
     /**
      * Decrement

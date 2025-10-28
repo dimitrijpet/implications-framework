@@ -102,37 +102,25 @@ export const {{actionName}} = async (testDataPath, options = {}) => {
   {{#if isPlaywright}}
   await TestSetup.navigateToApp(page, ctx.config);
   {{/if}}
+  
   {{#if hasActionDetails}}
-// ═══════════════════════════════════════════════════════════
-// 🎬 ACTION LOGIC - Generated from actionDetails
-// ═══════════════════════════════════════════════════════════
-
-{{#if actionDetails.imports}}
-// Initialize screen objects
-{{#each actionDetails.imports}}
-const {{className}} = require('{{relativePath}}');
-const {{varName}} = {{constructor}};
-{{/each}}
-
-{{/if}}
-console.log('\n🎬 Executing action: {{actionDetails.description}}');
-
-{{#each actionDetails.steps}}
-// Step {{addOne @index}}: {{description}}
-{{#if code}}
-{{code}}
-{{else if method}}
-{{#if instance}}
-await {{instance}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
-{{else}}
-await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
-{{/if}}
-{{/if}}
-
-{{/each}}
-
-console.log('✅ Action steps completed');
-{{else}}
+  // ✨ Generated action steps:
+  console.log('\n🎬 Executing action: {{actionDetails.description}}');
+  
+  {{#each actionDetails.steps}}
+  // Step {{@index}}: {{description}}
+  {{#if code}}
+  {{code}}
+  {{else if method}}
+  {{#if screen}}
+  await {{../appObjectName}}.{{screen}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{else}}
+  await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{/if}}
+  {{/if}}
+  
+  {{/each}}
+  {{else}}
   // ═══════════════════════════════════════════════════════════
   // 🎬 ACTION LOGIC - TODO: Implement State Transition
   // ═══════════════════════════════════════════════════════════

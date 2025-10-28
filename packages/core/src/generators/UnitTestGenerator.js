@@ -334,11 +334,22 @@ class UnitTestGenerator {
       stateName: stateName
     };
     
-    // Filter setup for this platform
-    metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
-    
-    return metadata;
+    // ✅ NOW process actionDetails AFTER metadata is created
+if (metadata.actionDetails) {
+  metadata.actionDetails = this._processActionDetailsImports(
+    metadata.actionDetails,
+    this.config?.screenObjectsPath,
+    this.implFilePath
+  );
+}
+
+// Filter setup for this platform
+metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
+
+return metadata;
   }
+
+  
   
   /**
    * Find the previous state by looking at incoming transitions
@@ -423,6 +434,19 @@ class UnitTestGenerator {
     
     // âœ¨ FIX #5: Extract action from triggeredBy
     const triggeredByAction = this._extractTriggeredByAction(metadata);
+    const transitionInfo = this._extractTransitionInfo(metadata, targetStatus);
+const suggestedScreens = this._extractSuggestedScreens(
+  metadata.mirrorsOn, 
+  platform,
+  this.implFilePath  // ✅ Use this.implFilePath (it's already set on line 143)
+);
+
+// Generate smart TODO (not used in template, can remove later)
+const smartTODOComment = this._generateSmartTODO(
+  transitionInfo,
+  suggestedScreens,
+  { implClassName, actionName, testFileName, platform }
+);
     
     // âœ¨ FIX #6: Extract UI validation screens
     const uiValidation = {
@@ -491,6 +515,9 @@ testSetupPath: paths.testSetup,
       navigationExample: this._generateNavigationExample(platform, metadata),
       actionExample: this._generateActionExample(metadata, platform),
       appObjectName: isMobile ? 'app' : 'page',
+   smartTODOComment,
+transitionInfo,
+suggestedScreens, 
       
       // âœ¨ FIX #5: Extracted action from triggeredBy
       hasTriggeredByAction: triggeredByAction.hasAction,
@@ -508,6 +535,7 @@ testSetupPath: paths.testSetup,
       // âœ¨ FIX #6: UI Validation screens
       hasUIValidation: uiValidation.hasValidation,
       validationScreens: uiValidation.screens,
+      useExpectImplication: true,
       
       // Test cases
       testCases,
@@ -1095,6 +1123,243 @@ return {
     
     return result;
   }
+
+  _extractTransitionInfo(metadata, targetStatus) {
+  const info = {
+    event: null,
+    fromState: metadata.previousStatus || 'unknown',
+    toState: targetStatus,
+    screens: []
+  };
+  
+  // Try to find event name from xstateConfig
+  // Look for transitions TO this state
+  if (metadata.xstateConfig && metadata.xstateConfig.states) {
+    for (const [stateName, stateConfig] of Object.entries(metadata.xstateConfig.states)) {
+      if (stateConfig.on) {
+        for (const [eventName, targetState] of Object.entries(stateConfig.on)) {
+          if (targetState === targetStatus || targetState.target === targetStatus) {
+            info.event = eventName;
+            info.fromState = stateName;
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  return info;
+}
+
+_extractScreenObjects(mirrorsOn, platform) {
+  const screens = [];
+  
+  if (!mirrorsOn || !mirrorsOn.UI) return screens;
+  
+  const platformData = mirrorsOn.UI[platform] || mirrorsOn.UI.web;
+  
+  if (!platformData) return screens;
+  
+  // Extract screen references
+  for (const [screenKey, screenDefs] of Object.entries(platformData)) {
+    const def = Array.isArray(screenDefs) ? screenDefs[0] : screenDefs;
+    
+    if (def.screen) {
+      screens.push({
+        name: screenKey,
+        file: def.screen,
+        instance: def.instance || null
+      });
+    }
+  }
+  
+  return screens;
+}
+
+// In UnitTestGenerator.js
+
+_extractSuggestedScreens(mirrorsOn, platform, implFilePath) {
+  const screens = [];
+  
+  if (!mirrorsOn || !mirrorsOn.UI) return screens;
+  
+  const platformData = mirrorsOn.UI[platform] || mirrorsOn.UI.web || {};
+  
+  for (const [screenKey, screenDefs] of Object.entries(platformData)) {
+    const def = Array.isArray(screenDefs) ? screenDefs[0] : screenDefs;
+    
+    if (def && def.screen) {
+      const className = def.screen
+        .split('.')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+      
+      const instanceName = def.instance || 
+        (screenKey.charAt(0).toLowerCase() + screenKey.slice(1)) ||
+        'instance';
+      
+      // ✨ Calculate relative path from generated test to screen object
+      const relativePath = this._calculateScreenObjectPath(
+        implFilePath,
+        def.screen
+      );
+      
+      screens.push({
+        screenKey,
+        file: def.screen,
+        className,
+        instanceName,
+        relativePath  // ✨ NEW
+      });
+    }
+  }
+  
+  return screens;
+}
+
+/**
+ * Calculate relative path from generated test to screen object
+ */
+_calculateScreenObjectPath(implFilePath, screenFile) {
+  const path = require('path');
+  
+  // Example:
+  // implFilePath: /project/tests/implications/bookings/status/AgencySelectedImplications.js
+  // screenFile: searchBar.wrapper
+  // screenObjectsDir: /project/tests/screenObjects/
+  // Generated test: /project/tests/implications/bookings/status/AgencySelect-Web-UNIT.spec.js
+  
+  const implDir = path.dirname(implFilePath);
+  const testFile = path.join(implDir, 'AgencySelect-Web-UNIT.spec.js');
+  
+  // Try to find screenObjects directory
+  let screenObjectsDir = this._findScreenObjectsDir(implFilePath);
+  
+  if (!screenObjectsDir) {
+    // Fallback: assume it's at tests/screenObjects
+    screenObjectsDir = path.join(path.dirname(implDir), 'screenObjects');
+  }
+  
+  const screenObjectFile = path.join(screenObjectsDir, `${screenFile}.js`);
+  
+  // Calculate relative path
+  const relativePath = path.relative(implDir, screenObjectFile);
+  
+  return relativePath;
+}
+
+/**
+ * Process actionDetails imports with calculated paths
+ */
+_processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
+  if (!actionDetails || !actionDetails.imports) {
+    return actionDetails;
+  }
+  
+  // Clone to avoid mutation
+  const processed = JSON.parse(JSON.stringify(actionDetails));
+  
+  // Calculate paths for each import
+  processed.imports = processed.imports.map(imp => {
+    const relativePath = this._calculateScreenObjectPath(
+      this.implFilePath,
+      imp.path
+    );
+    
+    return {
+      ...imp,
+      relativePath  // Add calculated path
+    };
+  });
+  
+  return processed;
+}
+
+/**
+ * Find screenObjects directory by walking up from impl file
+ */
+_findScreenObjectsDir(startPath) {
+  const path = require('path');
+  const fs = require('fs');
+  
+  let currentDir = path.dirname(startPath);
+  
+  // Walk up max 5 levels
+  for (let i = 0; i < 5; i++) {
+    const screenObjectsPath = path.join(currentDir, 'screenObjects');
+    
+    if (fs.existsSync(screenObjectsPath)) {
+      return screenObjectsPath;
+    }
+    
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break; // Reached root
+    currentDir = parentDir;
+  }
+  
+  return null;
+}
+
+_generateSmartTODO(transitionInfo, screens, metadata) {
+  const lines = [];
+  
+  lines.push('// ═══════════════════════════════════════════════════════════');
+  lines.push('// 🎬 ACTION LOGIC - TODO: Implement State Transition');
+  lines.push('// ═══════════════════════════════════════════════════════════');
+  lines.push('//');
+  lines.push(`// This test induces the transition from '${transitionInfo.fromState}' → '${transitionInfo.toState}'`);
+  lines.push('//');
+  
+  if (transitionInfo.event) {
+    lines.push(`// Event: ${transitionInfo.event}`);
+  }
+  lines.push(`// From State: ${transitionInfo.fromState}`);
+  lines.push(`// To State: ${transitionInfo.toState}`);
+  lines.push('//');
+  
+  // Screen suggestions
+  if (screens.length > 0) {
+    lines.push('// ──────────────────────────────────────────────────────────');
+    lines.push('// 💡 Suggested Implementation:');
+    lines.push('// ──────────────────────────────────────────────────────────');
+    lines.push('//');
+    lines.push(`// Based on mirrorsOn, you'll need these screen objects:`);
+    lines.push('//');
+    
+    screens.forEach((screen, index) => {
+      const className = screen.file.split('.').map(p => 
+        p.charAt(0).toUpperCase() + p.slice(1)
+      ).join('');
+      
+      lines.push(`//   ${index + 1}. Initialize ${className}:`);
+      lines.push(`//      const ${className} = require('../../screenObjects/${screen.file}.js');`);
+      lines.push(`//      const ${screen.instance || 'instance'} = new ${className}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');`);
+      lines.push('//');
+    });
+    
+    lines.push(`//   2. Perform actions to trigger '${transitionInfo.event || 'state change'}':`);
+    lines.push('//      // TODO: Add your action code here');
+    lines.push('//');
+  }
+  
+  // triggeredBy hint
+  lines.push('// ──────────────────────────────────────────────────────────');
+  lines.push(`// 📝 Once implemented, update ${metadata.implClassName}.js:`);
+  lines.push('// ──────────────────────────────────────────────────────────');
+  lines.push('//');
+  lines.push('//   static triggeredBy = [{');
+  lines.push(`//     description: "${transitionInfo.event || 'Perform action'}",`);
+  lines.push(`//     platform: "${metadata.platform}",`);
+  lines.push('//     action: async (testDataPath, options = {}) => {');
+  lines.push(`//       const { ${metadata.actionName} } = require('./${metadata.testFileName}');`);
+  lines.push(`//       return ${metadata.actionName}(testDataPath, options);`);
+  lines.push('//     }');
+  lines.push('//   }];');
+  lines.push('//');
+  lines.push('// ═══════════════════════════════════════════════════════════');
+  
+  return lines.join('\n');
+}
   
   /**
    * âœ¨ FIX #6: Extract UI validation screens from mirrorsOn

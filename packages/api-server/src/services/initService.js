@@ -20,7 +20,8 @@ function analyzeProject(projectPath) {
     patterns: {
       screenObjects: [],
       sections: []
-    }
+    },
+    screenObjectsPath: null  // ✨ NEW
   };
   
   // Detect test runner
@@ -46,6 +47,9 @@ function analyzeProject(projectPath) {
       break;
     }
   }
+  
+  // ✨ NEW: Detect screen objects directory
+  analysis.screenObjectsPath = detectScreenObjectsPath(projectPath, analysis.testsPath);
   
   // Detect patterns
   const testsDir = path.join(projectPath, analysis.testsPath);
@@ -75,6 +79,34 @@ function analyzeProject(projectPath) {
   }
   
   return analysis;
+}
+
+/**
+ * ✨ NEW: Detect screen objects directory
+ */
+function detectScreenObjectsPath(projectPath, testsPath) {
+  const commonLocations = [
+    path.join(testsPath, 'screenObjects'),
+    path.join(testsPath, 'screen-objects'),
+    path.join(testsPath, 'pages'),
+    path.join(testsPath, 'pageObjects'),
+    path.join(testsPath, 'page-objects'),
+    'screenObjects',
+    'pages',
+    'pageObjects'
+  ];
+  
+  for (const location of commonLocations) {
+    const fullPath = path.join(projectPath, location);
+    if (fs.existsSync(fullPath)) {
+      console.log(`✅ Found screen objects at: ${location}`);
+      return location;
+    }
+  }
+  
+  // Default fallback
+  console.log(`⚠️  Screen objects not found, using default: ${testsPath}/screenObjects`);
+  return path.join(testsPath, 'screenObjects');
 }
 
 /**
@@ -181,7 +213,7 @@ module.exports = {
     tests: '${analysis.testsPath}',
     implications: '${analysis.testsPath}/implications',
     utils: '${analysis.testsPath}/implications/utils',
-    screenObjects: '${analysis.testsPath}/screenObjects'
+    screenObjects: '${analysis.screenObjectsPath}'  // ✨ NEW
   },
   
   // === Test Configuration ===

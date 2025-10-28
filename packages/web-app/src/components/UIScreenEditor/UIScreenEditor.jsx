@@ -110,27 +110,23 @@ export default function UIScreenEditor({
   };
 
   // Handler: Add Screen
-  const handleAddScreen = (platformName, newScreen) => {
-    setEditedUI(prev => {
-      // ✅ Safety check
-      if (!prev || !prev[platformName]) {
-        console.error('❌ Platform not found:', platformName);
-        return prev;
-      }
-      
-      const platform = prev[platformName];
-      return {
-        ...prev,
-        [platformName]: {
-          ...platform,
-          screens: [...(platform.screens || []), newScreen],
-          count: (platform.count || 0) + 1
-        }
-      };
-    });
-    setHasChanges(true);
-    console.log('✅ Screen added:', newScreen.originalName);
-  };
+const handleAddScreen = (platformName, screenName, screenData) => {
+  console.log('✅ handleAddScreen received:', { platformName, screenName, screenData });
+  
+  setEditedUI(prev => ({  // ✅ CORRECT!
+    ...prev,
+    [platformName]: {
+      ...prev[platformName],
+      screens: [
+        ...(prev[platformName]?.screens || []),
+        screenData[0] || screenData
+      ]
+    }
+  }));
+  
+  setHasChanges(true);
+};
+
 
   // Handler: Delete Screen
   const handleDeleteScreen = (platformName, screenIndex) => {
@@ -372,18 +368,19 @@ export default function UIScreenEditor({
       </div>
 
       {/* Modals */}
-      <AddScreenModal
-        isOpen={addScreenModal.isOpen}
-        platformName={addScreenModal.platformName}
-        platformDisplayName={addScreenModal.platformDisplayName}
-        existingScreens={addScreenModal.platformName ? (platforms[addScreenModal.platformName]?.screens || []) : []}
-        onAdd={(newScreen) => {
-          handleAddScreen(addScreenModal.platformName, newScreen);
-          setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
-        }}
-        onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
-        theme={theme}
-      />
+<AddScreenModal
+  isOpen={addScreenModal.isOpen}
+  platformName={addScreenModal.platformName}
+  platformDisplayName={addScreenModal.platformDisplayName}
+  existingScreens={addScreenModal.platformName ? (platforms[addScreenModal.platformName]?.screens || []) : []}
+  onAdd={(platformName, screenName, newScreen) => {  // ✅ Accept 3 params
+    console.log('✅ Modal callback: Adding', screenName, 'to', platformName);
+    handleAddScreen(platformName, screenName, newScreen);  // ✅ Pass 3 params
+    setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
+  }}
+  onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
+  theme={theme}
+/>
 
       <CopyScreenDialog
         isOpen={copyScreenDialog.isOpen}
