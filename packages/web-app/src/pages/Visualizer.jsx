@@ -9,6 +9,7 @@ import StatsPanel from '../components/StatsPanel/StatsPanel';
 import IssuePanel from '../components/IssuePanel/IssuePanel';
 import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
+import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
 const API_URL = 'http://localhost:3000';
 
 
@@ -42,7 +43,9 @@ export default function Visualizer() {
   const [mode, setMode] = useState('view'); // 'view', 'add-transition'
   const [transitionSource, setTransitionSource] = useState(null);
   const [showAddStateModal, setShowAddStateModal] = useState(false);
-  const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
+const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
+const [showTransitionModal, setShowTransitionModal] = useState(false);
+const [transitionModalData, setTransitionModalData] = useState({ source: null, target: null });
   const [needsInit, setNeedsInit] = useState(false);
 const [initChecked, setInitChecked] = useState(false);
 const [initLoading, setInitLoading] = useState(false);
@@ -460,14 +463,13 @@ console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
   }
 };
 
-  // ADD THIS DEBUG CODE to your Visualizer.jsx handleTransitionModeClick function
 const handleTransitionModeClick = async (nodeData) => {
   if (!transitionMode.enabled) return;
   
   if (!transitionMode.source) {
     // First click - select source
-    console.log('📍 Source selected:', nodeData.id);
-    console.log('🔍 Source data:', nodeData);
+    console.log('🎯 Source selected:', nodeData.id);
+    console.log('📊 Source data:', nodeData);
     
     setTransitionMode({ 
       enabled: true, 
@@ -475,9 +477,9 @@ const handleTransitionModeClick = async (nodeData) => {
     });
     
   } else {
-    // Second click - select target
+    // Second click - select target, open modal
     console.log('👉 Target selected:', nodeData.id);
-    console.log('🔍 Target data:', nodeData);
+    console.log('📊 Target data:', nodeData);
     
     const sourceFile = transitionMode.source.files?.implication;
     const targetFile = nodeData.files?.implication;
@@ -490,40 +492,64 @@ const handleTransitionModeClick = async (nodeData) => {
       return;
     }
     
-    const event = prompt(
-      `Create transition from ${transitionMode.source.id} to ${nodeData.id}.\n\n` +
-      `Enter event name (e.g., LOGIN_COMPLETE, START_FILLING):`
-    );
-    
-    if (!event) {
-      setTransitionMode({ enabled: false, source: null });
-      return;
-    }
-    
-    try {
-      const response = await fetch(`${API_URL}/api/implications/add-transition`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceFile, targetFile, event })
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to add transition');
+    // ✨ NEW: Open modal instead of prompt
+    setTransitionModalData({
+      source: { 
+        id: transitionMode.source.id, 
+        file: sourceFile 
+      },
+      target: { 
+        id: nodeData.id, 
+        file: targetFile 
       }
-      
-      alert(`✅ Transition added: ${event}`);
-      
-      // Re-scan to update graph
-      handleScan();
-      
-    } catch (error) {
-      console.error('❌ Add transition failed:', error);
-      alert(`❌ ${error.message}`);
+    });
+    setShowTransitionModal(true);
+  }
+};
+
+const handleTransitionSubmit = async (formData) => {
+  try {
+    const response = await fetch(`${API_URL}/api/implications/add-transition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        sourceFile: transitionModalData.source.file,
+        targetFile: transitionModalData.target.file,
+        event: formData.event,
+        actionDetails: formData.actionDetails
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to add transition');
     }
     
+    // Success notification
+    const notification = document.createElement('div');
+    notification.className = 'fixed top-4 right-4 z-[100000] px-6 py-4 rounded-lg shadow-lg';
+    notification.style.backgroundColor = defaultTheme.colors.accents.green;
+    notification.style.color = 'white';
+    notification.innerHTML = `
+      <div class="font-bold">✅ Transition Added!</div>
+      <div class="text-sm mt-1">${formData.event}: ${transitionModalData.source.id} → ${transitionModalData.target.id}</div>
+    `;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.remove();
+    }, 3000);
+    
+    // Re-scan to update graph
+    handleScan();
+    
+    // Reset transition mode
     setTransitionMode({ enabled: false, source: null });
+    
+  } catch (error) {
+    console.error('❌ Add transition failed:', error);
+    throw error; // Let modal handle the error
   }
 };
 
@@ -1090,6 +1116,17 @@ const disableTransitionMode = () => {
           theme={defaultTheme}
         />
       )}
+<AddTransitionModal
+        isOpen={showTransitionModal}
+        onClose={() => {
+          setShowTransitionModal(false);
+          setTransitionMode({ enabled: false, source: null });
+        }}
+        onSubmit={handleTransitionSubmit}
+        sourceState={transitionModalData.source}
+        targetState={transitionModalData.target}
+      />
+    
     </div>
   );
 

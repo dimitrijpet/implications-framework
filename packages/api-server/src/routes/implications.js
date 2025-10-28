@@ -1491,10 +1491,9 @@ function extractValueFromNode(node) {
 
 // ✅ FIXED VERSION - Add Transition Endpoint
 // Replace lines 1547-1676 in implications.js with this
-
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event } = req.body;
+    const { sourceFile, targetFile, event, actionDetails } = req.body;  // ✨ Added actionDetails
     
     console.log('➕ Adding transition:', { sourceFile, targetFile, event });
     
@@ -1548,87 +1547,114 @@ router.post('/add-transition', async (req, res) => {
 
     console.log('🎯 Target state name:', targetStateName);
     
-    let transitionAdded = false;
-    
-    // ✅ FIX: Navigate to states.idle.on instead of top-level on
-    traverse.default(sourceAst, {
-      ClassProperty(path) {
-        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          const configValue = path.node.value;
+  let transitionAdded = false;
+
+// ✅ NEW: Handle BOTH simple and complex xstateConfig structures
+traverse.default(sourceAst, {
+  ClassProperty(path) {
+    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+      const configValue = path.node.value;
+      
+      if (configValue?.type === 'ObjectExpression') {
+        let onProperty = null;
+        
+        // Try to find 'on' at root level (SIMPLE structure)
+        onProperty = configValue.properties.find(p => p.key?.name === 'on');
+        
+        if (onProperty) {
+          console.log('✅ Found simple structure: xstateConfig.on');
+        } else {
+          // Try to find 'on' inside states.idle (COMPLEX structure)
+          console.log('🔍 Looking for complex structure: xstateConfig.states.*.on');
           
-          if (configValue?.type === 'ObjectExpression') {
-            // ✅ Find 'states' property
-            let statesProperty = configValue.properties.find(
-              p => p.key?.name === 'states'
-            );
+          const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
+          
+          if (statesProperty && statesProperty.value?.type === 'ObjectExpression') {
+            // Find 'idle' or first state
+            let targetState = statesProperty.value.properties.find(p => p.key?.name === 'idle');
             
-            if (!statesProperty || statesProperty.value?.type !== 'ObjectExpression') {
-              console.log('❌ No states property found');
-              return;
+            if (!targetState && statesProperty.value.properties.length > 0) {
+              targetState = statesProperty.value.properties[0];
+              console.log(`✅ Using first state: ${targetState.key?.name}`);
             }
             
-            // ✅ Find 'idle' state (or first state)
-            let idleState = statesProperty.value.properties.find(
-              p => p.key?.name === 'idle'
-            );
-            
-            if (!idleState) {
-              // Use first state if idle doesn't exist
-              idleState = statesProperty.value.properties[0];
-            }
-            
-            if (!idleState || idleState.value?.type !== 'ObjectExpression') {
-              console.log('❌ No idle state found');
-              return;
-            }
-            
-            // ✅ Find or create 'on' property INSIDE idle state
-            let onProperty = idleState.value.properties.find(
-              p => p.key?.name === 'on'
-            );
-            
-            if (!onProperty) {
-              console.log('📝 Creating new "on" property inside idle state');
-              onProperty = {
-                type: 'ObjectProperty',
-                key: { type: 'Identifier', name: 'on' },
-                value: { type: 'ObjectExpression', properties: [] }
-              };
-              idleState.value.properties.push(onProperty);
-            }
-            
-            // Check if transition already exists
-            const existingTransition = onProperty.value.properties?.find(
-              p => p.key?.name === event || p.key?.value === event
-            );
-            
-            if (existingTransition) {
-              console.log('⚠️ Transition already exists');
-              return;
-            }
-            
-            // ✅ Add new transition with proper target format
-            console.log(`✅ Adding transition: ${event} → #${targetStateName}`);
-            onProperty.value.properties.push({
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: event },
-              value: {
-                type: 'ObjectExpression',
-                properties: [
-                  {
-                    type: 'ObjectProperty',
-                    key: { type: 'Identifier', name: 'target' },
-                    value: { type: 'StringLiteral', value: `#${targetStateName}` }
-                  }
-                ]
+            if (targetState && targetState.value?.type === 'ObjectExpression') {
+              onProperty = targetState.value.properties.find(p => p.key?.name === 'on');
+              
+              if (!onProperty) {
+                // Create 'on' property inside state
+                console.log('📝 Creating new "on" property inside state');
+                onProperty = {
+                  type: 'ObjectProperty',
+                  key: { type: 'Identifier', name: 'on' },
+                  value: { type: 'ObjectExpression', properties: [] }
+                };
+                targetState.value.properties.push(onProperty);
               }
-            });
-            
-            transitionAdded = true;
+            }
           }
         }
+        
+        // If still no 'on' found, create it at root level
+        if (!onProperty) {
+          console.log('📝 Creating new "on" property at root level');
+          onProperty = {
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'on' },
+            value: { type: 'ObjectExpression', properties: [] }
+          };
+          configValue.properties.push(onProperty);
+        }
+        
+        // Check if transition already exists
+        const existingTransition = onProperty.value.properties?.find(
+          p => p.key?.name === event || p.key?.value === event
+        );
+        
+        if (existingTransition) {
+          console.log('⚠️ Transition already exists');
+          return;
+        }
+        
+        // Build transition value
+        const transitionProperties = [
+          {
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'target' },
+            value: { type: 'StringLiteral', value: `${targetStateName}` }
+          }
+        ];
+        
+        // ✨ Add actionDetails if provided
+        if (actionDetails) {
+          console.log('✨ Adding actionDetails to transition');
+          
+          // Convert actionDetails to AST
+          const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
+          
+          transitionProperties.push({
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'actionDetails' },
+            value: actionDetailsAST
+          });
+        }
+        
+        // Add new transition
+        console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
+        onProperty.value.properties.push({
+          type: 'ObjectProperty',
+          key: { type: 'Identifier', name: event },
+          value: {
+            type: 'ObjectExpression',
+            properties: transitionProperties
+          }
+        });
+        
+        transitionAdded = true;
       }
-    });
+    }
+  }
+});
     
     if (!transitionAdded) {
       return res.status(400).json({ 

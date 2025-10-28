@@ -143,7 +143,7 @@ class UnitTestGenerator {
     this.implFilePath = implFilePath;
     
     // 2. Extract metadata
-    const metadata = this._extractMetadata(ImplClass, platform, stateName);
+    const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
     
     // 3. Build template context
     const context = this._buildContext(metadata, platform);
@@ -258,6 +258,8 @@ class UnitTestGenerator {
     console.warn('   ⚠️  Could not find project root, using implication directory');
     return path.dirname(implFilePath);
   }
+
+  
   
   /**
    * Extract metadata from Implication class
@@ -266,89 +268,96 @@ class UnitTestGenerator {
    * @param {string} platform - Platform
    * @param {string} stateName - State name (for multi-state machines)
    */
-  _extractMetadata(ImplClass, platform, stateName = null) {
-    const xstateConfig = ImplClass.xstateConfig;
+_extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
+  const xstateConfig = ImplClass.xstateConfig;
+  
+  let meta, status, entry, transitions, previousStatus;
+  
+  if (stateName) {
+    // Multi-state machine: extract from specific state
+    const stateConfig = xstateConfig.states[stateName];
     
-    let meta, status, entry, transitions, previousStatus;
-    
-    if (stateName) {
-      // Multi-state machine: extract from specific state
-      const stateConfig = xstateConfig.states[stateName];
-      
-      if (!stateConfig) {
-        throw new Error(`State "${stateName}" not found in xstateConfig`);
-      }
-      
-      meta = stateConfig.meta || {};
-      status = meta.status || stateName;
-      entry = stateConfig.entry;
-      transitions = stateConfig.on || {};
-      
-      // âœ¨ NEW: Find previous state by looking at ALL transitions
-      previousStatus = this._findPreviousState(xstateConfig.states, stateName);
-      
-    } else {
-      // Single-state machine: extract from root
-      meta = xstateConfig.meta || {};
-      status = meta.status;
-      entry = xstateConfig.entry;
-      transitions = xstateConfig.on || {};
-      previousStatus = meta.requires?.previousStatus;
+    if (!stateConfig) {
+      throw new Error(`State "${stateName}" not found in xstateConfig`);
     }
     
-    const metadata = {
-      // Class info
-      className: ImplClass.name,
-      
-      // Status info
-      status: status,
-      previousStatus: previousStatus || meta.requires?.previousStatus,
-      
-      // Fields
-      requiredFields: meta.requiredFields || [],
-      
-      // Setup info
-      setup: meta.setup || [],
-      
-      // Buttons
-      triggerButton: meta.triggerButton,
-      afterButton: meta.afterButton,
-      previousButton: meta.previousButton,
-      
-      // Transitions
-      transitions: transitions,
-      
-      // Entry actions (for delta)
-      entry: entry,
-      
-      // Action details (if provided)
-      actionDetails: meta.actionDetails,
-      
-      // Triggered by (multi-platform actions)
-      triggeredBy: ImplClass.triggeredBy || [],
-      
-      // Mirrors on (for validation - Phase 2)
-      mirrorsOn: ImplClass.mirrorsOn,
-      
-      // State name (for multi-state)
-      stateName: stateName
-    };
+    meta = stateConfig.meta || {};
+    status = meta.status || stateName;
+    entry = stateConfig.entry;
+    transitions = stateConfig.on || {};
     
-    // ✅ NOW process actionDetails AFTER metadata is created
-if (metadata.actionDetails) {
-  metadata.actionDetails = this._processActionDetailsImports(
-    metadata.actionDetails,
-    this.config?.screenObjectsPath,
-    this.implFilePath
-  );
-}
-
-// Filter setup for this platform
-metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
-
-return metadata;
+    // ✨ NEW: Find previous state by looking at ALL transitions
+    previousStatus = this._findPreviousState(xstateConfig.states, stateName);
+    
+  } else {
+    // Single-state machine: extract from root
+    meta = xstateConfig.meta || {};
+    status = meta.status;
+    entry = xstateConfig.entry;
+    transitions = xstateConfig.on || {};
+    previousStatus = meta.requires?.previousStatus;
   }
-
+  
+const actionDetails = this._extractActionDetailsFromTransition(
+  xstateConfig,
+  stateName || status,
+  platform,
+  previousStatus || meta.requires?.previousStatus,  // ← ADD THIS
+  implFilePath  // ← ADD THIS (you need to pass this to _extractMetadata)
+);
+  
+  const metadata = {
+    // Class info
+    className: ImplClass.name,
+    
+    // Status info
+    status: status,
+    previousStatus: previousStatus || meta.requires?.previousStatus,
+    
+    // Fields
+    requiredFields: meta.requiredFields || [],
+    
+    // Setup info
+    setup: meta.setup || [],
+    
+    // Buttons
+    triggerButton: meta.triggerButton,
+    afterButton: meta.afterButton,
+    previousButton: meta.previousButton,
+    
+    // Transitions
+    transitions: transitions,
+    
+    // Entry actions (for delta)
+    entry: entry,
+    
+    // Action details (if provided) - ✅ NEW: From transition
+    actionDetails: actionDetails,
+    
+    // Triggered by (multi-platform actions)
+    triggeredBy: ImplClass.triggeredBy || [],
+    
+    // Mirrors on (for validation - Phase 2)
+    mirrorsOn: ImplClass.mirrorsOn,
+    
+    // State name (for multi-state)
+    stateName: stateName
+  };
+  
+  // Process actionDetails if present
+  if (metadata.actionDetails) {
+    metadata.actionDetails = this._processActionDetailsImports(
+      metadata.actionDetails,
+      this.config?.screenObjectsPath,
+      this.implFilePath
+    );
+  }
+  
+  // Filter setup for this platform
+  metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
+  
+  return metadata;
+}
   
   
   /**
@@ -387,6 +396,169 @@ return metadata;
     // Return first one found, or null
     return previousStates[0] || null;
   }
+
+  /**
+ * Extract actionDetails from the transition that leads to this state
+ * 
+ * Looks through all states for transitions TO the target state,
+ * and extracts actionDetails from those transitions.
+ * 
+ * @param {object} xstateConfig - Full xstate configuration
+ * @param {string} targetStateName - Target state we're generating for
+ * @param {string} platform - Platform (web, mobile, etc.)
+ * @returns {object|null} actionDetails or null
+ */
+/**
+ * Extract actionDetails from the transition that leads to this state
+ * 
+ * Looks through all states for transitions TO the target state,
+ * and extracts actionDetails from those transitions.
+ * If not found, checks the previous state's file.
+ * 
+ * @param {object} xstateConfig - Full xstate configuration
+ * @param {string} targetStateName - Target state we're generating for
+ * @param {string} platform - Platform (web, mobile, etc.)
+ * @param {string} previousStatus - Previous status (from meta.requires.previousStatus)
+ * @param {string} implFilePath - Path to current Implication file
+ * @returns {object|null} actionDetails or null
+ */
+_extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, previousStatus = null, implFilePath = null) {
+  console.log(`   🔍 Looking for actionDetails in transitions TO "${targetStateName}"`);
+  
+  let foundActionDetails = null;
+  
+  // For multi-state machines, look through all states for transitions TO target
+  if (xstateConfig.states) {
+    for (const [sourceStateName, sourceStateConfig] of Object.entries(xstateConfig.states)) {
+      const transitions = sourceStateConfig.on || {};
+      
+      for (const [eventName, transitionConfig] of Object.entries(transitions)) {
+        // Handle both string and object format
+        let target, actionDetails;
+        
+        if (typeof transitionConfig === 'string') {
+          target = transitionConfig;
+          actionDetails = null;
+        } else if (typeof transitionConfig === 'object') {
+          target = transitionConfig.target;
+          actionDetails = transitionConfig.actionDetails;
+        }
+        
+        // Remove leading # from target
+        const cleanTarget = target?.replace(/^#/, '');
+        
+        // Does this transition lead to our target state?
+        if (cleanTarget === targetStateName && actionDetails) {
+          console.log(`   ✨ Found actionDetails in transition: ${sourceStateName} --${eventName}--> ${targetStateName}`);
+          return actionDetails;
+        }
+      }
+    }
+  }
+  
+  // For single-state machines, check root-level transitions
+  if (xstateConfig.on && !xstateConfig.states) {
+    for (const [eventName, transitionConfig] of Object.entries(xstateConfig.on)) {
+      let target, actionDetails;
+      
+      if (typeof transitionConfig === 'string') {
+        target = transitionConfig;
+        actionDetails = null;
+      } else if (typeof transitionConfig === 'object') {
+        target = transitionConfig.target;
+        actionDetails = transitionConfig.actionDetails;
+      }
+      
+      const cleanTarget = target?.replace(/^#/, '');
+      
+      if (cleanTarget === targetStateName && actionDetails) {
+        console.log(`   ✨ Found actionDetails in root transition: --${eventName}--> ${targetStateName}`);
+        return actionDetails;
+      }
+    }
+  }
+
+  // If not found and we have previousStatus, look in previous state's file
+  if (!foundActionDetails && previousStatus && implFilePath) {
+    console.log(`   🔍 Checking previous state: ${previousStatus}`);
+    
+    try {
+      // Find the previous state's Implication file
+      const previousImplFile = this._findImplicationFile(previousStatus, implFilePath);
+      
+      if (previousImplFile) {
+        console.log(`   📂 Loading previous state file: ${previousImplFile}`);
+        const PreviousImplClass = require(previousImplFile);
+        const prevXstateConfig = PreviousImplClass.xstateConfig;
+        
+        // Check transitions in previous state
+        const transitions = prevXstateConfig.on || {};
+        
+        for (const [eventName, transitionConfig] of Object.entries(transitions)) {
+          let target, actionDetails;
+          
+          if (typeof transitionConfig === 'string') {
+            target = transitionConfig;
+          } else if (typeof transitionConfig === 'object') {
+            target = transitionConfig.target;
+            actionDetails = transitionConfig.actionDetails;
+          }
+          
+          const cleanTarget = target?.replace(/^#/, '');
+          
+          if (cleanTarget === targetStateName && actionDetails) {
+            console.log(`   ✨ Found actionDetails in previous state: ${previousStatus} --${eventName}--> ${targetStateName}`);
+            return actionDetails;
+          }
+        }
+      }
+    } catch (error) {
+      console.log(`   ⚠️  Could not load previous state file: ${error.message}`);
+    }
+  }
+  
+  // Fallback: check meta.actionDetails (for backward compatibility)
+  const meta = xstateConfig.states?.[targetStateName]?.meta || xstateConfig.meta || {};
+  if (meta.actionDetails) {
+    console.log(`   📝 Using actionDetails from meta (fallback)`);
+    return meta.actionDetails;
+  }
+  
+  console.log(`   ⚠️  No actionDetails found`);
+  return null;
+}
+
+/**
+ * Find Implication file for a given status
+ * 
+ * @param {string} status - Status name (e.g., 'agency_selected')
+ * @param {string} currentFilePath - Path to current Implication file
+ * @returns {string|null} Path to Implication file or null
+ */
+_findImplicationFile(status, currentFilePath) {
+  const path = require('path');
+  const fs = require('fs');
+  
+  // Get directory of current file
+  const dir = path.dirname(currentFilePath);
+  
+  // Convert status to PascalCase (e.g., agency_selected -> AgencySelected)
+  const className = status
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join('');
+  
+  // Try to find the file
+  const possiblePath = path.join(dir, `${className}Implications.js`);
+  
+  if (fs.existsSync(possiblePath)) {
+    console.log(`   ✅ Found: ${possiblePath}`);
+    return possiblePath;
+  }
+  
+  console.log(`   ❌ Not found: ${possiblePath}`);
+  return null;
+}
   
   /**
    * Build template context from metadata
@@ -509,8 +681,8 @@ testSetupPath: paths.testSetup,
       entityName,
       
       // Action
-      hasActionDetails,
-      actionDetails: metadata.actionDetails,
+   hasActionDetails,
+actionDetails: metadata.actionDetails,  // ✅ Already extracted!
       triggerButton: metadata.triggerButton,
       navigationExample: this._generateNavigationExample(platform, metadata),
       actionExample: this._generateActionExample(metadata, platform),
