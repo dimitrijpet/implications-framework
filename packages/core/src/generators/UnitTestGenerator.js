@@ -535,28 +535,83 @@ _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, pre
  * @param {string} currentFilePath - Path to current Implication file
  * @returns {string|null} Path to Implication file or null
  */
+/**
+ * Find Implication file for a given status using state registry
+ * 
+ * @param {string} status - Status name (e.g., 'agency_selected' or 'active')
+ * @param {string} currentFilePath - Path to current Implication file
+ * @returns {string|null} Path to Implication file or null
+ */
 _findImplicationFile(status, currentFilePath) {
   const path = require('path');
   const fs = require('fs');
   
-  // Get directory of current file
   const dir = path.dirname(currentFilePath);
   
-  // Convert status to PascalCase (e.g., agency_selected -> AgencySelected)
+  // ✅ STEP 1: Try state registry (BEST)
+  const registryPath = path.join(dir, '.state-registry.json');
+  
+  if (fs.existsSync(registryPath)) {
+    try {
+      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+      
+      // Try exact match first
+      if (registry[status]) {
+        const implFile = path.join(dir, `${registry[status]}.js`);
+        if (fs.existsSync(implFile)) {
+          console.log(`   ✅ Found via registry: ${status} → ${registry[status]}`);
+          return implFile;
+        }
+      }
+      
+      // Try normalized match (without underscores)
+      const normalized = status.replace(/_/g, '').toLowerCase();
+      if (registry[normalized]) {
+        const implFile = path.join(dir, `${registry[normalized]}.js`);
+        if (fs.existsSync(implFile)) {
+          console.log(`   ✅ Found via registry (normalized): ${status} → ${registry[normalized]}`);
+          return implFile;
+        }
+      }
+    } catch (error) {
+      console.log(`   ⚠️  Could not read registry: ${error.message}`);
+    }
+  }
+  
+  // ✅ STEP 2: Fallback to convention (snake_case → PascalCase)
   const className = status
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join('');
   
-  // Try to find the file
-  const possiblePath = path.join(dir, `${className}Implications.js`);
+  const conventionPath = path.join(dir, `${className}Implications.js`);
   
-  if (fs.existsSync(possiblePath)) {
-    console.log(`   ✅ Found: ${possiblePath}`);
-    return possiblePath;
+  if (fs.existsSync(conventionPath)) {
+    console.log(`   ✅ Found via convention: ${status} → ${className}Implications`);
+    return conventionPath;
   }
   
-  console.log(`   ❌ Not found: ${possiblePath}`);
+  // ✅ STEP 3: Last resort - scan directory
+  try {
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('Implications.js'));
+    
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const content = fs.readFileSync(filePath, 'utf8');
+      
+      // Look for id: 'status' in xstateConfig
+      if (content.includes(`id: '${status}'`) || 
+          content.includes(`status: '${status}'`)) {
+        console.log(`   ✅ Found via scan: ${status} → ${file}`);
+        return filePath;
+      }
+    }
+  } catch (error) {
+    console.log(`   ⚠️  Could not scan directory: ${error.message}`);
+  }
+  
+  console.log(`   ❌ Not found: ${status}`);
   return null;
 }
   

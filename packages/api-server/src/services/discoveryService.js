@@ -102,7 +102,16 @@ if (isImplication(parsed)) {
     
     // Calculate statistics
     result.statistics = calculateStatistics(result);
-    
+
+// ✨ NEW: Build and write state registry
+if (result.files.implications.length > 0) {
+  result.stateRegistry = buildAndWriteStateRegistry(
+    result.files.implications,
+    projectPath
+  );
+}
+
+console.log(`✅ Discovery complete`);
     console.log(`✅ Discovery complete`);
     console.log(`   - Implications: ${result.files.implications.length}`);
     console.log(`   - Sections: ${result.files.sections.length}`);
@@ -276,4 +285,53 @@ function calculateStatistics(result) {
     totalClasses,
     totalMethods: 0, // TODO: Sum from metadata
   };
+}
+
+/**
+ * Build and write state registry to disk
+ * 
+ * @param {Array} implications - Array of discovered implications
+ * @param {string} projectPath - Root path of project
+ * @returns {Object} State registry mapping
+ */
+export function buildAndWriteStateRegistry(implications, projectPath) {
+  console.log('\n🗺️  Building State Registry...');
+  console.log('🗺️  Building State Registry (strategy: auto)...');
+  
+  const registry = {};
+  
+  implications.forEach(imp => {
+    const metadata = imp.metadata || {};
+    
+    if (metadata.hasXStateConfig && metadata.status) {
+      // Map status -> className
+      registry[metadata.status] = metadata.className;
+      console.log(`  📌 Mapped: "${metadata.status}" → "${metadata.className}"`);
+      
+      // Also map normalized version (remove underscores, lowercase)
+      const normalized = metadata.status.replace(/_/g, '').toLowerCase();
+      if (normalized !== metadata.status) {
+        registry[normalized] = metadata.className;
+      }
+    }
+  });
+  
+  console.log(`✅ State Registry built: ${Object.keys(registry).length} mappings\n`);
+  
+  // Write to each directory containing Implications
+  const directories = new Set();
+  implications.forEach(imp => {
+    if (imp.metadata?.hasXStateConfig) {
+      const dir = path.dirname(imp.path);
+      directories.add(dir);
+    }
+  });
+  
+  directories.forEach(dir => {
+    const registryPath = path.join(projectPath, dir, '.state-registry.json');
+    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+    console.log(`   💾 Wrote registry: ${registryPath}`);
+  });
+  
+  return registry;
 }
