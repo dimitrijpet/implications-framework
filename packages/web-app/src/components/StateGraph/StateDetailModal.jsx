@@ -46,9 +46,6 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   // NEW: Context field suggestions
   const [suggestedFields, setSuggestedFields] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-
-  const [editingTransition, setEditingTransition] = useState(null);
-const [deleteConfirm, setDeleteConfirm] = useState(null);
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
@@ -107,29 +104,29 @@ const [deleteConfirm, setDeleteConfirm] = useState(null);
 
 
  
-const loadContextData = async () => {
-  setLoadingContext(true);
-  try {
-    const response = await fetch(
-      `http://localhost:3000/api/implications/context-schema?filePath=${encodeURIComponent(state.files.implication)}`
-    );
-    
-    if (response.ok) {
-      const data = await response.json();
-      console.log('📋 Loaded context data:', data.context);
-      console.log('📋 Context with types:', data.contextWithTypes);
-      setContextData(data.contextWithTypes || data.context);  // ← Use contextWithTypes
-    } else {
-      console.error('Failed to load context:', await response.text());
-      setContextData({});
+  const loadContextData = async () => {
+    setLoadingContext(true);
+    try {
+      const response = await fetch(
+        `http://localhost:3000/api/implications/context-schema?filePath=${encodeURIComponent(state.files.implication)}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('📋 Loaded context data:', data.context);
+        setContextData(data.context);
+      } else {
+        console.error('Failed to load context:', await response.text());
+        setContextData({}); // Set empty to show "no context" message
+      }
+    } catch (error) {
+      console.error('❌ Error loading context:', error);
+      setContextData({}); // Set empty on error
+    } finally {
+      setLoadingContext(false);
     }
-  } catch (error) {  // ← YOU WERE MISSING THIS!
-    console.error('❌ Error loading context:', error);
-    setContextData({});
-  } finally {
-    setLoadingContext(false);
-  }
-};
+  };
+
   // NEW: Load suggestions from mirrorsOn
   const loadMirrorsOnSuggestions = async () => {
     setLoadingSuggestions(true);
@@ -211,106 +208,6 @@ const loadContextData = async () => {
       alert(`❌ Failed to add field: ${error.message}`);
     }
   };
-
-  const handleEditTransition = async (transition) => {
-  try {
-    console.log('✏️ Edit transition:', transition);
-    
-    // Show edit modal
-    setEditingTransition({
-      oldEvent: transition.event,
-      newEvent: transition.event,
-      newTarget: transition.target,
-      sourceFile: state.files.implication
-    });
-    
-  } catch (error) {
-    console.error('❌ Edit transition failed:', error);
-    alert('Failed to edit transition: ' + error.message);
-  }
-};
-
-const handleSaveEditTransition = async () => {
-  try {
-    const response = await fetch('http://localhost:3000/api/implications/update-transition', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sourceFile: editingTransition.sourceFile,
-        oldEvent: editingTransition.oldEvent,
-        newEvent: editingTransition.newEvent,
-        newTarget: editingTransition.newTarget
-      })
-    });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Update failed');
-    }
-    
-    const result = await response.json();
-    console.log('✅ Transition updated:', result);
-    
-    // Show success notification
-    alert('✅ Transition updated! Refresh to see changes.');
-    
-    // Close modal
-    setEditingTransition(null);
-    
-    // Refresh the discovery
-    if (window.refreshDiscovery) {
-      window.refreshDiscovery();
-    }
-    
-  } catch (error) {
-    console.error('❌ Save edit failed:', error);
-    alert('Failed to save: ' + error.message);
-  }
-};
-
-const handleDeleteTransition = async (transition) => {
-  const confirmed = confirm(
-    `Delete transition "${transition.event}"?\n\n` +
-    `This will remove: ${state.name} --[${transition.event}]--> ${transition.target}`
-  );
-  
-  if (!confirmed) return;
-  
-  try {
-    console.log('🗑️ Delete transition:', transition);
-    
-    const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sourceFile: state.files.implication,
-        event: transition.event
-      })
-    });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Delete failed');
-    }
-    
-    const result = await response.json();
-    console.log('✅ Transition deleted:', result);
-    
-    // Show success notification
-    alert('✅ Transition deleted! Refresh to see changes.');
-    
-    // Refresh the discovery
-    if (window.refreshDiscovery) {
-      window.refreshDiscovery();
-    }
-    
-  } catch (error) {
-    console.error('❌ Delete transition failed:', error);
-    alert('Failed to delete: ' + error.message);
-  }
-};
-
-  
 
   // NEW: Delete context field handler
   const handleDeleteContextField = async (fieldName) => {
@@ -804,7 +701,7 @@ const handleAnalysisComplete = (analysis) => {
             </div>
           )}
 
-    {/* ========================================
+          {/* ========================================
     TEST DATA REQUIREMENTS SECTION - NEW!
     ======================================== */}
 <div>
@@ -818,7 +715,6 @@ const handleAnalysisComplete = (analysis) => {
   <TestDataPanel
     state={currentState}
     projectPath={projectPath}
-    contextData={contextData}  // ← ADD THIS LINE
     theme={theme}
   />
 </div>
@@ -877,71 +773,66 @@ const handleAnalysisComplete = (analysis) => {
   />
 </div>
           
-        {/* Transitions Section */}
-{state.transitions && state.transitions.length > 0 && (
-  <div>
-    <h3 className="font-bold mb-2" style={{ color: theme.colors.text.primary }}>
-      🔄 Transitions ({state.transitions.length})
-    </h3>
-    <div className="space-y-2">
-      {state.transitions.map((transition, idx) => (
-        <div 
-          key={idx}
-          className="p-3 rounded flex items-center justify-between"
-          style={{ 
-            background: `${theme.colors.background.tertiary}80`,
-            border: `1px solid ${theme.colors.border}`
-          }}
-        >
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <span 
-                className="px-2 py-1 rounded text-xs font-mono"
-                style={{ 
-                  background: theme.colors.accents.blue,
-                  color: 'white'
-                }}
-              >
-                {transition.event}
-              </span>
-              <span style={{ color: theme.colors.text.secondary }}>→</span>
-              <span style={{ color: theme.colors.text.primary }}>
-                {transition.target}
-              </span>
+          {/* ========================================
+              TRANSITIONS SECTION
+              ======================================== */}
+          {currentState.transitions && currentState.transitions.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 
+                  className="text-2xl font-bold"
+                  style={{ color: theme.colors.accents.green }}
+                >
+                  🔄 Transitions ({currentState.transitions.length})
+                </h2>
+                
+                {isEditMode && (
+                  <button
+                    onClick={handleAddTransition}
+                    className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                    style={{ 
+                      background: theme.colors.accents.green,
+                      color: 'white'
+                    }}
+                  >
+                    ➕ Add Transition
+                  </button>
+                )}
+              </div>
+              
+              <div className="grid grid-cols-1 gap-3">
+                {currentState.transitions.map((transition, index) => (
+                  <TransitionCard
+                    key={index}
+                    transition={transition}
+                    theme={theme}
+                    editable={isEditMode}
+                    onRemove={() => handleRemoveTransition(index)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          // Inside the modal, add the button section (after transitions section):
+
+
+{/* ✨ ADD THIS SECTION HERE ✨ */}
+        <div>
+          <h2 
+            className="text-2xl font-bold mb-4"
+            style={{ color: theme.colors.accents.green }}
+          >
+            🧪 Test Generation
+          </h2>
           
-          {/* Edit/Delete Buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleEditTransition(transition)}
-              className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
-              style={{
-                background: theme.colors.background.secondary,
-                color: theme.colors.text.primary,
-                border: `1px solid ${theme.colors.border}`
-              }}
-              title="Edit transition"
-            >
-              ✏️ Edit
-            </button>
-            <button
-              onClick={() => handleDeleteTransition(transition)}
-              className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
-              style={{
-                background: theme.colors.accents.red,
-                color: 'white'
-              }}
-              title="Delete transition"
-            >
-              🗑️ Delete
-            </button>
-          </div>
+          <GenerateTestsButton 
+            state={state} 
+            projectPath={projectPath}
+            theme={theme}
+          />
         </div>
-      ))}
-    </div>
-  </div>
-)}
+        {/* ✨ END NEW SECTION ✨ */}
           
           {/* ========================================
               SUGGESTIONS PANEL
@@ -1003,96 +894,6 @@ const handleAnalysisComplete = (analysis) => {
           )}
         </div>
       </div>
-      {/* Edit Transition Modal */}
-{editingTransition && (
-  <div 
-    className="fixed inset-0 z-[60] flex items-center justify-center"
-    style={{ background: 'rgba(0, 0, 0, 0.7)' }}
-  >
-    <div 
-      className="rounded-xl p-6 max-w-md w-full mx-4"
-      style={{
-        background: theme.colors.background.secondary,
-        border: `2px solid ${theme.colors.border}`
-      }}
-    >
-      <h3 className="text-xl font-bold mb-4" style={{ color: theme.colors.text.primary }}>
-        ✏️ Edit Transition
-      </h3>
-      
-      <div className="space-y-4">
-        {/* Event Name */}
-        <div>
-          <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.primary }}>
-            Event Name
-          </label>
-          <input
-            type="text"
-            value={editingTransition.newEvent}
-            onChange={(e) => setEditingTransition({
-              ...editingTransition,
-              newEvent: e.target.value
-            })}
-            className="w-full px-3 py-2 rounded"
-            style={{
-              background: theme.colors.background.primary,
-              color: theme.colors.text.primary,
-              border: `1px solid ${theme.colors.border}`
-            }}
-            placeholder="e.g., SUBMIT_FORM"
-          />
-        </div>
-        
-        {/* Target State */}
-        <div>
-          <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.primary }}>
-            Target State
-          </label>
-          <input
-            type="text"
-            value={editingTransition.newTarget}
-            onChange={(e) => setEditingTransition({
-              ...editingTransition,
-              newTarget: e.target.value
-            })}
-            className="w-full px-3 py-2 rounded"
-            style={{
-              background: theme.colors.background.primary,
-              color: theme.colors.text.primary,
-              border: `1px solid ${theme.colors.border}`
-            }}
-            placeholder="e.g., form_submitted"
-          />
-        </div>
-      </div>
-      
-      {/* Buttons */}
-      <div className="flex gap-3 mt-6">
-        <button
-          onClick={() => setEditingTransition(null)}
-          className="flex-1 px-4 py-2 rounded font-semibold transition"
-          style={{
-            background: theme.colors.background.tertiary,
-            color: theme.colors.text.primary,
-            border: `1px solid ${theme.colors.border}`
-          }}
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSaveEditTransition}
-          className="flex-1 px-4 py-2 rounded font-semibold transition hover:brightness-110"
-          style={{
-            background: theme.colors.accents.blue,
-            color: 'white'
-          }}
-        >
-          💾 Save Changes
-        </button>
-      </div>
-    </div>
-  </div>
-)}
     </div>
   );
 }
