@@ -1,14 +1,18 @@
 // packages/web-app/src/components/AddTransitionModal/AddTransitionModal.jsx
+// ✨ ENHANCED VERSION with POM Discovery, Method Dropdowns, Constructor Auto-Fill
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
+
+const API_URL = 'http://localhost:3000';
 
 export default function AddTransitionModal({ 
   isOpen, 
   onClose, 
   onSubmit, 
   sourceState, 
-  targetState 
+  targetState,
+  projectPath  // ✨ NEW: Added projectPath prop
 }) {
   const [formData, setFormData] = useState({
     event: '',
@@ -21,8 +25,83 @@ export default function AddTransitionModal({
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
+  // ✨ NEW: POM Discovery State
+  const [availablePOMs, setAvailablePOMs] = useState([]);
+  const [loadingPOMs, setLoadingPOMs] = useState(false);
+  const [pomDetails, setPomDetails] = useState({}); // Cache POM details
+
+  // ✨ NEW: Fetch available POMs when modal opens
+  useEffect(() => {
+    if (isOpen && projectPath) {
+      fetchAvailablePOMs();
+    }
+  }, [isOpen, projectPath]);
+
+  // ✨ NEW: Fetch POMs from API
+// ✨ NEW: Fetch POMs from API
+// ✨ FIXED: Fetch POMs from API
+const fetchAvailablePOMs = async () => {
+  setLoadingPOMs(true);
+  try {
+    const response = await fetch(`${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`);
+    if (response.ok) {
+      const data = await response.json();
+      
+      // ✨ Transform API response to match expected format
+      const transformedPOMs = data.poms.map(pom => {
+        // Get first class from classes array
+        const mainClass = pom.classes?.[0];
+        
+        return {
+          className: mainClass?.name || pom.name,
+          file: pom.path,
+          name: pom.name,
+          classes: pom.classes,
+          exports: pom.exports
+        };
+      });
+      
+      console.log('📦 Transformed POMs:', transformedPOMs);
+      setAvailablePOMs(transformedPOMs);
+    } else {
+      console.error('Failed to fetch POMs:', response.status);
+    }
+  } catch (error) {
+    console.error('Error fetching POMs:', error);
+  } finally {
+    setLoadingPOMs(false);
+  }
+};
+
+  // ✨ NEW: Fetch POM details (instances, methods, constructor)
+  const fetchPOMDetails = async (pomName) => {
+    // Check cache first
+    if (pomDetails[pomName]) {
+      return pomDetails[pomName];
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/poms/${pomName}?projectPath=${encodeURIComponent(projectPath)}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📋 POM Details for ${pomName}:`, data);
+        
+        // Cache it
+        setPomDetails(prev => ({
+          ...prev,
+          [pomName]: data
+        }));
+        
+        return data;
+      }
+    } catch (error) {
+      console.error(`Error fetching POM details for ${pomName}:`, error);
+    }
+    return null;
+  };
+
   // Reset form when modal opens/closes
-  useState(() => {
+  useEffect(() => {
     if (isOpen) {
       setFormData({
         event: '',
@@ -45,11 +124,53 @@ export default function AddTransitionModal({
           className: '',
           varName: '',
           path: '',
-          constructor: ''
+          constructor: '',
+          // ✨ NEW: Track selected POM for smart features
+          selectedPOM: '',
+          availableInstances: [],
+          selectedInstance: ''
         }
       ]
     }));
   };
+
+// ✨ ENHANCED: Handle POM selection
+// ✨ ENHANCED: Handle POM selection
+const handlePOMSelect = async (index, pomName) => {
+  console.log(`🔍 Selected POM: ${pomName}`);
+  
+  // Find the selected POM from availablePOMs
+  const selectedPOM = availablePOMs.find(p => p.className === pomName);
+  
+  if (selectedPOM) {
+    // Get the main class
+    const mainClass = selectedPOM.classes?.[0];
+    
+    // ✨ Auto-fill constructor template
+    const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
+    
+    // ✨ Auto-fill path (use the name field)
+    const pathTemplate = selectedPOM.name || selectedPOM.file.replace(/\\/g, '.').replace(/\.js$/, '');
+    
+    // ✨ Generate variable name (camelCase)
+    const varName = pomName.charAt(0).toLowerCase() + pomName.slice(1);
+    
+    setFormData(prev => ({
+      ...prev,
+      imports: prev.imports.map((imp, i) => 
+        i === index ? {
+          ...imp,
+          selectedPOM: pomName,
+          className: pomName,
+          varName: varName,
+          path: pathTemplate,
+          constructor: constructorTemplate,
+          functions: mainClass?.functions || []
+        } : imp
+      )
+    }));
+  }
+};
 
   // Update import field
   const handleImportChange = (index, field, value) => {
@@ -79,10 +200,64 @@ export default function AddTransitionModal({
           description: '',
           instance: '',
           method: '',
-          args: []
+          args: [],
+          // ✨ NEW: Track available methods for dropdown
+          availableMethods: []
         }
       ]
     }));
+  };
+
+  // ✨ NEW: Handle instance selection for step
+  const handleStepInstanceSelect = (stepIndex, instanceVarName) => {
+    // Find the import that matches this instance
+    const matchingImport = formData.imports.find(imp => imp.varName === instanceVarName);
+    
+    if (matchingImport) {
+      // Get available methods from the selected POM
+      const availableMethods = matchingImport.functions || [];
+      
+      setFormData(prev => ({
+        ...prev,
+        steps: prev.steps.map((step, i) => 
+          i === stepIndex ? {
+            ...step,
+            instance: instanceVarName,
+            availableMethods: availableMethods,
+            method: '', // Clear method when instance changes
+            args: []
+          } : step
+        )
+      }));
+    }
+  };
+
+  // ✨ NEW: Handle method selection with signature
+  const handleStepMethodSelect = (stepIndex, methodSignature) => {
+    // Parse method signature to extract name and params
+    // Example: "performSearch(locations, flightType, noOfPax)"
+    const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
+    
+    if (match) {
+      const methodName = match[1];
+      const paramsStr = match[2];
+      const params = paramsStr ? paramsStr.split(',').map(p => p.trim()) : [];
+      
+      setFormData(prev => ({
+        ...prev,
+        steps: prev.steps.map((step, i) => 
+          i === stepIndex ? {
+            ...step,
+            method: methodName,
+            args: params.map(p => {
+              // ✨ Smart default: Try to match param name to context fields
+              // Example: if param is "locations", suggest "ctx.data.locations"
+              return `ctx.data.${p}`;
+            })
+          } : step
+        )
+      }));
+    }
   };
 
   // Update step field
@@ -179,8 +354,18 @@ export default function AddTransitionModal({
         event: formData.event.trim(),
         actionDetails: formData.hasActionDetails ? {
           description: formData.description.trim(),
-          imports: formData.imports,
-          steps: formData.steps
+          imports: formData.imports.map(imp => ({
+            className: imp.className,
+            varName: imp.varName,
+            path: imp.path,
+            constructor: imp.constructor
+          })),
+          steps: formData.steps.map(step => ({
+            description: step.description,
+            instance: step.instance,
+            method: step.method,
+            args: step.args
+          }))
         } : null
       };
 
@@ -223,7 +408,7 @@ export default function AddTransitionModal({
                 className="text-2xl font-bold"
                 style={{ color: defaultTheme.colors.accents.blue }}
               >
-                🔗 Add Transition
+                🔗 Add Transition {loadingPOMs && '(Loading POMs...)'}
               </h2>
               <p 
                 className="text-sm mt-1"
@@ -382,79 +567,111 @@ export default function AddTransitionModal({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Class Name *
-                        </label>
-                        <input
-                          type="text"
-                          value={imp.className}
-                          onChange={(e) => handleImportChange(index, 'className', e.target.value)}
-                          placeholder="SearchBarWrapper"
-                          className="w-full px-3 py-1 rounded text-sm"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`import_${index}_className`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-                          }}
-                        />
-                      </div>
+                    {/* ✨ NEW: POM Dropdown */}
+                   <div>
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Select POM (Screen Object) *
+  </label>
+  <select
+  value={imp.selectedPOM || ''}
+  onChange={(e) => handlePOMSelect(index, e.target.value)}
+  className="w-full px-3 py-2 rounded text-sm"
+  style={{
+    backgroundColor: defaultTheme.colors.background.tertiary,
+    color: defaultTheme.colors.text.primary,
+    border: `1px solid ${defaultTheme.colors.border}`
+  }}
+>
+  <option value="">-- Select a POM --</option>
+  {availablePOMs.map((pom, idx) => (
+    <option key={idx} value={pom.className}>
+      {pom.className} ({pom.name})
+    </option>
+  ))}
+</select>
+</div>
 
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Variable Name *
-                        </label>
-                        <input
-                          type="text"
-                          value={imp.varName}
-                          onChange={(e) => handleImportChange(index, 'varName', e.target.value)}
-                          placeholder="searchBarWrapper"
-                          className="w-full px-3 py-1 rounded text-sm"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`import_${index}_varName`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-                          }}
-                        />
-                      </div>
+                    {/* Show auto-filled fields */}
+                    {imp.selectedPOM && (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                              Class Name * (auto-filled)
+                            </label>
+                            <input
+                              type="text"
+                              value={imp.className}
+                              onChange={(e) => handleImportChange(index, 'className', e.target.value)}
+                              className="w-full px-3 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: defaultTheme.colors.background.tertiary,
+                                color: defaultTheme.colors.text.primary,
+                                border: `1px solid ${errors[`import_${index}_className`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                              }}
+                            />
+                          </div>
 
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Path (relative to screenObjects) *
-                        </label>
-                        <input
-                          type="text"
-                          value={imp.path}
-                          onChange={(e) => handleImportChange(index, 'path', e.target.value)}
-                          placeholder="searchBar.wrapper"
-                          className="w-full px-3 py-1 rounded text-sm"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`import_${index}_path`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-                          }}
-                        />
-                      </div>
+                          <div>
+                            <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                              Variable Name * (auto-filled)
+                            </label>
+                            <input
+                              type="text"
+                              value={imp.varName}
+                              onChange={(e) => handleImportChange(index, 'varName', e.target.value)}
+                              className="w-full px-3 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: defaultTheme.colors.background.tertiary,
+                                color: defaultTheme.colors.text.primary,
+                                border: `1px solid ${errors[`import_${index}_varName`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                              }}
+                            />
+                          </div>
 
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Constructor *
-                        </label>
-                        <input
-                          type="text"
-                          value={imp.constructor}
-                          onChange={(e) => handleImportChange(index, 'constructor', e.target.value)}
-                          placeholder="new SearchBarWrapper(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')"
-                          className="w-full px-3 py-1 rounded text-sm font-mono"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`import_${index}_constructor`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-                          }}
-                        />
-                      </div>
-                    </div>
+                          <div>
+                            <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                              Path * (auto-filled)
+                            </label>
+                            <input
+                              type="text"
+                              value={imp.path}
+                              onChange={(e) => handleImportChange(index, 'path', e.target.value)}
+                              className="w-full px-3 py-1 rounded text-sm"
+                              style={{
+                                backgroundColor: defaultTheme.colors.background.tertiary,
+                                color: defaultTheme.colors.text.primary,
+                                border: `1px solid ${errors[`import_${index}_path`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                              }}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                              Constructor * (auto-filled, editable)
+                            </label>
+                            <input
+                              type="text"
+                              value={imp.constructor}
+                              onChange={(e) => handleImportChange(index, 'constructor', e.target.value)}
+                              className="w-full px-3 py-1 rounded text-sm font-mono"
+                              style={{
+                                backgroundColor: defaultTheme.colors.background.tertiary,
+                                color: defaultTheme.colors.text.primary,
+                                border: `1px solid ${errors[`import_${index}_constructor`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* ✨ Show available methods count */}
+                        {imp.functions && imp.functions.length > 0 && (
+                          <p className="text-xs" style={{ color: defaultTheme.colors.accents.green }}>
+                            ✓ Found {imp.functions.length} methods in this POM
+                          </p>
+                        )}
+                      </>
+                    )}
                   </div>
                 ))}
 
@@ -529,40 +746,54 @@ export default function AddTransitionModal({
                     </div>
 
                     <div className="grid grid-cols-3 gap-3">
+                      {/* ✨ NEW: Instance Dropdown */}
                       <div>
                         <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Instance *
+                          Instance * (from imports)
                         </label>
-                        <input
-                          type="text"
+                        <select
                           value={step.instance}
-                          onChange={(e) => handleStepChange(index, 'instance', e.target.value)}
-                          placeholder="searchBarWrapper"
+                          onChange={(e) => handleStepInstanceSelect(index, e.target.value)}
                           className="w-full px-3 py-1 rounded text-sm font-mono"
                           style={{
                             backgroundColor: defaultTheme.colors.background.tertiary,
                             color: defaultTheme.colors.text.primary,
                             border: `1px solid ${errors[`step_${index}_instance`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
                           }}
-                        />
+                        >
+                          <option value="">-- Select --</option>
+                          {formData.imports.map((imp, i) => (
+                            <option key={i} value={imp.varName}>
+                              {imp.varName} ({imp.className})
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
+                      {/* ✨ NEW: Method Dropdown with Signatures */}
                       <div>
                         <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Method *
+                          Method * (with signature)
                         </label>
-                        <input
-                          type="text"
-                          value={step.method}
-                          onChange={(e) => handleStepChange(index, 'method', e.target.value)}
-                          placeholder="functionSelectAgency"
+                        <select
+                          value={step.method ? `${step.method}(${step.args.join(', ')})` : ''}
+                          onChange={(e) => handleStepMethodSelect(index, e.target.value)}
+                          disabled={!step.instance}
                           className="w-full px-3 py-1 rounded text-sm font-mono"
                           style={{
                             backgroundColor: defaultTheme.colors.background.tertiary,
                             color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                            border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
+                            opacity: !step.instance ? 0.5 : 1
                           }}
-                        />
+                        >
+                          <option value="">-- Select method --</option>
+                          {step.availableMethods && step.availableMethods.map((method, i) => (
+                            <option key={i} value={method.signature}>
+                              {method.signature}
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       <div>
@@ -583,6 +814,13 @@ export default function AddTransitionModal({
                         />
                       </div>
                     </div>
+
+                    {/* ✨ Show parameter hints */}
+                    {step.method && step.args.length > 0 && (
+                      <p className="text-xs mt-1" style={{ color: defaultTheme.colors.text.secondary }}>
+                        💡 Tip: Use ctx.data.fieldName to access context fields
+                      </p>
+                    )}
                   </div>
                 ))}
 

@@ -828,9 +828,10 @@ suggestedScreens,
         // âœ… FIX #1: Changed from 'utils' to 'ai-testing/utils'
         utilsPath = path.join(testsBase, 'ai-testing/utils');
       } else {
-        // Fallback
-        utilsPath = 'tests/ai-testing/utils';
-      }
+  // Fallback - resolve relative to project root
+  const projectRoot = this._findProjectRoot(implFilePath);
+  utilsPath = path.join(projectRoot, 'tests/ai-testing/utils');
+}
     }
     
     // Calculate relative path from test location to utils

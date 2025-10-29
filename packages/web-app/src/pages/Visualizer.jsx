@@ -1125,6 +1125,7 @@ const disableTransitionMode = () => {
         onSubmit={handleTransitionSubmit}
         sourceState={transitionModalData.source}
         targetState={transitionModalData.target}
+        projectPath={projectPath}
       />
     
     </div>

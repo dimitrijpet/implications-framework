@@ -104,29 +104,29 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
 
 
  
-  const loadContextData = async () => {
-    setLoadingContext(true);
-    try {
-      const response = await fetch(
-        `http://localhost:3000/api/implications/context-schema?filePath=${encodeURIComponent(state.files.implication)}`
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📋 Loaded context data:', data.context);
-        setContextData(data.context);
-      } else {
-        console.error('Failed to load context:', await response.text());
-        setContextData({}); // Set empty to show "no context" message
-      }
-    } catch (error) {
-      console.error('❌ Error loading context:', error);
-      setContextData({}); // Set empty on error
-    } finally {
-      setLoadingContext(false);
+const loadContextData = async () => {
+  setLoadingContext(true);
+  try {
+    const response = await fetch(
+      `http://localhost:3000/api/implications/context-schema?filePath=${encodeURIComponent(state.files.implication)}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('📋 Loaded context data:', data.context);
+      console.log('📋 Context with types:', data.contextWithTypes);
+      setContextData(data.contextWithTypes || data.context);  // ← Use contextWithTypes
+    } else {
+      console.error('Failed to load context:', await response.text());
+      setContextData({});
     }
-  };
-
+  } catch (error) {  // ← YOU WERE MISSING THIS!
+    console.error('❌ Error loading context:', error);
+    setContextData({});
+  } finally {
+    setLoadingContext(false);
+  }
+};
   // NEW: Load suggestions from mirrorsOn
   const loadMirrorsOnSuggestions = async () => {
     setLoadingSuggestions(true);
@@ -208,6 +208,8 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
       alert(`❌ Failed to add field: ${error.message}`);
     }
   };
+
+  
 
   // NEW: Delete context field handler
   const handleDeleteContextField = async (fieldName) => {
@@ -701,7 +703,7 @@ const handleAnalysisComplete = (analysis) => {
             </div>
           )}
 
-          {/* ========================================
+    {/* ========================================
     TEST DATA REQUIREMENTS SECTION - NEW!
     ======================================== */}
 <div>
@@ -715,6 +717,7 @@ const handleAnalysisComplete = (analysis) => {
   <TestDataPanel
     state={currentState}
     projectPath={projectPath}
+    contextData={contextData}  // ← ADD THIS LINE
     theme={theme}
   />
 </div>
@@ -777,42 +780,111 @@ const handleAnalysisComplete = (analysis) => {
               TRANSITIONS SECTION
               ======================================== */}
           {currentState.transitions && currentState.transitions.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 
-                  className="text-2xl font-bold"
-                  style={{ color: theme.colors.accents.green }}
+  <div>
+    <div className="flex items-center justify-between mb-4">
+      <h2 
+        className="text-2xl font-bold"
+        style={{ color: theme.colors.accents.green }}
+      >
+        🔄 Transitions ({currentState.transitions.length})
+      </h2>
+      
+      {isEditMode && (
+        <button
+          onClick={handleAddTransition}
+          className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+          style={{ 
+            background: theme.colors.accents.green,
+            color: 'white'
+          }}
+        >
+          ➕ Add Transition
+        </button>
+      )}
+    </div>
+    
+    <div className="grid grid-cols-1 gap-3">
+      {currentState.transitions.map((transition, index) => (
+        <div
+          key={index}
+          className="p-4 rounded-lg"
+          style={{
+            backgroundColor: theme.colors.background.tertiary,
+            border: `1px solid ${theme.colors.border}`
+          }}
+        >
+          {/* Transition Header */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <span className="text-lg font-bold" style={{ color: theme.colors.accents.blue }}>
+                {transition.event}
+              </span>
+              <span style={{ color: theme.colors.text.secondary }}>→</span>
+              <span className="font-semibold" style={{ color: theme.colors.accents.green }}>
+                {transition.target}
+              </span>
+            </div>
+            
+            {isEditMode && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleEditTransition(index, transition)}
+                  className="px-3 py-1 rounded text-sm"
+                  style={{
+                    backgroundColor: theme.colors.accents.blue,
+                    color: 'white'
+                  }}
                 >
-                  🔄 Transitions ({currentState.transitions.length})
-                </h2>
-                
-                {isEditMode && (
-                  <button
-                    onClick={handleAddTransition}
-                    className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                    style={{ 
-                      background: theme.colors.accents.green,
-                      color: 'white'
-                    }}
-                  >
-                    ➕ Add Transition
-                  </button>
-                )}
+                  ✏️ Edit
+                </button>
+                <button
+                  onClick={() => handleRemoveTransition(index)}
+                  className="px-3 py-1 rounded text-sm"
+                  style={{
+                    backgroundColor: theme.colors.accents.red,
+                    color: 'white'
+                  }}
+                >
+                  🗑️ Remove
+                </button>
               </div>
+            )}
+          </div>
+
+          {/* Action Details */}
+          {transition.actionDetails && (
+            <div className="mt-3 p-3 rounded" style={{ backgroundColor: theme.colors.background.secondary }}>
+              <p className="text-sm font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
+                📝 {transition.actionDetails.description}
+              </p>
               
-              <div className="grid grid-cols-1 gap-3">
-                {currentState.transitions.map((transition, index) => (
-                  <TransitionCard
-                    key={index}
-                    transition={transition}
-                    theme={theme}
-                    editable={isEditMode}
-                    onRemove={() => handleRemoveTransition(index)}
-                  />
-                ))}
-              </div>
+              {transition.actionDetails.imports && transition.actionDetails.imports.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                    Imports: {transition.actionDetails.imports.map(imp => imp.className).join(', ')}
+                  </p>
+                </div>
+              )}
+              
+              {transition.actionDetails.steps && transition.actionDetails.steps.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold mb-1" style={{ color: theme.colors.text.tertiary }}>
+                    Steps:
+                  </p>
+                  {transition.actionDetails.steps.map((step, i) => (
+                    <p key={i} className="text-xs ml-3" style={{ color: theme.colors.text.secondary }}>
+                      {i + 1}. {step.instance}.{step.method}({step.args.join(', ')})
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 
           // Inside the modal, add the button section (after transitions section):
 <div className="section">

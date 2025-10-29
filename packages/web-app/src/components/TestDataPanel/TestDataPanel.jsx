@@ -11,98 +11,43 @@ import { AlertCircle, CheckCircle, ArrowRight, FileJson } from 'lucide-react';
  * - Entry data (outputs)
  * - Data flow information
  */
-export default function TestDataPanel({ state, projectPath, theme }) {
-  const [contextData, setContextData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (!state?.files?.implication || !projectPath) {
-      return;
-    }
-
-    fetchContextData();
-  }, [state?.files?.implication, projectPath]);
-
-  const fetchContextData = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(
-        `/api/context/extract?projectPath=${encodeURIComponent(projectPath)}&file=${encodeURIComponent(state.files.implication)}`
-      );
-
-      const data = await response.json();
-
-      if (data.success) {
-        setContextData(data);
-      } else {
-        setError(data.error || 'Failed to extract context');
-      }
-    } catch (err) {
-      console.error('Failed to fetch context:', err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="p-6 border rounded-lg" style={{ 
-        background: theme.colors.background.secondary,
-        borderColor: theme.colors.background.tertiary 
-      }}>
-        <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
-               style={{ borderColor: theme.colors.accents.blue }}></div>
-          <span style={{ color: theme.colors.text.secondary }}>
-            Loading test data requirements...
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 border rounded-lg" style={{ 
-        background: `${theme.colors.accents.red}10`,
-        borderColor: theme.colors.accents.red 
-      }}>
-        <div className="flex items-center gap-3">
-          <AlertCircle className="w-5 h-5" style={{ color: theme.colors.accents.red }} />
-          <span style={{ color: theme.colors.accents.red }}>
-            Failed to load context: {error}
-          </span>
-        </div>
-      </div>
-    );
-  }
-
+export default function TestDataPanel({ state, projectPath, contextData, theme }) {
+  
+  // Transform contextData from contextWithTypes format
+  const hasContext = contextData && Object.keys(contextData).length > 0;
+  
   if (!contextData) {
-    return null;
+    return (
+      <div className="p-6 border rounded-lg" style={{ 
+        background: theme.colors.background.secondary 
+      }}>
+        <div style={{ color: theme.colors.text.tertiary }}>
+          Loading test data requirements...
+        </div>
+      </div>
+    );
   }
 
-  const hasContext = contextData.hasContext && Object.keys(contextData.context).length > 0;
-  const hasEntry = contextData.hasEntry && Object.keys(contextData.entry).length > 0;
-  const hasRequiredFields = contextData.requiredFields && contextData.requiredFields.length > 0;
+  // Map contextWithTypes to old format for compatibility
+  const context = hasContext 
+    ? Object.fromEntries(
+        Object.entries(contextData).map(([key, fieldData]) => [
+          key, 
+          fieldData.value
+        ])
+      )
+    : {};
 
-  // Calculate readiness status
-  const allContextFields = Object.entries(contextData.context || {});
+  const allContextFields = Object.entries(context);
   const missingValues = allContextFields.filter(([_, value]) => 
-    value === null || value === undefined || value === '' ||
-    (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)
+    value === null || value === undefined || value === ''
   );
   const isReady = hasContext && missingValues.length === 0;
 
   return (
     <div className="space-y-4">
       
-      {/* ========================================
-          READINESS SUMMARY
-          ======================================== */}
+      {/* Readiness Summary */}
       <div className="border-2 rounded-lg p-5" style={{ 
         background: isReady ? `${theme.colors.accents.green}10` : `${theme.colors.accents.orange}10`,
         borderColor: isReady ? theme.colors.accents.green : theme.colors.accents.orange
@@ -155,45 +100,9 @@ export default function TestDataPanel({ state, projectPath, theme }) {
         </div>
       </div>
       
-      {/* ========================================
-          REQUIRED FIELDS (from meta)
-          ======================================== */}
-      {hasRequiredFields && (
-        <div className="border rounded-lg p-5" style={{ 
-          background: `${theme.colors.accents.orange}10`,
-          borderColor: theme.colors.accents.orange 
-        }}>
-          <div className="flex items-center gap-2 mb-4">
-            <div className="text-2xl">⚠️</div>
-            <h3 className="text-lg font-bold" style={{ color: theme.colors.text.primary }}>
-              Required Fields (Must Be Present)
-            </h3>
-          </div>
-
-          <div className="space-y-2">
-            {contextData.requiredFields.map((fieldName) => (
-              <div key={fieldName} className="flex items-center gap-2 p-2 rounded" style={{ 
-                background: theme.colors.background.primary 
-              }}>
-                <AlertCircle className="w-4 h-4" style={{ color: theme.colors.accents.orange }} />
-                <span className="font-mono font-semibold" style={{ color: theme.colors.text.primary }}>
-                  {fieldName}
-                </span>
-                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  (required for this state)
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {/* ========================================
-          REQUIRED CONTEXT (INPUTS)
-          ======================================== */}
+      {/* Required Context Section */}
       <div className="border rounded-lg p-5" style={{ 
-        background: theme.colors.background.secondary,
-        borderColor: theme.colors.background.tertiary 
+        background: theme.colors.background.secondary 
       }}>
         <div className="flex items-center gap-2 mb-4">
           <div className="text-2xl">📥</div>
@@ -204,14 +113,34 @@ export default function TestDataPanel({ state, projectPath, theme }) {
 
         {hasContext ? (
           <div className="space-y-3">
-            {Object.entries(contextData.context).map(([key, value]) => (
-              <FieldDisplay 
+            {Object.entries(contextData).map(([key, fieldData]) => (
+              <div 
                 key={key}
-                name={key}
-                value={value}
-                theme={theme}
-                type="input"
-              />
+                className="flex items-center justify-between p-3 rounded"
+                style={{ 
+                  background: theme.colors.background.tertiary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
+              >
+                <div>
+                  <div className="font-mono font-semibold" style={{ color: theme.colors.text.primary }}>
+                    {key}
+                  </div>
+                  <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                    Type: {fieldData.type}
+                    {fieldData.source && ` • Source: ${fieldData.source}`}
+                  </div>
+                </div>
+                <span 
+                  className="text-xs px-2 py-1 rounded"
+                  style={{ 
+                    background: `${theme.colors.accents.green}20`,
+                    color: theme.colors.accents.green
+                  }}
+                >
+                  Required
+                </span>
+              </div>
             ))}
           </div>
         ) : (
@@ -221,187 +150,22 @@ export default function TestDataPanel({ state, projectPath, theme }) {
         )}
       </div>
 
-      {/* ========================================
-          ENTRY DATA (OUTPUTS)
-          ======================================== */}
-      <div className="border rounded-lg p-5" style={{ 
-        background: theme.colors.background.secondary,
-        borderColor: theme.colors.background.tertiary 
-      }}>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="text-2xl">📤</div>
-          <h3 className="text-lg font-bold" style={{ color: theme.colors.text.primary }}>
-            State Output (What This State Creates)
-          </h3>
-        </div>
+      {/* Entry Data (Outputs) */}
+<div className="border rounded-lg p-5" style={{ 
+  background: theme.colors.background.secondary 
+}}>
+  <div className="flex items-center gap-2 mb-4">
+    <div className="text-2xl">📤</div>
+    <h3 className="text-lg font-bold" style={{ color: theme.colors.text.primary }}>
+      State Output (What This State Creates)
+    </h3>
+  </div>
 
-        {hasEntry ? (
-          <div className="space-y-3">
-            {Object.entries(contextData.entry).map(([key, value]) => (
-              <FieldDisplay 
-                key={key}
-                name={key}
-                value={value}
-                theme={theme}
-                type="output"
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="text-sm" style={{ color: theme.colors.text.tertiary }}>
-            No entry data defined
-          </div>
-        )}
-      </div>
-
-      {/* ========================================
-          DATA FLOW INFO
-          ======================================== */}
-      {(hasContext || hasEntry) && (
-        <div className="border rounded-lg p-5" style={{ 
-          background: `${theme.colors.accents.blue}10`,
-          borderColor: theme.colors.accents.blue 
-        }}>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="text-2xl">🔗</div>
-            <h3 className="text-lg font-bold" style={{ color: theme.colors.text.primary }}>
-              Data Flow
-            </h3>
-          </div>
-
-          <div className="space-y-2 text-sm" style={{ color: theme.colors.text.secondary }}>
-            {hasContext && (
-              <div className="flex items-start gap-2">
-                <ArrowRight className="w-4 h-4 mt-0.5 flex-shrink-0" 
-                            style={{ color: theme.colors.accents.blue }} />
-                <div>
-                  <span className="font-semibold">This state needs:</span>
-                  <span className="ml-1">
-                    {Object.keys(contextData.context).join(', ')}
-                  </span>
-                  <div className="text-xs mt-1" style={{ color: theme.colors.text.tertiary }}>
-                    These fields must be provided by previous states or test setup
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {hasEntry && (
-              <div className="flex items-start gap-2">
-                <ArrowRight className="w-4 h-4 mt-0.5 flex-shrink-0" 
-                            style={{ color: theme.colors.accents.green }} />
-                <div>
-                  <span className="font-semibold">This state creates:</span>
-                  <span className="ml-1">
-                    {Object.keys(contextData.entry).join(', ')}
-                  </span>
-                  <div className="text-xs mt-1" style={{ color: theme.colors.text.tertiary }}>
-                    These fields will be available to subsequent states
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================
-          FUTURE: TEMPLATE GENERATION BUTTON
-          ======================================== */}
-      {/* Placeholder for Phase 2 */}
-      <div className="border border-dashed rounded-lg p-4 text-center" style={{ 
-        borderColor: theme.colors.background.tertiary 
-      }}>
-        <FileJson className="w-8 h-8 mx-auto mb-2" 
-                  style={{ color: theme.colors.text.tertiary }} />
-        <div className="text-sm" style={{ color: theme.colors.text.tertiary }}>
-          Template generation coming in Phase 2
-        </div>
-      </div>
-
-      {/* ========================================
-          HOW TO USE THIS DATA
-          ======================================== */}
-      {hasContext && (
-        <div className="border rounded-lg p-5" style={{ 
-          background: `${theme.colors.accents.blue}05`,
-          borderColor: theme.colors.background.tertiary 
-        }}>
-          <div className="flex items-start gap-3">
-            <div className="text-2xl">📘</div>
-            <div className="flex-1 text-sm space-y-3" style={{ color: theme.colors.text.secondary }}>
-              <div className="font-semibold text-base" style={{ color: theme.colors.text.primary }}>
-                How to Provide Test Data
-              </div>
-              
-              <div>
-                <span className="font-semibold">1. Create Master testData file:</span>
-                <div className="mt-1 text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  This is your source of truth with initial values
-                </div>
-                <div className="mt-1 p-2 rounded font-mono text-xs" style={{ 
-                  background: theme.colors.background.primary 
-                }}>
-                  tests/data/your-test-master.json
-                </div>
-              </div>
-
-              <div>
-                <span className="font-semibold">2. Fill in the required context fields:</span>
-                <div className="mt-1 p-2 rounded font-mono text-xs overflow-x-auto" style={{ 
-                  background: theme.colors.background.primary 
-                }}>
-                  <pre>{JSON.stringify({
-                    ...Object.fromEntries(
-                      Object.entries(contextData.context).map(([key, value]) => {
-                        // Show actual value if exists, otherwise show placeholder
-                        if (value !== null && value !== undefined && value !== '' &&
-                            !(typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) {
-                          return [key, value];
-                        }
-                        // Generic placeholders based on type
-                        const placeholder = 
-                          key.includes('Id') ? 'your-id' :
-                          key.includes('Name') ? 'Your Name' :
-                          key === 'config' ? { device: 'desktop', lang: 'en' } :
-                          key.includes('Date') ? 'YYYY-MM-DD' :
-                          key.endsWith('At') || key.endsWith('Time') ? '2025-01-01T12:00:00Z' :
-                          key.includes('Count') || key.includes('Number') ? 0 :
-                          key.startsWith('is') || key.startsWith('has') ? false :
-                          'value';
-                        return [key, placeholder];
-                      })
-                    ),
-                    status: "initial",
-                    _config: {
-                      note: "Optional: test environment config"
-                    }
-                  }, null, 2)}</pre>
-                </div>
-              </div>
-
-              <div>
-                <span className="font-semibold">3. Tests will create runtime copies:</span>
-                <div className="mt-1 text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  During execution, tests save state changes with changeLog
-                </div>
-                <div className="mt-1 p-2 rounded font-mono text-xs" style={{ 
-                  background: theme.colors.background.primary 
-                }}>
-                  tests/data/your-test-run.json
-                </div>
-              </div>
-
-              <div className="pt-2 border-t" style={{ borderColor: theme.colors.background.tertiary }}>
-                <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  💡 <span className="font-semibold">Tip:</span> Master files are your source of truth. 
-                  Runtime files track test execution history.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+  {/* TODO: Get entry data from backend */}
+  <div className="text-sm" style={{ color: theme.colors.text.tertiary }}>
+    Entry data extraction coming soon
+  </div>
+</div>
     </div>
   );
 }

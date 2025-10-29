@@ -1,21 +1,22 @@
-// packages/api-server/src/routes/implications.js (COMPLETE FILE)
-
 import express from 'express';
 import path from 'path';
 import fs from 'fs-extra';
 import * as parser from '@babel/parser';
 import { parse } from '@babel/parser';
 import babelGenerate from '@babel/generator';
-import traverse from '@babel/traverse';
+import babelTraverse from '@babel/traverse';  // ← CHANGE
 import * as t from '@babel/types';
 import Handlebars from 'handlebars';
-import { glob } from 'glob';  // 👈 ADD THIS LINE
+import { glob } from 'glob';
 
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// ← ADD THIS
+const traverse = babelTraverse.default || babelTraverse;
 
 const router = express.Router();
 
@@ -190,8 +191,8 @@ router.post('/use-base-directly', async (req, res) => {
     let baseClassName = null;
     let foundMirrorsOn = false;
     
-    traverse.default(ast, {
-      ClassDeclaration(classPath) {
+    traverse(ast, {
+  ClassDeclaration(classPath) {
         if (classPath.node.superClass && classPath.node.superClass.name) {
           baseClassName = classPath.node.superClass.name;
         }
@@ -424,8 +425,8 @@ router.post('/update-metadata', async (req, res) => {
     
     let modified = false;
     
-    traverse.default(ast, {
-      ClassDeclaration(classPath) {
+    traverse(ast, {
+  ClassDeclaration(classPath) {
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -655,8 +656,8 @@ router.get('/get-state-details', async (req, res) => {
       uiCoverage: { totalScreens: 0 }
     };
 
-    traverse.default(ast, {  // 👈 FIX: Use .default
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         const propertyName = path.node.key?.name;
         
         // Look for xstateConfig
@@ -760,8 +761,8 @@ router.post('/update-ui', async (req, res) => {
     let originalUINode = null;
     
     // First pass: Extract original UI structure
-    traverse.default(ast, {
-      ClassDeclaration(classPath) {
+    traverse(ast, {
+  ClassDeclaration(classPath) {
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -791,8 +792,8 @@ router.post('/update-ui', async (req, res) => {
     const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent);
     
     // Second pass: Replace UI node
-    traverse.default(ast, {
-      ClassDeclaration(classPath) {
+    traverse(ast, {
+  ClassDeclaration(classPath) {
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -1385,8 +1386,8 @@ function extractCompleteXStateConfig(content) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
           const value = path.node.value;
           
@@ -1521,7 +1522,7 @@ router.post('/add-transition', async (req, res) => {
     let targetStateName = null;
 
     // Extract ID from target file's xstateConfig
-    traverse.default(targetAst, {
+    traverse(targetAst, {
       ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
           const config = path.node.value;
@@ -1550,7 +1551,7 @@ router.post('/add-transition', async (req, res) => {
   let transitionAdded = false;
 
 // ✅ NEW: Handle BOTH simple and complex xstateConfig structures
-traverse.default(sourceAst, {
+traverse(sourceAst, {
   ClassProperty(path) {
     if (path.node.key?.name === 'xstateConfig' && path.node.static) {
       const configValue = path.node.value;
@@ -1738,8 +1739,8 @@ router.post('/add-context-field', async (req, res) => {
     let fieldAdded = false;
     
     // Find xstateConfig.context and add field
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         if (path.node.static && path.node.key.name === 'xstateConfig') {
           console.log('✅ Found xstateConfig');
           
@@ -1853,8 +1854,8 @@ router.post('/delete-context-field', async (req, res) => {
     let fieldDeleted = false;
     
     // Find and remove field from context
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         if (path.node.static && path.node.key.name === 'xstateConfig') {
           const contextProp = path.node.value.properties.find(
             p => (p.key?.name === 'context' || p.key?.value === 'context')
@@ -1936,8 +1937,8 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     let mirrorsOnVariables = new Set();
     
     // Extract context and mirrorsOn
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         // Get context fields
         if (path.node.static && path.node.key.name === 'xstateConfig') {
           const contextProp = path.node.value.properties.find(
@@ -1954,7 +1955,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
         // Extract from mirrorsOn
         if (path.node.static && path.node.key.name === 'mirrorsOn') {
           // Traverse the entire mirrorsOn object
-          traverse.default(path.node.value, {
+          traverse(path.node.value, {
             TemplateLiteral(tPath) {
               // Find {{variable}} patterns in template literals
               tPath.node.quasis.forEach(quasi => {
@@ -2016,6 +2017,11 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
  * GET /api/implications/context-schema
  * Extract context fields from an xstate implication file
  */
+/**
+ * GET /api/implications/context-schema
+ * Extract context fields from an xstate implication file
+ * ✨ Enhanced to parse actionDetails for required fields
+ */
 router.get('/context-schema', async (req, res) => {
   try {
     const { filePath } = req.query;
@@ -2032,22 +2038,34 @@ router.get('/context-schema', async (req, res) => {
     // Extract complete xstate config
     const xstateConfig = extractCompleteXStateConfig(originalContent);
     
+    // ✨ NEW: Extract fields from actionDetails in transitions
+    const requiredFieldsFromActions = extractFieldsFromActionDetails(originalContent);
+    
+    // Merge context fields with discovered fields
+    const allContextFields = {
+      ...xstateConfig.context,
+      ...requiredFieldsFromActions
+    };
+    
     // Detect types for each context field
     const contextWithTypes = {};
     
-    Object.entries(xstateConfig.context).forEach(([fieldName, value]) => {
+    Object.entries(allContextFields).forEach(([fieldName, value]) => {
       contextWithTypes[fieldName] = {
         value,
         type: detectFieldType(value),
-        editable: true
+        editable: true,
+        source: xstateConfig.context[fieldName] !== undefined ? 'context' : 'actionDetails'
       };
     });
     
-    console.log(`✅ Extracted ${Object.keys(contextWithTypes).length} context fields:`, xstateConfig.context);
+    console.log(`✅ Extracted ${Object.keys(contextWithTypes).length} context fields:`, allContextFields);
+    console.log(`   - From context: ${Object.keys(xstateConfig.context).length}`);
+    console.log(`   - From actionDetails: ${Object.keys(requiredFieldsFromActions).length}`);
     
     res.json({
       success: true,
-      context: xstateConfig.context,
+      context: allContextFields,
       contextWithTypes,
       initial: xstateConfig.initial,
       states: Object.keys(xstateConfig.states)
@@ -2061,6 +2079,89 @@ router.get('/context-schema', async (req, res) => {
     });
   }
 });
+
+/**
+ * ✨ NEW: Extract required fields from actionDetails
+ * Parses ctx.data.fieldName from transition steps
+ */
+function extractFieldsFromActionDetails(fileContent) {
+  const fields = {};
+  
+  try {
+    const ast = parse(fileContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+    
+    console.log('🔍 Searching for actionDetails in AST...');
+    
+    traverse(ast, {
+      ObjectProperty(path) {
+        // Look for property with key "actionDetails"
+        if (path.node.key?.name === 'actionDetails' || path.node.key?.value === 'actionDetails') {
+          console.log('✅ Found actionDetails property!');
+          
+          const actionDetails = path.node.value;
+          
+          // actionDetails should be an ObjectExpression
+          if (actionDetails.type === 'ObjectExpression') {
+            console.log('  ✅ actionDetails is ObjectExpression');
+            
+            // Find "steps" property
+            const stepsProp = actionDetails.properties.find(
+              p => (p.key?.name === 'steps' || p.key?.value === 'steps')
+            );
+            
+            if (stepsProp) {
+              console.log('  ✅ Found steps property');
+              
+              // steps should be ArrayExpression
+              if (stepsProp.value?.type === 'ArrayExpression') {
+                console.log(`  ✅ Steps array has ${stepsProp.value.elements.length} elements`);
+                
+                stepsProp.value.elements.forEach((step, stepIndex) => {
+                  if (step?.type === 'ObjectExpression') {
+                    console.log(`    📍 Processing step ${stepIndex + 1}`);
+                    
+                    // Find "args" property in step
+                    const argsProp = step.properties.find(
+                      p => (p.key?.name === 'args' || p.key?.value === 'args')
+                    );
+                    
+                    if (argsProp && argsProp.value?.type === 'ArrayExpression') {
+                      console.log(`      ✅ Found args array with ${argsProp.value.elements.length} elements`);
+                      
+                      argsProp.value.elements.forEach((arg, argIndex) => {
+                        if (arg?.type === 'StringLiteral') {
+                          console.log(`        📝 Arg ${argIndex + 1}: "${arg.value}"`);
+                          
+                          // Parse ctx.data.fieldName pattern
+                          const match = arg.value.match(/ctx\.data\.(\w+)/);
+                          if (match) {
+                            const fieldName = match[1];
+                            fields[fieldName] = null;
+                            console.log(`        ✨ FOUND FIELD: ${fieldName}`);
+                          }
+                        }
+                      });
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    console.log(`📊 Total fields extracted: ${Object.keys(fields).length}`, fields);
+    
+  } catch (error) {
+    console.error('❌ Error parsing actionDetails:', error);
+  }
+  
+  return fields;
+}
 
 router.post('/add-context-field', async (req, res) => {
   const { filePath, fieldName, initialValue, fieldType } = req.body;
@@ -2087,8 +2188,8 @@ router.post('/add-context-field', async (req, res) => {
     // 3. Find and update xstateConfig.context
     let contextUpdated = false;
     
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         const node = path.node;
         
         // Find: static xstateConfig = { ... }
@@ -2211,8 +2312,8 @@ router.post('/delete-context-field', async (req, res) => {
     // 3. Find and remove from xstateConfig.context
     let contextUpdated = false;
     
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         const node = path.node;
         
         // Find: static xstateConfig = { ... }
@@ -2313,8 +2414,8 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     const variables = new Set();
     let contextFields = {};
     
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         const node = path.node;
         
         // Find mirrorsOn
@@ -2403,8 +2504,8 @@ router.post('/update-context', async (req, res) => {
     let contextFound = false;
     
     // Traverse AST and update context fields
-    traverse.default(ast, {
-      ClassProperty(path) {
+    traverse(ast, {
+  ClassProperty(path) {
         if (path.node.key?.name === 'xstateConfig' && path.node.static) {
           const configValue = path.node.value;
           

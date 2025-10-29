@@ -81,7 +81,7 @@ router.post('/add-context-field', async (req, res) => {
     let fieldAdded = false;
     
     // Find xstateConfig.context and add field
-    traverse.default(ast, {
+    traverse(ast, {
       ClassProperty(path) {
         if (path.node.static && path.node.key.name === 'xstateConfig') {
           console.log('✅ Found xstateConfig');
@@ -196,7 +196,7 @@ router.post('/delete-context-field', async (req, res) => {
     let fieldDeleted = false;
     
     // Find and remove field from context
-    traverse.default(ast, {
+    traverse(ast, {
       ClassProperty(path) {
         if (path.node.static && path.node.key.name === 'xstateConfig') {
           const contextProp = path.node.value.properties.find(
@@ -279,7 +279,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     let mirrorsOnVariables = new Set();
     
     // Extract context and mirrorsOn
-    traverse.default(ast, {
+    traverse(ast, {
       ClassProperty(path) {
         // Get context fields
         if (path.node.static && path.node.key.name === 'xstateConfig') {
@@ -297,7 +297,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
         // Extract from mirrorsOn
         if (path.node.static && path.node.key.name === 'mirrorsOn') {
           // Traverse the entire mirrorsOn object
-          traverse.default(path.node.value, {
+          traverse(path.node.value, {
             TemplateLiteral(tPath) {
               // Find {{variable}} patterns in template literals
               tPath.node.quasis.forEach(quasi => {
@@ -526,12 +526,12 @@ Then test:
 
 ## 🐛 **IF YOU GET ERRORS**
 
-### Error: "traverse.default is not a function"
+### Error: "traverse is not a function"
 
-**Fix:** Change all `traverse.default(` to `traverse(`
+**Fix:** Change all `traverse(` to `traverse(`
 
 Search and replace in the 3 endpoints:
-- Find: `traverse.default(`
+- Find: `traverse(`
 - Replace: `traverse(`
 
 ### Error: "babelGenerate.default is not a function"
