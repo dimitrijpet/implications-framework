@@ -1701,7 +1701,8 @@ traverse(sourceAst, {
 
 // ========================================
 // POST /api/implications/add-context-field
-// ========================================
+// ======================================== 
+/*
 router.post('/add-context-field', async (req, res) => {
   try {
     const { filePath, fieldName, initialValue, fieldType } = req.body;
@@ -1828,10 +1829,13 @@ router.post('/add-context-field', async (req, res) => {
     });
   }
 });
+*/
+
 
 // ========================================
 // POST /api/implications/delete-context-field
 // ========================================
+/*
 router.post('/delete-context-field', async (req, res) => {
   try {
     const { filePath, fieldName } = req.body;
@@ -1912,10 +1916,12 @@ router.post('/delete-context-field', async (req, res) => {
     });
   }
 });
+*/
 
 // ========================================
 // GET /api/implications/extract-mirrorson-variables
 // ========================================
+/*
 router.get('/extract-mirrorson-variables', async (req, res) => {
   try {
     const { filePath } = req.query;
@@ -2002,6 +2008,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     });
   }
 });
+*/
 
 // ============================================
 // COMPLETE BACKEND ENDPOINT FOR CONTEXT
@@ -2683,5 +2690,133 @@ function extractValueFromAST(node) {
       return null;
   }
 }
+
+
+/**
+ * GET /api/graph/layout
+ * Load saved graph layout from guest project
+ */
+router.get('/graph/layout', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+    
+    // Layout file location in guest project
+    const layoutPath = path.join(projectPath, '.implications-framework', 'graph-layout.json');
+    
+    console.log('📂 Loading graph layout from:', layoutPath);
+    
+    // Check if layout exists
+    if (await fs.pathExists(layoutPath)) {
+      const layout = await fs.readJson(layoutPath);
+      console.log(`✅ Loaded layout with ${Object.keys(layout.positions || {}).length} node positions`);
+      
+      res.json({
+        success: true,
+        layout: layout
+      });
+    } else {
+      console.log('ℹ️  No saved layout found');
+      res.json({
+        success: true,
+        layout: null
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Load graph layout error:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/graph/layout
+ * Save graph layout to guest project
+ */
+router.post('/graph/layout', async (req, res) => {
+  try {
+    const { projectPath, layout } = req.body;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+    
+    if (!layout || !layout.positions) {
+      return res.status(400).json({ error: 'layout with positions is required' });
+    }
+    
+    // Layout file location in guest project
+    const layoutDir = path.join(projectPath, '.implications-framework');
+    const layoutPath = path.join(layoutDir, 'graph-layout.json');
+    
+    console.log('💾 Saving graph layout to:', layoutPath);
+    
+    // Ensure directory exists
+    await fs.ensureDir(layoutDir);
+    
+    // Add metadata
+    const layoutData = {
+      ...layout,
+      savedAt: new Date().toISOString(),
+      version: '1.0'
+    };
+    
+    // Write layout file
+    await fs.writeJson(layoutPath, layoutData, { spaces: 2 });
+    
+    console.log(`✅ Saved ${Object.keys(layout.positions).length} node positions`);
+    
+    res.json({
+      success: true,
+      layoutPath: layoutPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Save graph layout error:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * DELETE /api/graph/layout
+ * Delete saved graph layout (reset to default)
+ */
+router.delete('/graph/layout', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+    
+    const layoutPath = path.join(projectPath, '.implications-framework', 'graph-layout.json');
+    
+    console.log('🗑️  Deleting graph layout:', layoutPath);
+    
+    if (await fs.pathExists(layoutPath)) {
+      await fs.remove(layoutPath);
+      console.log('✅ Layout deleted');
+    }
+    
+    res.json({
+      success: true,
+      message: 'Layout reset to default'
+    });
+    
+  } catch (error) {
+    console.error('❌ Delete graph layout error:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
 
 export default router;

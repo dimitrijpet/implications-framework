@@ -17,8 +17,8 @@ const API_URL = 'http://localhost:3000';
 export default function Visualizer() {
   // Load from localStorage on mount
   const [projectPath, setProjectPath] = useState(
-    localStorage.getItem('lastProjectPath') || '/home/dimitrij/Projects/cxm/PolePosition-TESTING'
-  );
+  localStorage.getItem('lastProjectPath') || '/home/dimitrij/Projects/cxm/PolePosition-TESTING'
+);
   const [discoveryResult, setDiscoveryResult] = useState(() => {
     const saved = localStorage.getItem('lastDiscoveryResult');
     return saved ? JSON.parse(saved) : null;
@@ -52,7 +52,11 @@ const [initLoading, setInitLoading] = useState(false);
 const [initSuccess, setInitSuccess] = useState(false);
 const [initError, setInitError] = useState(null);
 const [createdFiles, setCreatedFiles] = useState([]);
-  
+  const [showScreenGroups, setShowScreenGroups] = useState(false);
+  const [savedLayout, setSavedLayout] = useState(null);
+const [isSavingLayout, setIsSavingLayout] = useState(false);
+
+
   // Clear cache and reset state
   const handleClearCache = () => {
     localStorage.removeItem('lastProjectPath');
@@ -202,6 +206,143 @@ const handleReInitialize = async () => {
   }
 };
 
+const loadGraphLayout = async () => {
+  // ✨ ADD VALIDATION
+  if (!projectPath) {
+    console.log('⏭️  Skipping layout load - no projectPath yet');
+    return;
+  }
+  
+  try {
+    console.log('📂 Loading saved graph layout...');
+    console.log('📍 Project path:', projectPath); // ✨ ADD THIS DEBUG
+    
+    const response = await fetch(
+      `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    
+    if (!response.ok) {
+      const errorData = await response.json(); // ✨ ADD THIS
+      console.error('❌ Backend error:', errorData); // ✨ ADD THIS
+      throw new Error(`HTTP ${response.status}: ${errorData.error || 'Unknown error'}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.success && data.layout) {
+      console.log('✅ Layout loaded:', data.layout);
+      setSavedLayout(data.layout);
+    } else {
+      console.log('ℹ️  No saved layout found');
+      setSavedLayout(null);
+    }
+  } catch (error) {
+    console.error('❌ Load layout failed:', error);
+  }
+};
+
+// ✨ Load saved layout when graph data or project changes
+useEffect(() => {
+  // ✅ Only load when BOTH exist
+  if (graphData && projectPath && projectPath.trim() !== '') {
+    console.log('🔄 Loading layout:', {
+      projectPath,
+      hasGraphData: !!graphData,
+      nodeCount: graphData.nodes?.length || 0
+    });
+    loadGraphLayout();
+  } else {
+    console.log('⏭️  Skipping layout load:', {
+      hasGraphData: !!graphData,
+      hasProjectPath: !!projectPath,
+      projectPathValue: projectPath
+    });
+  }
+}, [graphData, projectPath]);
+
+// ────────────────────────────────────────────────────────────
+// 3. ADD SAVE LAYOUT FUNCTION
+// ────────────────────────────────────────────────────────────
+const saveGraphLayout = async () => {
+  if (!projectPath || !window.cytoscapeGraph) return;
+  
+  try {
+    setIsSavingLayout(true);
+    console.log('💾 Saving graph layout...');
+    
+    // Get current layout from Cytoscape
+    const layout = window.cytoscapeGraph.getLayout();
+
+    const response = await fetch(`${API_URL}/api/implications/graph/layout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectPath,
+        layout
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      console.log('✅ Layout saved!');
+      setSavedLayout(layout);
+      
+      // Show success message
+      alert('✅ Graph layout saved! It will be loaded automatically next time.');
+    }
+  } catch (error) {
+    console.error('❌ Save layout failed:', error);
+    alert('❌ Failed to save layout: ' + error.message);
+  } finally {
+    setIsSavingLayout(false);
+  }
+};
+
+// ────────────────────────────────────────────────────────────
+// 4. ADD RESET LAYOUT FUNCTION
+// ────────────────────────────────────────────────────────────
+const resetGraphLayout = async () => {
+  if (!projectPath) return;
+  
+  const confirmed = confirm('Reset graph layout to default?\n\nThis will delete your saved positions.');
+  if (!confirmed) return;
+  
+  try {
+    console.log('🗑️  Resetting graph layout...');
+    
+    const response = await fetch(
+  `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`,
+  { method: 'DELETE' }
+);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      console.log('✅ Layout reset!');
+      setSavedLayout(null);
+      
+      // Re-run dagre layout
+      if (window.cytoscapeGraph) {
+        window.cytoscapeGraph.relayout();
+      }
+      
+      alert('✅ Layout reset to default!');
+    }
+  } catch (error) {
+    console.error('❌ Reset layout failed:', error);
+    alert('❌ Failed to reset layout: ' + error.message);
+  }
+};
+
 // REPLACE the entire handleScan function (lines 64-113) with this:
 const handleScan = async () => {
   setLoading(true);
@@ -243,12 +384,57 @@ const handleScan = async () => {
     setDiscoveryResult(result);
     setAnalysisResult(result.analysis || null);
     setStateRegistry(result.stateRegistry || null);
+
+    // ────────────────────────────────────────────────────────────
+// 5. LOAD LAYOUT WHEN DISCOVERY COMPLETES (in handleDiscover)
+// ────────────────────────────────────────────────────────────
+// Add this AFTER setDiscoveryResult(result):
+
+await loadGraphLayout();  // ✨ Load saved layout
+
+// ────────────────────────────────────────────────────────────
+// 6. ADD BUTTONS TO CONTROLS (around line 290)
+// ────────────────────────────────────────────────────────────
+{/* Save Layout Button */}
+<button 
+  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90 flex items-center gap-2"
+  style={{
+    background: savedLayout 
+      ? defaultTheme.colors.accents.green 
+      : `${defaultTheme.colors.background.tertiary}`,
+    color: defaultTheme.colors.text.primary,
+    border: `1px solid ${defaultTheme.colors.border}`,
+    opacity: isSavingLayout ? 0.6 : 1
+  }}
+  onClick={saveGraphLayout}
+  disabled={isSavingLayout}
+  title="Save current graph layout"
+>
+  <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
+  {isSavingLayout ? 'Saving...' : 'Save Layout'}
+</button>
+
+{/* Reset Layout Button */}
+{savedLayout && (
+  <button 
+    className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
+    style={{
+      background: `${defaultTheme.colors.background.tertiary}`,
+      color: defaultTheme.colors.text.secondary,
+      border: `1px solid ${defaultTheme.colors.border}`
+    }}
+    onClick={resetGraphLayout}
+    title="Reset to default layout"
+  >
+    <span>🔄</span> Reset
+  </button>
+)}
     
     // Build graph data
     if (result.files?.implications) {
       const graph = buildGraphFromDiscovery(result);
       setGraphData(graph);
-      
+      await loadGraphLayout();
       // Save to localStorage
       localStorage.setItem('lastProjectPath', projectPath);
       localStorage.setItem('lastDiscoveryResult', JSON.stringify(result));
@@ -326,6 +512,8 @@ const handleScan = async () => {
     handleScan();
   }
 };
+
+
 
   // ✅ Expose refresh function globally for StateDetailModal
 useEffect(() => {
@@ -883,6 +1071,24 @@ const disableTransitionMode = () => {
   </div>
 )}
 
+{/* Screen Grouping Toggle */}
+{graphData && graphData.screenGroups && Object.keys(graphData.screenGroups).length > 0 && (
+  <button 
+    className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
+    style={{
+      background: showScreenGroups 
+        ? defaultTheme.colors.accents.green 
+        : `${defaultTheme.colors.background.tertiary}`,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${defaultTheme.colors.border}`
+    }}
+    onClick={() => setShowScreenGroups(!showScreenGroups)}
+    title="Group states by screen"
+  >
+    <span>📺</span> {showScreenGroups ? 'Hide' : 'Show'} Screen Groups
+  </button>
+)}
+
 {/* Success Banner */}
 {initSuccess && (
   <div 
@@ -994,48 +1200,49 @@ const disableTransitionMode = () => {
               </p>
             </div>
             
-            {/* Graph Controls */}
-            {graphData && (
-              <div className="flex gap-2">
-                <button 
-                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
-                  style={{
-                    background: `${defaultTheme.colors.background.tertiary}`,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`
-                  }}
-                  onClick={() => window.cytoscapeGraph?.fit()}
-                >
-                  <span>🎯</span> Fit
-                </button>
-                <button 
-                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
-                  style={{
-                    background: `${defaultTheme.colors.background.tertiary}`,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`
-                  }}
-                  onClick={() => window.cytoscapeGraph?.resetZoom()}
-                >
-                  <span>🔍</span> Reset
-                </button>
-                <button 
-                  className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-90"
-                  style={{
-                    background: `${defaultTheme.colors.background.tertiary}`,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`
-                  }}
-                  onClick={() => window.cytoscapeGraph?.relayout()}
-                >
-                  <span>🔄</span> Layout
-                </button>
-              </div>
-            )}
+         {/* Graph Controls */}
+{graphData && (
+  <div className="flex gap-2">
+    <button onClick={() => window.cytoscapeGraph?.fit()}>
+      <span>🎯</span> Fit
+    </button>
+    <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
+      <span>🔍</span> Reset
+    </button>
+    <button onClick={() => window.cytoscapeGraph?.relayout()}>
+      <span>🔄</span> Layout
+    </button>
+    
+    {/* ✨ ADD THESE */}
+    <button 
+      onClick={saveGraphLayout}
+      disabled={isSavingLayout}
+      title="Save current graph layout"
+      style={{
+        background: savedLayout 
+          ? defaultTheme.colors.accents.green 
+          : defaultTheme.colors.background.tertiary,
+        opacity: isSavingLayout ? 0.6 : 1
+      }}
+    >
+      <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
+      {isSavingLayout ? 'Saving...' : 'Save Layout'}
+    </button>
+    
+    {savedLayout && (
+      <button 
+        onClick={resetGraphLayout}
+        title="Reset to default layout"
+      >
+        <span>🔄</span> Reset
+      </button>
+    )}
+  </div>
+)}
           </div>
           
           {graphData ? (
-            <StateGraph
+   <StateGraph
   graphData={graphData}
   onNodeClick={(nodeData) => {
     if (transitionMode.enabled) {
@@ -1046,6 +1253,13 @@ const disableTransitionMode = () => {
   }}
   selectedNodeId={selectedNodeId}
   theme={defaultTheme}
+  showScreenGroups={showScreenGroups}
+  screenGroups={graphData.screenGroups}
+  savedLayout={savedLayout}  // ✨ ADD THIS
+  onLayoutChange={(layout) => {  // ✨ ADD THIS
+    // Optional: Auto-save on drag (commented out by default)
+    // setSavedLayout(layout);
+  }}
 />
           ) : (
             <div 
