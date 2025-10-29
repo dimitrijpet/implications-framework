@@ -221,15 +221,15 @@ const loadGraphLayout = async () => {
   
   try {
     console.log('📂 Loading saved graph layout...');
-    console.log('📍 Project path:', projectPath); // ✨ ADD THIS DEBUG
+    console.log('📍 Project path:', projectPath);
     
     const response = await fetch(
       `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`
     );
     
     if (!response.ok) {
-      const errorData = await response.json(); // ✨ ADD THIS
-      console.error('❌ Backend error:', errorData); // ✨ ADD THIS
+      const errorData = await response.json();
+      console.error('❌ Backend error:', errorData);
       throw new Error(`HTTP ${response.status}: ${errorData.error || 'Unknown error'}`);
     }
     
@@ -237,6 +237,11 @@ const loadGraphLayout = async () => {
     
     if (data.success && data.layout) {
       console.log('✅ Layout loaded:', data.layout);
+      
+      // ✅ CRITICAL: Store in window globals (Session 21 pattern)
+      window.__savedGraphLayout = data.layout;
+      window.__savedGraphLayoutVersion = Date.now();
+      
       setSavedLayout(data.layout);
     } else {
       console.log('ℹ️  No saved layout found');
@@ -320,6 +325,10 @@ const saveGraphLayout = async () => {
     await response.json();
     console.log('✅ Layout saved to file!');
     
+    // ✅ CRITICAL: Update window globals (Session 21 pattern)
+    window.__savedGraphLayout = layout;
+    window.__savedGraphLayoutVersion = Date.now();
+    
     setSavedLayout(layout);
     alert('✅ Graph layout saved! It will be loaded automatically next time.');
     
@@ -356,6 +365,12 @@ const resetGraphLayout = async () => {
     
     if (data.success) {
       console.log('✅ Layout reset!');
+      
+      // ✅ CRITICAL: Clear window globals (Session 21 pattern)
+      delete window.__savedGraphLayout;
+      delete window.__savedGraphLayoutVersion;
+      delete window.__lastAppliedVersion;
+      
       setSavedLayout(null);
       
       // Re-run dagre layout

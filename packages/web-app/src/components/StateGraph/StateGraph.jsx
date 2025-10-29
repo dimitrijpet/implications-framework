@@ -380,38 +380,31 @@ const applyLayout = () => {
   
   // Expose graph controls globally
   useEffect(() => {
-    if (!cyRef.current) return;
-    
-    window.cytoscapeGraph = cyRef.current;
-
-    window.cytoscapeHelpers = {
-      fit: () => cyRef.current.fit(null, 50),
-      resetZoom: () => {
-        cyRef.current.zoom(1);
-        cyRef.current.center();
-      },
-      relayout: () => {
-        cyRef.current.layout({
-          name: 'dagre',
-          rankDir: 'LR',
-          nodeSep: 100,
-          rankSep: 150,
-          padding: 50,
-          animate: true,
-          animationDuration: 600
-        }).run();
-      },
-      getLayout: () => {
-        const positions = {};
+  if (!cyRef.current) return;
+  
+  const interval = setInterval(() => {
+    if (window.__savedGraphLayoutVersion && 
+        window.__savedGraphLayoutVersion !== window.__lastAppliedVersion) {
+      
+      console.log('🔄 New layout version detected!');
+      
+      if (window.__savedGraphLayout?.positions) {
         cyRef.current.nodes().forEach(node => {
-          positions[node.id()] = node.position();
+          if (node.data('type') === 'screen_group') return;
+          
+          const savedPos = window.__savedGraphLayout.positions[node.id()];
+          if (savedPos) node.position(savedPos);
         });
-        return { positions };
+        
+        cyRef.current.fit(null, 50);
       }
-    };
-
-    console.log('✅ Cytoscape instance stored');
-  }, []);
+      
+      window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
+    }
+  }, 500);
+  
+  return () => clearInterval(interval);
+}, []);
   
   return (
     <div 
