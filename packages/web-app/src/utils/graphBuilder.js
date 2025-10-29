@@ -2,9 +2,7 @@ import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '.
 
 /**
  * Build Cytoscape graph from discovery results
- */
-/**
- * Build Cytoscape graph from discovery results
+ * ✨ Enhanced with screen grouping support
  */
 export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
@@ -17,22 +15,26 @@ export function buildGraphFromDiscovery(discoveryResult) {
   // Create a map of state names to class names
   const stateMap = new Map();
   
+  // ✨ NEW: Track screens for grouping
+  const screenGroups = {};
+  
   // ✅ FILTER: Only use implications with xstateConfig
-const statefulImplications = implications.filter(imp => 
-  imp.metadata?.hasXStateConfig === true
-);
+  const statefulImplications = implications.filter(imp => 
+    imp.metadata?.hasXStateConfig === true
+  );
 
-console.log(`✅ Filtered to ${statefulImplications.length} stateful implications (from ${implications.length} total)`);
+  console.log(`✅ Filtered to ${statefulImplications.length} stateful implications (from ${implications.length} total)`);
 
-// ✅ ADD THIS - Check what metadata we have
-statefulImplications.forEach(imp => {
-  console.log(`📋 ${imp.metadata.className}:`, {
-    status: imp.metadata.status,
-    triggerButton: imp.metadata.triggerButton,
-    platform: imp.metadata.platform,
-    setup: imp.metadata.setup,
+  // ✅ Check what metadata we have
+  statefulImplications.forEach(imp => {
+    console.log(`📋 ${imp.metadata.className}:`, {
+      status: imp.metadata.status,
+      triggerButton: imp.metadata.triggerButton,
+      platform: imp.metadata.platform,
+      setup: imp.metadata.setup,
+      screen: imp.metadata.screen,  // ✨ NEW
+    });
   });
-});
   
   // Create nodes from stateful implications only
   statefulImplications.forEach(imp => {
@@ -52,23 +54,37 @@ statefulImplications.forEach(imp => {
     const allPlatforms = metadata.platforms || [platform];
     const isMultiPlatform = allPlatforms.length > 1;
     
-    nodes.push({
-  data: {
-    id: stateName.toLowerCase(),
-    label: stateName,
-    type: 'state',
-    isStateful: metadata.isStateful,
-    pattern: metadata.pattern,
-    hasXState: metadata.hasXStateConfig,
-    metadata: metadata,
+    // ✨ NEW: Get screen from metadata
+    const screen = metadata.screen || null;
     
-    // ✅ ADD THIS - File paths!
-    files: {
-     implication: projectPath + '/' + imp.path,  // Make absolute!
-  test: projectPath + '/' + (Array.isArray(metadata.setup) 
-    ? metadata.setup[0]?.testFile 
-    : metadata.setup?.testFile)
-},
+    // ✨ NEW: Track screen grouping
+    if (screen) {
+      if (!screenGroups[screen]) {
+        screenGroups[screen] = [];
+      }
+      screenGroups[screen].push(stateName.toLowerCase());
+    }
+    
+    nodes.push({
+      data: {
+        id: stateName.toLowerCase(),
+        label: stateName,
+        type: 'state',
+        isStateful: metadata.isStateful,
+        pattern: metadata.pattern,
+        hasXState: metadata.hasXStateConfig,
+        metadata: metadata,
+        
+        // ✨ NEW: Screen information
+        screen: screen,
+        
+        // File paths
+        files: {
+          implication: projectPath + '/' + imp.path,  // Make absolute!
+          test: projectPath + '/' + (Array.isArray(metadata.setup) 
+            ? metadata.setup[0]?.testFile 
+            : metadata.setup?.testFile)
+        },
         
         // Visual styling data
         color: statusColor,
@@ -116,9 +132,12 @@ statefulImplications.forEach(imp => {
   }
   
   console.log(`✅ Built graph: ${nodes.length} nodes, ${edges.length} edges`);
+  console.log(`📺 Screen groups:`, Object.keys(screenGroups).length, screenGroups);
   
-  return { nodes, edges };
+  // ✨ NEW: Return screen groups
+  return { nodes, edges, screenGroups };
 }
+
 /**
  * Extract state name from class name
  * "AcceptedBookingImplications" -> "accepted"
@@ -137,7 +156,7 @@ function extractStateName(className) {
     return offset > 0 ? '_' + p1.toLowerCase() : p1.toLowerCase();
   });
   
-  return name || className;
+  return name || className;  // ✅ Fallback to className
 }
 
 /**
