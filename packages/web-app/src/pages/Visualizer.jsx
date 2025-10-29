@@ -55,6 +55,7 @@ const [createdFiles, setCreatedFiles] = useState([]);
   const [showScreenGroups, setShowScreenGroups] = useState(false);
   const [savedLayout, setSavedLayout] = useState(null);
 const [isSavingLayout, setIsSavingLayout] = useState(false);
+const [layoutFileExists, setLayoutFileExists] = useState(false);
 
 
   // Clear cache and reset state
@@ -207,7 +208,6 @@ const handleReInitialize = async () => {
 };
 
 const loadGraphLayout = async () => {
-  // ✨ ADD VALIDATION
   if (!projectPath) {
     console.log('⏭️  Skipping layout load - no projectPath yet');
     return;
@@ -215,35 +215,33 @@ const loadGraphLayout = async () => {
   
   try {
     console.log('📂 Loading saved graph layout...');
-    console.log('📍 Project path:', projectPath); // ✨ ADD THIS DEBUG
     
     const response = await fetch(
       `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`
     );
     
     if (!response.ok) {
-      const errorData = await response.json(); // ✨ ADD THIS
-      console.error('❌ Backend error:', errorData); // ✨ ADD THIS
-      throw new Error(`HTTP ${response.status}: ${errorData.error || 'Unknown error'}`);
+      throw new Error(`HTTP ${response.status}`);
     }
     
     const data = await response.json();
     
     if (data.success && data.layout) {
-      console.log('✅ Layout loaded:', data.layout);
-      setSavedLayout(data.layout);
+      console.log('✅ Layout loaded, storing in window global');
+      window.__savedGraphLayout = data.layout; // ✨ Store in window, not state
+      setLayoutFileExists(true);
     } else {
       console.log('ℹ️  No saved layout found');
-      setSavedLayout(null);
+      window.__savedGraphLayout = null; // ✨ Clear window global
+      setLayoutFileExists(false);
     }
   } catch (error) {
     console.error('❌ Load layout failed:', error);
+    window.__savedGraphLayout = null;
+    setLayoutFileExists(false);
   }
 };
-
-// ✨ Load saved layout when graph data or project changes
 useEffect(() => {
-  // ✅ Only load when BOTH exist
   if (graphData && projectPath && projectPath.trim() !== '') {
     console.log('🔄 Loading layout:', {
       projectPath,
@@ -260,49 +258,64 @@ useEffect(() => {
   }
 }, [graphData, projectPath]);
 
-// ────────────────────────────────────────────────────────────
-// 3. ADD SAVE LAYOUT FUNCTION
-// ────────────────────────────────────────────────────────────
+// Save current graph layout to file
 const saveGraphLayout = async () => {
-  if (!projectPath || !window.cytoscapeGraph) return;
+  if (!projectPath) return;
+  
+  if (!window.cytoscapeGraph) {
+    alert('⚠️ Graph not ready yet. Please wait and try again.');
+    return;
+  }
+  
+  const cy = window.cytoscapeGraph;
+  
+  if (typeof cy.nodes !== 'function') {
+    console.error('❌ Invalid Cytoscape instance:', cy);
+    alert('⚠️ Graph error. Please refresh the page.');
+    return;
+  }
+  
+  setIsSavingLayout(true);
   
   try {
-    setIsSavingLayout(true);
-    console.log('💾 Saving graph layout...');
+    const positions = {};
+    cy.nodes().forEach(node => {
+      if (node.data('type') === 'screen_group') return;
+      
+      const pos = node.position();
+      positions[node.id()] = { x: pos.x, y: pos.y };
+    });
     
-    // Get current layout from Cytoscape
-    const layout = window.cytoscapeGraph.getLayout();
-
+    console.log(`💾 Saving ${Object.keys(positions).length} node positions`);
+    console.log('📍 Sample position:', Object.entries(positions)[0]);
+    
+    const layout = { 
+      positions,
+      screenGroupsEnabled: showScreenGroups
+    };
+    
     const response = await fetch(`${API_URL}/api/implications/graph/layout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectPath,
-        layout
-      })
+      body: JSON.stringify({ projectPath, layout })
     });
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    const data = await response.json();
+    await response.json();
+    console.log('✅ Layout saved to file!');
     
-    if (data.success) {
-      console.log('✅ Layout saved!');
-      setSavedLayout(layout);
-      
-      // Show success message
-      alert('✅ Graph layout saved! It will be loaded automatically next time.');
-    }
+    setLayoutFileExists(true);
+    
   } catch (error) {
     console.error('❌ Save layout failed:', error);
-    alert('❌ Failed to save layout: ' + error.message);
+    alert('Failed to save: ' + error.message);
   } finally {
     setIsSavingLayout(false);
   }
 };
-
 // ────────────────────────────────────────────────────────────
 // 4. ADD RESET LAYOUT FUNCTION
 // ────────────────────────────────────────────────────────────
@@ -316,9 +329,9 @@ const resetGraphLayout = async () => {
     console.log('🗑️  Resetting graph layout...');
     
     const response = await fetch(
-  `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`,
-  { method: 'DELETE' }
-);
+      `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`,
+      { method: 'DELETE' }
+    );
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -328,12 +341,10 @@ const resetGraphLayout = async () => {
     
     if (data.success) {
       console.log('✅ Layout reset!');
-      setSavedLayout(null);
       
-      // Re-run dagre layout
-      if (window.cytoscapeGraph) {
-        window.cytoscapeGraph.relayout();
-      }
+      // ✅ DON'T clear savedLayout - just reload from file
+      setLayoutFileExists(false);
+      await loadGraphLayout(); // This will set savedLayout to null
       
       alert('✅ Layout reset to default!');
     }
@@ -1200,38 +1211,95 @@ const disableTransitionMode = () => {
               </p>
             </div>
             
-         {/* Graph Controls */}
+       {/* Graph Controls */}
 {graphData && (
   <div className="flex gap-2">
-    <button onClick={() => window.cytoscapeGraph?.fit()}>
-      <span>🎯</span> Fit
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
-      <span>🔍</span> Reset
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.relayout()}>
-      <span>🔄</span> Layout
-    </button>
-    
-    {/* ✨ ADD THESE */}
     <button 
-      onClick={saveGraphLayout}
-      disabled={isSavingLayout}
-      title="Save current graph layout"
+      onClick={() => {
+        if (window.cytoscapeGraph) {
+          window.cytoscapeGraph.fit(null, 50);
+        }
+      }}
+      className="px-3 py-1 rounded text-sm font-semibold"
       style={{
-        background: savedLayout 
-          ? defaultTheme.colors.accents.green 
-          : defaultTheme.colors.background.tertiary,
-        opacity: isSavingLayout ? 0.6 : 1
+        background: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`
       }}
     >
-      <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
-      {isSavingLayout ? 'Saving...' : 'Save Layout'}
+      <span>🎯</span> Fit
     </button>
     
+    <button 
+      onClick={() => {
+        if (window.cytoscapeGraph) {
+          window.cytoscapeGraph.zoom(1);
+          window.cytoscapeGraph.center();
+        }
+      }}
+      className="px-3 py-1 rounded text-sm font-semibold"
+      style={{
+        background: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`
+      }}
+    >
+      <span>🔍</span> Reset Zoom
+    </button>
+    
+    <button 
+      onClick={() => {
+        if (window.cytoscapeGraph) {
+          // ✅ Proper way to re-run layout
+          window.cytoscapeGraph.layout({
+            name: 'dagre',
+            rankDir: 'LR',
+            nodeSep: 100,
+            rankSep: 150,
+            padding: 50,
+            animate: true,
+            animationDuration: 600
+          }).run();
+        }
+      }}
+      className="px-3 py-1 rounded text-sm font-semibold"
+      style={{
+        background: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`
+      }}
+    >
+      <span>🔄</span> Re-layout
+    </button>
+    
+    {/* Save Layout Button */}
+ <button 
+  onClick={saveGraphLayout}
+  disabled={isSavingLayout}
+  style={{
+    background: layoutFileExists   // ✨ Changed from savedLayout
+      ? defaultTheme.colors.accents.green 
+      : defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+        opacity: isSavingLayout ? 0.6 : 1
+      }}
+      title="Save current graph layout"
+    >
+      <span>{isSavingLayout ? '⏳' : layoutFileExists ? '✅' : '💾'}</span>
+  {isSavingLayout ? 'Saving...' : 'Save Layout'}
+</button>
+    
+    {/* Reset Layout Button */}
     {savedLayout && (
       <button 
         onClick={resetGraphLayout}
+        className="px-3 py-1 rounded text-sm font-semibold"
+        style={{
+          background: defaultTheme.colors.background.tertiary,
+          color: defaultTheme.colors.text.secondary,
+          border: `1px solid ${defaultTheme.colors.border}`
+        }}
         title="Reset to default layout"
       >
         <span>🔄</span> Reset
