@@ -226,17 +226,15 @@ const loadGraphLayout = async () => {
     
     const data = await response.json();
     
-  if (data.success && data.layout) {
-  console.log('✅ Layout loaded, storing in window global');
-  window.__savedGraphLayout = data.layout;
-  window.__savedGraphLayoutVersion = Date.now(); // ✨ ADD THIS
-  setLayoutFileExists(true);
-} else {
-  console.log('ℹ️  No saved layout found');
-  window.__savedGraphLayout = null;
-  window.__savedGraphLayoutVersion = null; // ✨ ADD THIS
-  setLayoutFileExists(false);
-}
+    if (data.success && data.layout) {
+      console.log('✅ Layout loaded, storing in window global');
+      window.__savedGraphLayout = data.layout; // ✨ Store in window, not state
+      setLayoutFileExists(true);
+    } else {
+      console.log('ℹ️  No saved layout found');
+      window.__savedGraphLayout = null; // ✨ Clear window global
+      setLayoutFileExists(false);
+    }
   } catch (error) {
     console.error('❌ Load layout failed:', error);
     window.__savedGraphLayout = null;
@@ -250,27 +248,7 @@ useEffect(() => {
       hasGraphData: !!graphData,
       nodeCount: graphData.nodes?.length || 0
     });
-    
-    // ✨ Load layout BEFORE passing to StateGraph
-    const loadAndApply = async () => {
-      await loadGraphLayout();
-      
-      // ✨ Trigger StateGraph to re-apply layout after loading
-      if (window.cytoscapeGraph && window.__savedGraphLayout) {
-        console.log('🔄 Applying layout to existing graph');
-        window.cytoscapeGraph.nodes().forEach(node => {
-          if (node.data('type') === 'screen_group') return;
-          
-          const savedPos = window.__savedGraphLayout.positions[node.id()];
-          if (savedPos) {
-            node.position(savedPos);
-          }
-        });
-        window.cytoscapeGraph.fit(null, 50);
-      }
-    };
-    
-    loadAndApply();
+    loadGraphLayout();
   } else {
     console.log('⏭️  Skipping layout load:', {
       hasGraphData: !!graphData,
@@ -279,7 +257,6 @@ useEffect(() => {
     });
   }
 }, [graphData, projectPath]);
-
 
 // Save current graph layout to file
 const saveGraphLayout = async () => {
@@ -328,12 +305,11 @@ const saveGraphLayout = async () => {
     }
     
     await response.json();
-console.log('✅ Layout saved to file!');
-
-// ✨ UPDATE WINDOW GLOBAL TOO with version
-window.__savedGraphLayout = layout;
-window.__savedGraphLayoutVersion = Date.now(); // ✨ ADD THIS
-setLayoutFileExists(true);
+    console.log('✅ Layout saved to file!');
+    
+    // ✨ UPDATE WINDOW GLOBAL TOO!
+    window.__savedGraphLayout = layout;
+    setLayoutFileExists(true);
     
   } catch (error) {
     console.error('❌ Save layout failed:', error);

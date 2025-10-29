@@ -228,48 +228,38 @@ export default function StateGraph({
     });
     
     // Apply layout
-    // Apply layout
-const applyLayout = () => {
-  if (window.__savedGraphLayout && window.__savedGraphLayout.positions) {
-    console.log('📍 Applying saved layout from window global');
-    
-    cy.nodes().forEach(node => {
-      if (node.data('type') === 'screen_group') return;
-      
-      const savedPos = window.__savedGraphLayout.positions[node.id()];
-      if (savedPos) {
-        node.position(savedPos);
+    const applyLayout = () => {
+      if (window.__savedGraphLayout && window.__savedGraphLayout.positions) {
+        console.log('📍 Applying saved layout from window global');
+        
+        cy.nodes().forEach(node => {
+          if (node.data('type') === 'screen_group') return;
+          
+          const savedPos = window.__savedGraphLayout.positions[node.id()];
+          if (savedPos) {
+            node.position(savedPos);
+          }
+        });
+        
+        cy.fit(null, 50);
+        console.log('✅ Layout applied!');
+      } else {
+        console.log('🎨 Running dagre layout (no saved layout)');
+        
+        cy.layout({
+          name: 'dagre',
+          rankDir: 'LR',
+          nodeSep: 100,
+          rankSep: 150,
+          padding: 50,
+          animate: true,
+          animationDuration: 500,
+          stop: () => {
+            console.log('✅ Dagre layout complete - positions ready for saving');
+          }
+        }).run();
       }
-    });
-    
-    // Mark as applied
-    window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
-    
-    cy.fit(null, 50);
-    console.log('✅ Layout applied!');
-  } else {
-    // ✨ ONLY run dagre if we've never saved a layout
-    // This prevents re-layout when toggling screens
-    if (!window.__savedGraphLayoutVersion) {
-      console.log('🎨 Running dagre layout (first time, no saved layout)');
-      
-      cy.layout({
-        name: 'dagre',
-        rankDir: 'LR',
-        nodeSep: 100,
-        rankSep: 150,
-        padding: 50,
-        animate: true,
-        animationDuration: 500,
-        stop: () => {
-          console.log('✅ Dagre layout complete');
-        }
-      }).run();
-    } else {
-      console.log('⏭️ Skipping dagre - using existing positions');
-    }
-  }
-};
+    };
     
     applyLayout();
     
@@ -331,43 +321,14 @@ const applyLayout = () => {
     };
   }, [graphData]); // Only re-create when graphData changes
   
-  // Watch for saved layout version changes
+  // Handle screen groups toggle separately
   useEffect(() => {
     if (!cyRef.current) return;
     
-    const interval = setInterval(() => {
-      if (window.__savedGraphLayoutVersion && 
-          window.__savedGraphLayoutVersion !== window.__lastAppliedVersion) {
-        
-        console.log('📍 New layout version detected:', window.__savedGraphLayoutVersion);
-        
-        if (window.__savedGraphLayout?.positions) {
-          console.log('🔄 Re-applying updated layout...');
-          
-          cyRef.current.nodes().forEach(node => {
-            if (node.data('type') === 'screen_group') return;
-            
-            const savedPos = window.__savedGraphLayout.positions[node.id()];
-            if (savedPos) {
-              node.position(savedPos);
-            }
-          });
-          
-          cyRef.current.fit(null, 50);
-          console.log('✅ Updated layout applied!');
-        }
-        
-        window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
-      }
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, []);
-  
-  // Handle screen groups toggle
-  useEffect(() => {
-    if (!cyRef.current) return;
     console.log('📺 Screen groups toggled:', showScreenGroups);
+    
+    // This will trigger a full re-render because we need to rebuild compound nodes
+    // The main useEffect will handle it
   }, [showScreenGroups]);
   
   // Update selected node styling
