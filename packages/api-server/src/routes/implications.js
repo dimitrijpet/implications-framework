@@ -2818,5 +2818,275 @@ router.delete('/graph/layout', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/implications/update-transition
+ * Update an existing transition (change event name or target)
+ */
+router.post('/update-transition', async (req, res) => {
+  try {
+    const { 
+      sourceFile, 
+      oldEvent,      // Current event name
+      newEvent,      // New event name (can be same as oldEvent)
+      newTarget,     // New target state
+      actionDetails  // Optional: update actionDetails
+    } = req.body;
+    
+    console.log('✏️ Updating transition:', { sourceFile, oldEvent, newEvent, newTarget });
+    
+    if (!sourceFile || !oldEvent || !newEvent || !newTarget) {
+      return res.status(400).json({ 
+        error: 'sourceFile, oldEvent, newEvent, and newTarget are required' 
+      });
+    }
+    
+    const content = await fs.readFile(sourceFile, 'utf-8');
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+    
+    let transitionUpdated = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type === 'ObjectExpression') {
+            let onProperty = null;
+            
+            // Try root level 'on'
+            onProperty = configValue.properties.find(p => p.key?.name === 'on');
+            
+            // Try states.idle.on (complex structure)
+            if (!onProperty) {
+              const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
+              
+              if (statesProperty?.value?.type === 'ObjectExpression') {
+                const idleState = statesProperty.value.properties.find(p => p.key?.name === 'idle');
+                
+                if (idleState?.value?.type === 'ObjectExpression') {
+                  onProperty = idleState.value.properties.find(p => p.key?.name === 'on');
+                }
+              }
+            }
+            
+            if (!onProperty || !onProperty.value?.properties) {
+              return res.status(400).json({ 
+                error: 'Could not find transitions in xstateConfig' 
+              });
+            }
+            
+            // Find the old transition
+            const transitionIndex = onProperty.value.properties.findIndex(
+              p => (p.key?.name === oldEvent || p.key?.value === oldEvent)
+            );
+            
+            if (transitionIndex === -1) {
+              return res.status(404).json({ 
+                error: `Transition "${oldEvent}" not found` 
+              });
+            }
+            
+            const oldTransition = onProperty.value.properties[transitionIndex];
+            
+            // Update the transition
+            const transitionProperties = [
+              {
+                type: 'ObjectProperty',
+                key: { type: 'Identifier', name: 'target' },
+                value: { type: 'StringLiteral', value: newTarget }
+              }
+            ];
+            
+            // Add actionDetails if provided
+            if (actionDetails) {
+              const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
+              transitionProperties.push({
+                type: 'ObjectProperty',
+                key: { type: 'Identifier', name: 'actionDetails' },
+                value: actionDetailsAST
+              });
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing actionDetails if not updating
+              const existingActionDetails = oldTransition.value.properties.find(
+                p => p.key?.name === 'actionDetails'
+              );
+              if (existingActionDetails) {
+                transitionProperties.push(existingActionDetails);
+              }
+            }
+            
+            // Replace the transition
+            onProperty.value.properties[transitionIndex] = {
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: newEvent },
+              value: {
+                type: 'ObjectExpression',
+                properties: transitionProperties
+              }
+            };
+            
+            transitionUpdated = true;
+            console.log(`✅ Updated: ${oldEvent} → ${newEvent} (target: ${newTarget})`);
+          }
+        }
+      }
+    });
+    
+    if (!transitionUpdated) {
+      return res.status(400).json({ 
+        error: 'Could not update transition' 
+      });
+    }
+    
+    // Generate updated code
+    const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
+      retainLines: true,
+      comments: true
+    });
+    
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, backupPath);
+    
+    // Write updated file
+    await fs.writeFile(sourceFile, newCode, 'utf-8');
+    
+    console.log('✅ Transition updated successfully');
+    
+    res.json({
+      success: true,
+      transition: {
+        oldEvent,
+        newEvent,
+        target: newTarget
+      },
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Update transition failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/implications/delete-transition
+ * Remove a transition from xstateConfig
+ */
+router.post('/delete-transition', async (req, res) => {
+  try {
+    const { sourceFile, event } = req.body;
+    
+    console.log('🗑️ Deleting transition:', { sourceFile, event });
+    
+    if (!sourceFile || !event) {
+      return res.status(400).json({ 
+        error: 'sourceFile and event are required' 
+      });
+    }
+    
+    const content = await fs.readFile(sourceFile, 'utf-8');
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+    
+    let transitionDeleted = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type === 'ObjectExpression') {
+            let onProperty = null;
+            
+            // Try root level 'on'
+            onProperty = configValue.properties.find(p => p.key?.name === 'on');
+            
+            // Try states.idle.on (complex structure)
+            if (!onProperty) {
+              const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
+              
+              if (statesProperty?.value?.type === 'ObjectExpression') {
+                const idleState = statesProperty.value.properties.find(p => p.key?.name === 'idle');
+                
+                if (idleState?.value?.type === 'ObjectExpression') {
+                  onProperty = idleState.value.properties.find(p => p.key?.name === 'on');
+                }
+              }
+            }
+            
+            if (!onProperty || !onProperty.value?.properties) {
+              return res.status(400).json({ 
+                error: 'Could not find transitions in xstateConfig' 
+              });
+            }
+            
+            // Find and remove the transition
+            const transitionIndex = onProperty.value.properties.findIndex(
+              p => (p.key?.name === event || p.key?.value === event)
+            );
+            
+            if (transitionIndex === -1) {
+              return res.status(404).json({ 
+                error: `Transition "${event}" not found` 
+              });
+            }
+            
+            // Remove the transition
+            onProperty.value.properties.splice(transitionIndex, 1);
+            transitionDeleted = true;
+            
+            console.log(`✅ Deleted transition: ${event}`);
+          }
+        }
+      }
+    });
+    
+    if (!transitionDeleted) {
+      return res.status(400).json({ 
+        error: 'Could not delete transition' 
+      });
+    }
+    
+    // Generate updated code
+    const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
+      retainLines: true,
+      comments: true
+    });
+    
+    // Create backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, backupPath);
+    
+    // Write updated file
+    await fs.writeFile(sourceFile, newCode, 'utf-8');
+    
+    console.log('✅ Transition deleted successfully');
+    
+    res.json({
+      success: true,
+      deletedEvent: event,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Delete transition failed:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 
 export default router;
