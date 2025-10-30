@@ -111,7 +111,9 @@ function prepareValidationScreens(mirrorsOnUI, platform, testData) {
     validationScreens.push({
       screenKey,
       // ✅ FIX: Convert "passengers.field" → "PassengersField"
-      pomClassName: screen.screen ? toPascalCase(screen.screen.replace(/\./g, '')) : null,
+      pomClassName: screen.screen && typeof screen.screen === 'string' 
+  ? toPascalCase(screen.screen.replace(/\./g, '')) 
+  : null,
       
       // Functions
       hasFunctions: functionsWithParams.length > 0,

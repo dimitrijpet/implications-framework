@@ -669,11 +669,8 @@ console.log(`   deltaFields:`, deltaFields);
     // âœ¨ FIX #5: Extract action from triggeredBy
     const triggeredByAction = this._extractTriggeredByAction(metadata);
     const transitionInfo = this._extractTransitionInfo(metadata, targetStatus);
-const suggestedScreens = this._extractSuggestedScreens(
-  metadata.mirrorsOn, 
-  platform,
-  this.implFilePath  // ✅ Use this.implFilePath (it's already set on line 143)
-);
+const uiScreens = this._getUIScreensForPlatform(metadata.mirrorsOn, platform);
+const suggestedScreens = this._extractSuggestedScreens(uiScreens);
 
 // Generate smart TODO (not used in template, can remove later)
 const smartTODOComment = this._generateSmartTODO(
@@ -956,25 +953,51 @@ return {
     
     return fields;
   }
+
+  _getUIScreensForPlatform(mirrorsOn, platform) {
+  if (!mirrorsOn) {
+    console.log('   ⚠️  No mirrorsOn found');
+    return {};
+  }
+  
+  // Check if there's a UI property
+  if (!mirrorsOn.UI) {
+    console.log('   ⚠️  No mirrorsOn.UI found');
+    return {};
+  }
+  
+  // Map platform names to mirrorsOn keys
+  const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+  
+  // Get screens for this platform
+  const platformScreens = mirrorsOn.UI[platformKey];
+  
+  if (!platformScreens) {
+    console.log(`   ⚠️  No screens found for platform: ${platformKey}`);
+    return {};
+  }
+  
+  console.log(`   ✅ Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformScreens).length} screens`);
+  return platformScreens;
+}
   
   /**
    * Should we generate entity logic (e.g., bookings[0])?
    */
-  _shouldGenerateEntityLogic(metadata) {
+_shouldGenerateEntityLogic(metadata) {
   // Heuristic: if entry: assign modifies arrays or has indices
-  const entry = metadata.entry;
   
-  if (!entry) return false;
+  // ✅ Safety check added - prevents "Cannot read properties of undefined"
+  if (!metadata || !metadata.entry) {
+    return false;
+  }
   
-  // Use JSON.stringify instead of toString() to avoid "[object Object]" issue
-  const entryStr = JSON.stringify(entry);
-  
-  // Check for entity-specific patterns
+  const entryStr = metadata.entry?.toString() || '';
   return entryStr.includes('bookings') || 
-         entryStr.includes('.map(') ||      // Changed: more specific
-         entryStr.includes('context.');      // Check for context.bookings pattern
+         entryStr.includes('[') ||
+         entryStr.includes('map(');
 }
-  
+
   /**
    * Infer entity name from metadata
    */
@@ -1413,45 +1436,73 @@ _extractScreenObjects(mirrorsOn, platform) {
 
 // In UnitTestGenerator.js
 
-_extractSuggestedScreens(mirrorsOn, platform, implFilePath) {
-  const screens = [];
+_extractSuggestedScreens(uiScreens) {
+  const suggestedScreens = [];
   
-  if (!mirrorsOn || !mirrorsOn.UI) return screens;
-  
-  const platformData = mirrorsOn.UI[platform] || mirrorsOn.UI.web || {};
-  
-  for (const [screenKey, screenDefs] of Object.entries(platformData)) {
-    const def = Array.isArray(screenDefs) ? screenDefs[0] : screenDefs;
-    
-    if (def && def.screen) {
-      const className = def.screen
-        .split('.')
-        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-        .join('');
-      
-      const instanceName = def.instance || 
-        (screenKey.charAt(0).toLowerCase() + screenKey.slice(1)) ||
-        'instance';
-      
-      // ✨ Calculate relative path from generated test to screen object
-      const relativePath = this._calculateScreenObjectPath(
-        implFilePath,
-        def.screen
-      );
-      
-      screens.push({
-        screenKey,
-        file: def.screen,
-        className,
-        instanceName,
-        relativePath  // ✨ NEW
-      });
-    }
+  if (!uiScreens || typeof uiScreens !== 'object') {
+    return suggestedScreens;
   }
   
-  return screens;
+  for (const [screenKey, def] of Object.entries(uiScreens)) {
+    // ✅ Skip non-screen properties (description, etc.)
+    if (screenKey === 'description' || typeof def === 'string') {
+      console.log(`   ⏭️  Skipping non-screen property: ${screenKey}`);
+      continue;
+    }
+    
+    // ✅ Handle both array and object formats
+    let screenDef;
+    
+    if (Array.isArray(def)) {
+      // Array format: [ImplicationHelper.mergeWithBase(...)]
+      screenDef = def[0];
+    } else if (typeof def === 'object') {
+      // Object format: { screen: 'name', visible: [...] }
+      screenDef = def;
+    } else {
+      console.warn(`   ⚠️  Skipping invalid screen definition for ${screenKey}`);
+      continue;
+    }
+    
+    // ✅ Safety check for screen property
+    if (!screenDef) {
+      console.warn(`   ⚠️  Screen definition is undefined for ${screenKey}`);
+      continue;
+    }
+    
+    // ✅ Extract screen name (handle different structures)
+    let screenName;
+    
+    if (screenDef.screen) {
+      // Has explicit screen property
+      screenName = typeof screenDef.screen === 'string' 
+        ? screenDef.screen 
+        : String(screenDef.screen);
+    } else if (screenDef.name) {
+      // Fallback to name property
+      screenName = screenDef.name;
+    } else {
+      // Use the key itself
+      screenName = screenKey;
+    }
+    
+    // ✅ Build suggested screen object with 'file' property (used by _generateSmartTODO)
+    suggestedScreens.push({
+      key: screenKey,
+      screen: screenName,
+      file: screenName,  // ✅ ADD THIS - used in _generateSmartTODO
+      instance: screenDef.instance || screenKey.toLowerCase(),
+      visible: screenDef.visible || [],
+      hidden: screenDef.hidden || [],
+      checks: screenDef.checks || {},
+      description: screenDef.description || null
+    });
+    
+    console.log(`   ✅ Extracted screen: ${screenKey} → ${screenName}`);
+  }
+  
+  return suggestedScreens;
 }
-
 /**
  * Calculate relative path from generated test to screen object
  */
@@ -1560,11 +1611,16 @@ _generateSmartTODO(transitionInfo, screens, metadata) {
     lines.push('//');
     lines.push(`// Based on mirrorsOn, you'll need these screen objects:`);
     lines.push('//');
-    
-    screens.forEach((screen, index) => {
-      const className = screen.file.split('.').map(p => 
-        p.charAt(0).toUpperCase() + p.slice(1)
-      ).join('');
+screens.forEach((screen, index) => {
+  // ✅ Safety check for screen.file
+  if (!screen.file) {
+    console.warn(`   ⚠️  Screen ${index} has no file property, skipping`);
+    return;
+  }
+  
+  const className = screen.file.split('.').map(p => 
+    p.charAt(0).toUpperCase() + p.slice(1)
+  ).join('');
       
       lines.push(`//   ${index + 1}. Initialize ${className}:`);
       lines.push(`//      const ${className} = require('../../screenObjects/${screen.file}.js');`);

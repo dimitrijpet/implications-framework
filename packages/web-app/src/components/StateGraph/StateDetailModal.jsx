@@ -840,6 +840,19 @@ const handleAnalysisComplete = (analysis) => {
   onChange={handleMetadataChange}
 />
           </details>
+
+          {isEditMode && (
+  <div>
+  <h2 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.purple }}>
+    🧩 Composition Architecture
+  </h2>
+  
+  <CompositionViewer
+    implicationPath={state.files.implication}
+    theme={theme}
+  />
+</div>
+)}
           
 {/* ========================================
     UI SCREENS SECTION - ALWAYS SHOW

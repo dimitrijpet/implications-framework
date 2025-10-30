@@ -231,9 +231,8 @@ export function extractXStateMetadata(content) {
  * NOW with caching support
  */
 export async function extractUIImplications(content, projectPath, cache = {}) {
-  console.log('ðŸ” Extracting UI implications...');
+  console.log('🔍 Extracting UI implications...');
   
-  // Initialize base file cache if not provided
   if (!cache.baseFiles) {
     cache.baseFiles = {};
   }
@@ -249,13 +248,13 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    // We need to collect promises for base resolution
-    const platformPromises = [];
+    // ✅ Collect async work during traversal
+    const asyncWork = [];
     
     traverse.default(ast, {
       ClassProperty(path) {
         if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
-          console.log('âœ… Found mirrorsOn!');
+          console.log('✅ Found mirrorsOn!');
           
           const value = path.node.value;
           
@@ -263,57 +262,351 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
             const uiProperty = value.properties.find(p => p.key?.name === 'UI');
             
             if (uiProperty?.value?.type === 'ObjectExpression') {
-              console.log('âœ… UI is an object, platforms:', uiProperty.value.properties.length);
+              console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
               
-              // Extract platforms
+              // Process each platform
               uiProperty.value.properties.forEach(platformProp => {
                 const platformName = platformProp.key?.name;
+                
                 if (!platformName) return;
                 
-                console.log('  ðŸ“± Platform:', platformName);
+                console.log(`\n📱 Processing platform: ${platformName}`);
+                
+                const platformData = {
+                  name: platformName,
+                  screens: {},
+                  total: 0
+                };
                 
                 if (platformProp.value?.type === 'ObjectExpression') {
-                  console.log('    Platform has', platformProp.value.properties.length, 'screens');
+                  // ✅ First pass: collect spread operators
+                  const spreadOperators = [];
+                  const regularProperties = [];
                   
-                  // Process this platform (async) - PASS CACHE
-                  const platformPromise = processPlatform(
-                    platformName,
-                    platformProp.value,
-                    projectPath,
-                    cache  // âœ… Pass cache
-                  ).then(platformData => {
-                    if (platformData && platformData.screens.length > 0) {
-                      uiData.platforms[platformName] = platformData;
-                      uiData.total += platformData.count;
+                  platformProp.value.properties.forEach(prop => {
+                    if (prop.type === 'SpreadElement') {
+                      console.log('   🔄 Found spread operator');
+                      spreadOperators.push(prop);
+                    } else {
+                      regularProperties.push(prop);
                     }
                   });
                   
-                  platformPromises.push(platformPromise);
+                  // ✅ Queue async work for spread operators
+                  if (spreadOperators.length > 0) {
+                    asyncWork.push(async () => {
+                      console.log(`   ⚡ Processing ${spreadOperators.length} spread operators...`);
+                      
+                      for (const spreadProp of spreadOperators) {
+                        const resolved = await resolveSpreadOperator(
+                          spreadProp,
+                          projectPath,
+                          cache
+                        );
+                        
+                        if (resolved && typeof resolved === 'object') {
+                          console.log('   ✅ Spread resolved, merging...');
+                          // Merge resolved screens into platformData
+                          Object.assign(platformData.screens, resolved);
+                        }
+                      }
+                    });
+                  }
+                  
+                  // ✅ Process regular properties synchronously
+                  regularProperties.forEach(screenProp => {
+                    const screenName = screenProp.key?.name;
+                    
+                    if (!screenName) return;
+                    
+                    console.log(`   📺 Screen: ${screenName}`);
+                    
+                    let screenArray = [];
+                    
+                    if (screenProp.value?.type === 'ArrayExpression') {
+                      screenArray = screenProp.value.elements || [];
+                    } else if (screenProp.value?.type === 'CallExpression') {
+                      // mergeWithBase() call
+                      console.log('      🔗 Detected mergeWithBase()');
+                      
+                      asyncWork.push(async () => {
+                        const merged = await resolveMergeWithBase(
+                          screenProp.value,
+                          projectPath,
+                          cache
+                        );
+                        
+                        if (merged) {
+                          platformData.screens[screenName] = [merged];
+                          platformData.total++;
+                        }
+                      });
+                      
+                      return; // Skip sync processing
+                    }
+                    
+                    // Process array elements
+                    const screenDefinitions = [];
+                    
+                    screenArray.forEach((element, index) => {
+                      if (!element) return;
+                      
+                      if (element.type === 'ObjectExpression') {
+                        const def = extractScreenDefinition(element);
+                        if (def) {
+                          screenDefinitions.push(def);
+                        }
+                      } else if (element.type === 'CallExpression') {
+                        // mergeWithBase inside array
+                        asyncWork.push(async () => {
+                          const merged = await resolveMergeWithBase(
+                            element,
+                            projectPath,
+                            cache
+                          );
+                          
+                          if (merged) {
+                            if (!platformData.screens[screenName]) {
+                              platformData.screens[screenName] = [];
+                            }
+                            platformData.screens[screenName].push(merged);
+                          }
+                        });
+                      } else if (element.type === 'SpreadElement') {
+                        // Spread inside array
+                        asyncWork.push(async () => {
+                          const resolved = await resolveSpreadOperator(
+                            element,
+                            projectPath,
+                            cache
+                          );
+                          
+                          if (resolved) {
+                            if (!platformData.screens[screenName]) {
+                              platformData.screens[screenName] = [];
+                            }
+                            platformData.screens[screenName].push(resolved);
+                          }
+                        });
+                      }
+                    });
+                    
+                    if (screenDefinitions.length > 0) {
+                      platformData.screens[screenName] = screenDefinitions;
+                      platformData.total += screenDefinitions.length;
+                    }
+                  });
                 }
+                
+                // Store platform data (will be updated by async work)
+                uiData.platforms[platformName] = platformData;
               });
             }
           }
         }
-      },
+      }
     });
     
-    // Wait for all platform processing to complete
-    await Promise.all(platformPromises);
+    // ✅ Execute all async work AFTER traversal
+    console.log(`\n⚡ Executing ${asyncWork.length} async operations...`);
+    await Promise.all(asyncWork.map(fn => fn()));
     
-    console.log('ðŸ“Š Final UI data:', uiData);
-    
-    // âœ… Log cache stats
-    if (cache.baseFiles) {
-      const cacheKeys = Object.keys(cache.baseFiles);
-      console.log(`ðŸ’¾ Cache stats: ${cacheKeys.length} base files cached`);
-      console.log(`   Files:`, cacheKeys);
+    // ✅ Calculate totals after async work
+    for (const [platformName, platformData] of Object.entries(uiData.platforms)) {
+      platformData.total = Object.keys(platformData.screens).length;
+      uiData.total += platformData.total;
     }
     
+    console.log('\n✅ UI Implications extraction complete');
+    console.log(`   Total platforms: ${Object.keys(uiData.platforms).length}`);
+    console.log(`   Total screens: ${uiData.total}`);
+    
   } catch (error) {
-    console.error('âŒ Error extracting UI implications:', error.message);
+    console.error('❌ Error extracting UI implications:', error.message);
+    console.error(error.stack);
   }
   
   return uiData;
+}
+
+/**
+ * Resolve spread operator
+ * Example: ...NotificationsImplications.forBookings().dancer
+ */
+async function resolveSpreadOperator(spreadNode, projectPath, cache) {
+  console.log('      🔍 Resolving spread operator...');
+  
+  try {
+    const argument = spreadNode.argument;
+    
+    if (!argument) {
+      console.log('      ⚠️  No argument in spread');
+      return null;
+    }
+    
+    // Extract the chain: NotificationsImplications.forBookings().dancer
+    const chain = extractMemberExpressionChain(argument);
+    console.log('      📊 Chain:', chain.join('.'));
+    
+    if (chain.length === 0) {
+      console.log('      ⚠️  Empty chain');
+      return null;
+    }
+    
+    const className = chain[0];
+    
+    // Find and load the class file
+    const classFile = await findClassFile(className, projectPath, cache);
+    
+    if (!classFile) {
+      console.log(`      ⚠️  Could not find file for ${className}`);
+      return null;
+    }
+    
+    // Load the class
+    const ClassModule = await import(classFile);
+    const Class = ClassModule.default || ClassModule;
+    
+    // Navigate the chain
+    let value = Class;
+    for (let i = 1; i < chain.length; i++) {
+      const prop = chain[i];
+      
+      // Check if it's a method call (has parentheses in original)
+      if (typeof value[prop] === 'function') {
+        console.log(`      🔧 Calling method: ${prop}()`);
+        value = value[prop]();
+      } else {
+        console.log(`      📌 Accessing property: ${prop}`);
+        value = value[prop];
+      }
+      
+      if (value === undefined) {
+        console.log(`      ⚠️  ${prop} is undefined`);
+        return null;
+      }
+    }
+    
+    console.log('      ✅ Spread resolved successfully');
+    return value;
+    
+  } catch (error) {
+    console.error('      ❌ Error resolving spread:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Extract chain from MemberExpression
+ * Example: NotificationsImplications.forBookings().dancer
+ * Returns: ['NotificationsImplications', 'forBookings', 'dancer']
+ */
+function extractMemberExpressionChain(node) {
+  const chain = [];
+  let current = node;
+  
+  while (current) {
+    if (current.type === 'MemberExpression') {
+      if (current.property?.type === 'Identifier') {
+        chain.unshift(current.property.name);
+      }
+      current = current.object;
+    } else if (current.type === 'CallExpression') {
+      // Method call like forBookings()
+      if (current.callee?.type === 'MemberExpression') {
+        chain.unshift(current.callee.property.name);
+      }
+      current = current.callee.object;
+    } else if (current.type === 'Identifier') {
+      chain.unshift(current.name);
+      break;
+    } else {
+      break;
+    }
+  }
+  
+  return chain;
+}
+
+/**
+ * Find class file in project
+ */
+async function findClassFile(className, projectPath, cache) {
+  // Check cache first
+  if (cache.classFiles && cache.classFiles[className]) {
+    return cache.classFiles[className];
+  }
+  
+  // Common locations for implication files
+  const searchPaths = [
+    path.join(projectPath, 'tests/implications', `${className}.js`),
+    path.join(projectPath, 'tests/implications/**', `${className}.js`),
+    path.join(projectPath, 'tests/**', `${className}.js`)
+  ];
+  
+  for (const pattern of searchPaths) {
+    const files = await glob(pattern, { absolute: true });
+    if (files.length > 0) {
+      const filePath = files[0];
+      
+      // Cache it
+      if (!cache.classFiles) cache.classFiles = {};
+      cache.classFiles[className] = filePath;
+      
+      return filePath;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Extract screen definition from ObjectExpression node
+ */
+function extractScreenDefinition(objectNode) {
+  const def = {
+    visible: [],
+    hidden: [],
+    checks: {
+      visible: [],
+      hidden: [],
+      text: {}
+    }
+  };
+  
+  objectNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    if (key === 'visible' || key === 'hidden') {
+      if (prop.value?.type === 'ArrayExpression') {
+        def[key] = prop.value.elements
+          .map(el => extractValueFromNode(el))
+          .filter(Boolean);
+      }
+    } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        
+        if (checkKey === 'visible' || checkKey === 'hidden') {
+          if (checkProp.value?.type === 'ArrayExpression') {
+            def.checks[checkKey] = checkProp.value.elements
+              .map(el => extractValueFromNode(el))
+              .filter(Boolean);
+          }
+        } else if (checkKey === 'text' && checkProp.value?.type === 'ObjectExpression') {
+          checkProp.value.properties.forEach(textProp => {
+            const textKey = textProp.key?.name || textProp.key?.value;
+            const textValue = extractValueFromNode(textProp.value);
+            if (textKey && textValue) {
+              def.checks.text[textKey] = textValue;
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  return def;
 }
 
 /**
@@ -865,6 +1158,86 @@ function mergeScreenData(baseData, overrides) {
   });
   
   return merged;
+}
+
+/**
+ * Detect spread operator and resolve it
+ * Example: ...NotificationsImplications.forBookings().dancer
+ */
+async function resolveSpreadOperator(spreadNode, projectPath, cache) {
+  console.log('   🔍 Resolving spread operator...');
+  
+  // spreadNode looks like: ...NotificationsImplications.forBookings().dancer
+  const argument = spreadNode.argument;
+  
+  // Case 1: Method call - NotificationsImplications.forBookings().dancer
+  if (argument.type === 'MemberExpression') {
+    const chain = extractMemberExpressionChain(argument);
+    console.log('   📊 Chain:', chain);
+    
+    // chain = ['NotificationsImplications', 'forBookings', 'dancer']
+    const className = chain[0];
+    const methodName = chain[1];
+    const propertyPath = chain.slice(2);
+    
+    // Load the class file
+    const classFile = await findClassFile(className, projectPath);
+    if (!classFile) {
+      console.warn(`   ⚠️  Could not find ${className}`);
+      return null;
+    }
+    
+    // Execute the method (forBookings()) and get result
+    const result = await executeStaticMethod(classFile, methodName);
+    
+    // Navigate to property (dancer)
+    let value = result;
+    for (const prop of propertyPath) {
+      value = value[prop];
+    }
+    
+    return value;
+  }
+  
+  // Case 2: Direct property - BaseBookingImplications.dancer.notificationsScreen
+  if (argument.type === 'MemberExpression') {
+    // Similar logic but without method call
+    return resolvePropertyChain(argument, projectPath, cache);
+  }
+  
+  return null;
+}
+
+/**
+ * Extract chain from MemberExpression
+ * Example: NotificationsImplications.forBookings().dancer
+ * Returns: ['NotificationsImplications', 'forBookings', 'dancer']
+ */
+function extractMemberExpressionChain(node) {
+  const chain = [];
+  let current = node;
+  
+  while (current) {
+    if (current.type === 'MemberExpression') {
+      if (current.property.type === 'Identifier') {
+        chain.unshift(current.property.name);
+      }
+      current = current.object;
+    } else if (current.type === 'CallExpression') {
+      // Method call like forBookings()
+      if (current.callee.type === 'MemberExpression') {
+        chain.unshift(current.callee.property.name);
+      }
+      current = current.callee.object;
+    } else if (current.type === 'Identifier') {
+      chain.unshift(current.name);
+      break;
+    } else {
+      break;
+    }
+  }
+  
+  return chain;
 }
 
 // Enhanced astParser.js additions

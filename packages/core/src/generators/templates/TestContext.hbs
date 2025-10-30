@@ -314,6 +314,52 @@ class TestContext {
       this.data[path] = value;
     }
   }
+  /**
+   * Get item from array by index
+   * Example: ctx.getFromArray('bookings', 0)
+   */
+  getFromArray(arrayName, index) {
+    if (!this.data[arrayName]) {
+      console.warn(`⚠️  Array '${arrayName}' does not exist`);
+      return null;
+    }
+    return this.data[arrayName][index] || null;
+  }
+  
+  /**
+   * Set item in array at index
+   * Example: ctx.setInArray('bookings', 0, { status: 'accepted' })
+   */
+  setInArray(arrayName, index, value) {
+    if (!this.data[arrayName]) {
+      this.data[arrayName] = [];
+    }
+    this.data[arrayName][index] = value;
+  }
+  
+  /**
+   * Push item to array
+   * Example: ctx.pushToArray('bookings', { id: 123, status: 'pending' })
+   */
+  pushToArray(arrayName, value) {
+    if (!this.data[arrayName]) {
+      this.data[arrayName] = [];
+    }
+    this.data[arrayName].push(value);
+    return this.data[arrayName].length - 1; // Return new index
+  }
+  
+  /**
+   * Remove item from array at index
+   * Example: ctx.removeFromArray('bookings', 0)
+   */
+  removeFromArray(arrayName, index) {
+    if (!this.data[arrayName]) {
+      console.warn(`⚠️  Array '${arrayName}' does not exist`);
+      return;
+    }
+    this.data[arrayName].splice(index, 1);
+  }
 }
 
 module.exports = TestContext;

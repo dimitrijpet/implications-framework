@@ -8,13 +8,12 @@ const path = require('path');
 /**
  * TestPlanner - Validates prerequisites and auto-executes chains
  * 
- * This class handles:
- * - Building prerequisite chains from XState transitions
- * - Checking if test data is in correct state
- * - Validating required fields exist
- * - Finding the path from current state to target state
- * - AUTO-EXECUTING prerequisites in UNIT tests
- * - Providing helpful errors with exact commands to run
+ * RECURSIVE PREREQUISITE CHAINING:
+ * - Builds full chain from current state to target
+ * - Auto-executes missing steps in UNIT tests
+ * - Supports multi-level chains (A → B → C → D)
+ * - Reloads data after each step
+ * - Prevents infinite loops
  */
 class TestPlanner {
   
@@ -25,25 +24,18 @@ class TestPlanner {
       stateRegistry: options.stateRegistry || null
     };
     
-    // Try to load state registry if not provided
     if (!this.stateRegistry) {
       this.stateRegistry = this.loadStateRegistry();
     }
   }
   
-  /**
-   * Load .state-registry.json from the implications directory
-   * Maps state names to Implication class names
-   */
   loadStateRegistry() {
     try {
       const possiblePaths = [
-        path.join(process.cwd(), 'tests/implications/bookings/status/.state-registry.json'),
         path.join(process.cwd(), 'tests/implications/.state-registry.json'),
         path.join(process.cwd(), 'tests/ai-testing/implications/.state-registry.json'),
-        path.join(__dirname, '../implications/.state-registry.json'),
-        path.join(__dirname, '../../implications/.state-registry.json'),
-        path.join(__dirname, '../../implications/bookings/status/.state-registry.json')
+        path.join(__dirname, '../.state-registry.json'),
+        path.join(__dirname, '../../.state-registry.json')
       ];
       
       for (const registryPath of possiblePaths) {
@@ -57,7 +49,7 @@ class TestPlanner {
       }
       
       if (this.options.verbose) {
-        console.log('⚠️  No state registry found - limited chain building');
+        console.log('⚠️  No state registry found');
       }
       return {};
       
@@ -69,9 +61,6 @@ class TestPlanner {
     }
   }
   
-  /**
-   * Analyze if test can run and build prerequisite chain
-   */
   analyze(ImplicationClass, testData, options = {}) {
     const xstateConfig = ImplicationClass.xstateConfig || {};
     const meta = xstateConfig.meta || {};
@@ -85,19 +74,10 @@ class TestPlanner {
       console.log(`   Target: ${targetStatus}`);
     }
     
-    // Build the prerequisite chain
     const chain = this.buildPrerequisiteChain(ImplicationClass, currentStatus, targetStatus);
-    
-    // Check if we're ready
     const ready = this.isReady(chain, currentStatus);
-    
-    // Find next step if not ready
     const nextStep = ready ? null : this.findNextStep(chain, currentStatus);
-    
-    // Count remaining steps
     const stepsRemaining = chain.filter(step => !step.complete).length;
-    
-    // Find missing fields
     const missingFields = this.findMissingFields(meta, testData);
     
     const analysis = {
@@ -123,96 +103,110 @@ class TestPlanner {
     return analysis;
   }
   
-  /**
-   * Build the chain of prerequisites from current state to target state
-   */
-  buildPrerequisiteChain(ImplicationClass, currentStatus, targetStatus) {
+  buildPrerequisiteChain(ImplicationClass, currentStatus, targetStatus, visited = new Set()) {
     const chain = [];
+    
+    if (visited.has(targetStatus)) {
+      console.warn(`⚠️  Circular dependency detected for ${targetStatus}`);
+      return chain;
+    }
+    
+    visited.add(targetStatus);
+    
     const xstateConfig = ImplicationClass.xstateConfig || {};
     const meta = xstateConfig.meta || {};
     
-    // Target step
-    const targetStep = {
+    if (meta.requires?.previousStatus) {
+      const previousStatus = meta.requires.previousStatus;
+      const prevImplClassName = this.stateRegistry[previousStatus];
+      
+      if (prevImplClassName && !visited.has(previousStatus)) {
+        try {
+          const prevImplPath = this.findImplicationFile(prevImplClassName);
+          if (prevImplPath) {
+            const PrevImplClass = require(prevImplPath);
+            const prevChain = this.buildPrerequisiteChain(PrevImplClass, currentStatus, previousStatus, visited);
+            chain.push(...prevChain);
+          }
+        } catch (error) {
+          console.log(`   ⚠️  Could not load ${prevImplClassName}: ${error.message}`);
+        }
+      }
+    }
+    
+    chain.push({
       status: targetStatus,
+      className: ImplicationClass.name,
       actionName: meta.setup?.[0]?.actionName || 'unknown',
       testFile: meta.setup?.[0]?.testFile || 'unknown',
       platform: meta.platform || 'unknown',
       complete: currentStatus === targetStatus,
       isCurrent: currentStatus === targetStatus,
       isTarget: true
-    };
-    
-    // Check for previous status
-    if (meta.requires?.previousStatus) {
-      const previousStatus = meta.requires.previousStatus;
-      
-      // Look up in state registry
-      const prevImplClassName = this.stateRegistry[previousStatus];
-      
-      let prevStep = {
-        status: previousStatus,
-        actionName: 'unknown',
-        testFile: 'unknown',
-        platform: 'unknown',
-        complete: currentStatus === previousStatus,
-        isCurrent: currentStatus === previousStatus,
-        isTarget: false
-      };
-      
-      if (prevImplClassName) {
-        try {
-          // Load the prerequisite Implication class
-          const prevImplPath = path.join(
-            path.dirname(require.resolve('./TestPlanner.js')),
-            '../../implications/bookings/status',
-            `${prevImplClassName}.js`
-          );
-          
-          const PrevImplClass = require(prevImplPath);
-          const prevMeta = PrevImplClass.xstateConfig?.meta || {};
-          
-          // Extract the info
-          prevStep.actionName = prevMeta.setup?.[0]?.actionName || 'unknown';
-          prevStep.testFile = prevMeta.setup?.[0]?.testFile || 'unknown';
-          prevStep.platform = prevMeta.platform || 'unknown';
-          
-          console.log(`   ✅ Loaded prerequisite: ${prevImplClassName}`);
-          console.log(`      Action: ${prevStep.actionName}`);
-          console.log(`      Test: ${prevStep.testFile}`);
-        } catch (error) {
-          console.log(`   ⚠️  Could not load ${prevImplClassName}: ${error.message}`);
-        }
-      }
-      
-      chain.push(prevStep);
-    }
-    
-    chain.push(targetStep);
-    
-    // Generate commands
-    chain.forEach(step => {
-      if (step.testFile && step.testFile !== 'unknown') {
-        const testDataPath = this.options.config?.testDataPath || 'tests/data/shared.json';
-        const command = `TEST_DATA_PATH="${testDataPath}" npx playwright test tests/implications/bookings/status/${step.testFile}`;
-        step.command = command;
-      }
     });
     
     return chain;
   }
   
-  /**
-   * Check if test is ready to run
-   */
+  findImplicationFile(className) {
+    const searchPaths = [
+      path.join(process.cwd(), 'tests/implications'),
+      path.join(process.cwd(), 'tests/ai-testing/implications'),
+      path.join(__dirname, '..')
+    ];
+    
+    for (const basePath of searchPaths) {
+      const patterns = [
+        path.join(basePath, `${className}.js`),
+        path.join(basePath, '**', `${className}.js`)
+      ];
+      
+      for (const pattern of patterns) {
+        if (fs.existsSync(pattern)) {
+          return pattern;
+        }
+      }
+      
+      if (fs.existsSync(basePath)) {
+        const files = this.findFilesRecursive(basePath, `${className}.js`);
+        if (files.length > 0) {
+          return files[0];
+        }
+      }
+    }
+    
+    return null;
+  }
+  
+  findFilesRecursive(dir, filename) {
+    const results = [];
+    
+    try {
+      const items = fs.readdirSync(dir, { withFileTypes: true });
+      
+      for (const item of items) {
+        const fullPath = path.join(dir, item.name);
+        
+        if (item.isDirectory()) {
+          results.push(...this.findFilesRecursive(fullPath, filename));
+        } else if (item.name === filename) {
+          results.push(fullPath);
+        }
+      }
+    } catch (error) {
+      // Skip directories we can't read
+    }
+    
+    return results;
+  }
+  
   isReady(chain, currentStatus) {
     const incompleteSteps = chain.filter(step => !step.complete);
     
-    // If there are no incomplete steps, we're ready
     if (incompleteSteps.length === 0) {
       return true;
     }
     
-    // If the only incomplete step is the target, we're ready
     if (incompleteSteps.length === 1 && incompleteSteps[0].isTarget) {
       return true;
     }
@@ -220,31 +214,19 @@ class TestPlanner {
     return false;
   }
   
-  /**
-   * Find the next step to execute
-   */
   findNextStep(chain, currentStatus) {
-    // Find the first incomplete non-target step
     const nextStep = chain.find(step => !step.complete && !step.isTarget);
     
     if (nextStep) {
       return {
         ...nextStep,
-        executable: true,
-        executor: {
-          type: 'shell',
-          cwd: process.cwd(),
-          env: { TEST_DATA_PATH: this.options.config?.testDataPath || 'tests/data/shared.json' }
-        }
+        executable: true
       };
     }
     
     return null;
   }
   
-  /**
-   * Find missing required fields
-   */
   findMissingFields(meta, testData) {
     const missing = [];
     
@@ -259,11 +241,8 @@ class TestPlanner {
     return missing;
   }
   
-  /**
-   * Print a helpful error message when prerequisites not met
-   */
   printNotReadyError(analysis) {
-    const { currentStatus, targetStatus, chain, nextStep, missingFields, stepsRemaining } = analysis;
+    const { currentStatus, targetStatus, chain, nextStep, missingFields } = analysis;
     
     console.error('\n' + '═'.repeat(60));
     console.error('❌ TEST NOT READY - PREREQUISITES NOT MET');
@@ -284,14 +263,13 @@ class TestPlanner {
     
     chain.forEach((step, index) => {
       const icon = step.complete ? '✅' : step.isTarget ? '🎯' : '📍';
-      const label = step.complete ? 'You are here' : step.isTarget ? 'Target' : '';
+      const label = step.complete ? ' ← You are here' : step.isTarget ? ' ← Target' : '';
       
-      console.error(`   ${icon} ${index + 1}. ${step.status}${label ? ' ← ' + label : ''}`);
+      console.error(`   ${icon} ${index + 1}. ${step.status}${label}`);
       
       if (!step.complete && !step.isTarget) {
         console.error(`      Action: ${step.actionName}`);
         console.error(`      Test: ${step.testFile}`);
-        console.error(`      Platform: ${step.platform}`);
       }
       
       if (index < chain.length - 1) {
@@ -300,31 +278,16 @@ class TestPlanner {
     });
     
     if (nextStep) {
-      console.error(`\n💡 NEXT STEP TO TAKE:\n`);
-      console.error(`   Status: ${nextStep.status}`);
+      console.error(`\n💡 NEXT STEP: ${nextStep.status}`);
       console.error(`   Action: ${nextStep.actionName}`);
-      console.error(`   Platform: ${nextStep.platform}`);
-      console.error(`   `);
-      console.error(`   Command:`);
-      console.error(`   ${nextStep.command}`);
-      console.error(`   `);
-      
-      if (stepsRemaining > 1) {
-        console.error(`   ⏭️  ${stepsRemaining - 1} more step(s) after this\n`);
-      }
+      console.error(`   Test: ${nextStep.testFile}`);
     }
     
     console.error('═'.repeat(60) + '\n');
   }
   
   /**
-   * Check if prerequisites are met, auto-execute if not (UNIT tests only)
-   * 
-   * This is the main entry point used in generated UNIT tests
-   * 
-   * @param {class} ImplicationClass - The Implication class
-   * @param {object} testData - Current test data
-   * @param {object} options - Options (page, testDataPath)
+   * ✅ RECURSIVE checkOrThrow - The magic happens here
    */
   static async checkOrThrow(ImplicationClass, testData, options = {}) {
     const planner = new TestPlanner({ 
@@ -334,7 +297,6 @@ class TestPlanner {
     
     const analysis = planner.analyze(ImplicationClass, testData, options);
     
-    // ✅ CHECK: Already in target state? Skip everything!
     const targetStatus = ImplicationClass.xstateConfig?.meta?.status;
     const currentStatus = testData.status;
     
@@ -343,20 +305,17 @@ class TestPlanner {
       return { ready: true, skipped: true, currentStatus, targetStatus };
     }
     
-    // If not ready and we have a next step, auto-execute it
     if (!analysis.ready && analysis.nextStep && options.page) {
       const { testFile, actionName } = analysis.nextStep;
       
       console.log(`\n⚡ Auto-executing prerequisite: ${actionName}\n`);
       
       try {
-        // Set env to skip test registration
         process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
         
-        // Dynamically require the UNIT test
         const testPath = path.join(
           process.cwd(), 
-          'tests/implications/bookings/status',
+          'tests/implications',
           testFile
         );
         
@@ -369,36 +328,29 @@ class TestPlanner {
           throw new Error(`Function ${actionName} not exported from ${testFile}`);
         }
         
-        // Determine testDataPath
         const testDataPath = options.testDataPath 
           || testData.__testDataPath 
           || process.env.TEST_DATA_PATH 
           || 'tests/data/shared.json';
         
-        // Execute the prerequisite (it handles its own smart navigation)
         const result = await triggerFn(testDataPath, {
           page: options.page,
           testDataPath
         });
         
-        // ✅ CRITICAL: Save to disk before reloading
         if (result && result.save) {
           result.save(testDataPath);
           console.log('   💾 Prerequisite state saved');
         }
         
-        // ✅ Reload test data after prerequisite ran using TestContext
         const TestContext = require('./TestContext');
         const reloadedCtx = TestContext.load(ImplicationClass, testDataPath);
-        
-        // ✅ Update the original testData object with reloaded data
         Object.assign(testData, reloadedCtx.data);
         
-        // Re-check with UPDATED data
         const newAnalysis = planner.analyze(ImplicationClass, reloadedCtx.data);
         
         if (!newAnalysis.ready) {
-          // Still not ready? Go deeper (recursive for multi-level chains)
+          // ✅ RECURSIVE CALL - Go deeper for multi-level chains
           return TestPlanner.checkOrThrow(ImplicationClass, reloadedCtx.data, options);
         }
         
@@ -413,7 +365,6 @@ class TestPlanner {
       }
     }
     
-    // If not ready and no auto-execute option, just throw
     if (!analysis.ready) {
       planner.printNotReadyError(analysis);
       throw new Error('Prerequisites not met');
