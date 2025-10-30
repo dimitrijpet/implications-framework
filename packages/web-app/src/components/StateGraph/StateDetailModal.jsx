@@ -10,6 +10,7 @@ import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
 import TestDataPanel from '../TestDataPanel/TestDataPanel';
 import TestDataLinker from '../TestDataLinker/TestDataLinker';
+import CompositionViewer from '../CompositionViewer/CompositionViewer';
 
    function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -841,9 +842,14 @@ const handleAnalysisComplete = (analysis) => {
 />
           </details>
 
-          {isEditMode && (
-  <div>
-  <h2 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.purple }}>
+  {/* ======================================== 
+    COMPOSITION SECTION
+    ======================================== */}
+<div>
+  <h2 
+    className="text-2xl font-bold mb-4"
+    style={{ color: theme.colors.accents.purple }}
+  >
     🧩 Composition Architecture
   </h2>
   
@@ -852,7 +858,6 @@ const handleAnalysisComplete = (analysis) => {
     theme={theme}
   />
 </div>
-)}
           
 {/* ========================================
     UI SCREENS SECTION - ALWAYS SHOW

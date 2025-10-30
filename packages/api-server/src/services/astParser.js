@@ -248,7 +248,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
     
-    // ✅ Collect async work during traversal
+    // Collect async work during traversal
     const asyncWork = [];
     
     traverse.default(ast, {
@@ -279,7 +279,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                 };
                 
                 if (platformProp.value?.type === 'ObjectExpression') {
-                  // ✅ First pass: collect spread operators
+                  // First pass: collect spread operators
                   const spreadOperators = [];
                   const regularProperties = [];
                   
@@ -292,7 +292,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                     }
                   });
                   
-                  // ✅ Queue async work for spread operators
+                  // Queue async work for spread operators
                   if (spreadOperators.length > 0) {
                     asyncWork.push(async () => {
                       console.log(`   ⚡ Processing ${spreadOperators.length} spread operators...`);
@@ -306,14 +306,13 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                         
                         if (resolved && typeof resolved === 'object') {
                           console.log('   ✅ Spread resolved, merging...');
-                          // Merge resolved screens into platformData
                           Object.assign(platformData.screens, resolved);
                         }
                       }
                     });
                   }
                   
-                  // ✅ Process regular properties synchronously
+                  // Process regular properties synchronously
                   regularProperties.forEach(screenProp => {
                     const screenName = screenProp.key?.name;
                     
@@ -407,11 +406,11 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
       }
     });
     
-    // ✅ Execute all async work AFTER traversal
+    // Execute all async work AFTER traversal
     console.log(`\n⚡ Executing ${asyncWork.length} async operations...`);
     await Promise.all(asyncWork.map(fn => fn()));
     
-    // ✅ Calculate totals after async work
+    // Calculate totals after async work
     for (const [platformName, platformData] of Object.entries(uiData.platforms)) {
       platformData.total = Object.keys(platformData.screens).length;
       uiData.total += platformData.total;
@@ -426,107 +425,86 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
     console.error(error.stack);
   }
   
-  return uiData;
+  // ✅ NORMALIZE to array format before returning
+  return {
+    total: uiData.total,
+    platforms: normalizeUIData(uiData.platforms)
+  };
 }
-
 /**
- * Resolve spread operator
- * Example: ...NotificationsImplications.forBookings().dancer
+ * Normalize UI data to consistent format
+ * Converts object format to array format that UI components expect
+ * 
+ * INPUT (from AST):
+ * {
+ *   dancer: {
+ *     notificationsScreen: [...],
+ *     requestBookingScreen: [...]
+ *   }
+ * }
+ * 
+ * OUTPUT (for UI):
+ * {
+ *   dancer: {
+ *     name: 'dancer',
+ *     screens: [
+ *       { name: 'notificationsScreen', ... },
+ *       { name: 'requestBookingScreen', ... }
+ *     ],
+ *     total: 2
+ *   }
+ * }
  */
-async function resolveSpreadOperator(spreadNode, projectPath, cache) {
-  console.log('      🔍 Resolving spread operator...');
+function normalizeUIData(platforms) {
+  const normalized = {};
   
-  try {
-    const argument = spreadNode.argument;
-    
-    if (!argument) {
-      console.log('      ⚠️  No argument in spread');
-      return null;
+  for (const [platformName, platformData] of Object.entries(platforms)) {
+    // If already in array format, keep it
+    if (platformData.screens && Array.isArray(platformData.screens)) {
+      normalized[platformName] = platformData;
+      continue;
     }
     
-    // Extract the chain: NotificationsImplications.forBookings().dancer
-    const chain = extractMemberExpressionChain(argument);
-    console.log('      📊 Chain:', chain.join('.'));
+    // Convert object keys to screens array
+    const screens = [];
     
-    if (chain.length === 0) {
-      console.log('      ⚠️  Empty chain');
-      return null;
-    }
-    
-    const className = chain[0];
-    
-    // Find and load the class file
-    const classFile = await findClassFile(className, projectPath, cache);
-    
-    if (!classFile) {
-      console.log(`      ⚠️  Could not find file for ${className}`);
-      return null;
-    }
-    
-    // Load the class
-    const ClassModule = await import(classFile);
-    const Class = ClassModule.default || ClassModule;
-    
-    // Navigate the chain
-    let value = Class;
-    for (let i = 1; i < chain.length; i++) {
-      const prop = chain[i];
+    for (const [screenName, screenData] of Object.entries(platformData)) {
+      // Skip metadata fields
+      if (screenName === 'name' || screenName === 'total') {
+        continue;
+      }
       
-      // Check if it's a method call (has parentheses in original)
-      if (typeof value[prop] === 'function') {
-        console.log(`      🔧 Calling method: ${prop}()`);
-        value = value[prop]();
+      // screenData is typically an array of screen configs
+      if (Array.isArray(screenData)) {
+        screenData.forEach((config, index) => {
+          screens.push({
+            name: screenName,
+            ...config,
+            // Keep track of original for saving back
+            originalName: screenName,
+            index: index
+          });
+        });
       } else {
-        console.log(`      📌 Accessing property: ${prop}`);
-        value = value[prop];
-      }
-      
-      if (value === undefined) {
-        console.log(`      ⚠️  ${prop} is undefined`);
-        return null;
+        // Single object
+        screens.push({
+          name: screenName,
+          ...screenData,
+          originalName: screenName
+        });
       }
     }
     
-    console.log('      ✅ Spread resolved successfully');
-    return value;
-    
-  } catch (error) {
-    console.error('      ❌ Error resolving spread:', error.message);
-    return null;
+    normalized[platformName] = {
+      name: platformName,
+      screens: screens,
+      total: screens.length
+    };
   }
+  
+  return normalized;
 }
 
-/**
- * Extract chain from MemberExpression
- * Example: NotificationsImplications.forBookings().dancer
- * Returns: ['NotificationsImplications', 'forBookings', 'dancer']
- */
-function extractMemberExpressionChain(node) {
-  const chain = [];
-  let current = node;
-  
-  while (current) {
-    if (current.type === 'MemberExpression') {
-      if (current.property?.type === 'Identifier') {
-        chain.unshift(current.property.name);
-      }
-      current = current.object;
-    } else if (current.type === 'CallExpression') {
-      // Method call like forBookings()
-      if (current.callee?.type === 'MemberExpression') {
-        chain.unshift(current.callee.property.name);
-      }
-      current = current.callee.object;
-    } else if (current.type === 'Identifier') {
-      chain.unshift(current.name);
-      break;
-    } else {
-      break;
-    }
-  }
-  
-  return chain;
-}
 
 /**
  * Find class file in project
