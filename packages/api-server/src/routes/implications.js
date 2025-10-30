@@ -12,6 +12,7 @@ import { glob } from 'glob';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import CompositionAnalyzer from '../services/CompositionAnalyzer.js';
+import CompositionRewriter from '../services/CompositionRewriter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -577,6 +578,154 @@ router.post('/update-metadata', async (req, res) => {
     res.status(500).json({ 
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/implications/update-composition
+ * 
+ * Update composition patterns in an Implication file
+ * 
+ * Body:
+ * {
+ *   filePath: "/absolute/path/to/AcceptedBookingImplications.js",
+ *   config: {
+ *     baseClass: "BaseBookingImplications",  // or null to remove
+ *     behaviors: ["NotificationsImplications"]
+ *   },
+ *   preview: false  // Set true to preview without writing
+ * }
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   backupPath: "/path/.backups/file.backup",
+ *   changes: { ... },
+ *   preview?: { ... }  // If preview mode
+ * }
+ */
+router.post('/update-composition', async (req, res) => {
+  console.log('📝 POST /update-composition', req.body);
+  
+  try {
+    const { filePath, config, preview = false } = req.body;
+    
+    // Validation
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        error: 'filePath is required'
+      });
+    }
+    
+    if (!config) {
+      return res.status(400).json({
+        success: false,
+        error: 'config is required'
+      });
+    }
+    
+    // Validate file exists and has correct structure
+    const rewriter = new CompositionRewriter();
+    const validation = await rewriter.validateFile(filePath);
+    
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid Implication file: ${validation.error}`
+      });
+    }
+    
+    // Validate base class exists (if specified)
+    if (config.baseClass && config.baseClass !== 'None') {
+      const availableBaseClasses = await rewriter.getAvailableBaseClasses(filePath);
+      if (!availableBaseClasses.includes(config.baseClass)) {
+        return res.status(400).json({
+          success: false,
+          error: `Base class "${config.baseClass}" not found. Available: ${availableBaseClasses.join(', ')}`
+        });
+      }
+    }
+    
+    // Validate behaviors exist (if specified)
+    if (config.behaviors && config.behaviors.length > 0) {
+      const availableBehaviors = await rewriter.getAvailableBehaviors(filePath);
+      const invalidBehaviors = config.behaviors.filter(b => !availableBehaviors.includes(b));
+      
+      if (invalidBehaviors.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Behaviors not found: ${invalidBehaviors.join(', ')}. Available: ${availableBehaviors.join(', ')}`
+        });
+      }
+    }
+    
+    // Perform rewrite
+    const result = await rewriter.rewrite(filePath, config, preview);
+    
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    
+    // Success!
+    console.log('✅ Composition updated successfully');
+    return res.json(result);
+    
+  } catch (error) {
+    console.error('❌ Error updating composition:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * GET /api/implications/available-compositions
+ * 
+ * Get available base classes and behaviors for a given Implication file
+ * 
+ * Query:
+ * - filePath: Path to Implication file
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   baseClasses: ["BaseBookingImplications", "BaseDancerImplications"],
+ *   behaviors: ["NotificationsImplications", "EmailImplications"]
+ * }
+ */
+router.get('/available-compositions', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        error: 'filePath is required'
+      });
+    }
+    
+    const rewriter = new CompositionRewriter();
+    
+    const [baseClasses, behaviors] = await Promise.all([
+      rewriter.getAvailableBaseClasses(filePath),
+      rewriter.getAvailableBehaviors(filePath)
+    ]);
+    
+    return res.json({
+      success: true,
+      baseClasses,
+      behaviors
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting available compositions:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
