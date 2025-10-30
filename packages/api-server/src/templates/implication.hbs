@@ -15,11 +15,24 @@ class {{className}} {
       {{#if meta.triggerButton}}
       triggerButton: '{{meta.triggerButton}}',
       {{/if}}
+     {{!-- Replace with: --}}
+      {{#if platforms}}
+      setup: [
+        {{#each platforms}}
+        {
+          testFile: '{{testFile}}',
+          actionName: '{{actionName}}',
+          platform: '{{platform}}'
+        }{{#unless @last}},{{/unless}}
+        {{/each}}
+      ],
+      {{else}}
       setup: [{
-        testFile: 'tests/implications/bookings/status/{{className}}-Web-UNIT.spec.js',
+        testFile: 'tests/implications/bookings/status/{{className}}-{{capitalize meta.platform}}-UNIT.spec.js',
         actionName: '{{#if meta.triggerAction}}{{meta.triggerAction}}{{else}}{{stateId}}{{/if}}',
         platform: '{{meta.platform}}'
-      }]
+      }],
+      {{/if}}
     },
     
     on: {

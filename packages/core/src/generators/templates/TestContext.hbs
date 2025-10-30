@@ -258,6 +258,62 @@ class TestContext {
       console.log(`   💾 Saved to delta file: ${fileName}`);
     }
   }
+  
+  /**
+   * Get booking by index (generic - works for any array entity)
+   */
+  getBooking(index) {
+    if (!this.data.bookings || !this.data.bookings[index]) {
+      throw new Error(`Booking at index ${index} not found`);
+    }
+    return this.data.bookings[index];
+  }
+  
+  /**
+   * Get bookings by status
+   */
+  getBookingsByStatus(status) {
+    if (!this.data.bookings) return [];
+    return this.data.bookings.filter(b => b.status === status);
+  }
+  
+  /**
+   * Get bookings by indices
+   */
+  getBookingsByIndices(indices) {
+    if (!this.data.bookings) return [];
+    return indices.map(i => this.getBooking(i));
+  }
+  
+  /**
+   * Apply delta to nested paths (supports array notation)
+   * 
+   * Examples:
+   *   applyDelta('status', 'active')
+   *     → this.data.status = 'active'
+   *   
+   *   applyDelta('bookings[0].status', 'accepted')
+   *     → this.data.bookings[0].status = 'accepted'
+   */
+  applyDelta(path, value) {
+    if (path.includes('[')) {
+      // Handle array notation: bookings[0].status
+      const match = path.match(/^(\w+)\[(\d+)\]\.?(.*)$/);
+      if (match) {
+        const [, arrayName, index, rest] = match;
+        if (!this.data[arrayName]) this.data[arrayName] = [];
+        if (!this.data[arrayName][index]) this.data[arrayName][index] = {};
+        if (rest) {
+          this.data[arrayName][index][rest] = value;
+        } else {
+          this.data[arrayName][index] = { ...this.data[arrayName][index], ...value };
+        }
+      }
+    } else {
+      // Simple property
+      this.data[path] = value;
+    }
+  }
 }
 
 module.exports = TestContext;

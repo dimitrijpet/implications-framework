@@ -3,15 +3,9 @@
 import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
-import UtilsGenerator from '../../../core/src/generators/UtilsGenerator.js';
 
 const router = express.Router();
 
-/**
- * POST /api/init/check
- * 
- * Check if a project is initialized with the ai-testing structure
- */
 router.post('/check', async (req, res) => {
   try {
     const { projectPath } = req.body;
@@ -22,7 +16,6 @@ router.post('/check', async (req, res) => {
     
     console.log(`\n🔍 Checking initialization for: ${projectPath}`);
     
-    // Check for required files in NEW structure
     const checks = {
       testContext: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/TestContext.js')),
       expectImplication: await fileExists(path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js')),
@@ -31,21 +24,12 @@ router.post('/check', async (req, res) => {
     };
     
     const initialized = Object.values(checks).every(Boolean);
-    const missing = Object.entries(checks)
-      .filter(([_, exists]) => !exists)
-      .map(([name, _]) => name);
+    const missing = Object.entries(checks).filter(([_, exists]) => !exists).map(([name, _]) => name);
     
     console.log(`   ${initialized ? '✅' : '⚠️'} Initialized: ${initialized}`);
-    if (!initialized) {
-      console.log(`   Missing: ${missing.join(', ')}`);
-    }
+    if (!initialized) console.log(`   Missing: ${missing.join(', ')}`);
     
-    res.json({
-      initialized,
-      checks,
-      missing,
-      structure: 'tests/ai-testing/'  // New structure!
-    });
+    res.json({ initialized, checks, missing, structure: 'tests/ai-testing/' });
     
   } catch (error) {
     console.error('Error checking initialization:', error);
@@ -53,11 +37,6 @@ router.post('/check', async (req, res) => {
   }
 });
 
-/**
- * POST /api/init/setup
- * 
- * Initialize a project with the ai-testing structure
- */
 router.post('/setup', async (req, res) => {
   try {
     const { projectPath, force = false } = req.body;
@@ -69,7 +48,6 @@ router.post('/setup', async (req, res) => {
     console.log(`\n🚀 Initializing project: ${projectPath}`);
     console.log(`   Force: ${force}`);
     
-    // Check if already initialized
     if (!force) {
       const existingCheck = await checkIfInitialized(projectPath);
       if (existingCheck.initialized) {
@@ -80,7 +58,6 @@ router.post('/setup', async (req, res) => {
       }
     }
     
-    // Perform initialization
     const result = await initializeProject(projectPath, force);
     
     console.log(`   ✅ Initialization complete!`);
@@ -96,10 +73,6 @@ router.post('/setup', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// ═══════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════
 
 async function fileExists(filePath) {
   try {
@@ -118,21 +91,14 @@ async function checkIfInitialized(projectPath) {
     config: await fileExists(path.join(projectPath, 'ai-testing.config.js'))
   };
   
-  const initialized = Object.values(checks).every(Boolean);
-  
-  return { initialized, checks };
+  return { initialized: Object.values(checks).every(Boolean), checks };
 }
 
 async function initializeProject(projectPath, force) {
   const createdFiles = [];
   
-  // 1. Create directory structure
   console.log('   📁 Creating directories...');
-  const dirsToCreate = [
-    'tests/ai-testing',
-    'tests/ai-testing/utils',
-    'tests/ai-testing/config'
-  ];
+  const dirsToCreate = ['tests/ai-testing', 'tests/ai-testing/utils', 'tests/ai-testing/config'];
   
   for (const dir of dirsToCreate) {
     const dirPath = path.join(projectPath, dir);
@@ -140,67 +106,49 @@ async function initializeProject(projectPath, force) {
     console.log(`      ✅ ${dir}/`);
   }
   
- // Replace lines ~142-161 with this:
-console.log('   🛠️  Generating utility files...');
-
-try {
-  const generator = new UtilsGenerator({ backup: false });
-  const results = generator.generateAll({
-    projectPath,
-    preview: false
-  });
+  console.log('   📝 Creating utility files...');
   
-  results.files.forEach(file => {
-    createdFiles.push(file.filePath.replace(projectPath + '/', ''));
-    console.log(`      ✅ ${file.type}.js`);
-  });
-  
-} catch (error) {
-  console.error('   ⚠️  UtilsGenerator failed, using templates:', error.message);
-  
-  // Fallback to old method
-  await fs.writeFile(testContextPath, getTestContextTemplate());
+  await fs.writeFile(
+    path.join(projectPath, 'tests/ai-testing/utils/TestContext.js'),
+    getTestContextTemplate()
+  );
   createdFiles.push('tests/ai-testing/utils/TestContext.js');
+  console.log(`      ✅ TestContext.js`);
   
-  await fs.writeFile(testPlannerPath, getTestPlannerTemplate());
+  await fs.writeFile(
+    path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js'),
+    getTestPlannerTemplate()
+  );
   createdFiles.push('tests/ai-testing/utils/TestPlanner.js');
-}
+  console.log(`      ✅ TestPlanner.js`);
   
-  // 3. Create ExpectImplication.js (✅ NOW WITH REAL IMPLEMENTATION!)
-  console.log('   📝 Creating ExpectImplication.js...');
-  const expectImplicationPath = path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js');
-  await fs.writeFile(expectImplicationPath, getExpectImplicationTemplate());
+  await fs.writeFile(
+    path.join(projectPath, 'tests/ai-testing/utils/ExpectImplication.js'),
+    getExpectImplicationTemplate()
+  );
   createdFiles.push('tests/ai-testing/utils/ExpectImplication.js');
   console.log(`      ✅ ExpectImplication.js`);
   
-  
-  // 5. Create ai-testing.config.js
   console.log('   ⚙️  Creating ai-testing.config.js...');
-  const configPath = path.join(projectPath, 'ai-testing.config.js');
-  await fs.writeFile(configPath, getConfigTemplate(projectPath));
+  await fs.writeFile(
+    path.join(projectPath, 'ai-testing.config.js'),
+    getConfigTemplate(projectPath)
+  );
   createdFiles.push('ai-testing.config.js');
   console.log(`      ✅ ai-testing.config.js`);
   
-  // 6. Create README.md
   console.log('   📖 Creating README.md...');
-  const readmePath = path.join(projectPath, 'tests/ai-testing/README.md');
-  await fs.writeFile(readmePath, getReadmeTemplate());
+  await fs.writeFile(
+    path.join(projectPath, 'tests/ai-testing/README.md'),
+    getReadmeTemplate()
+  );
   createdFiles.push('tests/ai-testing/README.md');
   console.log(`      ✅ README.md`);
   
-  return {
-    filesCreated: createdFiles,
-    structure: 'tests/ai-testing/'
-  };
+  return { filesCreated: createdFiles, structure: 'tests/ai-testing/' };
 }
 
-// ═══════════════════════════════════════════════════════════
-// FILE TEMPLATES
-// ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-// FILE TEMPLATES
-// ═══════════════════════════════════════════════════════════
-
+// COPY FROM DOCUMENT 9 - TestContext.js with delta system + array methods
 function getTestContextTemplate() {
   return `// Auto-generated by Implications Framework
 // Location: tests/ai-testing/utils/TestContext.js
@@ -209,37 +157,43 @@ function getTestContextTemplate() {
  * TestContext - Manages test data and state transitions
  * 
  * This class handles:
- * - Loading test data from JSON files
+ * - Loading test data from JSON files (master or delta)
+ * - Automatic delta file creation/management
  * - Providing config for actions (device, lang, etc.)
  * - Tracking state changes (delta)
  * - Validating prerequisites
- * - Saving updated state back to disk
+ * - Saving updated state to delta file (NEVER overwrites master)
+ * 
+ * FILE STRATEGY:
+ * - Master files: *-master.json (read-only, pristine)
+ * - Delta files: *-current.json (created automatically, tracks changes)
+ * 
+ * When you load "flight-booking-master.json":
+ * - Checks if "flight-booking-current.json" exists
+ * - If yes: loads from current (delta)
+ * - If no: loads from master, will save to current
+ * - Master file is NEVER modified
  */
 class TestContext {
-  constructor(ImplicationClass, testData) {
+  constructor(ImplicationClass, testData, actualFilePath) {
     this.ImplicationClass = ImplicationClass;
     this.data = testData;
     this.changeLog = [];
+    this.actualFilePath = actualFilePath;
     
-    // ✅ Create config object from test data
     this.config = {
       device: testData.device || testData._config?.device || 'desktop',
       lang: testData.lang || testData._config?.lang || 'en',
       carrier: testData.carrier || testData._config?.carrier || 'LCC',
       debugMode: testData.debugMode || testData._config?.debugMode || false,
       baseURL: testData._config?.baseURL,
-      // Spread any additional config fields
       ...testData._config
     };
     
-    // ✅ Initialize wrappers storage (for page object wrappers)
     this.wrappers = {};
-    
-    // ✅ Initialize domain-specific data storage (bookings, flights, etc.)
     this.bookingData = {};
     this.flightData = {};
     
-    // ✅ Initialize runtime data (NOT saved - ephemeral)
     this.runtime = {
       price: null,
       indexStart: 0,
@@ -247,47 +201,73 @@ class TestContext {
     };
   }
   
-  /**
-   * Load test data from JSON file
-   */
+  static getDeltaPath(inputPath) {
+    if (inputPath.includes('-master.')) {
+      return inputPath.replace('-master.', '-current.');
+    }
+    if (inputPath.includes('-current.')) {
+      return inputPath;
+    }
+    return inputPath.replace('.json', '-current.json');
+  }
+  
   static load(ImplicationClass, testDataPath) {
     const fs = require('fs');
-    const fileData = JSON.parse(fs.readFileSync(testDataPath, 'utf8'));
+    const path = require('path');
     
-    // Handle both formats:
-    // Format 1: { "status": "initial", "agencyId": "..." }  (fresh file)
-    // Format 2: { "_original": {...}, "_changeLog": [...] } (saved file)
+    let actualPath = testDataPath;
+    let isMasterFile = testDataPath.includes('-master.');
+    
+    if (isMasterFile) {
+      const deltaPath = this.getDeltaPath(testDataPath);
+      
+      if (fs.existsSync(deltaPath)) {
+        actualPath = deltaPath;
+        console.log(\`   📂 Loading from delta file: \${path.basename(deltaPath)}\`);
+      } else {
+        console.log(\`   📂 Loading from master file: \${path.basename(testDataPath)}\`);
+        console.log(\`   💡 Will create delta file: \${path.basename(deltaPath)}\`);
+      }
+    } else {
+      console.log(\`   📂 Loading from: \${path.basename(testDataPath)}\`);
+    }
+    
+    const fileData = JSON.parse(fs.readFileSync(actualPath, 'utf8'));
     
     let testData, changeLog;
     
     if (fileData._original) {
       testData = fileData._original;
       changeLog = fileData._changeLog || [];
-      console.log(\`   📂 Loaded existing state with \${changeLog.length} changes\`);
+      
+      for (const change of changeLog) {
+        for (const [key, value] of Object.entries(change.delta)) {
+          testData[key] = value;
+        }
+      }
+      
+      console.log(\`   📊 Applied \${changeLog.length} changes from history\`);
+      console.log(\`   🎯 Current state: \${testData.status || 'unknown'}\`);
     } else {
       testData = fileData;
       changeLog = [];
-      console.log(\`   📂 Loaded fresh state\`);
+      console.log(\`   ✨ Fresh state loaded\`);
     }
     
-    const ctx = new TestContext(ImplicationClass, testData);
+    const ctx = new TestContext(ImplicationClass, testData, actualPath);
     ctx.changeLog = changeLog;
+    ctx.inputPath = testDataPath;
     
     return ctx;
   }
   
-  /**
-   * Execute action and save changes
-   */
   async executeAndSave(label, testFile, deltaFn) {
     const { delta } = await deltaFn();
     
-    // Apply delta to data
     for (const [key, value] of Object.entries(delta)) {
       this.data[key] = value;
     }
     
-    // Log change
     this.changeLog.push({
       label,
       testFile,
@@ -298,19 +278,89 @@ class TestContext {
     return this;
   }
   
-  /**
-   * Save updated data back to file
-   */
   save(testDataPath) {
     const fs = require('fs');
+    const path = require('path');
     
-    // Save with _original and _changeLog structure
+    let savePath;
+    
+    if (testDataPath) {
+      savePath = TestContext.getDeltaPath(testDataPath);
+    } else if (this.inputPath) {
+      savePath = TestContext.getDeltaPath(this.inputPath);
+    } else {
+      savePath = this.actualFilePath;
+    }
+    
+    const originalData = { ...this.data };
+    
+    for (let i = this.changeLog.length - 1; i >= 0; i--) {
+      const change = this.changeLog[i];
+      for (const key of Object.keys(change.delta)) {
+        delete originalData[key];
+      }
+    }
+    
+    if (this.changeLog.length === 0) {
+      // No changes yet
+    }
+    
+    const masterPath = this.inputPath || testDataPath;
+    if (masterPath && masterPath.includes('-master.') && fs.existsSync(masterPath)) {
+      const masterData = JSON.parse(fs.readFileSync(masterPath, 'utf8'));
+      Object.assign(originalData, masterData);
+    }
+    
     const output = {
-      _original: this.data,
+      _original: originalData,
       _changeLog: this.changeLog
     };
     
-    fs.writeFileSync(testDataPath, JSON.stringify(output, null, 2));
+    fs.writeFileSync(savePath, JSON.stringify(output, null, 2));
+    
+    const fileName = path.basename(savePath);
+    const isMaster = savePath.includes('-master.');
+    
+    if (isMaster) {
+      console.log(\`   ⚠️  WARNING: Saved to master file: \${fileName}\`);
+    } else {
+      console.log(\`   💾 Saved to delta file: \${fileName}\`);
+    }
+  }
+  
+  getBooking(index) {
+    if (!this.data.bookings || !this.data.bookings[index]) {
+      throw new Error(\`Booking at index \${index} not found\`);
+    }
+    return this.data.bookings[index];
+  }
+  
+  getBookingsByStatus(status) {
+    if (!this.data.bookings) return [];
+    return this.data.bookings.filter(b => b.status === status);
+  }
+  
+  getBookingsByIndices(indices) {
+    if (!this.data.bookings) return [];
+    return indices.map(i => this.getBooking(i));
+  }
+  
+  applyDelta(path, value) {
+    if (path.includes('[')) {
+      const match = path.match(/^(\\w+)\\[(\\d+)\\]\\.?(.*)$/);
+      if (match) {
+        const [, arrayName, index, rest] = match;
+        if (!this.data[arrayName]) this.data[arrayName] = [];
+        if (!this.data[arrayName][index]) this.data[arrayName][index] = {};
+        if (rest) {
+          this.data[arrayName][index][rest] = value;
+        } else {
+          this.data[arrayName][index] = { ...this.data[arrayName][index], ...value };
+        }
+      }
+    } else {
+      this.data[path] = value;
+    }
   }
 }
 
@@ -318,97 +368,7 @@ module.exports = TestContext;
 `;
 }
 
-// ✅ NEW: TestSetup template
-function getTestSetupTemplate() {
-  return `// Auto-generated by Implications Framework
-// Location: tests/helpers/TestSetup.js
-
-/**
- * TestSetup - Navigation and initialization helpers
- * 
- * Reusable setup functions used across ALL tests in this project.
- * 
- * ⚠️  CUSTOMIZE THIS FILE for your application:
- * - Change baseURL to your app's URL
- * - Update cookie selectors
- * - Adjust wait times
- * - Add any custom setup logic
- */
-class TestSetup {
-  
-  /**
-   * Navigate to application
-   * 
-   * @param {Page} page - Playwright page object
-   * @param {object} config - Configuration from TestContext
-   */
-  static async navigateToApp(page, config) {
-    console.log('\\n🚀 Navigating to application...');
-    
-    // TODO: Change this to your app's URL!
-    const url = config.baseURL || 'https://your-app.com';
-    console.log(\`   URL: \${url}\`);
-    
-    await page.goto(url);
-    await page.waitForLoadState('domcontentloaded');
-    
-    // TODO: Adjust wait time for your app
-    if (config.debugMode) {
-      console.log('   ⏳ Debug mode: waiting extra time...');
-      await page.waitForTimeout(3000);
-    }
-    
-    // Close any modals/popups with Escape
-    await page.keyboard.press('Escape');
-    
-    // Handle cookies
-    await this.handleCookies(page);
-    
-    console.log('   ✅ Navigation complete');
-  }
-  
-  /**
-   * Handle cookie consent banner
-   * 
-   * TODO: Customize these selectors for your app!
-   */
-  static async handleCookies(page) {
-    try {
-      const cookieSelectors = [
-        '[data-testid="accept-cookies"]',
-        '#onetrust-accept-btn-handler',
-        'button:has-text("Accept all")',
-        'button:has-text("Accept")'
-      ];
-      
-      for (const selector of cookieSelectors) {
-        const button = page.locator(selector).first();
-        if (await button.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await button.click();
-          console.log('   🍪 Cookies accepted');
-          return;
-        }
-      }
-    } catch (error) {
-      console.log('   ℹ️  No cookie banner found');
-    }
-  }
-  
-  /**
-   * Cleanup after test
-   */
-  static async cleanup(page) {
-    if (page && !page.isClosed()) {
-      await page.close();
-    }
-  }
-}
-
-module.exports = TestSetup;
-`;
-}
-
-// ✅ FIXED: Real ExpectImplication implementation!
+// COPY FROM DOCUMENT 8 - ExpectImplication.js with prerequisites
 function getExpectImplicationTemplate() {
   return `// Auto-generated by Implications Framework
 // Location: tests/ai-testing/utils/ExpectImplication.js
@@ -426,22 +386,26 @@ const { expect } = require('@playwright/test');
  * - Supporting both Playwright and Appium
  */
 class ExpectImplication {
-  /**
-   * Main validation entry point
-   * Validates all screens for a given implication
-   */
   static async validateImplications(screenDef, testData, page) {
     if (!screenDef || screenDef.length === 0) {
       console.log('   ⚠️  No screen definition to validate');
       return;
     }
     
-    // Handle both array and object formats
     const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
     
     console.log(\`   🔍 Validating screen: \${def.name || 'unnamed'}\`);
     
-    // Validate visible elements (top-level)
+    // Execute prerequisites FIRST (navigation, setup, etc.)
+    if (def.prerequisites && def.prerequisites.length > 0) {
+      console.log(\`   🔧 Running \${def.prerequisites.length} prerequisites...\`);
+      for (const prereq of def.prerequisites) {
+        console.log(\`      \${prereq.description}\`);
+        await prereq.setup(testData, page);
+      }
+      console.log('   ✅ Prerequisites completed');
+    }
+    
     if (def.visible && def.visible.length > 0) {
       console.log(\`   ✅ Checking \${def.visible.length} visible elements...\`);
       for (const elementSelector of def.visible) {
@@ -456,7 +420,6 @@ class ExpectImplication {
       }
     }
     
-    // Validate hidden elements (top-level)
     if (def.hidden && def.hidden.length > 0) {
       console.log(\`   ✅ Checking \${def.hidden.length} hidden elements...\`);
       for (const elementSelector of def.hidden) {
@@ -478,11 +441,9 @@ class ExpectImplication {
       }
     }
     
-    // Validate checks (additional validations)
     if (def.checks) {
       console.log('   🔍 Running additional checks...');
       
-      // checks.visible (extra visibility checks)
       if (def.checks.visible && def.checks.visible.length > 0) {
         console.log(\`   ✅ Checking \${def.checks.visible.length} additional visible elements...\`);
         for (const elementSelector of def.checks.visible) {
@@ -497,7 +458,6 @@ class ExpectImplication {
         }
       }
       
-      // checks.hidden (extra hidden checks)
       if (def.checks.hidden && def.checks.hidden.length > 0) {
         console.log(\`   ✅ Checking \${def.checks.hidden.length} additional hidden elements...\`);
         for (const elementSelector of def.checks.hidden) {
@@ -519,14 +479,12 @@ class ExpectImplication {
         }
       }
       
-      // checks.text (text content validation with variable substitution)
       if (def.checks.text && Object.keys(def.checks.text).length > 0) {
         console.log(\`   ✅ Checking \${Object.keys(def.checks.text).length} text checks...\`);
         for (const [elementSelector, expectedText] of Object.entries(def.checks.text)) {
           try {
             const element = page.locator(\`[data-testid="\${elementSelector}"]\`);
             
-            // Variable substitution: {{fieldName}} -> testData.fieldName
             let finalText = expectedText;
             if (typeof expectedText === 'string' && expectedText.includes('{{')) {
               const variableMatch = expectedText.match(/\\{\\{(\\w+)\\}\\}/);
@@ -546,7 +504,6 @@ class ExpectImplication {
       }
     }
     
-    // Run custom expect function if provided
     if (def.expect && typeof def.expect === 'function') {
       console.log('   🎯 Running custom expect function...');
       await def.expect(testData, page);
@@ -556,9 +513,6 @@ class ExpectImplication {
     console.log(\`   ✅ All validations passed for \${def.name || 'screen'}\`);
   }
   
-  /**
-   * Helper: Check if element is Playwright
-   */
   static isPlaywright(element) {
     return element && typeof element.locator === 'function';
   }
@@ -568,27 +522,16 @@ module.exports = ExpectImplication;
 `;
 }
 
+// COPY FROM DOCUMENT 10 - TestPlanner.js with recursion (simplified for inline)
 function getTestPlannerTemplate() {
   return `// Auto-generated by Implications Framework
 // Location: tests/ai-testing/utils/TestPlanner.js
 
-/**
- * TestPlanner - Validates prerequisites before running tests
- * 
- * This class handles:
- * - Checking if test data is in correct state
- * - Validating required fields exist
- * - Throwing helpful errors when prerequisites not met
- */
 class TestPlanner {
-  /**
-   * Check if prerequisites are met, throw if not
-   */
   static checkOrThrow(ImplicationClass, testData) {
     const xstateConfig = ImplicationClass.xstateConfig;
     const meta = xstateConfig.meta || {};
     
-    // Check previous status
     if (meta.requires?.previousStatus) {
       const expected = meta.requires.previousStatus;
       const actual = testData.status;
@@ -603,10 +546,8 @@ class TestPlanner {
       }
     }
     
-    // Check required fields
     if (meta.requiredFields && meta.requiredFields.length > 0) {
       const missing = [];
-      
       for (const field of meta.requiredFields) {
         if (!testData.hasOwnProperty(field)) {
           missing.push(field);
@@ -631,38 +572,20 @@ module.exports = TestPlanner;
 
 function getConfigTemplate(projectPath) {
   const projectName = path.basename(projectPath);
-  
   return `// Auto-generated by Implications Framework
-// Location: ai-testing.config.js
-
 module.exports = {
-  // Project info
   projectName: "${projectName}",
   projectRoot: __dirname,
-  
-  // Framework paths
   utilsPath: "tests/ai-testing/utils",
   outputPath: "tests/implications",
-  
-  // Test configuration
-  testRunner: "playwright", // or "appium", "cypress"
-  platforms: ["web"], // Add your platforms: "web", "mobile-dancer", etc.
-  
-  // Data management
-  testDataMode: "stateful", // or "stateless"
+  testRunner: "playwright",
+  platforms: ["web"],
+  testDataMode: "stateful",
   testDataPath: "tests/data/shared.json",
-  
-  // Patterns
   patterns: {
-    implications: [
-      "tests/implications/**/*Implications.js"
-    ],
-    tests: [
-      "tests/**/*.spec.js"
-    ]
+    implications: ["tests/implications/**/*Implications.js"],
+    tests: ["tests/**/*.spec.js"]
   },
-  
-  // Generation options
   generation: {
     skipTestRegistration: false,
     autoValidateUI: true,
@@ -675,49 +598,9 @@ module.exports = {
 function getReadmeTemplate() {
   return `# AI Testing Framework
 
-This directory contains the auto-generated testing utilities for the Implications Framework.
+Auto-generated testing utilities for the Implications Framework.
 
-## Structure
-
-\`\`\`
-tests/ai-testing/
-├── utils/
-│   ├── TestContext.js       # Test data management
-│   ├── ExpectImplication.js # UI validation
-│   └── TestPlanner.js       # Prerequisites checking
-├── config/
-│   └── (future: custom configs)
-└── README.md                # This file
-\`\`\`
-
-## Files
-
-### TestContext.js
-Manages test data and state transitions. Handles loading data from JSON files and saving changes (delta).
-
-### ExpectImplication.js
-Validates UI state against implications. Checks visible/hidden elements and runs custom validations.
-
-### TestPlanner.js
-Validates prerequisites before running tests. Ensures test data is in the correct state.
-
-## Usage
-
-These files are automatically imported in generated tests:
-
-\`\`\`javascript
-const TestContext = require('../ai-testing/utils/TestContext');
-const ExpectImplication = require('../ai-testing/utils/ExpectImplication');
-const TestPlanner = require('../ai-testing/utils/TestPlanner');
-\`\`\`
-
-## Configuration
-
-Main configuration file: \`ai-testing.config.js\` (project root)
-
-## Generated by
-
-Implications Framework - Auto-generated on ${new Date().toISOString()}
+Generated: ${new Date().toISOString()}
 `;
 }
 
