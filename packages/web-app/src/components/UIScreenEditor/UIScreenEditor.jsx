@@ -1,7 +1,7 @@
 // packages/web-app/src/components/UIScreenEditor/UIScreenEditor.jsx
 // ✨ ENHANCED with Function Support + Parameters!
 // COMPLETE FILE - All existing functionality preserved + NEW function features
-
+import { useMemo } from 'react';
 import { useState } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
 import AddScreenModal from './AddScreenModal';
@@ -404,115 +404,45 @@ const handleAddScreen = (platformName, screenName, screenData) => {
 // PART 2: PlatformSection Component (UNCHANGED)
 // ============================================
 
-function PlatformSection({ 
-  platformName, 
-  platformData, 
-  screens,  // ← This prop is ignored now, we extract from platformData
-  editMode, 
-  projectPath,
-  theme, 
-  onScreenUpdate, 
-  onAddScreen,
-  onDeleteScreen,
-  onCopyScreen
-}) {
-  // ✅ FIX: Convert platform object to screen array
-  // Platform data structure is:
-  // {
-  //   dancer: {
-  //     notificationsScreen: [{...}],
-  //     bookingDetailsScreen: [{...}],
-  //     displayName: "Dancer",
-  //     count: 2
-  //   }
-  // }
-  
-  const screenArray = platformData.screens 
-    ? platformData.screens  // New format (already an array)
-    : Object.entries(platformData)
-        .filter(([key]) => key !== 'displayName' && key !== 'count')
-        .flatMap(([screenName, screenData]) => {
-          // Each screen can be an array of screen objects
-          if (Array.isArray(screenData)) {
-            return screenData.map(screen => ({
-              ...screen,
-              name: screenName,
-              originalName: screenName
-            }));
-          }
-          // Or a single object
-          return [{
-            ...screenData,
-            name: screenName,
-            originalName: screenName
-          }];
+function PlatformSection({ platformName, platformData, onScreenUpdate, editable, theme }) {
+  // ✅ Convert screens object to array
+  const screenArray = useMemo(() => {  // ← Changed from React.useMemo
+    if (!platformData?.screens) return [];
+    
+    // If already an array, use it
+    if (Array.isArray(platformData.screens)) {
+      return platformData.screens;
+    }
+    
+    // If it's an object, flatten all screen arrays
+    const allScreens = [];
+    Object.entries(platformData.screens).forEach(([screenName, screenDefs]) => {
+      if (Array.isArray(screenDefs)) {
+        screenDefs.forEach(def => {
+          allScreens.push({
+            ...def,
+            originalName: screenName,  // Preserve original screen name
+            name: def.name || screenName
+          });
         });
+      }
+    });
+    
+    return allScreens;
+  }, [platformData]);
   
-  console.log('🎨 PlatformSection processed:', {
-    platformName,
-    rawPlatformData: platformData,
-    extractedScreens: screenArray.length,
-    screenNames: screenArray.map(s => s.name)
-  });
-
+  // Now use screenArray.map() as before
   return (
-    <div 
-      className="p-4 rounded-lg"
-      style={{ 
-        background: theme.colors.background.tertiary,
-        border: `1px solid ${theme.colors.border}`
-      }}
-    >
-      {/* Platform Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <span style={{ fontSize: '32px' }}>{getPlatformIcon(platformName)}</span>
-          <div>
-            <div style={{ fontSize: '18px', fontWeight: 600, color: theme.colors.text.primary }}>
-              {platformData.displayName || platformName}
-            </div>
-            <div style={{ fontSize: '14px', color: theme.colors.text.tertiary }}>
-              {screenArray.length} screen{screenArray.length !== 1 ? 's' : ''}
-            </div>
-          </div>
-        </div>
-
-        {editMode && (
-          <button
-            onClick={onAddScreen}
-            className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110"
-            style={{ background: theme.colors.accents.green, color: 'white' }}
-          >
-            ➕ Add Screen
-          </button>
-        )}
-      </div>
-
-      {/* Screens */}
-      <div className="space-y-3">
-        {screenArray.map((screen, index) => (
-  <ScreenCard
-    key={`${screen.name}-${index}`}  // ← Added curly braces!
-    screen={screen}
-    screenIndex={index}
-    editMode={editMode}
-    projectPath={projectPath}
-    theme={theme}
-    onUpdate={(updatedScreen) => onScreenUpdate(index, updatedScreen)}
-    onDelete={() => onDeleteScreen(index)}
-    onCopy={() => onCopyScreen(screen)}
-  />
-))}
-
-        {screenArray.length === 0 && !editMode && (
-          <div 
-            className="text-center py-4"
-            style={{ color: theme.colors.text.tertiary, fontSize: '14px' }}
-          >
-            No screens configured
-          </div>
-        )}
-      </div>
+    <div>
+      {screenArray.map((screen, idx) => (
+        <ScreenCard 
+          key={idx} 
+          screen={screen} 
+          onUpdate={onScreenUpdate}
+          editable={editable}
+          theme={theme}
+        />
+      ))}
     </div>
   );
 }

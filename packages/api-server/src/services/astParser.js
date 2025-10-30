@@ -253,157 +253,129 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
     
     traverse.default(ast, {
       ClassProperty(path) {
-        if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
-          console.log('✅ Found mirrorsOn!');
+  if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
+    console.log('✅ Found mirrorsOn!');
+    
+    const value = path.node.value;
+    
+    if (value?.type === 'ObjectExpression') {
+      const uiProperty = value.properties.find(p => p.key?.name === 'UI');
+      
+      if (uiProperty?.value?.type === 'ObjectExpression') {
+        console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
+        
+        // Process each platform
+        uiProperty.value.properties.forEach(platformProp => {
+          const platformName = platformProp.key?.name;
           
-          const value = path.node.value;
+          if (!platformName) return;
           
-          if (value?.type === 'ObjectExpression') {
-            const uiProperty = value.properties.find(p => p.key?.name === 'UI');
-            
-            if (uiProperty?.value?.type === 'ObjectExpression') {
-              console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
+          console.log(`\n📱 Processing platform: ${platformName}`);
+          
+          if (platformProp.value?.type === 'ObjectExpression') {
+            // Collect all screens for this platform
+            platformProp.value.properties.forEach(screenProp => {
+              const screenName = screenProp.key?.name;
               
-              // Process each platform
-              uiProperty.value.properties.forEach(platformProp => {
-                const platformName = platformProp.key?.name;
+              if (!screenName) return;
+              
+              console.log(`   📺 Screen: ${screenName}`);
+              
+              // Queue async work for this screen
+              asyncWork.push(async () => {
+                let screenDefinitions = [];
                 
-                if (!platformName) return;
-                
-                console.log(`\n📱 Processing platform: ${platformName}`);
-                
-                const platformData = {
-                  name: platformName,
-                  screens: {},
-                  total: 0
-                };
-                
-                if (platformProp.value?.type === 'ObjectExpression') {
-                  // First pass: collect spread operators
-                  const spreadOperators = [];
-                  const regularProperties = [];
+                if (screenProp.value?.type === 'ArrayExpression') {
+                  // Process array elements
+                  const elements = screenProp.value.elements || [];
                   
-                  platformProp.value.properties.forEach(prop => {
-                    if (prop.type === 'SpreadElement') {
-                      console.log('   🔄 Found spread operator');
-                      spreadOperators.push(prop);
-                    } else {
-                      regularProperties.push(prop);
-                    }
-                  });
-                  
-                  // Queue async work for spread operators
-                  if (spreadOperators.length > 0) {
-                    asyncWork.push(async () => {
-                      console.log(`   ⚡ Processing ${spreadOperators.length} spread operators...`);
-                      
-                      for (const spreadProp of spreadOperators) {
-                        const resolved = await resolveSpreadOperator(
-                          spreadProp,
-                          projectPath,
-                          cache
-                        );
-                        
-                        if (resolved && typeof resolved === 'object') {
-                          console.log('   ✅ Spread resolved, merging...');
-                          Object.assign(platformData.screens, resolved);
-                        }
+                  for (const element of elements) {
+                    if (!element) continue;
+                    
+                    if (element.type === 'ObjectExpression') {
+                      // Direct screen definition
+                      const def = extractScreenDefinition(element);
+                      if (def) {
+                        screenDefinitions.push(def);
                       }
-                    });
+                    } else if (element.type === 'CallExpression') {
+                      // mergeWithBase call - ✅ FIXED FUNCTION NAME
+                      const merged = await parseScreenValidation(
+                        element,
+                        projectPath,
+                        cache
+                      );
+                      
+                      if (merged) {
+                        screenDefinitions.push(merged);
+                      }
+                    } else if (element.type === 'MemberExpression') {
+                      // Base reference: BaseClass.platform.screen
+                      const baseData = await resolveBaseImplication(
+                        {
+                          className: element.object?.object?.name,
+                          platform: element.object?.property?.name,
+                          screenName: element.property?.name
+                        },
+                        projectPath,
+                        cache
+                      );
+                      
+                      if (baseData) {
+                        screenDefinitions.push(baseData);
+                      }
+                    }
                   }
+                } else if (screenProp.value?.type === 'CallExpression') {
+                  // Direct mergeWithBase (not in array)
+                  const merged = await parseScreenValidation(
+                    screenProp.value,
+                    projectPath,
+                    cache
+                  );
                   
-                  // Process regular properties synchronously
-                  regularProperties.forEach(screenProp => {
-                    const screenName = screenProp.key?.name;
-                    
-                    if (!screenName) return;
-                    
-                    console.log(`   📺 Screen: ${screenName}`);
-                    
-                    let screenArray = [];
-                    
-                    if (screenProp.value?.type === 'ArrayExpression') {
-                      screenArray = screenProp.value.elements || [];
-                    } else if (screenProp.value?.type === 'CallExpression') {
-                      // mergeWithBase() call
-                      console.log('      🔗 Detected mergeWithBase()');
-                      
-                      asyncWork.push(async () => {
-                        const merged = await resolveMergeWithBase(
-                          screenProp.value,
-                          projectPath,
-                          cache
-                        );
-                        
-                        if (merged) {
-                          platformData.screens[screenName] = [merged];
-                          platformData.total++;
-                        }
-                      });
-                      
-                      return; // Skip sync processing
-                    }
-                    
-                    // Process array elements
-                    const screenDefinitions = [];
-                    
-                    screenArray.forEach((element, index) => {
-                      if (!element) return;
-                      
-                      if (element.type === 'ObjectExpression') {
-                        const def = extractScreenDefinition(element);
-                        if (def) {
-                          screenDefinitions.push(def);
-                        }
-                      } else if (element.type === 'CallExpression') {
-                        // mergeWithBase inside array
-                        asyncWork.push(async () => {
-                          const merged = await resolveMergeWithBase(
-                            element,
-                            projectPath,
-                            cache
-                          );
-                          
-                          if (merged) {
-                            if (!platformData.screens[screenName]) {
-                              platformData.screens[screenName] = [];
-                            }
-                            platformData.screens[screenName].push(merged);
-                          }
-                        });
-                      } else if (element.type === 'SpreadElement') {
-                        // Spread inside array
-                        asyncWork.push(async () => {
-                          const resolved = await resolveSpreadOperator(
-                            element,
-                            projectPath,
-                            cache
-                          );
-                          
-                          if (resolved) {
-                            if (!platformData.screens[screenName]) {
-                              platformData.screens[screenName] = [];
-                            }
-                            platformData.screens[screenName].push(resolved);
-                          }
-                        });
-                      }
-                    });
-                    
-                    if (screenDefinitions.length > 0) {
-                      platformData.screens[screenName] = screenDefinitions;
-                      platformData.total += screenDefinitions.length;
-                    }
-                  });
+                  if (merged) {
+                    screenDefinitions.push(merged);
+                  }
+                } else if (screenProp.value?.type === 'MemberExpression') {
+                  // Direct base reference
+                  const baseData = await resolveBaseImplication(
+                    {
+                      className: screenProp.value.object?.object?.name,
+                      platform: screenProp.value.object?.property?.name,
+                      screenName: screenProp.value.property?.name
+                    },
+                    projectPath,
+                    cache
+                  );
+                  
+                  if (baseData) {
+                    screenDefinitions.push(baseData);
+                  }
                 }
                 
-                // Store platform data (will be updated by async work)
-                uiData.platforms[platformName] = platformData;
+                // Store results
+                if (screenDefinitions.length > 0) {
+                  if (!uiData.platforms[platformName]) {
+                    uiData.platforms[platformName] = {
+                      name: platformName,
+                      screens: {},
+                      total: 0
+                    };
+                  }
+                  
+                  uiData.platforms[platformName].screens[screenName] = screenDefinitions;
+                  uiData.platforms[platformName].total += screenDefinitions.length;
+                  uiData.total += screenDefinitions.length;
+                }
               });
-            }
+            });
           }
-        }
+        });
       }
+    }
+  }
+}
     });
     
     // Execute all async work AFTER traversal
@@ -426,10 +398,13 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
   }
   
   // ✅ NORMALIZE to array format before returning
-  return {
-    total: uiData.total,
-    // platforms: normalizeUIData(uiData.platforms)
-  };
+console.log('🎯 FINAL uiData before return:', JSON.stringify(uiData, null, 2));
+
+return {
+  total: uiData.total,
+  platforms: uiData.platforms
+};
+
 }
 /**
  * Normalize UI data to consistent format

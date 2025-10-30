@@ -922,12 +922,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
               return null;
             })()}
             {(() => {
-  console.log('🚨 BEFORE passing to UIScreenEditor:', {
-    stateUiCoverage: currentState.uiCoverage,
-    metaUiCoverage: currentState.meta?.uiCoverage,
-    platforms: currentState.uiCoverage?.platforms || currentState.meta?.uiCoverage?.platforms,
-    fullPlatformsData: JSON.stringify(currentState.uiCoverage?.platforms || currentState.meta?.uiCoverage?.platforms, null, 2)
-  });
+ console.log('🔍 FULL STATE OBJECT:', JSON.stringify(state, null, 2));
+console.log('🔍 state.uiCoverage:', state.uiCoverage);
+console.log('🔍 state.meta:', state.meta);
+console.log('🔍 state.meta?.uiCoverage:', state.meta?.uiCoverage);
   return null;
 })()}
 

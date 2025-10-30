@@ -86,13 +86,23 @@ export async function extractImplicationMetadata(parsed, extractXStateMetadata =
       const xstateMetadata = extractXStateMetadata(parsed.content);
       Object.assign(metadata, xstateMetadata);
     }
+    if (parsed.content && extractUIImplications) {
+  try {
+    const uiResult = await extractUIImplications(parsed.content);
+    console.log('✅ UI extraction result:', JSON.stringify(uiResult, null, 2));
     
-    // ✅ Extract context fields
-    if (parsed.content && extractXStateContext) {
-      const contextFields = extractXStateContext(parsed.content);
-      metadata.xstateContext = contextFields;
-      console.log(`📦 Extracted ${Object.keys(contextFields).length} context fields for ${metadata.className}`);
+    if (uiResult && (uiResult.total > 0 || Object.keys(uiResult.platforms || {}).length > 0)) {
+      metadata.uiCoverage = uiResult;
+      console.log('✅ Assigned UI coverage to metadata');
+    } else {
+      console.log('⚠️ UI extraction returned empty/invalid result');
     }
+  } catch (error) {
+    console.error('❌ UI extraction failed:', error);
+  }
+} else {
+  console.log('⚠️ Cannot extract UI - missing content or extractor');
+}
   }
   
   // Check for mirrorsOn
