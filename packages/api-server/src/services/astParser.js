@@ -428,7 +428,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
   // ✅ NORMALIZE to array format before returning
   return {
     total: uiData.total,
-    platforms: normalizeUIData(uiData.platforms)
+    // platforms: normalizeUIData(uiData.platforms)
   };
 }
 /**
@@ -470,7 +470,7 @@ function normalizeUIData(platforms) {
     
     for (const [screenName, screenData] of Object.entries(platformData)) {
       // Skip metadata fields
-      if (screenName === 'name' || screenName === 'total') {
+      if (screenName === 'name' || screenName === 'total' || screenName === 'screens') {
         continue;
       }
       
@@ -478,9 +478,8 @@ function normalizeUIData(platforms) {
       if (Array.isArray(screenData)) {
         screenData.forEach((config, index) => {
           screens.push({
-            name: screenName,
-            ...config,
-            // Keep track of original for saving back
+            ...config,           // ← SPREAD FIRST!
+            name: screenName,    // ← THEN override name
             originalName: screenName,
             index: index
           });
@@ -488,8 +487,8 @@ function normalizeUIData(platforms) {
       } else {
         // Single object
         screens.push({
-          name: screenName,
-          ...screenData,
+          ...screenData,        // ← SPREAD FIRST!
+          name: screenName,     // ← THEN override name
           originalName: screenName
         });
       }

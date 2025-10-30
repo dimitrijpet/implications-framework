@@ -11,19 +11,12 @@ import POMFieldSelector from './POMFieldSelector';
 import FieldAutocomplete from './FieldAutocomplete';
 import FunctionSelector from './FunctionSelector';  // ✨ NEW!
 
-export default function UIScreenEditor({ 
-  state, 
-  projectPath,
-  onSave, 
-  onCancel, 
-  theme = defaultTheme 
-}) {
-  console.log('🎨 UIScreenEditor received:', { 
-    state, 
-    projectPath,
-    hasUiCoverage: !!state?.uiCoverage,
-    hasMeta: !!state?.meta,
-    platforms: state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms
+export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel }) {
+  console.log('🚨🚨🚨 UIScreenEditor TOP OF FUNCTION:', {
+    state,
+    uiCoverage: state?.uiCoverage,
+    platforms: state?.uiCoverage?.platforms,
+    platformKeys: Object.keys(state?.uiCoverage?.platforms || {})
   });
   
   const [editMode, setEditMode] = useState(false);
@@ -414,7 +407,7 @@ const handleAddScreen = (platformName, screenName, screenData) => {
 function PlatformSection({ 
   platformName, 
   platformData, 
-  screens, 
+  screens,  // ← This prop is ignored now, we extract from platformData
   editMode, 
   projectPath,
   theme, 
@@ -423,6 +416,45 @@ function PlatformSection({
   onDeleteScreen,
   onCopyScreen
 }) {
+  // ✅ FIX: Convert platform object to screen array
+  // Platform data structure is:
+  // {
+  //   dancer: {
+  //     notificationsScreen: [{...}],
+  //     bookingDetailsScreen: [{...}],
+  //     displayName: "Dancer",
+  //     count: 2
+  //   }
+  // }
+  
+  const screenArray = platformData.screens 
+    ? platformData.screens  // New format (already an array)
+    : Object.entries(platformData)
+        .filter(([key]) => key !== 'displayName' && key !== 'count')
+        .flatMap(([screenName, screenData]) => {
+          // Each screen can be an array of screen objects
+          if (Array.isArray(screenData)) {
+            return screenData.map(screen => ({
+              ...screen,
+              name: screenName,
+              originalName: screenName
+            }));
+          }
+          // Or a single object
+          return [{
+            ...screenData,
+            name: screenName,
+            originalName: screenName
+          }];
+        });
+  
+  console.log('🎨 PlatformSection processed:', {
+    platformName,
+    rawPlatformData: platformData,
+    extractedScreens: screenArray.length,
+    screenNames: screenArray.map(s => s.name)
+  });
+
   return (
     <div 
       className="p-4 rounded-lg"
@@ -440,7 +472,7 @@ function PlatformSection({
               {platformData.displayName || platformName}
             </div>
             <div style={{ fontSize: '14px', color: theme.colors.text.tertiary }}>
-              {screens.length} screen{screens.length !== 1 ? 's' : ''}
+              {screenArray.length} screen{screenArray.length !== 1 ? 's' : ''}
             </div>
           </div>
         </div>
@@ -458,21 +490,21 @@ function PlatformSection({
 
       {/* Screens */}
       <div className="space-y-3">
-        {screens.map((screen, index) => (
-          <ScreenCard
-            key={index}
-            screen={screen}
-            screenIndex={index}
-            editMode={editMode}
-            projectPath={projectPath}
-            theme={theme}
-            onUpdate={(updatedScreen) => onScreenUpdate(index, updatedScreen)}
-            onDelete={() => onDeleteScreen(index)}
-            onCopy={() => onCopyScreen(screen)}
-          />
-        ))}
+        {screenArray.map((screen, index) => (
+  <ScreenCard
+    key={`${screen.name}-${index}`}  // ← Added curly braces!
+    screen={screen}
+    screenIndex={index}
+    editMode={editMode}
+    projectPath={projectPath}
+    theme={theme}
+    onUpdate={(updatedScreen) => onScreenUpdate(index, updatedScreen)}
+    onDelete={() => onDeleteScreen(index)}
+    onCopy={() => onCopyScreen(screen)}
+  />
+))}
 
-        {screens.length === 0 && !editMode && (
+        {screenArray.length === 0 && !editMode && (
           <div 
             className="text-center py-4"
             style={{ color: theme.colors.text.tertiary, fontSize: '14px' }}
@@ -490,26 +522,36 @@ function PlatformSection({
 // ============================================
 
 function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdate, onDelete, onCopy }) {
+  console.log('🔍 ScreenCard received:', JSON.stringify(screen, null, 2));  // ← ADD THIS LINE
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
   const [instanceName, setInstanceName] = useState(null);
 
-  // Extract element arrays
+  // ✅ FIXED: Extract and MERGE element arrays from BOTH formats
+  // Old format: screen.visible / screen.hidden (at root)
+  // New format: screen.checks.visible / screen.checks.hidden (nested)
   const topLevelVisible = screen.visible || [];
   const topLevelHidden = screen.hidden || [];
   const checksVisible = screen.checks?.visible || [];
   const checksHidden = screen.checks?.hidden || [];
-  const textChecks = screen.checks?.text || {};
   
-  // ✨ NEW: Extract functions
+  // Merge and dedupe - single list from both locations
+  const allVisibleElements = [...new Set([...topLevelVisible, ...checksVisible])];
+  const allHiddenElements = [...new Set([...topLevelHidden, ...checksHidden])];
+  
+  const textChecks = screen.checks?.text || {};
   const functions = screen.functions || {};
   
-  // 🐛 DEBUG: Log functions
-  console.log('🎯 ScreenCard - Functions extracted:', {
+  console.log('🎯 ScreenCard data extraction:', {
     screenName: screen.originalName || screen.name,
-    functionsCount: Object.keys(functions).length,
-    functionNames: Object.keys(functions),
-    functions: functions
+    topLevelVisible: topLevelVisible.length,
+    checksVisible: checksVisible.length,
+    mergedVisible: allVisibleElements.length,
+    topLevelHidden: topLevelHidden.length,
+    checksHidden: checksHidden.length,
+    mergedHidden: allHiddenElements.length,
+    visibleElements: allVisibleElements,
+    hiddenElements: allHiddenElements
   });
 
   const updateScreen = (updates) => {
@@ -584,11 +626,11 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             theme={theme}
           />
 
-          {/* Top-Level Visible */}
-          {(topLevelVisible.length > 0 || editMode) && (
+          {/* ✅ Visible Elements - MERGED from both formats */}
+          {(allVisibleElements.length > 0 || editMode) && (
             <ElementSection
-              title="✅ Visible (top-level)"
-              elements={topLevelVisible}
+              title="✅ Visible Elements"
+              elements={allVisibleElements}
               color={theme.colors.accents.green}
               editMode={editMode}
               pomName={pomName}
@@ -596,30 +638,13 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               projectPath={projectPath}
               functions={functions}
               onChange={(newElements) => {
-                console.log('✅ Updating top-level visible:', newElements);
-                updateScreen({ visible: newElements });
-              }}
-              theme={theme}
-            />
-          )}
-
-          {/* Checks Visible */}
-          {(checksVisible.length > 0 || editMode) && (
-            <ElementSection
-              title="✅ Visible (checks)"
-              elements={checksVisible}
-              color={theme.colors.accents.green}
-              editMode={editMode}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              functions={functions}
-              onChange={(newElements) => {
-                console.log('✅ Updating checks.visible:', newElements);
+                console.log('✅ Updating visible elements:', newElements);
+                // Update BOTH locations for full compatibility
                 updateScreen({ 
+                  visible: newElements,  // Top-level for old format
                   checks: { 
                     ...screen.checks, 
-                    visible: newElements 
+                    visible: newElements  // Nested for new format
                   } 
                 });
               }}
@@ -627,11 +652,11 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             />
           )}
 
-          {/* Top-Level Hidden */}
-          {(topLevelHidden.length > 0 || editMode) && (
+          {/* ❌ Hidden Elements - MERGED from both formats */}
+          {(allHiddenElements.length > 0 || editMode) && (
             <ElementSection
-              title="❌ Hidden (top-level)"
-              elements={topLevelHidden}
+              title="❌ Hidden Elements"
+              elements={allHiddenElements}
               color={theme.colors.accents.red}
               editMode={editMode}
               pomName={pomName}
@@ -639,28 +664,13 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               projectPath={projectPath}
               functions={functions}
               onChange={(newElements) => {
-                updateScreen({ hidden: newElements });
-              }}
-              theme={theme}
-            />
-          )}
-
-          {/* Checks Hidden */}
-          {(checksHidden.length > 0 || editMode) && (
-            <ElementSection
-              title="❌ Hidden (checks)"
-              elements={checksHidden}
-              color={theme.colors.accents.red}
-              editMode={editMode}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              functions={functions}
-              onChange={(newElements) => {
+                console.log('❌ Updating hidden elements:', newElements);
+                // Update BOTH locations for full compatibility
                 updateScreen({ 
+                  hidden: newElements,  // Top-level for old format
                   checks: { 
                     ...screen.checks, 
-                    hidden: newElements 
+                    hidden: newElements  // Nested for new format
                   } 
                 });
               }}
@@ -685,7 +695,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             />
           )}
 
-          {/* ✨ NEW: Functions Section */}
+          {/* ✨ Functions Section */}
           {(Object.keys(functions).length > 0 || editMode) && (
             <FunctionSection
               functions={functions}

@@ -1,5 +1,5 @@
 // packages/web-app/src/components/StateGraph/StateDetailModal.jsx
-// COMPLETE VERSION with Add/Delete Context Fields + Auto-Suggestions
+// REFACTORED VERSION - Clean and working
 
 import { useEffect, useState } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
@@ -10,27 +10,7 @@ import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
 import TestDataPanel from '../TestDataPanel/TestDataPanel';
 import TestDataLinker from '../TestDataLinker/TestDataLinker';
-import CompositionViewer from '../CompositionViewer/CompositionViewer';
-
-   function transformPlatformsData(platforms) {
-  if (!platforms) return { UI: {} };
-  
-  const transformed = { UI: {} };
-  
-  Object.entries(platforms).forEach(([platformName, platformData]) => {
-    transformed.UI[platformName] = {};
-    
-    if (platformData.screens && Array.isArray(platformData.screens)) {
-      platformData.screens.forEach(screen => {
-        transformed.UI[platformName][screen.name] = [screen];
-      });
-    } else {
-      transformed.UI[platformName] = platformData;
-    }
-  });
-  
-  return transformed;
-}
+import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWithEdit';
 
 export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
   // Edit mode state
@@ -44,15 +24,21 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   const [loadingContext, setLoadingContext] = useState(false);
   const [contextChanges, setContextChanges] = useState({});
   
-  // NEW: Context field suggestions
+  // Composition state
+  const [compositionData, setCompositionData] = useState(null);
+  const [isLoadingComposition, setIsLoadingComposition] = useState(false);
+  
+  // Context field suggestions
   const [suggestedFields, setSuggestedFields] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   
-   const [editingTransition, setEditingTransition] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  // Transition editing
+  const [editingTransition, setEditingTransition] = useState(null);
+  
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
 
+  // Initialize edited state from props
   useEffect(() => {
     if (state) {
       setEditedState(JSON.parse(JSON.stringify(state)));
@@ -85,12 +71,19 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   }, [state?.files?.implication]);
 
-  // NEW: Load mirrorsOn suggestions when edit mode is enabled
+  // Load mirrorsOn suggestions when edit mode is enabled
   useEffect(() => {
     if (state?.files?.implication && isEditMode) {
       loadMirrorsOnSuggestions();
     }
   }, [state?.files?.implication, isEditMode]);
+
+  // Load composition when modal opens
+  useEffect(() => {
+    if (state?.files?.implication) {
+      loadComposition();
+    }
+  }, [state?.files?.implication]);
 
   if (!state) return null;
   
@@ -102,11 +95,9 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   const platformStyle = getPlatformStyle(currentState.meta?.platform, theme);
 
   // ========================================
-  // CONTEXT HANDLERS
+  // DATA LOADING FUNCTIONS
   // ========================================
 
-
- 
   const loadContextData = async () => {
     setLoadingContext(true);
     try {
@@ -120,17 +111,16 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
         setContextData(data.context);
       } else {
         console.error('Failed to load context:', await response.text());
-        setContextData({}); // Set empty to show "no context" message
+        setContextData({});
       }
     } catch (error) {
       console.error('❌ Error loading context:', error);
-      setContextData({}); // Set empty on error
+      setContextData({});
     } finally {
       setLoadingContext(false);
     }
   };
 
-  // NEW: Load suggestions from mirrorsOn
   const loadMirrorsOnSuggestions = async () => {
     setLoadingSuggestions(true);
     try {
@@ -154,26 +144,74 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
+  const loadComposition = async () => {
+    if (!state?.files?.implication) {
+      console.warn('⚠️ No implication file path');
+      return;
+    }
+    
+    setIsLoadingComposition(true);
+    try {
+      console.log('🔍 Loading composition for:', state.files.implication);
+      
+      const response = await fetch(
+        `http://localhost:3000/api/implications/analyze-composition?filePath=${encodeURIComponent(state.files.implication)}`
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to analyze composition');
+      }
+      
+      console.log('✅ Composition loaded:', data.composition);
+      setCompositionData(data.composition);
+      
+    } catch (error) {
+      console.error('❌ Failed to load composition:', error);
+      setCompositionData(null);
+    } finally {
+      setIsLoadingComposition(false);
+    }
+  };
+
+  // ========================================
+  // EVENT HANDLERS
+  // ========================================
+
+  const handleCompositionUpdated = async (saveResult) => {
+    console.log('✅ Composition updated:', saveResult);
+    
+    try {
+      await loadComposition();
+      await loadMirrorsOnSuggestions();
+      alert('✅ Composition updated and refreshed!');
+    } catch (error) {
+      console.error('Failed to refresh after composition update:', error);
+      alert('⚠️ Changes saved but failed to refresh display. Please reload.');
+    }
+  };
+
   const handleContextChange = (fieldName, newValue) => {
     console.log('🔄 handleContextChange:', fieldName, newValue);
     
-    // Update local context data
     setContextData(prev => ({
       ...prev,
       [fieldName]: newValue
     }));
     
-    // Track changes for save
     setContextChanges(prev => ({
       ...prev,
       [fieldName]: newValue
     }));
     
-    // Mark as having changes
     setHasChanges(true);
   };
 
-  // NEW: Add context field handler
   const handleAddContextField = async (fieldName, initialValue, fieldType) => {
     console.log('➕ Adding context field:', { fieldName, initialValue, fieldType });
     
@@ -197,13 +235,9 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
       const result = await response.json();
       console.log('✅ Field added:', result);
 
-      // Reload context data to show new field
       await loadContextData();
-      
-      // Reload suggestions (field is no longer missing)
       await loadMirrorsOnSuggestions();
 
-      // Show success message
       alert(`✅ Added field "${fieldName}" to context!`);
       
     } catch (error) {
@@ -212,7 +246,6 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-  // NEW: Delete context field handler
   const handleDeleteContextField = async (fieldName) => {
     console.log('🗑️ Deleting context field:', fieldName);
     
@@ -234,24 +267,20 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
       const result = await response.json();
       console.log('✅ Field deleted:', result);
 
-      // Update local context data (remove field)
       setContextData(prev => {
         const updated = { ...prev };
         delete updated[fieldName];
         return updated;
       });
       
-      // Also remove from context changes if it was pending
       setContextChanges(prev => {
         const updated = { ...prev };
         delete updated[fieldName];
         return updated;
       });
 
-      // Reload suggestions (field might now be missing again)
       await loadMirrorsOnSuggestions();
 
-      // Show success message
       alert(`✅ Deleted field "${fieldName}" from context!`);
       
     } catch (error) {
@@ -259,10 +288,6 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
       alert(`❌ Failed to delete field: ${error.message}`);
     }
   };
-
-  // ========================================
-  // EDIT MODE HANDLERS
-  // ========================================
 
   const handleEditToggle = () => {
     if (isEditMode) {
@@ -293,37 +318,10 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setHasChanges(true);
   };
 
-  // ========================================
-  // TRANSITION HANDLERS
-  // ========================================
-
-  const handleAddTransition = () => {
-    const event = prompt('Enter event name (e.g., CANCEL):');
-    if (!event) return;
-    
-    const target = prompt('Enter target state name (e.g., rejected):');
-    if (!target) return;
-
-    setEditedState(prev => ({
-      ...prev,
-      transitions: [...(prev.transitions || []), { event, target }]
-    }));
-    setHasChanges(true);
-  };
-
-  const handleRemoveTransition = (index) => {
-    setEditedState(prev => ({
-      ...prev,
-      transitions: prev.transitions.filter((_, i) => i !== index)
-    }));
-    setHasChanges(true);
-  };
-
   const handleEditTransition = async (transition) => {
     try {
       console.log('✏️ Edit transition:', transition);
       
-      // Show edit modal
       setEditingTransition({
         oldEvent: transition.event,
         newEvent: transition.event,
@@ -411,10 +409,6 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-  // ========================================
-  // SUGGESTION HANDLERS
-  // ========================================
-
   const handleSuggestionApply = (actionType, value) => {
     console.log('🎯 Suggestion apply:', actionType, value);
     
@@ -447,78 +441,71 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-
   const handleSave = async () => {
-  setIsSaving(true);
-  
-  try {
-    console.log('💾 Starting save process...');
-    console.log('📦 Context changes to save:', contextChanges);
+    setIsSaving(true);
     
-    // Check if there are metadata changes (compare with original state)
-    const hasMetadataChanges = JSON.stringify(editedState.meta) !== JSON.stringify(state.meta) ||
-                               JSON.stringify(editedState.transitions) !== JSON.stringify(state.transitions);
-    
-    // 1. Save metadata (ONLY if changed)
-    if (hasMetadataChanges) {
-      console.log('1️⃣ Saving metadata changes...');
-      const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filePath: state.files.implication,
-          metadata: editedState.meta,
-          transitions: editedState.transitions
-        })
-      });
+    try {
+      console.log('💾 Starting save process...');
+      console.log('📦 Context changes to save:', contextChanges);
+      
+      const hasMetadataChanges = JSON.stringify(editedState.meta) !== JSON.stringify(state.meta) ||
+                                 JSON.stringify(editedState.transitions) !== JSON.stringify(state.transitions);
+      
+      if (hasMetadataChanges) {
+        console.log('1️⃣ Saving metadata changes...');
+        const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath: state.files.implication,
+            metadata: editedState.meta,
+            transitions: editedState.transitions
+          })
+        });
 
-      if (!metadataResponse.ok) {
-        const result = await metadataResponse.json();
-        throw new Error(result.error || 'Failed to save metadata');
+        if (!metadataResponse.ok) {
+          const result = await metadataResponse.json();
+          throw new Error(result.error || 'Failed to save metadata');
+        }
+        
+        console.log('✅ Metadata saved');
+      } else {
+        console.log('⏭️ No metadata changes, skipping metadata save');
       }
       
-      console.log('✅ Metadata saved');
-    } else {
-      console.log('⏭️ No metadata changes, skipping metadata save');
-    }
-    
-    // 2. Save context changes (if any)
-    if (Object.keys(contextChanges).length > 0) {
-      console.log('2️⃣ Saving context changes...');
-      
-      const contextResponse = await fetch('http://localhost:3000/api/implications/update-context', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filePath: state.files.implication,
-          contextUpdates: contextChanges
-        })
-      });
-      
-      if (!contextResponse.ok) {
-        const result = await contextResponse.json();
-        throw new Error(result.error || 'Failed to save context');
+      if (Object.keys(contextChanges).length > 0) {
+        console.log('2️⃣ Saving context changes...');
+        
+        const contextResponse = await fetch('http://localhost:3000/api/implications/update-context', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath: state.files.implication,
+            contextUpdates: contextChanges
+          })
+        });
+        
+        if (!contextResponse.ok) {
+          const result = await contextResponse.json();
+          throw new Error(result.error || 'Failed to save context');
+        }
+        
+        console.log('✅ Context saved');
+      } else {
+        console.log('⏭️ No context changes, skipping context save');
       }
       
-      console.log('✅ Context saved');
-    } else {
-      console.log('⏭️ No context changes, skipping context save');
-    }
-    
-    // Check if anything was actually saved
-    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0) {
-      alert('ℹ️ No changes to save');
-      setIsSaving(false);
-      return;
-    }
+      if (!hasMetadataChanges && Object.keys(contextChanges).length === 0) {
+        alert('ℹ️ No changes to save');
+        setIsSaving(false);
+        return;
+      }
       
-      // Success!
       alert('✅ Changes saved successfully!');
       setHasChanges(false);
       setContextChanges({});
       setIsEditMode(false);
       
-      // Reload context to sync
       await loadContextData();
       
     } catch (error) {
@@ -529,22 +516,18 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-  // ========================================
-  // UI EDITOR HANDLERS
-  // ========================================
-
   const handleUIUpdate = async (uiData) => {
-  console.log('💾 handleUIUpdate received:', uiData);
-  
-  try {
-    const response = await fetch('http://localhost:3000/api/implications/update-ui', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filePath: state.files.implication,
-        uiData: uiData  // Pass full platforms object
-      })
-    });
+    console.log('💾 handleUIUpdate received:', uiData);
+    
+    try {
+      const response = await fetch('http://localhost:3000/api/implications/update-ui', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          uiData: uiData
+        })
+      });
 
       if (!response.ok) {
         const error = await response.json();
@@ -559,32 +542,28 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   };
 
   const handleFieldsSelected = async (fields) => {
-  console.log('✅ User selected fields:', fields);
-  
-  // Add each field to context
-  for (const field of fields) {
-    await fetch('/api/implications/add-context-field', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filePath: state.files.implication,
-        fieldName: field.field,
-        initialValue: null,
-        fieldType: typeof field.value
-      })
-    });
-  }
-  
-  // Reload context
-  await fetchContextData();
-  
-  alert(`✅ Added ${fields.length} fields to context!`);
-};
+    console.log('✅ User selected fields:', fields);
+    
+    for (const field of fields) {
+      await fetch('http://localhost:3000/api/implications/add-context-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          fieldName: field.field,
+          initialValue: null,
+          fieldType: typeof field.value
+        })
+      });
+    }
+    
+    await loadContextData();
+    alert(`✅ Added ${fields.length} fields to context!`);
+  };
 
-const handleAnalysisComplete = (analysis) => {
-  console.log('📊 Analysis complete:', analysis);
-  // Optional: Store analysis for later use
-};
+  const handleAnalysisComplete = (analysis) => {
+    console.log('📊 Analysis complete:', analysis);
+  };
 
   // ========================================
   // RENDER
@@ -604,9 +583,7 @@ const handleAnalysisComplete = (analysis) => {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ========================================
-            HEADER
-            ======================================== */}
+        {/* HEADER */}
         <div 
           className="sticky top-0 z-10 p-6 border-b"
           style={{ 
@@ -703,30 +680,30 @@ const handleAnalysisComplete = (analysis) => {
           </div>
         </div>
 
-        {/* ========================================
-            CONTENT
-            ======================================== */}
+        {/* CONTENT */}
         <div className="p-6 space-y-8">
 
-        <div className="mb-6">
-  <h3 className="text-xl font-bold mb-3">
-    🧠 Intelligent Field Suggestions
-  </h3>
-  
- <TestDataLinker
-    stateName={state.name}
-    projectPath={projectPath}
-    implicationPath={state.files.implication}  // ← ADD THIS!
-    theme={theme}
-    existingContext={contextData}
-    onFieldsSelected={handleFieldsSelected}
-    onAnalysisComplete={handleAnalysisComplete}
-  />
-</div>
+          {/* INTELLIGENT FIELD SUGGESTIONS */}
+          <div>
+            <h3 
+              className="text-xl font-bold mb-3"
+              style={{ color: theme.colors.accents.blue }}
+            >
+              🧠 Intelligent Field Suggestions
+            </h3>
+            
+            <TestDataLinker
+              stateName={state.name}
+              projectPath={projectPath}
+              implicationPath={state.files.implication}
+              theme={theme}
+              existingContext={contextData}
+              onFieldsSelected={handleFieldsSelected}
+              onAnalysisComplete={handleAnalysisComplete}
+            />
+          </div>
           
-          {/* ========================================
-              CONTEXT SECTION
-              ======================================== */}
+          {/* CONTEXT FIELDS */}
           {(contextData || loadingContext) && (
             <div>
               <div className="flex items-center justify-between mb-4">
@@ -763,7 +740,6 @@ const handleAnalysisComplete = (analysis) => {
                 )}
               </div>
               
-              {/* DynamicContextFields Component - ENHANCED */}
               {loadingContext ? (
                 <div 
                   className="glass p-8 rounded-lg text-center"
@@ -796,27 +772,23 @@ const handleAnalysisComplete = (analysis) => {
             </div>
           )}
 
-          {/* ========================================
-    TEST DATA REQUIREMENTS SECTION - NEW!
-    ======================================== */}
-<div>
-  <h2 
-    className="text-2xl font-bold mb-4"
-    style={{ color: theme.colors.accents.purple }}
-  >
-    📊 Test Data Requirements
-  </h2>
-  
-  <TestDataPanel
-    state={currentState}
-    projectPath={projectPath}
-    theme={theme}
-  />
-</div>
+          {/* TEST DATA REQUIREMENTS */}
+          <div>
+            <h2 
+              className="text-2xl font-bold mb-4"
+              style={{ color: theme.colors.accents.purple }}
+            >
+              📊 Test Data Requirements
+            </h2>
+            
+            <TestDataPanel
+              state={currentState}
+              projectPath={projectPath}
+              theme={theme}
+            />
+          </div>
           
-          {/* ========================================
-              METADATA SECTION - COLLAPSIBLE
-              ======================================== */}
+          {/* METADATA SECTION - COLLAPSIBLE */}
           <details 
             className="mb-8" 
             open={!contextData || Object.keys(contextData || {}).length === 0}
@@ -834,60 +806,146 @@ const handleAnalysisComplete = (analysis) => {
               </span>
             </summary>
             
-          <DynamicMetadataGrid 
-  metadata={currentState.meta}
-  theme={theme}
-  editable={false}  // ← Always false!
-  onChange={handleMetadataChange}
-/>
+            <DynamicMetadataGrid 
+              metadata={currentState.meta}
+              theme={theme}
+              editable={false}
+              onChange={handleMetadataChange}
+            />
           </details>
 
-  {/* ======================================== 
-    COMPOSITION SECTION
-    ======================================== */}
-<div>
-  <h2 
-    className="text-2xl font-bold mb-4"
-    style={{ color: theme.colors.accents.purple }}
-  >
-    🧩 Composition Architecture
-  </h2>
-  
-  <CompositionViewer
-    implicationPath={state.files.implication}
-    theme={theme}
-  />
-</div>
+          {/* COMPOSITION ARCHITECTURE */}
+          <div>
+            <h2 
+              className="text-2xl font-bold mb-4"
+              style={{ color: theme.colors.accents.purple }}
+            >
+              🧩 Composition Architecture
+            </h2>
+            
+            {!state?.files?.implication ? (
+              <div 
+                className="p-8 rounded-lg text-center"
+                style={{ 
+                  background: theme.colors.background.secondary,
+                  color: theme.colors.text.tertiary 
+                }}
+              >
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>📂</div>
+                <div>No implication file path available</div>
+              </div>
+            ) : isLoadingComposition ? (
+              <div 
+                className="p-8 rounded-lg text-center"
+                style={{ 
+                  background: theme.colors.background.secondary,
+                  color: theme.colors.text.tertiary 
+                }}
+              >
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>⏳</div>
+                <div>Loading composition...</div>
+              </div>
+            ) : compositionData ? (
+              <>
+                {/* Debug info - shows what data was loaded */}
+                <div style={{
+                  padding: '12px',
+                  background: '#f0f9ff',
+                  border: '2px solid #0ea5e9',
+                  borderRadius: '8px',
+                  marginBottom: '16px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace'
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#0369a1' }}>
+                    🐛 Debug Info (remove after testing):
+                  </div>
+                  <div style={{ color: '#0c4a6e' }}>
+                    <div>✓ Base Class: {compositionData.baseClass?.className || 'None'}</div>
+                    <div>✓ Behaviors: {compositionData.behaviors?.length || 0}</div>
+                    <div>✓ Screens Used: {compositionData.baseClass?.screensUsed?.length || 0}</div>
+                    <div>✓ Total Merges: {compositionData.baseClass?.totalMerges || 0}</div>
+                  </div>
+                </div>
+                
+                <CompositionViewerWithEdit
+                  compositionData={compositionData}
+                  theme={theme}
+                  implicationPath={state.files.implication}
+                  onCompositionUpdated={handleCompositionUpdated}
+                />
+              </>
+            ) : (
+              <div 
+                className="p-8 rounded-lg text-center"
+                style={{ 
+                  background: theme.colors.background.secondary,
+                  color: theme.colors.text.tertiary 
+                }}
+              >
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>❌</div>
+                <div className="font-semibold mb-2">Failed to load composition</div>
+                <button
+                  onClick={loadComposition}
+                  className="mt-4 px-4 py-2 rounded-lg font-semibold hover:brightness-110 transition"
+                  style={{
+                    background: theme.colors.accents.blue,
+                    color: 'white'
+                  }}
+                >
+                  🔄 Retry
+                </button>
+              </div>
+            )}
+          </div>
           
-{/* ========================================
-    UI SCREENS SECTION - ALWAYS SHOW
-    ======================================== */}
-<div>
-  <h2 
-    className="text-2xl font-bold mb-4"
-    style={{ color: theme.colors.accents.purple }}
-  >
-    📱 UI Screens
-  </h2>
-  
-  <UIScreenEditor
-    state={{
-      ...currentState,
-      // ✅ Initialize empty structure if missing
-      uiCoverage: currentState.uiCoverage || {
-        platforms: currentState.meta?.uiCoverage?.platforms || {}
-      }
-    }}
-    projectPath={projectPath}
-    theme={theme}
-    onSave={handleUIUpdate}
-    onCancel={() => console.log('UI edit cancelled')}
-  />
-</div>
+          {/* UI SCREENS */}
+          <div>
+            <h2 
+              className="text-2xl font-bold mb-4"
+              style={{ color: theme.colors.accents.purple }}
+            >
+              📱 UI Screens
+            </h2>
+            
+            {/* Debug logging */}
+            {(() => {
+              console.log('🎯 State data for UIScreenEditor:', {
+                name: currentState.name,
+                uiCoverage: currentState.uiCoverage,
+                meta_uiCoverage: currentState.meta?.uiCoverage,
+                hasUICoverage: !!currentState.uiCoverage,
+                hasPlatforms: !!currentState.uiCoverage?.platforms,
+                platformKeys: currentState.uiCoverage?.platforms ? Object.keys(currentState.uiCoverage.platforms) : [],
+                fullUICoverage: JSON.stringify(currentState.uiCoverage, null, 2)
+              });
+              return null;
+            })()}
+            {(() => {
+  console.log('🚨 BEFORE passing to UIScreenEditor:', {
+    stateUiCoverage: currentState.uiCoverage,
+    metaUiCoverage: currentState.meta?.uiCoverage,
+    platforms: currentState.uiCoverage?.platforms || currentState.meta?.uiCoverage?.platforms,
+    fullPlatformsData: JSON.stringify(currentState.uiCoverage?.platforms || currentState.meta?.uiCoverage?.platforms, null, 2)
+  });
+  return null;
+})()}
+
+            <UIScreenEditor
+              state={{
+                ...currentState,
+                uiCoverage: currentState.uiCoverage || {
+                  platforms: currentState.meta?.uiCoverage?.platforms || {}
+                }
+              }}
+              projectPath={projectPath}
+              theme={theme}
+              onSave={handleUIUpdate}
+              onCancel={() => console.log('UI edit cancelled')}
+            />
+          </div>
           
-            {/* ========================================
-              TRANSITIONS SECTION - WITH EDIT/DELETE
-              ======================================== */}
+          {/* TRANSITIONS */}
           {currentState.transitions && currentState.transitions.length > 0 && (
             <div>
               <h3 
@@ -924,7 +982,6 @@ const handleAnalysisComplete = (analysis) => {
                       </div>
                     </div>
                     
-                    {/* Edit/Delete Buttons */}
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleEditTransition(transition)}
@@ -955,29 +1012,24 @@ const handleAnalysisComplete = (analysis) => {
               </div>
             </div>
           )}
-          // Inside the modal, add the button section (after transitions section):
 
-
-{/* ✨ ADD THIS SECTION HERE ✨ */}
-        <div>
-          <h2 
-            className="text-2xl font-bold mb-4"
-            style={{ color: theme.colors.accents.green }}
-          >
-            🧪 Test Generation
-          </h2>
+          {/* TEST GENERATION */}
+          <div>
+            <h2 
+              className="text-2xl font-bold mb-4"
+              style={{ color: theme.colors.accents.green }}
+            >
+              🧪 Test Generation
+            </h2>
+            
+            <GenerateTestsButton 
+              state={state} 
+              projectPath={projectPath}
+              theme={theme}
+            />
+          </div>
           
-          <GenerateTestsButton 
-            state={state} 
-            projectPath={projectPath}
-            theme={theme}
-          />
-        </div>
-        {/* ✨ END NEW SECTION ✨ */}
-          
-          {/* ========================================
-              SUGGESTIONS PANEL
-              ======================================== */}
+          {/* SUGGESTIONS PANEL */}
           {isEditMode && analysis && !suggestionsLoading && (
             <div>
               <h2 
@@ -996,9 +1048,7 @@ const handleAnalysisComplete = (analysis) => {
             </div>
           )}
           
-          {/* ========================================
-              FILES SECTION
-              ======================================== */}
+          {/* FILES */}
           {currentState.files && (
             <div>
               <h2 
@@ -1034,7 +1084,8 @@ const handleAnalysisComplete = (analysis) => {
             </div>
           )}
         </div>
-         {/* Edit Transition Modal */}
+        
+        {/* Edit Transition Modal */}
         {editingTransition && (
           <div 
             className="fixed inset-0 z-[60] flex items-center justify-center"
@@ -1052,7 +1103,6 @@ const handleAnalysisComplete = (analysis) => {
               </h3>
               
               <div className="space-y-4">
-                {/* Event Name */}
                 <div>
                   <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.primary }}>
                     Event Name
@@ -1074,7 +1124,6 @@ const handleAnalysisComplete = (analysis) => {
                   />
                 </div>
                 
-                {/* Target State */}
                 <div>
                   <label className="block text-sm font-semibold mb-2" style={{ color: theme.colors.text.primary }}>
                     Target State
@@ -1097,7 +1146,6 @@ const handleAnalysisComplete = (analysis) => {
                 </div>
               </div>
               
-              {/* Buttons */}
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={() => setEditingTransition(null)}
@@ -1170,7 +1218,6 @@ function DynamicMetadataGrid({ metadata, theme, platformStyle, editable, onChang
                 onChange={(newValue) => onChange(key, newValue)}
               />
             ))}
-            
           </div>
         </div>
       ))}
@@ -1472,41 +1519,6 @@ function FileCard({ label, path, theme }) {
       >
         {path}
       </div>
-    </div>
-  );
-}
-
-function TransitionCard({ transition, theme, editable, onRemove }) {
-  return (
-    <div className="glass p-4 rounded-lg flex items-center gap-4 group relative">
-      <span 
-        className="font-mono font-bold px-4 py-2 rounded-lg"
-        style={{ background: theme.colors.accents.blue }}
-      >
-        {transition.event}
-      </span>
-      <span 
-        className="text-2xl"
-        style={{ color: theme.colors.text.tertiary }}
-      >
-        →
-      </span>
-      <span 
-        className="font-bold text-lg cursor-pointer hover:underline"
-        style={{ color: theme.colors.accents.blue }}
-      >
-        {getStatusIcon(transition.target)} {transition.target}
-      </span>
-      
-      {editable && onRemove && (
-        <button
-          onClick={onRemove}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
-          style={{ background: theme.colors.accents.red, color: 'white' }}
-        >
-          🗑️ Remove
-        </button>
-      )}
     </div>
   );
 }
