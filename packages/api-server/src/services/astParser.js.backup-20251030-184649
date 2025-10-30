@@ -648,10 +648,7 @@ async function parseScreenValidation(node, projectPath, cache) {
       if (mergeData && mergeData.baseInfo) {
         // âœ… Resolve base file and merge (with cache)
         const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath, cache);
-        const merged = mergeScreenData(baseData, mergeData.overrides, {
-     baseClassName: mergeData.baseInfo.className || 'BaseClass',
-     childClassName: mergeData.parentClass || 'ChildClass'
-   });
+        const merged = mergeScreenData(baseData, mergeData.overrides);
         
         return merged;
       } else {
@@ -1043,92 +1040,27 @@ async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
 
 /**
  * Merge base data with overrides (like ImplicationHelper.mergeWithBase does)
- * 
- * REPLACE THE ENTIRE mergeScreenData FUNCTION WITH THIS
  */
-function mergeScreenData(baseData, overrides, options = {}) {
+function mergeScreenData(baseData, overrides) {
   if (!baseData) {
-    console.log(`    No base data, returning overrides only`);
+    console.log(`    â„¹ï¸ No base data, returning overrides only`);
     return overrides;
   }
   
-  const baseClassName = options.baseClassName || 'BaseClass';
-  const childClassName = options.childClassName || 'ChildClass';
-  
-  console.log(`    Merging base (${baseClassName}) + overrides (${childClassName})...`);
+  console.log(`    ðŸ”€ Merging base + overrides...`);
   console.log(`      Base visible:`, baseData.visible);
   console.log(`      Base alwaysVisible:`, baseData.alwaysVisible);
   console.log(`      Override visible:`, overrides.visible);
   console.log(`      Override alwaysVisible:`, overrides.alwaysVisible);
   
-  // Initialize source tracking
-  const sourceInfo = {
-    visible: {},
-    hidden: {},
-    description: null,
-    checks: {
-      visible: {},
-      hidden: {},
-      text: {}
-    }
-  };
-  
   // Merge arrays (deduplicate)
   const mergeArrays = (...arrays) => {
-    const flattened = arrays.flat().filter(Boolean);
-    return [...new Set(flattened)];
+    const flattened = arrays.flat().filter(Boolean); // Flatten and remove nulls/undefined
+    return [...new Set(flattened)]; // Deduplicate
   };
   
-  // Merge checks objects WITH source tracking
+  // Merge checks objects
   const mergeChecks = (baseChecks, overrideChecks) => {
-    (baseChecks?.visible || []).forEach(check => {
-      sourceInfo.checks.visible[check] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    (overrideChecks?.visible || []).forEach(check => {
-      sourceInfo.checks.visible[check] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
-    (baseChecks?.hidden || []).forEach(check => {
-      sourceInfo.checks.hidden[check] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    (overrideChecks?.hidden || []).forEach(check => {
-      sourceInfo.checks.hidden[check] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
-    Object.keys(baseChecks?.text || {}).forEach(key => {
-      sourceInfo.checks.text[key] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    Object.keys(overrideChecks?.text || {}).forEach(key => {
-      sourceInfo.checks.text[key] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
     return {
       visible: mergeArrays(baseChecks?.visible || [], overrideChecks?.visible || []),
       hidden: mergeArrays(baseChecks?.hidden || [], overrideChecks?.hidden || []),
@@ -1139,131 +1071,42 @@ function mergeScreenData(baseData, overrides, options = {}) {
     };
   };
   
-  // Build visible array with source tracking
-  const combinedVisible = [];
-  
-  (baseData.alwaysVisible || []).forEach(element => {
-    if (!combinedVisible.includes(element)) {
-      combinedVisible.push(element);
-      sourceInfo.visible[element] = {
-        source: baseClassName,
-        type: 'alwaysVisible',
-        category: 'base'
-      };
-    }
-  });
-  
-  (baseData.visible || []).forEach(element => {
-    if (!combinedVisible.includes(element)) {
-      combinedVisible.push(element);
-      sourceInfo.visible[element] = {
-        source: baseClassName,
-        type: 'visible',
-        category: 'base'
-      };
-    }
-  });
-  
-  (overrides.alwaysVisible || []).forEach(element => {
-    if (!combinedVisible.includes(element)) {
-      combinedVisible.push(element);
-    }
-    sourceInfo.visible[element] = {
-      source: childClassName,
-      type: 'alwaysVisible',
-      category: 'child'
-    };
-  });
-  
-  (overrides.visible || []).forEach(element => {
-    if (!combinedVisible.includes(element)) {
-      combinedVisible.push(element);
-    }
-    sourceInfo.visible[element] = {
-      source: childClassName,
-      type: 'override',
-      category: 'child'
-    };
-  });
+  // âœ… Combine alwaysVisible + visible into one visible array
+  const combinedVisible = mergeArrays(
+    baseData.alwaysVisible || [],
+    baseData.visible || [],
+    overrides.alwaysVisible || [],
+    overrides.visible || []
+  );
   
   console.log(`      Combined visible:`, combinedVisible);
   
-  // Build hidden array with source tracking
-  const combinedHidden = [];
+  // âœ… Combine sometimesVisible + hidden into one hidden array
+  let combinedHidden = mergeArrays(
+    baseData.sometimesVisible || [],
+    baseData.hidden || [],
+    overrides.sometimesVisible || [],
+    overrides.hidden || []
+  );
   
-  (baseData.sometimesVisible || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-      sourceInfo.hidden[element] = {
-        source: baseClassName,
-        type: 'sometimesVisible',
-        category: 'base'
-      };
-    }
-  });
+  console.log(`      Combined hidden (before filter):`, combinedHidden);
   
-  (baseData.hidden || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-      sourceInfo.hidden[element] = {
-        source: baseClassName,
-        type: 'hidden',
-        category: 'base'
-      };
-    }
-  });
-  
-  (overrides.sometimesVisible || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-    }
-    sourceInfo.hidden[element] = {
-      source: childClassName,
-      type: 'sometimesVisible',
-      category: 'child'
-    };
-  });
-  
-  (overrides.hidden || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-    }
-    sourceInfo.hidden[element] = {
-      source: childClassName,
-      type: 'override',
-      category: 'child'
-    };
-  });
+  // âœ… CRITICAL: Remove items from hidden if they appear in visible
+  combinedHidden = combinedHidden.filter(item => !combinedVisible.includes(item));
   
   console.log(`      Combined hidden (after filter):`, combinedHidden);
-  
-  if (overrides.description) {
-    sourceInfo.description = {
-      source: childClassName,
-      type: 'override',
-      category: 'child'
-    };
-  } else if (baseData.description) {
-    sourceInfo.description = {
-      source: baseClassName,
-      type: 'default',
-      category: 'base'
-    };
-  }
   
   const merged = {
     description: overrides.description || baseData.description || '',
     visible: combinedVisible,
     hidden: combinedHidden,
-    checks: mergeChecks(baseData.checks || {}, overrides.checks || {}),
-    sourceInfo
+    checks: mergeChecks(baseData.checks || {}, overrides.checks || {})
   };
   
-  console.log(`    Merged result with source tracking:`, {
-    visible: merged.visible.length,
-    hidden: merged.hidden.length,
-    visibleSources: Object.keys(merged.sourceInfo.visible).length,
-    hiddenSources: Object.keys(merged.sourceInfo.hidden).length
+  console.log(`    âœ… Merged result:`, {
+    visible: merged.visible,
+    hidden: merged.hidden,
+    description: merged.description ? 'yes' : 'no'
   });
   
   return merged;
