@@ -232,7 +232,11 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
       <div className="space-y-4">
         {platformNames.map(platformName => {
           const platformData = platforms[platformName];
-          const screens = platformData.screens || [];
+          const screens = Array.isArray(platformData.screens) 
+  ? platformData.screens 
+  : Object.entries(platformData.screens || {}).flatMap(([name, screenArray]) => 
+      screenArray.map(screen => ({ ...screen, screenName: name }))
+    );
 
           return (
             <PlatformSection
