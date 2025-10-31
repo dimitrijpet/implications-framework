@@ -1,4 +1,5 @@
 import { parse } from '@babel/parser';
+import parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import fs from 'fs/promises';
 import { glob } from 'glob';
@@ -632,50 +633,130 @@ async function processPlatform(platformName, platformNode, projectPath, cache) {
  * Parse a screen validation object (NOW ASYNC with caching)
  */
 async function parseScreenValidation(node, projectPath, cache) {
-  console.log('      ðŸ” Parsing screen validation, node type:', node?.type);
+  console.log('      🔍 Parsing screen validation, node type:', node?.type);
   
-  // âœ… Check if this is a mergeWithBase call
+  // ============================================================
+  // CASE 1: Direct Reference to Another Implication
+  // Example: NotificationsImplications.mirrorsOn.UI.dancer.notificationsScreen[0]
+  // ============================================================
+  if (node?.type === 'MemberExpression') {
+    console.log('      🔗 Detected direct reference (MemberExpression)!');
+    
+    try {
+      // Parse the reference chain to get className, platform, screenName
+      const refInfo = extractBaseReference(node);
+      
+      if (refInfo && refInfo.className) {
+        console.log(`      🔗 Following direct reference to: ${refInfo.className}.${refInfo.platform}.${refInfo.screenName}`);
+        
+        // Recursively resolve the reference
+        const resolvedData = await resolveBaseImplication(refInfo, projectPath, cache);
+        
+        if (resolvedData) {
+          console.log('      ✅ Direct reference resolved successfully!');
+          console.log('      📊 Resolved data:', {
+            visible: resolvedData.visible?.length || 0,
+            hidden: resolvedData.hidden?.length || 0,
+            alwaysVisible: resolvedData.alwaysVisible?.length || 0,
+            sometimesVisible: resolvedData.sometimesVisible?.length || 0
+          });
+          return resolvedData;
+        } else {
+          console.log('      ⚠️ Direct reference could not be resolved, returning empty');
+        }
+      } else {
+        console.log('      ⚠️ Could not extract reference info from MemberExpression');
+      }
+    } catch (error) {
+      console.log('      ❌ Error resolving direct reference:', error.message);
+    }
+    
+    // If resolution failed, return empty structure
+    return {
+      description: 'Direct reference (unresolved)',
+      visible: [],
+      hidden: [],
+      alwaysVisible: [],
+      sometimesVisible: [],
+      checks: { visible: [], hidden: [], text: {} }
+    };
+  }
+  
+  // ============================================================
+  // CASE 2: ImplicationHelper.mergeWithBase() Call
+  // Example: ImplicationHelper.mergeWithBase(BaseClass.platform.screen, {...})
+  // ============================================================
   if (node?.type === 'CallExpression') {
     // Check if it's specifically ImplicationHelper.mergeWithBase()
     if (node.callee?.type === 'MemberExpression' &&
         node.callee.object?.name === 'ImplicationHelper' &&
         node.callee.property?.name === 'mergeWithBase') {
       
-      console.log('      âœ… Detected mergeWithBase call!');
+      console.log('      ✅ Detected mergeWithBase call!');
+      console.log('      🔧 Parsing mergeWithBase arguments...');
       
-      const mergeData = parseMergeWithBaseCall(node);
-      
-      if (mergeData && mergeData.baseInfo) {
-        // âœ… Resolve base file and merge (with cache)
-        const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath, cache);
-        const merged = mergeScreenData(baseData, mergeData.overrides, {
-     baseClassName: mergeData.baseInfo.className || 'BaseClass',
-     childClassName: mergeData.parentClass || 'ChildClass'
-   });
+      try {
+        // Parse the mergeWithBase call to extract base reference and overrides
+        const mergeData = parseMergeWithBaseCall(node);
         
-        return merged;
-      } else {
-        // Just return overrides if we couldn't parse base reference
-        return mergeData?.overrides || {
-          description: 'MergeWithBase parse error',
+        if (mergeData && mergeData.baseInfo) {
+          console.log('      📋 Base reference:', mergeData.baseInfo);
+          
+          // Resolve the base file and get its data
+          const baseData = await resolveBaseImplication(mergeData.baseInfo, projectPath, cache);
+          
+          // Merge base data with child overrides
+          const merged = mergeScreenData(baseData, mergeData.overrides, {
+            baseClassName: mergeData.baseInfo.className || 'BaseClass',
+            childClassName: mergeData.parentClass || 'ChildClass'
+          });
+          
+          return merged;
+        } else {
+          console.log('      ⚠️ Could not parse mergeWithBase arguments');
+          // Return just the overrides if base couldn't be parsed
+          return mergeData?.overrides || {
+            description: 'MergeWithBase parse error',
+            visible: [],
+            hidden: [],
+            alwaysVisible: [],
+            sometimesVisible: [],
+            checks: { visible: [], hidden: [], text: {} }
+          };
+        }
+      } catch (error) {
+        console.log('      ❌ Error parsing mergeWithBase:', error.message);
+        return {
+          description: 'MergeWithBase error',
           visible: [],
           hidden: [],
+          alwaysVisible: [],
+          sometimesVisible: [],
           checks: { visible: [], hidden: [], text: {} }
         };
       }
     }
     
-    // Other function calls - return generic placeholder
-    console.log('      âš ï¸ Screen uses function call (unknown type)');
+    // ============================================================
+    // CASE 3: Other Function Calls (not mergeWithBase)
+    // Example: someOtherHelper.doSomething()
+    // ============================================================
+    console.log('      ⚠️ Screen uses function call (unknown type)');
     return {
-      description: 'Screen validation defined',
+      description: 'Screen validation defined via function call',
       visible: [],
       hidden: [],
+      alwaysVisible: [],
+      sometimesVisible: [],
       checks: { visible: [], hidden: [], text: {} }
     };
   }
   
-  // Handle object literals
+  // ============================================================
+  // CASE 4: Object Literal
+  // Example: { screen: () => app.screen, visible: [...], hidden: [...] }
+  // ============================================================
+  console.log('      📝 Parsing as object literal');
   return parseScreenValidationObject(node);
 }
  
@@ -950,7 +1031,9 @@ function extractStaticPropertyFromContent(content, platform, screenName) {
   console.log(`    ðŸ“– Extracting ${platform}.${screenName} from base file...`);
   
   try {
-    const ast = parse(content, {
+    const babelParser = require('@babel/parser'); // Add at top of function
+const ast = babelParser.parse(content, {
+
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
@@ -998,47 +1081,114 @@ async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
   
   const cacheKey = `${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`;
   
-  // âœ… Check cache first
+  // ✅ Check cache first
   if (cache.baseFiles && cache.baseFiles[cacheKey]) {
-    console.log(`    ðŸ’¾ Cache HIT: ${cacheKey}`);
+    console.log(`    💾 Cache HIT: ${cacheKey}`);
     return cache.baseFiles[cacheKey];
   }
   
-  console.log(`    ðŸ”— Resolving base: ${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`);
+  console.log(`    📖 Resolving base: ${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`);
   
   // Find the base file
   const baseFilePath = await findFile(projectPath, `${baseInfo.className}.js`);
   
   if (!baseFilePath) {
-    console.log(`    âš ï¸ Base file not found, using overrides only`);
+    console.log(`    ⚠️ Base file not found, using overrides only`);
     return null;
   }
   
   // Read and parse the base file
   const baseContent = await fs.readFile(baseFilePath, 'utf-8');
-  const baseData = extractStaticPropertyFromContent(
-    baseContent, 
-    baseInfo.platform, 
-    baseInfo.screenName
+  
+  // ✨ NEW: Use a more sophisticated extraction that can detect and follow references
+  const baseData = await extractStaticPropertyWithReferences(
+    baseContent,
+    baseInfo.platform,
+    baseInfo.screenName,
+    projectPath,
+    cache
   );
   
   if (baseData) {
-    console.log(`    âœ… Base data resolved:`, {
+    console.log(`    ✅ Base data resolved:`, {
       visible: baseData.visible?.length || 0,
       hidden: baseData.hidden?.length || 0,
       alwaysVisible: baseData.alwaysVisible?.length || 0,
+      sometimesVisible: baseData.sometimesVisible?.length || 0,
       description: baseData.description ? 'yes' : 'no'
     });
     
-    // âœ… Store in cache
+    // ✅ Store in cache
     if (!cache.baseFiles) {
       cache.baseFiles = {};
     }
     cache.baseFiles[cacheKey] = baseData;
-    console.log(`    ðŸ’¾ Cached: ${cacheKey}`);
+    console.log(`    💾 Cached: ${cacheKey}`);
   }
   
   return baseData;
+}
+
+// ✨ NEW HELPER FUNCTION - Add this after resolveBaseImplication
+async function extractStaticPropertyWithReferences(content, platform, screenName, projectPath, cache) {
+  // First try the normal extraction
+  let data = extractStaticPropertyFromContent(content, platform, screenName);
+  
+  // If we got data but it's empty arrays, check if it's a reference
+  if (data && 
+      (!data.alwaysVisible || data.alwaysVisible.length === 0) &&
+      (!data.sometimesVisible || data.sometimesVisible.length === 0) &&
+      (!data.visible || data.visible.length === 0)) {
+    
+    console.log(`    🔗 Empty data, checking if it's a reference...`);
+    
+    // Parse the AST to look for references
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx']
+    });
+    
+    let referenceFound = false;
+    
+    traverse(ast, {
+      ClassDeclaration(path) {
+        // Find the static property for the platform
+        const staticProps = path.node.body.body.filter(
+          node => node.static && node.type === 'ClassProperty'
+        );
+        
+        for (const prop of staticProps) {
+          if (prop.key.name === platform && prop.value?.type === 'ObjectExpression') {
+            // Look for the specific screen property
+            for (const screenProp of prop.value.properties) {
+              if (screenProp.key.name === screenName) {
+                // Check if it's a MemberExpression (reference to another class)
+                if (screenProp.value.type === 'MemberExpression') {
+                  console.log(`    🔗 Found reference chain!`);
+                  const refInfo = extractBaseReference(screenProp.value);
+                  
+                  if (refInfo && refInfo.className) {
+                    console.log(`    🔗 Following to: ${refInfo.className}.${refInfo.platform}.${refInfo.screenName}`);
+                    referenceFound = true;
+                    
+                    // Recursively resolve - use the helper flag to avoid infinite loops
+                    data = resolveBaseImplication(refInfo, projectPath, cache);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    // If we found a reference, await it
+    if (referenceFound && data && typeof data.then === 'function') {
+      data = await data;
+    }
+  }
+  
+  return data;
 }
 
 /**
@@ -1047,6 +1197,23 @@ async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
  * REPLACE THE ENTIRE mergeScreenData FUNCTION WITH THIS
  */
 function mergeScreenData(baseData, overrides, options = {}) {
+  // ✨ ADD THIS DEBUG LOG
+  console.log('🔍 mergeScreenData called with:', {
+    baseData: {
+      alwaysVisible: baseData?.alwaysVisible,
+      sometimesVisible: baseData?.sometimesVisible,
+      visible: baseData?.visible,
+      hidden: baseData?.hidden
+    },
+    overrides: {
+      alwaysVisible: overrides?.alwaysVisible,
+      sometimesVisible: overrides?.sometimesVisible,
+      visible: overrides?.visible,
+      hidden: overrides?.hidden
+    },
+    hasBaseData: !!baseData,
+    hasOverrides: !!overrides
+  });
   if (!baseData) {
     console.log(`    No base data, returning overrides only`);
     return overrides;

@@ -1,37 +1,29 @@
 // packages/web-app/src/components/UIScreenEditor/UIScreenEditor.jsx
-// ✨ ENHANCED with Function Support + Parameters!
-// COMPLETE FILE - All existing functionality preserved + NEW function features
-import { useMemo } from 'react';
-import { useState } from 'react';
+// ✨ COMPLETE REFACTOR with Source Attribution
+import { useMemo, useState } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
 import AddScreenModal from './AddScreenModal';
 import CopyScreenDialog from './CopyScreenDialog';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
 import POMFieldSelector from './POMFieldSelector';
 import FieldAutocomplete from './FieldAutocomplete';
-import FunctionSelector from './FunctionSelector';  // ✨ NEW!
+import FunctionSelector from './FunctionSelector';
+import ElementList from '../SourceAttribution/ElementList';
+import SourceLegend from '../SourceAttribution/SourceLegend';
 
 export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel }) {
-  console.log('🚨🚨🚨 UIScreenEditor TOP OF FUNCTION:', {
-    state,
-    uiCoverage: state?.uiCoverage,
-    platforms: state?.uiCoverage?.platforms,
-    platformKeys: Object.keys(state?.uiCoverage?.platforms || {})
-  });
-  
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [modifiedScreens, setModifiedScreens] = useState(new Set());
 
-  // Modal state for Add Screen
+  // Modal states
   const [addScreenModal, setAddScreenModal] = useState({
     isOpen: false,
     platformName: '',
     platformDisplayName: ''
   });
 
-  // Modal state for Copy Screen
   const [copyScreenDialog, setCopyScreenDialog] = useState({
     isOpen: false,
     screen: null,
@@ -39,7 +31,6 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
     platformDisplayName: ''
   });
 
-  // Modal state for Delete Confirmation
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState({
     isOpen: false,
     screen: null,
@@ -51,84 +42,32 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
   // Initialize edited state
   const initializeEditedUI = () => {
     const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
-    console.log('🔄 initializeEditedUI - platforms:', platforms);
-    
-    // 🐛 DEBUG: Check if functions exist in platforms
-    if (platforms?.web?.screens) {
-      platforms.web.screens.forEach(screen => {
-        if (screen.functions) {
-          console.log('  📦 Screen', screen.originalName, 'has', Object.keys(screen.functions).length, 'functions:', Object.keys(screen.functions));
-        }
-      });
-    }
-    
     if (!platforms) return null;
     return JSON.parse(JSON.stringify(platforms));
   };
-  
-  const uiData = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
-  console.log('🖼️ UI Data for rendering:', uiData);
-  console.log('🖼️ Edit mode:', editMode);
-  console.log('🖼️ Edited UI:', editedUI);
 
   const handleEnterEditMode = () => {
     setEditedUI(initializeEditedUI());
     setEditMode(true);
   };
 
-  const getAllScreens = () => {
-    if (!editedUI) return [];
-    
-    const screens = [];
-    Object.entries(editedUI).forEach(([platformName, platformData]) => {
-      if (platformData.screens) {
-        platformData.screens.forEach(screen => {
-          screens.push({
-            ...screen,
-            platform: platformName
-          });
-        });
+  const handleAddScreen = (platformName, screenName, screenData) => {
+    setEditedUI(prev => ({
+      ...prev,
+      [platformName]: {
+        ...prev[platformName],
+        screens: [
+          ...(prev[platformName]?.screens || []),
+          screenData[0] || screenData
+        ]
       }
-    });
-    return screens;
-  };
-
-  const getAvailablePlatforms = () => {
-    if (!editedUI) return [];
-    
-    return Object.entries(editedUI).map(([name, data]) => ({
-      name,
-      displayName: data.displayName || name
     }));
+    setHasChanges(true);
   };
 
-  // Handler: Add Screen
-const handleAddScreen = (platformName, screenName, screenData) => {
-  console.log('✅ handleAddScreen received:', { platformName, screenName, screenData });
-  
-  setEditedUI(prev => ({  // ✅ CORRECT!
-    ...prev,
-    [platformName]: {
-      ...prev[platformName],
-      screens: [
-        ...(prev[platformName]?.screens || []),
-        screenData[0] || screenData
-      ]
-    }
-  }));
-  
-  setHasChanges(true);
-};
-
-
-  // Handler: Delete Screen
   const handleDeleteScreen = (platformName, screenIndex) => {
     setEditedUI(prev => {
-      // ✅ Safety check
-      if (!prev || !prev[platformName]) {
-        console.error('❌ Platform not found:', platformName);
-        return prev;
-      }
+      if (!prev || !prev[platformName]) return prev;
       
       const platform = prev[platformName];
       return {
@@ -141,10 +80,8 @@ const handleAddScreen = (platformName, screenName, screenData) => {
       };
     });
     setHasChanges(true);
-    console.log('🗑️ Screen deleted');
   };
 
-  // Handler: Copy Screen
   const handleCopyScreen = (sourcePlatform, sourceScreen, targetPlatform, newName) => {
     const newScreen = {
       ...JSON.parse(JSON.stringify(sourceScreen)),
@@ -153,11 +90,7 @@ const handleAddScreen = (platformName, screenName, screenData) => {
     };
 
     setEditedUI(prev => {
-      // ✅ Safety check
-      if (!prev || !prev[targetPlatform]) {
-        console.error('❌ Target platform not found:', targetPlatform);
-        return prev;
-      }
+      if (!prev || !prev[targetPlatform]) return prev;
       
       const platform = prev[targetPlatform];
       return {
@@ -170,7 +103,6 @@ const handleAddScreen = (platformName, screenName, screenData) => {
       };
     });
     setHasChanges(true);
-    console.log(`📋 Screen copied: ${sourceScreen.originalName} → ${newName}`);
   };
 
   const handleCancelEdit = () => {
@@ -183,20 +115,24 @@ const handleAddScreen = (platformName, screenName, screenData) => {
   };
 
   const handleSaveChanges = async () => {
-    console.log('💾 Saving UI changes:', editedUI);
-    
     try {
       if (onSave) {
         await onSave(editedUI);
       }
-      
       setEditMode(false);
       setHasChanges(false);
       setEditedUI(null);
-      
     } catch (error) {
       console.error('❌ Save failed, staying in edit mode');
     }
+  };
+
+  const getAvailablePlatforms = () => {
+    if (!editedUI) return [];
+    return Object.entries(editedUI).map(([name, data]) => ({
+      name,
+      displayName: data.displayName || name
+    }));
   };
 
   // Get platforms data
@@ -309,11 +245,7 @@ const handleAddScreen = (platformName, screenName, screenData) => {
               theme={theme}
               onScreenUpdate={(screenIndex, updatedScreen) => {
                 setEditedUI(prev => {
-                  // ✅ Safety check: ensure platform exists
-                  if (!prev || !prev[platformName]) {
-                    console.error('❌ Platform not found in editedUI:', platformName);
-                    return prev;
-                  }
+                  if (!prev || !prev[platformName]) return prev;
                   
                   const platform = prev[platformName];
                   const updatedScreens = [...platform.screens];
@@ -361,19 +293,18 @@ const handleAddScreen = (platformName, screenName, screenData) => {
       </div>
 
       {/* Modals */}
-<AddScreenModal
-  isOpen={addScreenModal.isOpen}
-  platformName={addScreenModal.platformName}
-  platformDisplayName={addScreenModal.platformDisplayName}
-  existingScreens={addScreenModal.platformName ? (platforms[addScreenModal.platformName]?.screens || []) : []}
-  onAdd={(platformName, screenName, newScreen) => {  // ✅ Accept 3 params
-    console.log('✅ Modal callback: Adding', screenName, 'to', platformName);
-    handleAddScreen(platformName, screenName, newScreen);  // ✅ Pass 3 params
-    setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
-  }}
-  onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
-  theme={theme}
-/>
+      <AddScreenModal
+        isOpen={addScreenModal.isOpen}
+        platformName={addScreenModal.platformName}
+        platformDisplayName={addScreenModal.platformDisplayName}
+        existingScreens={addScreenModal.platformName ? (platforms[addScreenModal.platformName]?.screens || []) : []}
+        onAdd={(platformName, screenName, newScreen) => {
+          handleAddScreen(platformName, screenName, newScreen);
+          setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' });
+        }}
+        onClose={() => setAddScreenModal({ isOpen: false, platformName: '', platformDisplayName: '' })}
+        theme={theme}
+      />
 
       <CopyScreenDialog
         isOpen={copyScreenDialog.isOpen}
@@ -401,95 +332,161 @@ const handleAddScreen = (platformName, screenName, screenData) => {
 }
 
 // ============================================
-// PART 2: PlatformSection Component (UNCHANGED)
+// PlatformSection Component
 // ============================================
 
-function PlatformSection({ platformName, platformData, onScreenUpdate, editable, theme }) {
-  // ✅ Convert screens object to array
-  const screenArray = useMemo(() => {  // ← Changed from React.useMemo
-    if (!platformData?.screens) return [];
+function PlatformSection({ 
+  platformName, 
+  platformData, 
+  screens,
+  editMode, 
+  projectPath, 
+  theme,
+  onScreenUpdate,
+  onAddScreen,
+  onDeleteScreen,
+  onCopyScreen
+}) {
+  // ✅ Convert screens to array if it's an object
+  const screenArray = useMemo(() => {
+    if (!screens) return [];
     
     // If already an array, use it
-    if (Array.isArray(platformData.screens)) {
-      return platformData.screens;
+    if (Array.isArray(screens)) {
+      return screens;
     }
     
     // If it's an object, flatten all screen arrays
     const allScreens = [];
-    Object.entries(platformData.screens).forEach(([screenName, screenDefs]) => {
+    Object.entries(screens).forEach(([screenName, screenDefs]) => {
       if (Array.isArray(screenDefs)) {
         screenDefs.forEach(def => {
           allScreens.push({
             ...def,
-            originalName: screenName,  // Preserve original screen name
+            originalName: screenName,
             name: def.name || screenName
           });
+        });
+      } else if (typeof screenDefs === 'object' && screenDefs !== null) {
+        // Single screen object
+        allScreens.push({
+          ...screenDefs,
+          originalName: screenName,
+          name: screenDefs.name || screenName
         });
       }
     });
     
     return allScreens;
-  }, [platformData]);
-  
-  // Now use screenArray.map() as before
+  }, [screens]);
+
   return (
-    <div>
-      {screenArray.map((screen, idx) => (
-        <ScreenCard 
-          key={idx} 
-          screen={screen} 
-          onUpdate={onScreenUpdate}
-          editable={editable}
-          theme={theme}
-        />
-      ))}
+    <div 
+      className="p-4 rounded-lg"
+      style={{ 
+        background: theme.colors.background.tertiary,
+        border: `1px solid ${theme.colors.border}`
+      }}
+    >
+      {/* Platform Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: '24px' }}>{getPlatformIcon(platformName)}</span>
+          <h4 style={{ fontSize: '16px', fontWeight: 600, color: theme.colors.text.primary }}>
+            {platformData.displayName || platformName}
+          </h4>
+          <span 
+            className="px-2 py-1 rounded text-xs"
+            style={{ 
+              background: theme.colors.background.secondary,
+              color: theme.colors.text.tertiary
+            }}
+          >
+            {screenArray.length} {screenArray.length === 1 ? 'screen' : 'screens'}
+          </span>
+        </div>
+
+        {editMode && (
+          <button
+            onClick={onAddScreen}
+            className="px-3 py-1.5 rounded text-sm font-semibold transition hover:brightness-110"
+            style={{ 
+              background: theme.colors.accents.blue,
+              color: 'white'
+            }}
+          >
+            ➕ Add Screen
+          </button>
+        )}
+      </div>
+
+      {/* Screens */}
+      <div className="space-y-3">
+        {screenArray.map((screen, idx) => (
+          <ScreenCard
+            key={idx}
+            screen={screen}
+            screenIndex={idx}
+            editMode={editMode}
+            projectPath={projectPath}
+            theme={theme}
+            onUpdate={(updates) => onScreenUpdate(idx, { ...screen, ...updates })}
+            onDelete={() => onDeleteScreen(idx)}
+            onCopy={() => onCopyScreen(screen)}
+          />
+        ))}
+
+        {screenArray.length === 0 && !editMode && (
+          <div 
+            className="p-8 text-center rounded"
+            style={{ 
+              background: theme.colors.background.secondary,
+              color: theme.colors.text.tertiary
+            }}
+          >
+            No screens defined
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
+
 // ============================================
-// PART 3: ScreenCard Component (ENHANCED!)
+// ScreenCard Component
 // ============================================
 
 function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdate, onDelete, onCopy }) {
-  console.log('🔍 ScreenCard received:', JSON.stringify(screen, null, 2));  // ← ADD THIS LINE
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
   const [instanceName, setInstanceName] = useState(null);
+  console.log('🔍 ScreenCard DEBUG:', {
+    screenName: screen.name || screen.originalName,
+    hasSourceInfo: !!screen.sourceInfo,
+    sourceInfo: screen.sourceInfo,
+    visible: screen.visible,
+    hidden: screen.hidden,
+    fullScreen: screen
+  });
 
-  // ✅ FIXED: Extract and MERGE element arrays from BOTH formats
-  // Old format: screen.visible / screen.hidden (at root)
-  // New format: screen.checks.visible / screen.checks.hidden (nested)
+  // Extract and merge element arrays
   const topLevelVisible = screen.visible || [];
   const topLevelHidden = screen.hidden || [];
   const checksVisible = screen.checks?.visible || [];
   const checksHidden = screen.checks?.hidden || [];
   
-  // Merge and dedupe - single list from both locations
   const allVisibleElements = [...new Set([...topLevelVisible, ...checksVisible])];
   const allHiddenElements = [...new Set([...topLevelHidden, ...checksHidden])];
   
   const textChecks = screen.checks?.text || {};
   const functions = screen.functions || {};
-  
-  console.log('🎯 ScreenCard data extraction:', {
-    screenName: screen.originalName || screen.name,
-    topLevelVisible: topLevelVisible.length,
-    checksVisible: checksVisible.length,
-    mergedVisible: allVisibleElements.length,
-    topLevelHidden: topLevelHidden.length,
-    checksHidden: checksHidden.length,
-    mergedHidden: allHiddenElements.length,
-    visibleElements: allVisibleElements,
-    hiddenElements: allHiddenElements
-  });
 
   const updateScreen = (updates) => {
-    onUpdate({ ...screen, ...updates });
+    onUpdate(updates);
   };
 
   const handlePOMChange = (selectedPOM, selectedInstance) => {
-    console.log('🔄 POM changed:', { selectedPOM, selectedInstance });
     setPomName(selectedPOM || '');
     setInstanceName(selectedInstance || null);
     
@@ -541,7 +538,12 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
       {isExpanded && (
         <div className="p-3 pt-0 space-y-3">
           
-          {/* POM Selector - ALWAYS SHOW */}
+          {/* Show legend if sourceInfo exists */}
+          {screen.sourceInfo && (
+            <SourceLegend theme={theme} />
+          )}
+          
+          {/* POM Selector */}
           <POMFieldSelector
             projectPath={projectPath}
             pomName={pomName}
@@ -556,56 +558,76 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             theme={theme}
           />
 
-          {/* ✅ Visible Elements - MERGED from both formats */}
+          {/* Visible Elements - WITH SOURCE ATTRIBUTION */}
           {(allVisibleElements.length > 0 || editMode) && (
-            <ElementSection
-              title="✅ Visible Elements"
-              elements={allVisibleElements}
-              color={theme.colors.accents.green}
-              editMode={editMode}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              functions={functions}
-              onChange={(newElements) => {
-                console.log('✅ Updating visible elements:', newElements);
-                // Update BOTH locations for full compatibility
-                updateScreen({ 
-                  visible: newElements,  // Top-level for old format
-                  checks: { 
-                    ...screen.checks, 
-                    visible: newElements  // Nested for new format
-                  } 
-                });
-              }}
-              theme={theme}
-            />
+            editMode ? (
+              <ElementSection
+                title="✅ Visible Elements"
+                elements={allVisibleElements}
+                color={theme.colors.accents.green}
+                editMode={editMode}
+                pomName={pomName}
+                instanceName={instanceName}
+                projectPath={projectPath}
+                functions={functions}
+                onChange={(newElements) => {
+                  updateScreen({ 
+                    visible: newElements,
+                    checks: { 
+                      ...screen.checks, 
+                      visible: newElements
+                    } 
+                  });
+                }}
+                theme={theme}
+              />
+            ) : (
+              <ElementList
+                elements={allVisibleElements}
+                sourceInfo={screen.sourceInfo?.visible || {}}
+                title="Visible Elements"
+                icon="✅"
+                color={theme.colors.accents.green}
+                theme={theme}
+                emptyMessage="No visible elements"
+              />
+            )
           )}
 
-          {/* ❌ Hidden Elements - MERGED from both formats */}
+          {/* Hidden Elements - WITH SOURCE ATTRIBUTION */}
           {(allHiddenElements.length > 0 || editMode) && (
-            <ElementSection
-              title="❌ Hidden Elements"
-              elements={allHiddenElements}
-              color={theme.colors.accents.red}
-              editMode={editMode}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              functions={functions}
-              onChange={(newElements) => {
-                console.log('❌ Updating hidden elements:', newElements);
-                // Update BOTH locations for full compatibility
-                updateScreen({ 
-                  hidden: newElements,  // Top-level for old format
-                  checks: { 
-                    ...screen.checks, 
-                    hidden: newElements  // Nested for new format
-                  } 
-                });
-              }}
-              theme={theme}
-            />
+            editMode ? (
+              <ElementSection
+                title="❌ Hidden Elements"
+                elements={allHiddenElements}
+                color={theme.colors.accents.red}
+                editMode={editMode}
+                pomName={pomName}
+                instanceName={instanceName}
+                projectPath={projectPath}
+                functions={functions}
+                onChange={(newElements) => {
+                  updateScreen({ 
+                    hidden: newElements,
+                    checks: { 
+                      ...screen.checks, 
+                      hidden: newElements
+                    } 
+                  });
+                }}
+                theme={theme}
+              />
+            ) : (
+              <ElementList
+                elements={allHiddenElements}
+                sourceInfo={screen.sourceInfo?.hidden || {}}
+                title="Hidden Elements"
+                icon="❌"
+                color={theme.colors.accents.red}
+                theme={theme}
+                emptyMessage="No hidden elements"
+              />
+            )
           )}
 
           {/* Text Checks */}
@@ -625,7 +647,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             />
           )}
 
-          {/* ✨ Functions Section */}
+          {/* Functions Section */}
           {(Object.keys(functions).length > 0 || editMode) && (
             <FunctionSection
               functions={functions}
@@ -634,14 +656,13 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               projectPath={projectPath}
               contextFields={getContextFields(screen)}
               onChange={(newFunctions) => {
-                console.log('✨ Updating functions:', newFunctions);
                 updateScreen({ functions: newFunctions });
               }}
               theme={theme}
             />
           )}
 
-          {/* Action Buttons (Delete/Copy) */}
+          {/* Action Buttons */}
           {editMode && (
             <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
               <button
@@ -667,22 +688,13 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
 }
 
 // ============================================
-// PART 4: ElementSection Component (UNCHANGED)
+// ElementSection Component (for edit mode)
 // ============================================
 
 function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newElement, setNewElement] = useState('');
   const [fieldValidation, setFieldValidation] = useState(null);
-  
-  // 🐛 DEBUG: Log functions received
-  console.log('🔍 ElementSection received:', {
-    title,
-    functionsCount: Object.keys(functions).length,
-    functionNames: Object.keys(functions),
-    pomName,
-    instanceName
-  });
 
   const handleAddElement = () => {
     if (!newElement.trim()) return;
@@ -769,7 +781,6 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                       background: fieldValidation === false ? '#94a3b8' : color, 
                       color: 'white' 
                     }}
-                    title={fieldValidation === false ? '⚠️ This field does not exist in the selected POM' : 'Add this field to the list'}
                   >
                     {fieldValidation === false ? '⚠️ Invalid' : 'Add'}
                   </button>
@@ -785,12 +796,6 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                     Cancel
                   </button>
                 </div>
-                
-                {fieldValidation === false && newElement && (
-                  <div className="text-xs text-amber-600 flex items-center gap-1">
-                    ⚠️ This field doesn't exist in {pomName}.{instanceName}
-                  </div>
-                )}
               </div>
             ) : (
               <div className="space-y-2">
@@ -827,11 +832,6 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                     Cancel
                   </button>
                 </div>
-                {!pomName && (
-                  <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                    💡 Select a POM above to get field suggestions
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -848,7 +848,7 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
 }
 
 // ============================================
-// PART 5: TextChecksSection Component (UNCHANGED)
+// TextChecksSection Component
 // ============================================
 
 function TextChecksSection({ textChecks, editMode, onChange, theme }) {
@@ -993,7 +993,7 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
 }
 
 // ============================================
-// ✨ PART 6: NEW FunctionSection Component
+// FunctionSection Component
 // ============================================
 
 function FunctionSection({ functions, editMode, pomName, projectPath, contextFields, onChange, theme }) {
@@ -1037,7 +1037,6 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
       </div>
 
       <div className="space-y-2">
-        {/* Existing Functions */}
         {Object.entries(functions).map(([funcName, funcData]) => (
           <div
             key={funcName}
@@ -1078,7 +1077,6 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
           </div>
         ))}
 
-        {/* Add Function Form */}
         {isAdding && (
           <div className="p-3 rounded" style={{ background: `${color}15` }}>
             <FunctionSelector
@@ -1118,10 +1116,8 @@ function getPlatformIcon(platformName) {
 }
 
 function getContextFields(screen) {
-  // Extract context fields from various sources
   const fields = [];
   
-  // From visible/hidden elements that use {{}} syntax
   const allElements = [
     ...(screen.visible || []),
     ...(screen.hidden || []),
