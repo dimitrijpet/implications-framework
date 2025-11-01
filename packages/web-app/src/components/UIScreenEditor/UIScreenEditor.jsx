@@ -11,6 +11,74 @@ import FunctionSelector from './FunctionSelector';
 import ElementList from '../SourceAttribution/ElementList';
 import SourceLegend from '../SourceAttribution/SourceLegend';
 
+// ============================================
+// Helper Functions (outside component)
+// ============================================
+
+/**
+ * Normalize screens to array format
+ * Handles: arrays, objects with screen arrays, single objects
+ */
+const normalizeScreens = (screens) => {
+  if (!screens) return [];
+  if (Array.isArray(screens)) return screens;
+  
+  // If it's an object, flatten to array
+  if (typeof screens === 'object') {
+    return Object.entries(screens).flatMap(([name, screenArray]) => {
+      if (Array.isArray(screenArray)) {
+        return screenArray.map(screen => ({ ...screen, screenName: name }));
+      } else if (typeof screenArray === 'object' && screenArray !== null) {
+        return [{ ...screenArray, screenName: name }];
+      } else {
+        return [];
+      }
+    });
+  }
+  
+  return [];
+};
+
+function getPlatformIcon(platformName) {
+  const icons = {
+    web: '🌐',
+    cms: '📝',
+    dancer: '💃',
+    clubApp: '🎯',
+    mobile: '📱'
+  };
+  return icons[platformName] || '📱';
+}
+
+function getContextFields(screen) {
+  const fields = [];
+  
+  const allElements = [
+    ...(screen.visible || []),
+    ...(screen.hidden || []),
+    ...(screen.checks?.visible || []),
+    ...(screen.checks?.hidden || [])
+  ];
+  
+  allElements.forEach(el => {
+    const matches = el.match(/\{\{(\w+)\}\}/g);
+    if (matches) {
+      matches.forEach(match => {
+        const fieldName = match.replace(/\{\{|\}\}/g, '');
+        if (!fields.includes(fieldName)) {
+          fields.push(fieldName);
+        }
+      });
+    }
+  });
+  
+  return fields;
+}
+
+// ============================================
+// Main Component
+// ============================================
+
 export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel }) {
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
@@ -39,11 +107,21 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
     screenIndex: -1
   });
 
-  // Initialize edited state
+  // Initialize edited state with normalized screens
   const initializeEditedUI = () => {
     const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
     if (!platforms) return null;
-    return JSON.parse(JSON.stringify(platforms));
+    
+    const normalized = {};
+    
+    Object.entries(platforms).forEach(([platformName, platformData]) => {
+      normalized[platformName] = {
+        ...platformData,
+        screens: normalizeScreens(platformData.screens)
+      };
+    });
+    
+    return normalized;
   };
 
   const handleEnterEditMode = () => {
@@ -232,11 +310,9 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
       <div className="space-y-4">
         {platformNames.map(platformName => {
           const platformData = platforms[platformName];
-          const screens = Array.isArray(platformData.screens) 
-  ? platformData.screens 
-  : Object.entries(platformData.screens || {}).flatMap(([name, screenArray]) => 
-      screenArray.map(screen => ({ ...screen, screenName: name }))
-    );
+          
+          // Normalize screens to array
+          const screens = normalizeScreens(platformData.screens);
 
           return (
             <PlatformSection
@@ -351,38 +427,7 @@ function PlatformSection({
   onDeleteScreen,
   onCopyScreen
 }) {
-  // ✅ Convert screens to array if it's an object
-  const screenArray = useMemo(() => {
-    if (!screens) return [];
-    
-    // If already an array, use it
-    if (Array.isArray(screens)) {
-      return screens;
-    }
-    
-    // If it's an object, flatten all screen arrays
-    const allScreens = [];
-    Object.entries(screens).forEach(([screenName, screenDefs]) => {
-      if (Array.isArray(screenDefs)) {
-        screenDefs.forEach(def => {
-          allScreens.push({
-            ...def,
-            originalName: screenName,
-            name: def.name || screenName
-          });
-        });
-      } else if (typeof screenDefs === 'object' && screenDefs !== null) {
-        // Single screen object
-        allScreens.push({
-          ...screenDefs,
-          originalName: screenName,
-          name: screenDefs.name || screenName
-        });
-      }
-    });
-    
-    return allScreens;
-  }, [screens]);
+  const screenArray = screens || [];
 
   return (
     <div 
@@ -456,7 +501,6 @@ function PlatformSection({
   );
 }
 
-
 // ============================================
 // ScreenCard Component
 // ============================================
@@ -465,14 +509,6 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
   const [instanceName, setInstanceName] = useState(null);
-  console.log('🔍 ScreenCard DEBUG:', {
-    screenName: screen.name || screen.originalName,
-    hasSourceInfo: !!screen.sourceInfo,
-    sourceInfo: screen.sourceInfo,
-    visible: screen.visible,
-    hidden: screen.hidden,
-    fullScreen: screen
-  });
 
   // Extract and merge element arrays
   const topLevelVisible = screen.visible || [];
@@ -518,7 +554,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
           <span style={{ fontSize: '20px' }}>📄</span>
           <div className="text-left">
             <div style={{ fontSize: '16px', fontWeight: 600, color: theme.colors.text.primary }}>
-              {screen.name || screen.originalName || 'Unnamed Screen'}
+              {screen.screenName || screen.name || screen.originalName || 'Unnamed Screen'}
             </div>
             {screen.description && (
               <div style={{ fontSize: '13px', color: theme.colors.text.tertiary }}>
@@ -550,8 +586,8 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
           {/* POM Selector */}
           <POMFieldSelector
             projectPath={projectPath}
-            pomName={pomName}
-            instanceName={instanceName}
+            selectedPOM={pomName}
+            selectedInstance={instanceName}
             onPOMChange={(selectedPOM) => {
               handlePOMChange(selectedPOM, instanceName);
             }}
@@ -562,7 +598,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             theme={theme}
           />
 
-          {/* Visible Elements - WITH SOURCE ATTRIBUTION */}
+          {/* Visible Elements */}
           {(allVisibleElements.length > 0 || editMode) && (
             editMode ? (
               <ElementSection
@@ -598,7 +634,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             )
           )}
 
-          {/* Hidden Elements - WITH SOURCE ATTRIBUTION */}
+          {/* Hidden Elements */}
           {(allHiddenElements.length > 0 || editMode) && (
             editMode ? (
               <ElementSection
@@ -1102,44 +1138,4 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
       )}
     </div>
   );
-}
-
-// ============================================
-// Helper Functions
-// ============================================
-
-function getPlatformIcon(platformName) {
-  const icons = {
-    web: '🌐',
-    cms: '📝',
-    dancer: '💃',
-    clubApp: '🎯',
-    mobile: '📱'
-  };
-  return icons[platformName] || '📱';
-}
-
-function getContextFields(screen) {
-  const fields = [];
-  
-  const allElements = [
-    ...(screen.visible || []),
-    ...(screen.hidden || []),
-    ...(screen.checks?.visible || []),
-    ...(screen.checks?.hidden || [])
-  ];
-  
-  allElements.forEach(el => {
-    const matches = el.match(/\{\{(\w+)\}\}/g);
-    if (matches) {
-      matches.forEach(match => {
-        const fieldName = match.replace(/\{\{|\}\}/g, '');
-        if (!fields.includes(fieldName)) {
-          fields.push(fieldName);
-        }
-      });
-    }
-  });
-  
-  return fields;
 }

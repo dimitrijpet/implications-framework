@@ -40,7 +40,8 @@ export default function POMFieldSelector({
         const data = await response.json();
         
         if (data.success) {
-          setPoms(data.poms.map(p => p.name));
+          // ✅ Store full POM objects, not just names
+          setPoms(data.poms || []);
         }
       } catch (error) {
         console.error('Failed to fetch POMs:', error);
@@ -147,12 +148,14 @@ export default function POMFieldSelector({
         >
           <option value="">Select POM...</option>
           {poms.map(pom => (
-            <option key={pom} value={pom}>{pom}</option>
+            <option key={pom.path} value={pom.name}>
+              {pom.name}
+            </option>
           ))}
         </select>
       </div>
 
-      {/* ✨ NEW: Screen File Dropdown */}
+      {/* ✨ Screen File Dropdown */}
       {currentPOM && matchingScreens.length > 0 && (
         <div>
           <label className="block text-sm font-medium mb-1" style={{ color: theme?.colors?.text?.primary || '#000' }}>
@@ -176,8 +179,8 @@ export default function POMFieldSelector({
             {matchingScreens
               .filter(screen => screen.name !== currentPOM)
               .map(screen => (
-                <option key={screen.name} value={screen.name}>
-                  {screen.name}
+                <option key={screen.path} value={screen.name}>
+                  {screen.displayName} ({screen.path.split('/').slice(-2, -1)[0]})
                 </option>
               ))
             }

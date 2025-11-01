@@ -1,10 +1,13 @@
 // packages/core/src/discovery/POMDiscovery.js
-// ✨ ENHANCED with parameter extraction!
-
+// ✨ FIXED: Proper recursive search with glob!
 import fs from 'fs/promises';
 import path from 'path';
 import parser from '@babel/parser';
 import traverse from '@babel/traverse';
+import { promisify } from 'util';
+import globCallback from 'glob';
+
+const glob = promisify(globCallback);
 
 // Handle default export from @babel/traverse
 const traverseAST = traverse.default || traverse;
@@ -46,63 +49,46 @@ class POMDiscovery {
   }
 
   /**
-   * Find all POM files in project
+   * ✅ FIXED: Find all POM files using glob patterns
    */
   async _findPOMFiles() {
-    const searchPaths = [
-      'tests/screenObjects',
-      'tests/pages',
-      'tests/pom',
-      'tests/pageObjects',
-      'src/screenObjects',
-      'src/pages',
-      'src/pom',
-      'src/pageObjects'
+    // ✅ Use glob patterns to search ANYWHERE in project
+    const patterns = [
+      '**/screenObjects/**/*.js',
+      '**/pages/**/*.js',
+      '**/pom/**/*.js',
+      '**/pageObjects/**/*.js'
     ];
 
     const pomFiles = [];
 
-    for (const searchPath of searchPaths) {
-      const fullPath = path.join(this.projectPath, searchPath);
-      
+    for (const pattern of patterns) {
       try {
-        const exists = await fs.access(fullPath).then(() => true).catch(() => false);
-        if (!exists) continue;
-
-        const files = await this._scanDirectory(fullPath);
+        console.log(`   🔍 Searching: ${pattern}`);
+        
+        const files = await glob(pattern, {
+          cwd: this.projectPath,
+          absolute: true,
+          ignore: [
+            '**/node_modules/**',
+            '**/dist/**',
+            '**/build/**',
+            '**/.next/**'
+          ]
+        });
+        
+        console.log(`      Found ${files.length} files`);
         pomFiles.push(...files);
       } catch (error) {
-        // Directory doesn't exist, skip
+        console.error(`   ⚠️  Pattern ${pattern} failed: ${error.message}`);
       }
     }
 
-    return pomFiles;
-  }
-
-  /**
-   * Recursively scan directory for .js files
-   */
-  async _scanDirectory(dirPath) {
-    const files = [];
+    // ✅ Deduplicate (in case files match multiple patterns)
+    const uniqueFiles = [...new Set(pomFiles)];
+    console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
     
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        
-        if (entry.isDirectory()) {
-          const subFiles = await this._scanDirectory(fullPath);
-          files.push(...subFiles);
-        } else if (entry.isFile() && entry.name.endsWith('.js')) {
-          files.push(fullPath);
-        }
-      }
-    } catch (error) {
-      // Skip inaccessible directories
-    }
-    
-    return files;
+    return uniqueFiles;
   }
 
   /**

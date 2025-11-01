@@ -13,7 +13,7 @@ async function testPOMDiscovery() {
   console.log('🧪 Testing POM Discovery...\n');
   
   // Use your actual guest project path
-  const guestProjectPath = 'C:\\Users\\Studio Radost!\\Projects\\cxm\\Leclerc-Playwright';
+  const guestProjectPath = 'C:\\Users\\Studio Radost!\\Projects\\cxm\\PolePosition-TESTING';
   // Or on Linux: '/home/dimitrij/Projects/cxm/Leclerc-Playwright'
   
   const discovery = new POMDiscovery(guestProjectPath);
