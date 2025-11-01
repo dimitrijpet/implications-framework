@@ -854,14 +854,14 @@ function parseScreenValidationObject(node) {
       case 'visible':
       case 'hidden':
       case 'alwaysVisible':
-      case 'sometimesVisible':
-        if (value.type === 'ArrayExpression') {
-          screenData[key] = value.elements
-            .map(el => extractValueFromNode(el))
-            .filter(Boolean);
-          console.log('          ', key, ':', screenData[key].length);
-        }
-        break;
+case 'sometimesVisible':
+  if (value.type === 'ArrayExpression') {
+    screenData[key] = value.elements
+      .map(el => extractValueFromNode(el))
+      .filter(Boolean);
+    console.log('          ', key, ':', screenData[key].length);
+  }
+  break;
         
       case 'checks':
         if (value.type === 'ObjectExpression') {
@@ -1028,12 +1028,11 @@ async function findFile(projectPath, fileName) {
  * Extract static property from base class content
  */
 function extractStaticPropertyFromContent(content, platform, screenName) {
-  console.log(`    ðŸ“– Extracting ${platform}.${screenName} from base file...`);
+  console.log(`    📖 Extracting ${platform}.${screenName} from base file...`);
   
   try {
-    const babelParser = require('@babel/parser'); // Add at top of function
-const ast = babelParser.parse(content, {
-
+    // ✅ USE THE ALREADY IMPORTED 'parser' INSTEAD OF require()
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread'],
     });
@@ -1047,7 +1046,7 @@ const ast = babelParser.parse(content, {
             path.node.key?.name === platform &&
             path.node.value?.type === 'ObjectExpression') {
           
-          console.log(`    âœ… Found static ${platform} property`);
+          console.log(`    ✅ Found static ${platform} property`);
           
           // Find the screen property
           const screenProp = path.node.value.properties.find(
@@ -1055,8 +1054,21 @@ const ast = babelParser.parse(content, {
           );
           
           if (screenProp && screenProp.value?.type === 'ObjectExpression') {
-            console.log(`    âœ… Found ${screenName} screen`);
+            console.log(`    ✅ Found ${screenName} screen in AST`);
+            console.log(`    📊 Properties found:`, screenProp.value.properties.map(p => p.key?.name).join(', '));
+            
             baseData = parseScreenValidationObject(screenProp.value);
+            
+            console.log(`    📊 After parsing:`, {
+              alwaysVisible: baseData?.alwaysVisible?.length || 0,
+              sometimesVisible: baseData?.sometimesVisible?.length || 0,
+              visible: baseData?.visible?.length || 0,
+              hidden: baseData?.hidden?.length || 0
+            });
+          } else if (screenProp) {
+            console.log(`    ⚠️ screenProp.value type is:`, screenProp.value?.type);
+          } else {
+            console.log(`    ❌ Did NOT find ${screenName} in static ${platform}`);
           }
         }
       }
@@ -1065,11 +1077,10 @@ const ast = babelParser.parse(content, {
     return baseData;
     
   } catch (error) {
-    console.error(`    âŒ Error parsing base file:`, error.message);
+    console.error(`    ❌ Error parsing base file:`, error.message);
     return null;
   }
 }
-
 /**
  * Resolve base implication and return base data
  * NOW with caching!
@@ -1078,6 +1089,13 @@ async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
   if (!baseInfo || !baseInfo.className) {
     return null;
   }
+  
+  console.log(`🔍 ATTEMPTING TO FIND: ${baseInfo.className}.js`);
+  console.log(`   Project path: ${projectPath}`);
+  
+  const baseFilePath = await findClassFile(baseInfo.className, projectPath, cache);
+  
+  console.log(`📁 RESULT: ${baseFilePath || 'NOT FOUND'}`);
   
   const cacheKey = `${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`;
   
@@ -1090,7 +1108,6 @@ async function resolveBaseImplication(baseInfo, projectPath, cache = {}) {
   console.log(`    📖 Resolving base: ${baseInfo.className}.${baseInfo.platform}.${baseInfo.screenName}`);
   
   // Find the base file
-  const baseFilePath = await findFile(projectPath, `${baseInfo.className}.js`);
   
   if (!baseFilePath) {
     console.log(`    ⚠️ Base file not found, using overrides only`);
@@ -1150,7 +1167,7 @@ async function extractStaticPropertyWithReferences(content, platform, screenName
     
     let referenceFound = false;
     
-    traverse(ast, {
+    traverse.default(ast, {
       ClassDeclaration(path) {
         // Find the static property for the platform
         const staticProps = path.node.body.body.filter(
@@ -1197,118 +1214,42 @@ async function extractStaticPropertyWithReferences(content, platform, screenName
  * REPLACE THE ENTIRE mergeScreenData FUNCTION WITH THIS
  */
 function mergeScreenData(baseData, overrides, options = {}) {
-  // ✨ ADD THIS DEBUG LOG
-  console.log('🔍 mergeScreenData called with:', {
-    baseData: {
-      alwaysVisible: baseData?.alwaysVisible,
-      sometimesVisible: baseData?.sometimesVisible,
-      visible: baseData?.visible,
-      hidden: baseData?.hidden
-    },
-    overrides: {
-      alwaysVisible: overrides?.alwaysVisible,
-      sometimesVisible: overrides?.sometimesVisible,
-      visible: overrides?.visible,
-      hidden: overrides?.hidden
-    },
-    hasBaseData: !!baseData,
-    hasOverrides: !!overrides
+  console.log('🔍 mergeScreenData called');
+  console.log('   Base:', {
+    alwaysVisible: baseData?.alwaysVisible?.length || 0,
+    sometimesVisible: baseData?.sometimesVisible?.length || 0,
+    visible: baseData?.visible?.length || 0,
+    hidden: baseData?.hidden?.length || 0
   });
+  console.log('   Override:', {
+    alwaysVisible: overrides?.alwaysVisible?.length || 0,
+    sometimesVisible: overrides?.sometimesVisible?.length || 0,
+    visible: overrides?.visible?.length || 0,
+    hidden: overrides?.hidden?.length || 0
+  });
+  
   if (!baseData) {
-    console.log(`    No base data, returning overrides only`);
+    console.log('   No base data, returning overrides only');
     return overrides;
   }
   
   const baseClassName = options.baseClassName || 'BaseClass';
   const childClassName = options.childClassName || 'ChildClass';
   
-  console.log(`    Merging base (${baseClassName}) + overrides (${childClassName})...`);
-  console.log(`      Base visible:`, baseData.visible);
-  console.log(`      Base alwaysVisible:`, baseData.alwaysVisible);
-  console.log(`      Override visible:`, overrides.visible);
-  console.log(`      Override alwaysVisible:`, overrides.alwaysVisible);
-  
   // Initialize source tracking
   const sourceInfo = {
     visible: {},
     hidden: {},
     description: null,
-    checks: {
-      visible: {},
-      hidden: {},
-      text: {}
-    }
+    checks: { visible: {}, hidden: {}, text: {} }
   };
   
-  // Merge arrays (deduplicate)
-  const mergeArrays = (...arrays) => {
-    const flattened = arrays.flat().filter(Boolean);
-    return [...new Set(flattened)];
-  };
-  
-  // Merge checks objects WITH source tracking
-  const mergeChecks = (baseChecks, overrideChecks) => {
-    (baseChecks?.visible || []).forEach(check => {
-      sourceInfo.checks.visible[check] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    (overrideChecks?.visible || []).forEach(check => {
-      sourceInfo.checks.visible[check] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
-    (baseChecks?.hidden || []).forEach(check => {
-      sourceInfo.checks.hidden[check] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    (overrideChecks?.hidden || []).forEach(check => {
-      sourceInfo.checks.hidden[check] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
-    Object.keys(baseChecks?.text || {}).forEach(key => {
-      sourceInfo.checks.text[key] = {
-        source: baseClassName,
-        type: 'default',
-        category: 'base'
-      };
-    });
-    
-    Object.keys(overrideChecks?.text || {}).forEach(key => {
-      sourceInfo.checks.text[key] = {
-        source: childClassName,
-        type: 'override',
-        category: 'child'
-      };
-    });
-    
-    return {
-      visible: mergeArrays(baseChecks?.visible || [], overrideChecks?.visible || []),
-      hidden: mergeArrays(baseChecks?.hidden || [], overrideChecks?.hidden || []),
-      text: {
-        ...(baseChecks?.text || {}),
-        ...(overrideChecks?.text || {})
-      }
-    };
-  };
-  
-  // Build visible array with source tracking
+  // ============================================
+  // MERGE VISIBLE ELEMENTS
+  // ============================================
   const combinedVisible = [];
   
+  // From base: alwaysVisible → visible
   (baseData.alwaysVisible || []).forEach(element => {
     if (!combinedVisible.includes(element)) {
       combinedVisible.push(element);
@@ -1320,6 +1261,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     }
   });
   
+  // From base: visible → visible
   (baseData.visible || []).forEach(element => {
     if (!combinedVisible.includes(element)) {
       combinedVisible.push(element);
@@ -1331,6 +1273,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     }
   });
   
+  // From child: alwaysVisible → visible (override)
   (overrides.alwaysVisible || []).forEach(element => {
     if (!combinedVisible.includes(element)) {
       combinedVisible.push(element);
@@ -1342,22 +1285,24 @@ function mergeScreenData(baseData, overrides, options = {}) {
     };
   });
   
+  // From child: visible → visible (add new)
   (overrides.visible || []).forEach(element => {
     if (!combinedVisible.includes(element)) {
       combinedVisible.push(element);
     }
     sourceInfo.visible[element] = {
       source: childClassName,
-      type: 'override',
+      type: 'visible',
       category: 'child'
     };
   });
   
-  console.log(`      Combined visible:`, combinedVisible);
-  
-  // Build hidden array with source tracking
+  // ============================================
+  // MERGE HIDDEN ELEMENTS
+  // ============================================
   const combinedHidden = [];
   
+  // From base: sometimesVisible → hidden (if not in visible)
   (baseData.sometimesVisible || []).forEach(element => {
     if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
       combinedHidden.push(element);
@@ -1369,6 +1314,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     }
   });
   
+  // From base: hidden → hidden
   (baseData.hidden || []).forEach(element => {
     if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
       combinedHidden.push(element);
@@ -1380,6 +1326,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     }
   });
   
+  // From child: sometimesVisible → hidden (if not in visible)
   (overrides.sometimesVisible || []).forEach(element => {
     if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
       combinedHidden.push(element);
@@ -1391,46 +1338,72 @@ function mergeScreenData(baseData, overrides, options = {}) {
     };
   });
   
+  // From child: hidden → hidden
   (overrides.hidden || []).forEach(element => {
     if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
       combinedHidden.push(element);
     }
     sourceInfo.hidden[element] = {
       source: childClassName,
-      type: 'override',
+      type: 'hidden',
       category: 'child'
     };
   });
   
-  console.log(`      Combined hidden (after filter):`, combinedHidden);
+  // ============================================
+  // MERGE CHECKS
+  // ============================================
+  const mergedChecks = {
+    visible: [...new Set([
+      ...(baseData.checks?.visible || []),
+      ...(overrides.checks?.visible || [])
+    ])],
+    hidden: [...new Set([
+      ...(baseData.checks?.hidden || []),
+      ...(overrides.checks?.hidden || [])
+    ])],
+    text: {
+      ...(baseData.checks?.text || {}),
+      ...(overrides.checks?.text || {})
+    }
+  };
   
-  if (overrides.description) {
-    sourceInfo.description = {
-      source: childClassName,
-      type: 'override',
-      category: 'child'
-    };
-  } else if (baseData.description) {
-    sourceInfo.description = {
-      source: baseClassName,
-      type: 'default',
-      category: 'base'
-    };
-  }
+  // Track sources for checks
+  (baseData.checks?.visible || []).forEach(check => {
+    sourceInfo.checks.visible[check] = { source: baseClassName, category: 'base' };
+  });
+  (overrides.checks?.visible || []).forEach(check => {
+    sourceInfo.checks.visible[check] = { source: childClassName, category: 'child' };
+  });
+  (baseData.checks?.hidden || []).forEach(check => {
+    sourceInfo.checks.hidden[check] = { source: baseClassName, category: 'base' };
+  });
+  (overrides.checks?.hidden || []).forEach(check => {
+    sourceInfo.checks.hidden[check] = { source: childClassName, category: 'child' };
+  });
   
+  // ============================================
+  // MERGE OTHER FIELDS
+  // ============================================
   const merged = {
     description: overrides.description || baseData.description || '',
+    screen: overrides.screen || baseData.screen,
+    instance: overrides.instance !== undefined ? overrides.instance : baseData.instance,
     visible: combinedVisible,
     hidden: combinedHidden,
-    checks: mergeChecks(baseData.checks || {}, overrides.checks || {}),
+    alwaysVisible: baseData.alwaysVisible || [],  // Keep original for reference
+    sometimesVisible: baseData.sometimesVisible || [],  // Keep original for reference
+    checks: mergedChecks,
+    prerequisites: overrides.prerequisites || baseData.prerequisites,
+    functions: { ...(baseData.functions || {}), ...(overrides.functions || {}) },
+    expect: overrides.expect || baseData.expect,
     sourceInfo
   };
   
-  console.log(`    Merged result with source tracking:`, {
+  console.log('   ✅ Merged result:', {
     visible: merged.visible.length,
     hidden: merged.hidden.length,
-    visibleSources: Object.keys(merged.sourceInfo.visible).length,
-    hiddenSources: Object.keys(merged.sourceInfo.hidden).length
+    description: merged.description ? 'yes' : 'no'
   });
   
   return merged;
