@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import CompositionAnalyzer from '../services/CompositionAnalyzer.js';
 import CompositionRewriter from '../services/CompositionRewriter.js';
+import { extractUIImplications } from '../services/astParser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1050,13 +1051,13 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
   // Group new screens by originalName
   const screenGroups = {};
   newScreens.forEach(screen => {
-    const key = screen.originalName || screen.name;
+    // ✅ FIXED: Check screenName first!
+    const key = screen.screenName || screen.originalName || screen.name;
     if (!screenGroups[key]) {
       screenGroups[key] = [];
     }
     screenGroups[key].push(screen);
   });
-  
   const screenProps = [];
   
   for (const [screenKey, screens] of Object.entries(screenGroups)) {
@@ -1215,7 +1216,8 @@ function buildScreenPropsFromData(screens) {
   const screenGroups = {};
   
   screens.forEach(screen => {
-    const key = screen.originalName || screen.name;
+    // ✅ FIXED: Check screenName first!
+    const key = screen.screenName || screen.originalName || screen.name;
     if (!screenGroups[key]) {
       screenGroups[key] = [];
     }
@@ -1918,6 +1920,31 @@ router.get('/analyze-composition', async (req, res) => {
   }
 });
 
+router.get('/ui-with-source', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+
+    console.log('📋 Getting UI data with source info for:', filePath);
+    
+    // Read the file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // Extract UI with full merge (this includes sourceInfo!)
+    const projectPath = findProjectRoot(filePath);
+    const uiData = await extractUIImplications(content, projectPath, {});
+    
+    res.json({ uiData });
+    
+  } catch (error) {
+    console.error('❌ Error getting UI with source:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/context-schema', async (req, res) => {
   try {
     const { filePath } = req.query;
@@ -1975,7 +2002,28 @@ router.get('/context-schema', async (req, res) => {
     });
   }
 });
-
+function findProjectRoot(filePath) {
+  let current = path.dirname(filePath);
+  
+  // Go up until we find a directory that contains 'tests'
+  while (current !== '/' && !current.endsWith('/')) {
+    if (fs.existsSync(path.join(current, 'package.json'))) {
+      console.log('   ✅ Found project root (package.json):', current);
+      return current;
+    }
+    
+    // Check if current dir has 'tests' subdirectory
+    if (fs.existsSync(path.join(current, 'tests'))) {
+      console.log('   ✅ Found project root (tests/):', current);
+      return current;
+    }
+    
+    current = path.dirname(current);
+  }
+  
+  console.warn('   ⚠️ Could not find project root, using 3-level-up fallback');
+  return path.dirname(path.dirname(path.dirname(filePath)));
+}
 /**
  * ✨ NEW: Extract required fields from actionDetails
  * Parses ctx.data.fieldName from transition steps

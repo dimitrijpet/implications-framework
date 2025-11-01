@@ -930,17 +930,18 @@ console.log('🔍 state.meta?.uiCoverage:', state.meta?.uiCoverage);
 })()}
 
             <UIScreenEditor
-              state={{
-                ...currentState,
-                uiCoverage: currentState.uiCoverage || {
-                  platforms: currentState.meta?.uiCoverage?.platforms || {}
-                }
-              }}
-              projectPath={projectPath}
-              theme={theme}
-              onSave={handleUIUpdate}
-              onCancel={() => console.log('UI edit cancelled')}
-            />
+  state={{
+    ...currentState,
+    filePath: state.files.implication,  // ← ADD THIS
+    uiCoverage: currentState.uiCoverage || {
+      platforms: currentState.meta?.uiCoverage?.platforms || {}
+    }
+  }}
+  projectPath={projectPath}
+  theme={theme}
+  onSave={handleUIUpdate}
+  onCancel={() => console.log('UI edit cancelled')}
+/>
           </div>
           
           {/* TRANSITIONS */}

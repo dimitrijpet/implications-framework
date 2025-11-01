@@ -254,140 +254,151 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
     
     traverse.default(ast, {
       ClassProperty(path) {
-  if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
-    console.log('✅ Found mirrorsOn!');
-    
-    const value = path.node.value;
-    
-    if (value?.type === 'ObjectExpression') {
-      const uiProperty = value.properties.find(p => p.key?.name === 'UI');
-      
-      if (uiProperty?.value?.type === 'ObjectExpression') {
-        console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
-        
-        // Process each platform
-        uiProperty.value.properties.forEach(platformProp => {
-          const platformName = platformProp.key?.name;
+        if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
+          console.log('✅ Found mirrorsOn!');
           
-          if (!platformName) return;
+          const value = path.node.value;
           
-          console.log(`\n📱 Processing platform: ${platformName}`);
-          
-          if (platformProp.value?.type === 'ObjectExpression') {
-            // Collect all screens for this platform
-            platformProp.value.properties.forEach(screenProp => {
-              const screenName = screenProp.key?.name;
+          if (value?.type === 'ObjectExpression') {
+            const uiProperty = value.properties.find(p => p.key?.name === 'UI');
+            
+            if (uiProperty?.value?.type === 'ObjectExpression') {
+              console.log('✅ UI is an object, platforms:', uiProperty.value.properties.length);
               
-              if (!screenName) return;
-              
-              console.log(`   📺 Screen: ${screenName}`);
-              
-              // Queue async work for this screen
-              asyncWork.push(async () => {
-                let screenDefinitions = [];
+              // Process each platform
+              uiProperty.value.properties.forEach(platformProp => {
+                const platformName = platformProp.key?.name;
                 
-                if (screenProp.value?.type === 'ArrayExpression') {
-                  // Process array elements
-                  const elements = screenProp.value.elements || [];
-                  
-                  for (const element of elements) {
-                    if (!element) continue;
+                if (!platformName) return;
+                
+                console.log(`\n📱 Processing platform: ${platformName}`);
+                
+                if (platformProp.value?.type === 'ObjectExpression') {
+                  // Collect all screens for this platform
+                  platformProp.value.properties.forEach(screenProp => {
+                    const screenName = screenProp.key?.name;
                     
-                    if (element.type === 'ObjectExpression') {
-                      // Direct screen definition
-                      const def = extractScreenDefinition(element);
-                      if (def) {
-                        screenDefinitions.push(def);
-                      }
-                    } else if (element.type === 'CallExpression') {
-                      // mergeWithBase call - ✅ FIXED FUNCTION NAME
-                      const merged = await parseScreenValidation(
-                        element,
-                        projectPath,
-                        cache
-                      );
+                    if (!screenName) return;
+                    
+                    console.log(`   📺 Screen: ${screenName}`);
+                    
+                    // Queue async work for this screen
+                    asyncWork.push(async () => {
+                      let screenDefinitions = [];
                       
-                      if (merged) {
-                        screenDefinitions.push(merged);
+                      if (screenProp.value?.type === 'ArrayExpression') {
+                        // Process array elements
+                        const elements = screenProp.value.elements || [];
+                        
+                        console.log(`      📦 Array with ${elements.length} elements`);
+                        
+                        for (let i = 0; i < elements.length; i++) {
+                          const element = elements[i];
+                          if (!element) continue;
+                          
+                          console.log(`      🎯 Element ${i}: type=${element.type}`);
+                          
+                          if (element.type === 'ObjectExpression') {
+                            console.log('      📝 Direct screen definition (ObjectExpression)');
+                            const def = extractScreenDefinition(element);
+                            if (def) {
+                              screenDefinitions.push(def);
+                            }
+                          } else if (element.type === 'CallExpression') {
+                            console.log('      📞 CallExpression detected!');
+                            console.log('      🎯 Callee type:', element.callee?.type);
+                            console.log('      🎯 Callee object:', element.callee?.object?.name);
+                            console.log('      🎯 Callee property:', element.callee?.property?.name);
+                            
+                            // mergeWithBase call
+                            const merged = await parseScreenValidation(
+                              element,
+                              projectPath,
+                              cache
+                            );
+                            
+                            if (merged) {
+                              console.log('      ✅ Merged result has sourceInfo?', !!merged.sourceInfo);
+                              screenDefinitions.push(merged);
+                            }
+                          } else if (element.type === 'MemberExpression') {
+                            console.log('      🔗 Base reference (MemberExpression)');
+                            const baseData = await resolveBaseImplication(
+                              {
+                                className: element.object?.object?.name,
+                                platform: element.object?.property?.name,
+                                screenName: element.property?.name
+                              },
+                              projectPath,
+                              cache
+                            );
+                            
+                            if (baseData) {
+                              screenDefinitions.push(baseData);
+                            }
+                          } else {
+                            console.log(`      ⚠️ Unknown element type: ${element.type}`);
+                          }
+                        }
+                      } else if (screenProp.value?.type === 'CallExpression') {
+                        console.log('      📞 Direct CallExpression (not in array)');
+                        const merged = await parseScreenValidation(
+                          screenProp.value,
+                          projectPath,
+                          cache
+                        );
+                        
+                        if (merged) {
+                          screenDefinitions.push(merged);
+                        }
+                      } else if (screenProp.value?.type === 'MemberExpression') {
+                        console.log('      🔗 Direct base reference');
+                        const baseData = await resolveBaseImplication(
+                          {
+                            className: screenProp.value.object?.object?.name,
+                            platform: screenProp.value.object?.property?.name,
+                            screenName: screenProp.value.property?.name
+                          },
+                          projectPath,
+                          cache
+                        );
+                        
+                        if (baseData) {
+                          screenDefinitions.push(baseData);
+                        }
+                      } else {
+                        console.log(`      ⚠️ Unhandled screen value type: ${screenProp.value?.type}`);
                       }
-                    } else if (element.type === 'MemberExpression') {
-                      // Base reference: BaseClass.platform.screen
-                      const baseData = await resolveBaseImplication(
-                        {
-                          className: element.object?.object?.name,
-                          platform: element.object?.property?.name,
-                          screenName: element.property?.name
-                        },
-                        projectPath,
-                        cache
-                      );
                       
-                      if (baseData) {
-                        screenDefinitions.push(baseData);
+                      // Store results
+                      if (screenDefinitions.length > 0) {
+                        if (!uiData.platforms[platformName]) {
+                          uiData.platforms[platformName] = {
+                            name: platformName,
+                            screens: {},
+                            total: 0
+                          };
+                        }
+                        
+                        uiData.platforms[platformName].screens[screenName] = screenDefinitions;
+                        uiData.platforms[platformName].total += screenDefinitions.length;
+                        uiData.total += screenDefinitions.length;
+                        
+                        console.log(`      ✅ Stored ${screenDefinitions.length} definition(s) for ${screenName}`);
                       }
-                    }
-                  }
-                } else if (screenProp.value?.type === 'CallExpression') {
-                  // Direct mergeWithBase (not in array)
-                  const merged = await parseScreenValidation(
-                    screenProp.value,
-                    projectPath,
-                    cache
-                  );
-                  
-                  if (merged) {
-                    screenDefinitions.push(merged);
-                  }
-                } else if (screenProp.value?.type === 'MemberExpression') {
-                  // Direct base reference
-                  const baseData = await resolveBaseImplication(
-                    {
-                      className: screenProp.value.object?.object?.name,
-                      platform: screenProp.value.object?.property?.name,
-                      screenName: screenProp.value.property?.name
-                    },
-                    projectPath,
-                    cache
-                  );
-                  
-                  if (baseData) {
-                    screenDefinitions.push(baseData);
-                  }
-                }
-                
-                // Store results
-                if (screenDefinitions.length > 0) {
-                  if (!uiData.platforms[platformName]) {
-                    uiData.platforms[platformName] = {
-                      name: platformName,
-                      screens: {},
-                      total: 0
-                    };
-                  }
-                  
-                  uiData.platforms[platformName].screens[screenName] = screenDefinitions;
-                  uiData.platforms[platformName].total += screenDefinitions.length;
-                  uiData.total += screenDefinitions.length;
+                    });
+                  });
                 }
               });
-            });
+            }
           }
-        });
+        }
       }
-    }
-  }
-}
     });
     
     // Execute all async work AFTER traversal
     console.log(`\n⚡ Executing ${asyncWork.length} async operations...`);
     await Promise.all(asyncWork.map(fn => fn()));
-    
-    // Calculate totals after async work
-    for (const [platformName, platformData] of Object.entries(uiData.platforms)) {
-      platformData.total = Object.keys(platformData.screens).length;
-      uiData.total += platformData.total;
-    }
     
     console.log('\n✅ UI Implications extraction complete');
     console.log(`   Total platforms: ${Object.keys(uiData.platforms).length}`);
@@ -398,14 +409,12 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
     console.error(error.stack);
   }
   
-  // ✅ NORMALIZE to array format before returning
-console.log('🎯 FINAL uiData before return:', JSON.stringify(uiData, null, 2));
-
-return {
-  total: uiData.total,
-  platforms: uiData.platforms
-};
-
+  console.log('🎯 FINAL uiData before return:', JSON.stringify(uiData, null, 2));
+  
+  return {
+    total: uiData.total,
+    platforms: uiData.platforms
+  };
 }
 /**
  * Normalize UI data to consistent format
@@ -490,17 +499,23 @@ async function findClassFile(className, projectPath, cache) {
     return cache.classFiles[className];
   }
   
+  console.log(`🔍 Searching for ${className}.js in ${projectPath}`);
+  
   // Common locations for implication files
   const searchPaths = [
-    path.join(projectPath, 'tests/implications', `${className}.js`),
-    path.join(projectPath, 'tests/implications/**', `${className}.js`),
-    path.join(projectPath, 'tests/**', `${className}.js`)
+    path.join(projectPath, `tests/implications/${className}.js`),
+    path.join(projectPath, `tests/implications/**/${className}.js`),
+    path.join(projectPath, `tests/**/${className}.js`),
+    path.join(projectPath, `**/${className}.js`)
   ];
   
   for (const pattern of searchPaths) {
+    console.log(`   🔍 Trying pattern: ${pattern}`);
     const files = await glob(pattern, { absolute: true });
+    
     if (files.length > 0) {
       const filePath = files[0];
+      console.log(`   ✅ FOUND: ${filePath}`);
       
       // Cache it
       if (!cache.classFiles) cache.classFiles = {};
@@ -510,6 +525,7 @@ async function findClassFile(className, projectPath, cache) {
     }
   }
   
+  console.log(`   ❌ NOT FOUND after trying all patterns`);
   return null;
 }
 

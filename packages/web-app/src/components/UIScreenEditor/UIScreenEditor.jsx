@@ -27,9 +27,15 @@ const normalizeScreens = (screens) => {
   if (typeof screens === 'object') {
     return Object.entries(screens).flatMap(([name, screenArray]) => {
       if (Array.isArray(screenArray)) {
-        return screenArray.map(screen => ({ ...screen, screenName: name }));
+        return screenArray.map(screen => ({ 
+          ...screen,              // ← This should preserve sourceInfo
+          screenName: name 
+        }));
       } else if (typeof screenArray === 'object' && screenArray !== null) {
-        return [{ ...screenArray, screenName: name }];
+        return [{ 
+          ...screenArray,         // ← This should preserve sourceInfo
+          screenName: name 
+        }];
       } else {
         return [];
       }
@@ -84,6 +90,7 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [modifiedScreens, setModifiedScreens] = useState(new Set());
+  const [isLoadingMergedData, setIsLoadingMergedData] = useState(false); // ← ADD THIS
 
   // Modal states
   const [addScreenModal, setAddScreenModal] = useState({
@@ -108,26 +115,79 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
   });
 
   // Initialize edited state with normalized screens
-  const initializeEditedUI = () => {
-    const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
-    if (!platforms) return null;
+ const initializeEditedUI = () => {
+  const platforms = state?.uiCoverage?.platforms || state?.meta?.uiCoverage?.platforms;
+  if (!platforms) return null;
+  
+  // 🔍 CHANGE THIS
+  console.log('🔍 Raw platforms from state:', platforms);
+  console.log('🔍 platforms.dancer:', platforms.dancer);
+  console.log('🔍 platforms.dancer.screens:', platforms.dancer?.screens);
+  
+  const normalized = {};
+  
+  Object.entries(platforms).forEach(([platformName, platformData]) => {
+    normalized[platformName] = {
+      ...platformData,
+      screens: normalizeScreens(platformData.screens)
+    };
+  });
+  
+  return normalized;
+};
+const handleEnterEditMode = async () => {
+  setIsLoadingMergedData(true);
+  
+  try {
+    // Fetch fully merged data with sourceInfo
+    const response = await fetch(
+      `/api/implications/ui-with-source?filePath=${encodeURIComponent(state.filePath)}`
+    );
     
-    const normalized = {};
+    if (!response.ok) {
+      throw new Error('Failed to fetch merged data');
+    }
     
-    Object.entries(platforms).forEach(([platformName, platformData]) => {
-      normalized[platformName] = {
+    const { uiData } = await response.json();
+    
+    console.log('🎯 API returned uiData:', uiData);
+    
+    // Transform the data for editing - keep sourceInfo and arrays as-is
+    // The backend already merged everything correctly
+    const editableUI = {};
+    
+    for (const [platformName, platformData] of Object.entries(uiData.platforms)) {
+      editableUI[platformName] = {
         ...platformData,
-        screens: normalizeScreens(platformData.screens)
+        screens: {}
       };
-    });
+      
+      for (const [screenName, screenArray] of Object.entries(platformData.screens)) {
+        // Just use the first screen definition (there's typically only one)
+        editableUI[platformName].screens[screenName] = screenArray[0] || {
+          visible: [],
+          hidden: [],
+          checks: { visible: [], hidden: [], text: {} },
+          sourceInfo: { visible: {}, hidden: {} }
+        };
+      }
+    }
     
-    return normalized;
-  };
-
-  const handleEnterEditMode = () => {
+    console.log('✅ Editable UI prepared:', editableUI);
+    
+    // Initialize edit mode with merged data (has sourceInfo!)
+    setEditedUI(editableUI);
+    setEditMode(true);
+    
+  } catch (error) {
+    console.error('❌ Failed to load merged data:', error);
+    // Fallback to old method
     setEditedUI(initializeEditedUI());
     setEditMode(true);
-  };
+  } finally {
+    setIsLoadingMergedData(false);
+  }
+};
 
   const handleAddScreen = (platformName, screenName, screenData) => {
     setEditedUI(prev => ({
@@ -192,18 +252,58 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
     setHasChanges(false);
   };
 
-  const handleSaveChanges = async () => {
-    try {
-      if (onSave) {
-        await onSave(editedUI);
+const denormalizeUIForSave = (normalizedUI) => {
+  console.log('🔄 Denormalizing UI...');
+  console.log('📥 Input:', JSON.stringify(normalizedUI, null, 2));
+  
+  const denormalized = {};
+  
+  for (const [platformName, platformData] of Object.entries(normalizedUI)) {
+    denormalized[platformName] = {};
+    
+    // Group screens by their original name
+    const screensByName = {};
+    
+    for (const screen of platformData.screens || []) {
+      // ✅ FIXED: Check all possible name properties
+      const screenName = screen.screenName || screen.originalName || screen.name;
+      
+      if (!screenName || screenName === 'undefined') {
+        console.warn('⚠️ Screen has no name, skipping:', screen);
+        continue;
       }
-      setEditMode(false);
-      setHasChanges(false);
-      setEditedUI(null);
-    } catch (error) {
-      console.error('❌ Save failed, staying in edit mode');
+      
+      if (!screensByName[screenName]) {
+        screensByName[screenName] = [];
+      }
+      
+      // Remove UI-specific metadata before saving
+      const { name, originalName, index, screenName: _, ...screenData } = screen;
+      screensByName[screenName].push(screenData);
     }
-  };
+    
+    // Assign to denormalized structure (already arrays)
+    Object.assign(denormalized[platformName], screensByName);
+  }
+  
+  console.log('📤 Output:', JSON.stringify(denormalized, null, 2));
+  return denormalized;
+};
+
+const handleSaveChanges = async () => {
+  try {
+    if (onSave) {
+      // ✅ Send normalized format directly - backend handles it!
+      await onSave(editedUI);
+    }
+    setEditMode(false);
+    setHasChanges(false);
+    setEditedUI(null);
+  } catch (error) {
+    console.error('❌ Save failed, staying in edit mode');
+  }
+};
+
 
   const getAvailablePlatforms = () => {
     if (!editedUI) return [];
@@ -268,18 +368,19 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
           </h3>
         </div>
 
-        {!editMode ? (
-          <button
-            onClick={handleEnterEditMode}
-            className="px-4 py-2 rounded font-semibold transition hover:brightness-110"
-            style={{ 
-              background: theme.colors.accents.blue,
-              color: 'white'
-            }}
-          >
-            ✏️ Edit UI
-          </button>
-        ) : (
+       {!editMode ? (
+  <button
+    onClick={handleEnterEditMode}
+    disabled={isLoadingMergedData}
+    className="px-4 py-2 rounded font-semibold transition hover:brightness-110 disabled:opacity-50"
+    style={{ 
+      background: theme.colors.accents.blue,
+      color: 'white'
+    }}
+  >
+    {isLoadingMergedData ? '⏳ Loading...' : '✏️ Edit UI'}
+  </button>
+) : (
           <div className="flex gap-2">
             <button
               onClick={handleSaveChanges}
@@ -601,16 +702,16 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
           {/* Visible Elements */}
           {(allVisibleElements.length > 0 || editMode) && (
             editMode ? (
-              <ElementSection
-                title="✅ Visible Elements"
-                elements={allVisibleElements}
-                color={theme.colors.accents.green}
-                editMode={editMode}
-                pomName={pomName}
-                instanceName={instanceName}
-                projectPath={projectPath}
-                functions={functions}
-                onChange={(newElements) => {
+          <ElementSection
+  title="✅ Visible Elements"
+  elements={allVisibleElements}
+  color={theme.colors.accents.green}
+  editMode={editMode}
+  pomName={pomName}
+  instanceName={instanceName}
+  projectPath={projectPath}
+  functions={functions}
+  onChange={(newElements) => {
                   updateScreen({ 
                     visible: newElements,
                     checks: { 
@@ -620,6 +721,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
                   });
                 }}
                 theme={theme}
+                screen={screen}  // ← ADD THIS
               />
             ) : (
               <ElementList
@@ -640,13 +742,13 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               <ElementSection
                 title="❌ Hidden Elements"
                 elements={allHiddenElements}
-                color={theme.colors.accents.red}
-                editMode={editMode}
-                pomName={pomName}
-                instanceName={instanceName}
-                projectPath={projectPath}
-                functions={functions}
-                onChange={(newElements) => {
+  color={theme.colors.accents.red}
+  editMode={editMode}
+  pomName={pomName}
+  instanceName={instanceName}
+  projectPath={projectPath}
+  functions={functions}
+  onChange={(newElements) => {
                   updateScreen({ 
                     hidden: newElements,
                     checks: { 
@@ -656,6 +758,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
                   });
                 }}
                 theme={theme}
+                screen={screen}
               />
             ) : (
               <ElementList
@@ -731,7 +834,10 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
 // ElementSection Component (for edit mode)
 // ============================================
 
-function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme }) {
+function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme, screen }) {
+   console.log('🔍 ElementSection received screen:', screen);
+  console.log('🔍 screen.sourceInfo:', screen?.sourceInfo);
+
   const [isAdding, setIsAdding] = useState(false);
   const [newElement, setNewElement] = useState('');
   const [fieldValidation, setFieldValidation] = useState(null);
@@ -776,26 +882,65 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
       </div>
 
       <div className="space-y-2">
-        {elements.map((element, idx) => (
-          <div
-            key={idx}
-            className="flex items-center justify-between p-2 rounded text-sm"
-            style={{ background: `${color}20` }}
+ {elements.map((element, idx) => {
+  // Check if this element is from base
+  const isVisible = title.includes('Visible');
+  const sourceInfo = isVisible 
+    ? screen?.sourceInfo?.visible?.[element]
+    : screen?.sourceInfo?.hidden?.[element];
+  const isFromBase = sourceInfo?.category === 'base';
+  
+  // 🔍 ADD THIS DEBUG LOG
+  console.log(`Element: ${element}, isVisible: ${isVisible}, sourceInfo:`, sourceInfo, `isFromBase: ${isFromBase}`);
+  
+  return (
+    <div
+      key={idx}
+      className="flex items-center justify-between p-2 rounded text-sm"
+      style={{ 
+        background: isFromBase ? `${color}15` : `${color}20`,
+        opacity: isFromBase ? 0.7 : 1
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono" style={{ color: theme.colors.text.primary }}>
+          {element}
+        </span>
+        {isFromBase && (
+          <span 
+            className="px-1.5 py-0.5 rounded text-xs font-semibold"
+            style={{ 
+              background: theme.colors.accents.blue + '30',
+              color: theme.colors.accents.blue
+            }}
           >
-            <span className="font-mono" style={{ color: theme.colors.text.primary }}>
-              {element}
-            </span>
-            {editMode && (
-              <button
-                onClick={() => handleRemoveElement(element)}
-                className="hover:text-red-500 transition"
-                style={{ color }}
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        ))}
+            Base
+          </span>
+        )}
+      </div>
+      
+      {editMode && (
+        isFromBase ? (
+          <span 
+            className="text-xs cursor-help"
+            style={{ color: theme.colors.text.tertiary }}
+            title="Inherited from base class - cannot be removed"
+          >
+            🔒
+          </span>
+        ) : (
+          <button
+            onClick={() => handleRemoveElement(element)}
+            className="hover:text-red-500 transition"
+            style={{ color }}
+          >
+            ✕
+          </button>
+        )
+      )}
+    </div>
+  );
+})}
 
         {isAdding && (
           <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
