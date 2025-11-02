@@ -14,6 +14,7 @@ import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWit
 
 export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
   // Edit mode state
+  const [editedScreens, setEditedScreens] = useState(new Set()); // Add this with other state
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedState, setEditedState] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -516,30 +517,89 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
-  const handleUIUpdate = async (uiData) => {
-    console.log('💾 handleUIUpdate received:', uiData);
+const handleUIUpdate = async (uiData, editedScreensSet) => {
+  console.log('💾 handleUIUpdate received:', uiData);
+  console.log('✏️ Edited screens:', Array.from(editedScreensSet));
+  
+  try {
+    const filteredUI = {};
     
-    try {
-      const response = await fetch('http://localhost:3000/api/implications/update-ui', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filePath: state.files.implication,
-          uiData: uiData
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to update UI');
+    for (const [platformName, platformData] of Object.entries(uiData)) {
+      filteredUI[platformName] = {
+        name: platformData.name,
+        screens: {}
+      };
+      
+      for (const [screenName, screenData] of Object.entries(platformData.screens || {})) {
+        const screenKey = `${platformName}.${screenName}`;
+        
+        // ✅ SKIP: Numeric keys (corrupted data)
+        if (/^\d+$/.test(screenName)) {
+          console.warn(`⚠️ Skipping corrupted numeric screen key: ${screenName}`);
+          continue;
+        }
+        
+        // ✅ SKIP: Screens not edited by user
+        if (!editedScreensSet.has(screenKey)) {
+          console.log(`⏭️ Skipping ${screenKey} - not edited by user`);
+          continue;
+        }
+        
+        // ✅ FILTER: Extract only child overrides (not base elements)
+        const sourceInfo = screenData.sourceInfo || { visible: {}, hidden: {} };
+        
+        const childVisible = (screenData.visible || []).filter(element => 
+          sourceInfo.visible[element]?.category === 'child'
+        );
+        
+        const childHidden = (screenData.hidden || []).filter(element =>
+          sourceInfo.hidden[element]?.category === 'child'
+        );
+        
+        // ✅ INCLUDE: Even if empty (user removed all child overrides)
+        filteredUI[platformName].screens[screenName] = {
+          screenName: screenName,
+          description: screenData.description,
+          visible: childVisible,
+          hidden: childHidden,
+          checks: screenData.checks || { visible: [], hidden: [], text: {} }
+        };
+        
+        console.log(`✅ Including edited screen ${screenKey}:`, {
+          visible: childVisible,
+          hidden: childHidden,
+          wasEmptied: childVisible.length === 0 && childHidden.length === 0
+        });
       }
-
-      alert('✅ UI screens updated successfully!');
-    } catch (error) {
-      console.error('❌ UI update failed:', error);
-      alert(`❌ Failed to update UI: ${error.message}`);
     }
-  };
+    
+    console.log('✅ Filtered UI (edited screens only):', filteredUI);
+    console.log('📊 Screens sent per platform:', 
+      Object.entries(filteredUI)
+        .map(([platform, data]) => `${platform}: ${Object.keys(data.screens).length}`)
+        .join(', ')
+    );
+    
+    const response = await fetch('http://localhost:3000/api/implications/update-ui', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath: state.files.implication,
+        uiData: filteredUI
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to update UI');
+    }
+
+    alert('✅ UI screens updated successfully!');
+  } catch (error) {
+    console.error('❌ UI update failed:', error);
+    alert(`❌ Failed to update UI: ${error.message}`);
+  }
+};
 
   const handleFieldsSelected = async (fields) => {
     console.log('✅ User selected fields:', fields);

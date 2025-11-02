@@ -89,7 +89,7 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [modifiedScreens, setModifiedScreens] = useState(new Set());
+  const [editedScreens, setEditedScreens] = useState(new Set());
   const [isLoadingMergedData, setIsLoadingMergedData] = useState(false); // ← ADD THIS
 
   // Modal states
@@ -139,7 +139,6 @@ const handleEnterEditMode = async () => {
   setIsLoadingMergedData(true);
   
   try {
-    // Fetch fully merged data with sourceInfo
     const response = await fetch(
       `/api/implications/ui-with-source?filePath=${encodeURIComponent(state.filePath)}`
     );
@@ -152,8 +151,6 @@ const handleEnterEditMode = async () => {
     
     console.log('🎯 API returned uiData:', uiData);
     
-    // Transform the data for editing - keep sourceInfo and arrays as-is
-    // The backend already merged everything correctly
     const editableUI = {};
     
     for (const [platformName, platformData] of Object.entries(uiData.platforms)) {
@@ -163,26 +160,23 @@ const handleEnterEditMode = async () => {
       };
       
       for (const [screenName, screenArray] of Object.entries(platformData.screens)) {
-        // Just use the first screen definition (there's typically only one)
-        editableUI[platformName].screens[screenName] = screenArray[0] || {
-          visible: [],
-          hidden: [],
-          checks: { visible: [], hidden: [], text: {} },
-          sourceInfo: { visible: {}, hidden: {} }
+        editableUI[platformName].screens[screenName] = {
+          ...(screenArray[0] || {}),
+          screenName: screenName
         };
       }
     }
     
     console.log('✅ Editable UI prepared:', editableUI);
     
-    // Initialize edit mode with merged data (has sourceInfo!)
     setEditedUI(editableUI);
+    setEditedScreens(new Set()); // ✅ Clear edited screens tracking
     setEditMode(true);
     
   } catch (error) {
     console.error('❌ Failed to load merged data:', error);
-    // Fallback to old method
     setEditedUI(initializeEditedUI());
+    setEditedScreens(new Set()); // ✅ Clear here too
     setEditMode(true);
   } finally {
     setIsLoadingMergedData(false);
@@ -293,12 +287,13 @@ const denormalizeUIForSave = (normalizedUI) => {
 const handleSaveChanges = async () => {
   try {
     if (onSave) {
-      // ✅ Send normalized format directly - backend handles it!
-      await onSave(editedUI);
+      // ✅ Pass editedScreens to parent so it knows which screens to regenerate
+      await onSave(editedUI, editedScreens);
     }
     setEditMode(false);
     setHasChanges(false);
     setEditedUI(null);
+    setEditedScreens(new Set()); // Clear tracking after successful save
   } catch (error) {
     console.error('❌ Save failed, staying in edit mode');
   }
@@ -424,25 +419,31 @@ const handleSaveChanges = async () => {
               editMode={editMode}
               projectPath={projectPath}
               theme={theme}
-              onScreenUpdate={(screenIndex, updatedScreen) => {
-                setEditedUI(prev => {
-                  if (!prev || !prev[platformName]) return prev;
-                  
-                  const platform = prev[platformName];
-                  const updatedScreens = [...platform.screens];
-                  updatedScreens[screenIndex] = updatedScreen;
-                  
-                  return {
-                    ...prev,
-                    [platformName]: {
-                      ...platform,
-                      screens: updatedScreens
-                    }
-                  };
-                });
-                setHasChanges(true);
-                setModifiedScreens(prev => new Set(prev).add(`${platformName}-${screenIndex}`));
-              }}
+            onScreenUpdate={(screenName, updatedScreen) => {
+  setEditedUI(prev => {
+    if (!prev || !prev[platformName]) return prev;
+    
+    const platform = prev[platformName];
+    
+    return {
+      ...prev,
+      [platformName]: {
+        ...platform,
+        screens: {
+          ...platform.screens,
+          [screenName]: updatedScreen
+        }
+      }
+    };
+  });
+  
+  setHasChanges(true);
+  
+  // ✅ Track that this screen was edited
+  setEditedScreens(prev => new Set(prev).add(`${platformName}.${screenName}`));
+  
+  console.log(`✏️ User edited: ${platformName}.${screenName}`);
+}}
               onAddScreen={() => {
                 setAddScreenModal({
                   isOpen: true,
@@ -450,16 +451,16 @@ const handleSaveChanges = async () => {
                   platformDisplayName: platformData.displayName || platformName
                 });
               }}
-              onDeleteScreen={(screenIndex) => {
-                const screen = screens[screenIndex];
-                setDeleteConfirmDialog({
-                  isOpen: true,
-                  screen,
-                  platformName,
-                  platformDisplayName: platformData.displayName || platformName,
-                  screenIndex
-                });
-              }}
+              onDeleteScreen={(screenName) => {
+  const screen = platformData.screens[screenName];
+  setDeleteConfirmDialog({
+    isOpen: true,
+    screen,
+    platformName,
+    platformDisplayName: platformData.displayName || platformName,
+    screenName  // ✅ Use screenName instead of screenIndex
+  });
+}}
               onCopyScreen={(screen) => {
                 setCopyScreenDialog({
                   isOpen: true,
@@ -570,7 +571,7 @@ function PlatformSection({
         )}
       </div>
 
-      {/* Screens */}
+{/* Screens */}
       <div className="space-y-3">
         {screenArray.map((screen, idx) => (
           <ScreenCard
@@ -580,8 +581,14 @@ function PlatformSection({
             editMode={editMode}
             projectPath={projectPath}
             theme={theme}
-            onUpdate={(updates) => onScreenUpdate(idx, { ...screen, ...updates })}
-            onDelete={() => onDeleteScreen(idx)}
+            onUpdate={(updates) => {
+              const screenName = screen.screenName || screen.name || screen.originalName;
+              onScreenUpdate(screenName, { ...screen, ...updates });
+            }}
+            onDelete={() => {
+              const screenName = screen.screenName || screen.name || screen.originalName;
+              onDeleteScreen(screenName);
+            }}
             onCopy={() => onCopyScreen(screen)}
           />
         ))}
@@ -631,7 +638,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
     setPomName(selectedPOM || '');
     setInstanceName(selectedInstance || null);
     
-    updateScreen({
+    onUpdate({
       screen: selectedPOM || '',
       instance: selectedInstance || null
     });
@@ -712,7 +719,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
   projectPath={projectPath}
   functions={functions}
   onChange={(newElements) => {
-                  updateScreen({ 
+                  onUpdate({ 
                     visible: newElements,
                     checks: { 
                       ...screen.checks, 
@@ -749,7 +756,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
   projectPath={projectPath}
   functions={functions}
   onChange={(newElements) => {
-                  updateScreen({ 
+                  onUpdate({ 
                     hidden: newElements,
                     checks: { 
                       ...screen.checks, 
@@ -779,7 +786,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               textChecks={textChecks}
               editMode={editMode}
               onChange={(newTextChecks) => {
-                updateScreen({ 
+                onUpdate({ 
                   checks: { 
                     ...screen.checks, 
                     text: newTextChecks 
@@ -799,7 +806,7 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
               projectPath={projectPath}
               contextFields={getContextFields(screen)}
               onChange={(newFunctions) => {
-                updateScreen({ functions: newFunctions });
+                onUpdate({ functions: newFunctions });
               }}
               theme={theme}
             />

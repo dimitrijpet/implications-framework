@@ -940,7 +940,9 @@ router.post('/update-ui', async (req, res) => {
     }
     
     // Build new UI AST with smart preservation
-    const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent);
+    const className = path.basename(filePath, '.js');
+
+const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, className);
     
     // Second pass: Replace UI node
     traverse(ast, {
@@ -1009,7 +1011,7 @@ router.post('/update-ui', async (req, res) => {
 /**
  * ✅ SMART: Build UI AST while preserving original structure where possible
  */
-function buildSmartUIAst(newData, originalUINode, originalContent) {
+function buildSmartUIAst(newData, originalUINode, originalContent, className) {
   const platformProps = [];
   
   // For each platform in new data
@@ -1021,16 +1023,31 @@ function buildSmartUIAst(newData, originalUINode, originalContent) {
     
     let platformScreenProps;
     
-    if (originalPlatformProp && t.isObjectExpression(originalPlatformProp.value)) {
+      if (originalPlatformProp && t.isObjectExpression(originalPlatformProp.value)) {
+      // ✅ CONVERT: screens object → array with screenName property
+      const screensArray = Object.entries(platformData.screens || {}).map(([screenName, screenData]) => ({
+        ...screenData,
+        screenName: screenName  // ← Add the name!
+      }));
+      
+      console.log(`  📋 Platform ${platformName}: converted ${Object.keys(platformData.screens || {}).length} screens to array`);
+      
       // Platform exists in original - preserve what we can
       platformScreenProps = buildSmartScreenProps(
-        platformData.screens,
-        originalPlatformProp.value,
-        originalContent
-      );
+      screensArray,
+      originalPlatformProp.value,
+      originalContent,
+      platformName,  // ← Add this
+      className      // ← Add this
+    );
     } else {
       // New platform - build from scratch
-      platformScreenProps = buildScreenPropsFromData(platformData.screens);
+      const screensArray = Object.entries(platformData.screens || {}).map(([screenName, screenData]) => ({
+        ...screenData,
+        screenName: screenName
+      }));
+      
+      platformScreenProps = buildScreenPropsFromData(screensArray);
     }
     
     platformProps.push(
@@ -1047,53 +1064,83 @@ function buildSmartUIAst(newData, originalUINode, originalContent) {
 /**
  * Build screen properties while preserving original AST where unchanged
  */
-function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent) {
-  // Group new screens by originalName
-  const screenGroups = {};
+function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent, platformName, className) {
+  // ✅ First, get ALL original screen names
+  const originalScreenNames = originalPlatformNode.properties.map(p => p.key?.name).filter(Boolean);
+  
+  // ✅ Build a map of new screens by name
+  const newScreensMap = {};
   newScreens.forEach(screen => {
-    // ✅ FIXED: Check screenName first!
     const key = screen.screenName || screen.originalName || screen.name;
-    if (!screenGroups[key]) {
-      screenGroups[key] = [];
+    if (!newScreensMap[key]) {
+      newScreensMap[key] = [];
     }
-    screenGroups[key].push(screen);
+    newScreensMap[key].push(screen);
   });
+  
+  console.log(`    📊 Original screens: ${originalScreenNames.length}, New screens: ${Object.keys(newScreensMap).length}`);
+  
   const screenProps = [];
   
-  for (const [screenKey, screens] of Object.entries(screenGroups)) {
-    // Find original screen array
+  // ✅ Process ALL original screens (preserve those not in update)
+  for (const screenName of originalScreenNames) {
     const originalScreenProp = originalPlatformNode.properties.find(
-      p => p.key?.name === screenKey
+      p => p.key?.name === screenName
     );
+    
+    if (!originalScreenProp) continue;
     
     let screenArrayNode;
     
-    if (originalScreenProp && t.isArrayExpression(originalScreenProp.value)) {
-      // Check if screens changed
-      const hasChanges = screensHaveChanges(screens, originalScreenProp.value);
+    // Check if this screen is in the update
+    if (newScreensMap[screenName]) {
+      // ✅ Screen is being updated - check for changes
+      const screens = newScreensMap[screenName];
       
-      if (!hasChanges) {
-        // ✅ NO CHANGES - Use original AST (preserves spreads, merges, comments!)
-        console.log(`  ✨ Preserving original AST for ${screenKey}`);
-        screenArrayNode = originalScreenProp.value;
+      if (t.isArrayExpression(originalScreenProp.value)) {
+        const hasChanges = screensHaveChanges(screens, originalScreenProp.value);
+        
+        if (!hasChanges) {
+          // ✅ NO CHANGES - Use original AST (preserves mergeWithBase!)
+          console.log(`  ✨ Preserving original AST for ${screenName}`);
+          screenArrayNode = originalScreenProp.value;
+        } else {
+          // ❌ HAS CHANGES - Generate new AST
+          console.log(`  🔧 Regenerating AST for ${screenName} (modified)`);
+          screenArrayNode = t.arrayExpression(
+  screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
+);
+        }
       } else {
-        // ❌ HAS CHANGES - Generate new AST
-        console.log(`  🔧 Regenerating AST for ${screenKey} (modified)`);
+        // New screen - build from scratch
         screenArrayNode = t.arrayExpression(
-          screens.map(screen => buildScreenObjectAst(screen))
-        );
+    screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
+  );
       }
+      
+      // Remove from map so we know it's processed
+      delete newScreensMap[screenName];
     } else {
-      // New screen - build from scratch
-      screenArrayNode = t.arrayExpression(
-        screens.map(screen => buildScreenObjectAst(screen))
-      );
+      // ✅ Screen NOT in update - preserve original completely!
+      console.log(`  ♻️ Preserving untouched screen: ${screenName}`);
+      screenArrayNode = originalScreenProp.value;
     }
     
     screenProps.push(
       t.objectProperty(
-        t.identifier(screenKey),
+        t.identifier(screenName),
         screenArrayNode
+      )
+    );
+  }
+  
+  // ✅ Add any NEW screens that weren't in original
+  for (const [screenName, screens] of Object.entries(newScreensMap)) {
+    console.log(`  ➕ Adding new screen: ${screenName}`);
+    screenProps.push(
+      t.objectProperty(
+        t.identifier(screenName),
+        t.arrayExpression(screens.map(screen => buildScreenAst(screen, screenName, platformName, className)))
       )
     );
   }
@@ -1108,6 +1155,7 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
 function screensHaveChanges(newScreens, originalArrayNode) {
   // Simple check: compare lengths
   if (newScreens.length !== originalArrayNode.elements.length) {
+    console.log('    📊 Length changed:', newScreens.length, 'vs', originalArrayNode.elements.length);
     return true;
   }
   
@@ -1116,19 +1164,52 @@ function screensHaveChanges(newScreens, originalArrayNode) {
     const newScreen = newScreens[i];
     const originalElement = originalArrayNode.elements[i];
     
-    if (!originalElement || originalElement.type !== 'ObjectExpression') {
-      return true;  // Can't compare - assume changed
+    if (!originalElement) {
+      return true;
     }
     
-    // Extract data from original AST
-    const originalData = extractScreenDataFromAst(originalElement);
-    
-    // Compare
-    if (!screensMatch(newScreen, originalData)) {
+    // Check if original is mergeWithBase call
+    if (originalElement.type === 'CallExpression' &&
+        originalElement.callee?.type === 'MemberExpression' &&
+        originalElement.callee.object?.name === 'ImplicationHelper' &&
+        originalElement.callee.property?.name === 'mergeWithBase') {
+      
+      console.log('    🔍 Original is mergeWithBase, extracting child overrides...');
+      
+      // Extract child overrides from mergeWithBase (2nd argument)
+      const overridesArg = originalElement.arguments[1];
+      if (!overridesArg || overridesArg.type !== 'ObjectExpression') {
+        console.log('    ⚠️ Could not extract overrides, assuming changed');
+        return true;
+      }
+      
+      const originalOverrides = extractScreenDataFromAst(overridesArg);
+      
+      // Compare new data with original overrides (not merged result!)
+      if (!screensMatch(newScreen, originalOverrides)) {
+        console.log('    🔧 Child overrides changed!');
+        console.log('       Original:', JSON.stringify(originalOverrides, null, 2));
+        console.log('       New:', JSON.stringify(newScreen, null, 2));
+        return true;
+      }
+      
+      console.log('    ✨ Child overrides match! Preserving mergeWithBase');
+    } else if (originalElement.type === 'ObjectExpression') {
+      // Direct object - compare as before
+      const originalData = extractScreenDataFromAst(originalElement);
+      
+      if (!screensMatch(newScreen, originalData)) {
+        console.log('    🔧 Screen data changed');
+        return true;
+      }
+    } else {
+      // Unknown type - assume changed
+      console.log('    ⚠️ Unknown original type:', originalElement.type);
       return true;
     }
   }
   
+  console.log('    ✅ No changes detected');
   return false;  // No changes detected
 }
 
@@ -1160,27 +1241,58 @@ function extractScreenDataFromAst(objectNode) {
 /**
  * Compare two screen objects
  */
-function screensMatch(newScreen, originalData) {
-  // Compare basic fields
-  if (newScreen.name !== originalData.name) return false;
-  if (newScreen.description !== originalData.description) return false;
+function screensMatch(screen1, screen2) {
+  const clean1 = stripMetadata(screen1);
+  const clean2 = stripMetadata(screen2);
   
-  // Compare arrays
-  if (!arraysMatch(newScreen.visible, originalData.visible)) return false;
-  if (!arraysMatch(newScreen.hidden, originalData.hidden)) return false;
+  // Deep comparison instead of JSON.stringify
+  return deepEqual(clean1, clean2);
+}
+
+function deepEqual(obj1, obj2) {
+  // Handle null/undefined
+  if (obj1 === obj2) return true;
+  if (!obj1 || !obj2) return false;
+  if (typeof obj1 !== 'object' || typeof obj2 !== 'object') return obj1 === obj2;
   
-  // Compare checks
-  if (newScreen.checks || originalData.checks) {
-    if (!newScreen.checks || !originalData.checks) return false;
-    
-    if (!arraysMatch(newScreen.checks.visible, originalData.checks.visible)) return false;
-    if (!arraysMatch(newScreen.checks.hidden, originalData.checks.hidden)) return false;
-    
-    // Compare checks.text
-    if (!objectsMatch(newScreen.checks.text, originalData.checks.text)) return false;
+  // Handle arrays
+  if (Array.isArray(obj1) && Array.isArray(obj2)) {
+    if (obj1.length !== obj2.length) return false;
+    return obj1.every((item, i) => deepEqual(item, obj2[i]));
   }
   
-  return true;
+  // Handle arrays vs objects mismatch
+  if (Array.isArray(obj1) !== Array.isArray(obj2)) return false;
+  
+  // Handle objects
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+  
+  if (keys1.length !== keys2.length) return false;
+  
+  return keys1.every(key => {
+    if (!keys2.includes(key)) return false;
+    return deepEqual(obj1[key], obj2[key]);
+  });
+}
+
+function stripMetadata(screen) {
+  const { screenName, sourceInfo, alwaysVisible, sometimesVisible, functions, ...cleanScreen } = screen;
+  
+  // Also strip empty arrays from checks
+  if (cleanScreen.checks) {
+    const cleanChecks = { ...cleanScreen.checks };
+    if (cleanChecks.visible?.length === 0) delete cleanChecks.visible;
+    if (cleanChecks.hidden?.length === 0) delete cleanChecks.hidden;
+    if (Object.keys(cleanChecks.text || {}).length === 0) delete cleanChecks.text;
+    cleanScreen.checks = cleanChecks;
+  }
+  
+  // Strip empty arrays
+  if (cleanScreen.visible?.length === 0) delete cleanScreen.visible;
+  if (cleanScreen.hidden?.length === 0) delete cleanScreen.hidden;
+  
+  return cleanScreen;
 }
 
 /**
@@ -1434,54 +1546,67 @@ function buildScreenObjectAst(screen) {
 /**
  * Helper: Build AST for UI data
  */
-function buildUIAst(uiData) {
+function buildUIAst(uiData, className) {
   const platformProps = Object.entries(uiData).map(([platformName, platformData]) => {
-    const screenArray = t.arrayExpression(
-      platformData.screens.map(screen => buildScreenAst(screen))
-    );
+    const screenEntries = Object.entries(platformData.screens);
     
-    const screenNameKey = Object.keys(platformData.screens[0]?.screen ? { screen: 1 } : {})[0] || 
-                          platformData.screens[0]?.name || 
-                          'unknownScreen';
+    const screenProps = screenEntries.map(([screenName, screenArray]) => {
+      // Each screen is wrapped in an array
+      const wrappedScreens = t.arrayExpression(
+        screenArray.map(screen => buildScreenAst(screen, screenName, platformName, className))
+      );
+      
+      return t.objectProperty(
+        t.identifier(screenName),
+        wrappedScreens
+      );
+    });
     
     return t.objectProperty(
-      t.identifier(screenNameKey),
-      screenArray
+      t.identifier(platformName),
+      t.objectExpression(screenProps)
     );
   });
   
-  return t.objectExpression(platformProps);
+  return t.objectExpression([
+    t.objectProperty(
+      t.identifier('UI'),
+      t.objectExpression(platformProps)
+    )
+  ]);
 }
 
 /**
  * Helper: Build AST for screen object
  */
-function buildScreenAst(screen) {
-  const props = [];
+function buildScreenAst(screen, screenName, platformName, className) {
+  const overrideProps = [];
   
-  // Add each property
-  if (screen.name) {
-    props.push(t.objectProperty(t.identifier('name'), t.stringLiteral(screen.name)));
-  }
-  
+  // description (always include if present)
   if (screen.description) {
-    props.push(t.objectProperty(t.identifier('description'), t.stringLiteral(screen.description)));
+    overrideProps.push(t.objectProperty(
+      t.identifier('description'), 
+      t.stringLiteral(screen.description)
+    ));
   }
   
+  // visible (only if has child elements)
   if (screen.visible && screen.visible.length > 0) {
-    props.push(t.objectProperty(
+    overrideProps.push(t.objectProperty(
       t.identifier('visible'),
       t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
     ));
   }
   
+  // hidden (only if has child elements)
   if (screen.hidden && screen.hidden.length > 0) {
-    props.push(t.objectProperty(
+    overrideProps.push(t.objectProperty(
       t.identifier('hidden'),
       t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
     ));
   }
   
+  // checks
   if (screen.checks) {
     const checkProps = [];
     
@@ -1499,7 +1624,7 @@ function buildScreenAst(screen) {
       ));
     }
     
-    if (screen.checks.text) {
+    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
       const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
         t.objectProperty(t.identifier(key), t.stringLiteral(value))
       );
@@ -1510,14 +1635,56 @@ function buildScreenAst(screen) {
     }
     
     if (checkProps.length > 0) {
-      props.push(t.objectProperty(
+      overrideProps.push(t.objectProperty(
         t.identifier('checks'),
         t.objectExpression(checkProps)
       ));
     }
   }
   
-  return t.objectExpression(props);
+  // prerequisites (if present)
+  if (screen.prerequisites) {
+    // Keep as-is from original screen data
+    overrideProps.push(t.objectProperty(
+      t.identifier('prerequisites'),
+      screen.prerequisites // Already an AST node
+    ));
+  }
+  
+  // expect (if present)
+  if (screen.expect) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('expect'),
+      screen.expect // Already an AST node
+    ));
+  }
+  
+  // ✅ Build: ImplicationHelper.mergeWithBase(base, overrides, options)
+  return t.callExpression(
+    t.memberExpression(
+      t.identifier('ImplicationHelper'),
+      t.identifier('mergeWithBase')
+    ),
+    [
+      // First arg: BaseBookingImplications.platform.screenName
+      t.memberExpression(
+        t.memberExpression(
+          t.identifier('BaseBookingImplications'),
+          t.identifier(platformName)
+        ),
+        t.identifier(screenName)
+      ),
+      // Second arg: override object
+      t.objectExpression(overrideProps),
+      // Third arg: { parentClass: AcceptedBookingImplications }
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier('parentClass'),
+          t.identifier(className)
+        )
+      ])
+    ]
+  );
 }
 
 /**
@@ -1702,7 +1869,7 @@ router.post('/add-transition', async (req, res) => {
     
   let transitionAdded = false;
 
-// ✅ NEW: Handle BOTH simple and complex xstateConfig structures
+// ✅ NEW: Handle BOTH simple and complex xstateCsonfig structures
 traverse(sourceAst, {
   ClassProperty(path) {
     if (path.node.key?.name === 'xstateConfig' && path.node.static) {
