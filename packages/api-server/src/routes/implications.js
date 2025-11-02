@@ -1093,29 +1093,39 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
     let screenArrayNode;
     
     // Check if this screen is in the update
+   // Check if this screen is in the update
     if (newScreensMap[screenName]) {
       // ✅ Screen is being updated - check for changes
       const screens = newScreensMap[screenName];
       
       if (t.isArrayExpression(originalScreenProp.value)) {
-        const hasChanges = screensHaveChanges(screens, originalScreenProp.value);
+        const comparisonResult = screensHaveChanges(screens, originalScreenProp.value);
         
-        if (!hasChanges) {
+        if (!comparisonResult.hasChanges) {
           // ✅ NO CHANGES - Use original AST (preserves mergeWithBase!)
           console.log(`  ✨ Preserving original AST for ${screenName}`);
           screenArrayNode = originalScreenProp.value;
         } else {
-          // ❌ HAS CHANGES - Generate new AST
+          // ❌ HAS CHANGES - Generate new AST with preserved functions
           console.log(`  🔧 Regenerating AST for ${screenName} (modified)`);
           screenArrayNode = t.arrayExpression(
-  screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
-);
+            screens.map(screen => {
+              // ✨ Attach original functions to screen data
+              if (comparisonResult.originalFunctions.prerequisites) {
+                screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+              }
+              if (comparisonResult.originalFunctions.expect) {
+                screen._originalExpect = comparisonResult.originalFunctions.expect;
+              }
+              return buildScreenAst(screen, screenName, platformName, className);
+            })
+          );
         }
       } else {
         // New screen - build from scratch
         screenArrayNode = t.arrayExpression(
-    screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
-  );
+          screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
+        );
       }
       
       // Remove from map so we know it's processed
@@ -1156,8 +1166,11 @@ function screensHaveChanges(newScreens, originalArrayNode) {
   // Simple check: compare lengths
   if (newScreens.length !== originalArrayNode.elements.length) {
     console.log('    📊 Length changed:', newScreens.length, 'vs', originalArrayNode.elements.length);
-    return true;
+    return { hasChanges: true, originalFunctions: {} };
   }
+  
+  // Track original function nodes
+  let originalFunctions = {};
   
   // Deep check: compare each screen's data
   for (let i = 0; i < newScreens.length; i++) {
@@ -1165,7 +1178,7 @@ function screensHaveChanges(newScreens, originalArrayNode) {
     const originalElement = originalArrayNode.elements[i];
     
     if (!originalElement) {
-      return true;
+      return { hasChanges: true, originalFunctions: {} };
     }
     
     // Check if original is mergeWithBase call
@@ -1180,17 +1193,29 @@ function screensHaveChanges(newScreens, originalArrayNode) {
       const overridesArg = originalElement.arguments[1];
       if (!overridesArg || overridesArg.type !== 'ObjectExpression') {
         console.log('    ⚠️ Could not extract overrides, assuming changed');
-        return true;
+        return { hasChanges: true, originalFunctions: {} };
       }
       
+      // ✨ NEW: Extract prerequisites and expect nodes
       const originalOverrides = extractScreenDataFromAst(overridesArg);
+      
+      // Extract function nodes
+      overridesArg.properties.forEach(prop => {
+        if (prop.key?.name === 'prerequisites') {
+          originalFunctions.prerequisites = prop.value;
+          console.log('    📦 Preserved prerequisites function');
+        } else if (prop.key?.name === 'expect') {
+          originalFunctions.expect = prop.value;
+          console.log('    📦 Preserved expect function');
+        }
+      });
       
       // Compare new data with original overrides (not merged result!)
       if (!screensMatch(newScreen, originalOverrides)) {
         console.log('    🔧 Child overrides changed!');
         console.log('       Original:', JSON.stringify(originalOverrides, null, 2));
         console.log('       New:', JSON.stringify(newScreen, null, 2));
-        return true;
+        return { hasChanges: true, originalFunctions };
       }
       
       console.log('    ✨ Child overrides match! Preserving mergeWithBase');
@@ -1198,19 +1223,28 @@ function screensHaveChanges(newScreens, originalArrayNode) {
       // Direct object - compare as before
       const originalData = extractScreenDataFromAst(originalElement);
       
+      // ✨ NEW: Extract function nodes from direct object too
+      originalElement.properties.forEach(prop => {
+        if (prop.key?.name === 'prerequisites') {
+          originalFunctions.prerequisites = prop.value;
+        } else if (prop.key?.name === 'expect') {
+          originalFunctions.expect = prop.value;
+        }
+      });
+      
       if (!screensMatch(newScreen, originalData)) {
         console.log('    🔧 Screen data changed');
-        return true;
+        return { hasChanges: true, originalFunctions };
       }
     } else {
       // Unknown type - assume changed
       console.log('    ⚠️ Unknown original type:', originalElement.type);
-      return true;
+      return { hasChanges: true, originalFunctions: {} };
     }
   }
   
   console.log('    ✅ No changes detected');
-  return false;  // No changes detected
+  return { hasChanges: false, originalFunctions };  // No changes detected
 }
 
 /**
@@ -1642,20 +1676,21 @@ function buildScreenAst(screen, screenName, platformName, className) {
     }
   }
   
-  // prerequisites (if present)
-  if (screen.prerequisites) {
-    // Keep as-is from original screen data
+  // ✨ NEW: prerequisites (preserved from original AST)
+  if (screen._originalPrerequisites) {
+    console.log('    📦 Including preserved prerequisites');
     overrideProps.push(t.objectProperty(
       t.identifier('prerequisites'),
-      screen.prerequisites // Already an AST node
+      screen._originalPrerequisites // AST node from original file
     ));
   }
   
-  // expect (if present)
-  if (screen.expect) {
+  // ✨ NEW: expect (preserved from original AST)
+  if (screen._originalExpect) {
+    console.log('    📦 Including preserved expect function');
     overrideProps.push(t.objectProperty(
       t.identifier('expect'),
-      screen.expect // Already an AST node
+      screen._originalExpect // AST node from original file
     ));
   }
   
