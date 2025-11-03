@@ -419,7 +419,11 @@ const handleSaveChanges = async () => {
               editMode={editMode}
               projectPath={projectPath}
               theme={theme}
-            onScreenUpdate={(screenName, updatedScreen) => {
+          onScreenUpdate={(screenName, updatedScreen) => {
+  console.log('🔧 onScreenUpdate called!');
+  console.log('   screenName:', screenName);
+  console.log('   updatedScreen:', updatedScreen);
+  
   setEditedUI(prev => {
     if (!prev || !prev[platformName]) return prev;
     
@@ -440,9 +444,14 @@ const handleSaveChanges = async () => {
   setHasChanges(true);
   
   // ✅ Track that this screen was edited
-  setEditedScreens(prev => new Set(prev).add(`${platformName}.${screenName}`));
-  
-  console.log(`✏️ User edited: ${platformName}.${screenName}`);
+  const screenKey = `${platformName}.${screenName}`;
+  setEditedScreens(prev => {
+    const newSet = new Set(prev);
+    newSet.add(screenKey);
+    console.log('✅ Added to editedScreens:', screenKey);
+    console.log('   Current editedScreens:', Array.from(newSet));
+    return newSet;
+  });
 }}
               onAddScreen={() => {
                 setAddScreenModal({
@@ -706,79 +715,67 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             theme={theme}
           />
 
-          {/* Visible Elements */}
-          {(allVisibleElements.length > 0 || editMode) && (
-            editMode ? (
-          <ElementSection
-  title="✅ Visible Elements"
-  elements={allVisibleElements}
-  color={theme.colors.accents.green}
-  editMode={editMode}
-  pomName={pomName}
-  instanceName={instanceName}
-  projectPath={projectPath}
-  functions={functions}
-  onChange={(newElements) => {
-                  onUpdate({ 
-                    visible: newElements,
-                    checks: { 
-                      ...screen.checks, 
-                      visible: newElements
-                    } 
-                  });
-                }}
-                theme={theme}
-                screen={screen}  // ← ADD THIS
-              />
-            ) : (
-              <ElementList
-                elements={allVisibleElements}
-                sourceInfo={screen.sourceInfo?.visible || {}}
-                title="Visible Elements"
-                icon="✅"
-                color={theme.colors.accents.green}
-                theme={theme}
-                emptyMessage="No visible elements"
-              />
-            )
-          )}
+        {/* Visible Elements */}
+{(allVisibleElements.length > 0 || editMode) && (
+  editMode ? (
+    <ElementSection
+      title="✅ Visible Elements"
+      elements={allVisibleElements}
+      color={theme.colors.accents.green}
+      editMode={editMode}
+      pomName={pomName}
+      instanceName={instanceName}
+      projectPath={projectPath}
+      functions={functions}
+      onChange={(newElements) => {
+        onUpdate({ visible: newElements });  // ← FIXED!
+      }}
+      theme={theme}
+      screen={screen}
+    />
+  ) : (
+    <ElementList
+      elements={allVisibleElements}
+      sourceInfo={screen.sourceInfo?.visible || {}}
+      title="Visible Elements"
+      icon="✅"
+      color={theme.colors.accents.green}
+      theme={theme}
+      emptyMessage="No visible elements"
+    />
+  )
+)}
 
-          {/* Hidden Elements */}
-          {(allHiddenElements.length > 0 || editMode) && (
-            editMode ? (
-              <ElementSection
-                title="❌ Hidden Elements"
-                elements={allHiddenElements}
-  color={theme.colors.accents.red}
-  editMode={editMode}
-  pomName={pomName}
-  instanceName={instanceName}
-  projectPath={projectPath}
-  functions={functions}
-  onChange={(newElements) => {
-                  onUpdate({ 
-                    hidden: newElements,
-                    checks: { 
-                      ...screen.checks, 
-                      hidden: newElements
-                    } 
-                  });
-                }}
-                theme={theme}
-                screen={screen}
-              />
-            ) : (
-              <ElementList
-                elements={allHiddenElements}
-                sourceInfo={screen.sourceInfo?.hidden || {}}
-                title="Hidden Elements"
-                icon="❌"
-                color={theme.colors.accents.red}
-                theme={theme}
-                emptyMessage="No hidden elements"
-              />
-            )
-          )}
+{/* Hidden Elements */}
+{(allHiddenElements.length > 0 || editMode) && (
+  editMode ? (
+    <ElementSection
+      title="❌ Hidden Elements"
+      elements={allHiddenElements}
+      color={theme.colors.accents.red}
+      editMode={editMode}
+      pomName={pomName}
+      instanceName={instanceName}
+      projectPath={projectPath}
+      functions={functions}
+      onChange={(newElements) => {
+        onUpdate({ hidden: newElements });  // ← FIXED!
+      }}
+      theme={theme}
+      screen={screen}
+    />
+  ) : (
+    <ElementList
+      elements={allHiddenElements}
+      sourceInfo={screen.sourceInfo?.hidden || {}}
+      title="Hidden Elements"
+      icon="❌"
+      color={theme.colors.accents.red}
+      theme={theme}
+      emptyMessage="No hidden elements"
+    />
+  )
+)}
 
           {/* Text Checks */}
           {(Object.keys(textChecks).length > 0 || editMode) && (
@@ -849,19 +846,27 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   const [newElement, setNewElement] = useState('');
   const [fieldValidation, setFieldValidation] = useState(null);
 
-  const handleAddElement = () => {
-    if (!newElement.trim()) return;
-    
-    if (elements.includes(newElement.trim())) {
-      alert('Element already exists!');
-      return;
-    }
-    
-    onChange([...elements, newElement.trim()]);
-    setNewElement('');
-    setIsAdding(false);
-    setFieldValidation(null);
-  };
+const handleAddElement = () => {
+  console.log('➕ handleAddElement called!');
+  console.log('   newElement:', newElement);
+  console.log('   current elements:', elements);
+  
+  if (!newElement.trim()) return;
+  
+  if (elements.includes(newElement.trim())) {
+    alert('Element already exists!');
+    return;
+  }
+  
+  const updatedElements = [...elements, newElement.trim()];
+  console.log('   ✅ Calling onChange with:', updatedElements);
+  
+  onChange(updatedElements);  // ← Does this get called?
+  
+  setNewElement('');
+  setIsAdding(false);
+  setFieldValidation(null);
+};
 
   const handleRemoveElement = (element) => {
     onChange(elements.filter(el => el !== element));
@@ -890,59 +895,34 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
 
       <div className="space-y-2">
  {elements.map((element, idx) => {
-  // Check if this element is from base
   const isVisible = title.includes('Visible');
   const sourceInfo = isVisible 
     ? screen?.sourceInfo?.visible?.[element]
     : screen?.sourceInfo?.hidden?.[element];
-  const isFromBase = sourceInfo?.category === 'base';
   
-  // 🔍 ADD THIS DEBUG LOG
-  console.log(`Element: ${element}, isVisible: ${isVisible}, sourceInfo:`, sourceInfo, `isFromBase: ${isFromBase}`);
+  // ✅ NEW: Only lock elements that were ORIGINALLY in this section from base
+  // If it's in hidden but was originally in visible, it's an OVERRIDE, not locked!
+  const isFromBase = sourceInfo?.category === 'base';
+  const wasInVisibleBase = screen?.sourceInfo?.visible?.[element]?.category === 'base';
+  const isOverrideToHidden = !isVisible && wasInVisibleBase;
   
   return (
-    <div
-      key={idx}
-      className="flex items-center justify-between p-2 rounded text-sm"
-      style={{ 
-        background: isFromBase ? `${color}15` : `${color}20`,
-        opacity: isFromBase ? 0.7 : 1
-      }}
-    >
+    <div key={idx} className="flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <span className="font-mono" style={{ color: theme.colors.text.primary }}>
-          {element}
-        </span>
-        {isFromBase && (
-          <span 
-            className="px-1.5 py-0.5 rounded text-xs font-semibold"
-            style={{ 
-              background: theme.colors.accents.blue + '30',
-              color: theme.colors.accents.blue
-            }}
-          >
-            Base
-          </span>
+        <span>{element}</span>
+        {isFromBase && !isOverrideToHidden && (
+          <span>Base</span>
+        )}
+        {isOverrideToHidden && (
+          <span style={{ color: theme.colors.accents.orange }}>Override</span>
         )}
       </div>
       
       {editMode && (
-        isFromBase ? (
-          <span 
-            className="text-xs cursor-help"
-            style={{ color: theme.colors.text.tertiary }}
-            title="Inherited from base class - cannot be removed"
-          >
-            🔒
-          </span>
+        isFromBase && !isOverrideToHidden ? (
+          <span title="Inherited from base - cannot be removed">🔒</span>
         ) : (
-          <button
-            onClick={() => handleRemoveElement(element)}
-            className="hover:text-red-500 transition"
-            style={{ color }}
-          >
-            ✕
-          </button>
+          <button onClick={() => handleRemoveElement(element)}>✕</button>
         )
       )}
     </div>

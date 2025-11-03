@@ -527,73 +527,120 @@ useEffect(() => {
   }, [projectPath]);  // ✅ FIXED: Dependency array
   
   // Handle node click in graph
-  const handleNodeClick = (nodeData) => {
-    setSelectedNodeId(nodeData.id);
-    console.log('🖱️ Node clicked:', nodeData);
-    
-    if (discoveryResult) {
-      const implication = discoveryResult.files.implications.find(
-        imp => extractStateName(imp.metadata.className) === nodeData.id
-      );
-      
-      if (implication) {
-        const metadata = implication.metadata;
-        console.log('🔍 Modal data for', nodeData.id, ':', {
-  statusCode: metadata.statusCode,
-  statusNumber: metadata.statusNumber,
-  triggerButton: metadata.triggerButton
-});
-        
-        if (!metadata.hasXStateConfig) {
-          console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
-          alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
-          return;
-        }
-        
-        const stateTransitions = (discoveryResult.transitions || [])
-          .filter(t => extractStateName(t.from) === nodeData.id)
-          .map(t => ({
-            event: t.event,
-            target: t.to
-          }));
-        
-        const state = {
-  name: nodeData.id,
-  displayName: metadata.status || nodeData.label,
-  meta: {
-  status: metadata.status,
-  triggerAction: metadata.triggerAction,
-  triggerButton: metadata.triggerButton,
-  afterButton: metadata.afterButton,
-  previousButton: metadata.previousButton,
-  platform: metadata.platform,
-  platforms: metadata.platforms,
-  notificationKey: metadata.notificationKey,
-  statusCode: metadata.statusCode,
-  statusNumber: metadata.statusNumber,
-  requiredFields: metadata.requiredFields,
-  requires: metadata.requires,
-  setup: metadata.setup,
-  xstateContext: metadata.xstateContext || {},
-  uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }  // ← MOVE HERE!
-},
-transitions: stateTransitions,
-files: {
-  implication: `${projectPath}/${implication.path}`,
-  test: (Array.isArray(metadata.setup) ? metadata.setup[0]?.testFile : metadata.setup?.testFile) || ''
-},
-};
-        
-        console.log('✅ Selected state with full metadata:', state);
-        console.log('✅ Selected state with full metadata:', state);
-console.log('🔍 meta.uiCoverage:', state.meta.uiCoverage);
-console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
-        setSelectedState(state);
-      } else {
-        console.warn('⚠️ Implication not found for:', nodeData.id);
-      }
-    }
+const handleNodeClick = (nodeData) => {
+  setSelectedNodeId(nodeData.id);
+  console.log('🖱️ Node clicked:', nodeData);
+  
+  if (!discoveryResult) {
+    console.warn('⚠️ No discovery result available');
+    return;
+  }
+  
+  // ✅ Try multiple ways to find the implication (most reliable first)
+  let implication = null;
+  
+  // Method 1: Use className from node metadata (most reliable!)
+  if (nodeData.metadata?.className) {
+    console.log('🔍 Looking up by className:', nodeData.metadata.className);
+    implication = discoveryResult.files.implications.find(
+      imp => imp.metadata.className === nodeData.metadata.className
+    );
+  }
+  
+  // Method 2: Fall back to extractStateName comparison (backward compatibility)
+  if (!implication) {
+    console.log('🔍 Fallback: Looking up by extracted name:', nodeData.id);
+    implication = discoveryResult.files.implications.find(
+      imp => extractStateName(imp.metadata.className) === nodeData.id
+    );
+  }
+  
+  // Method 3: Last resort - try matching xstateConfig.id
+  if (!implication) {
+    console.log('🔍 Last resort: Looking up by xstateConfig.id:', nodeData.id);
+    implication = discoveryResult.files.implications.find(
+      imp => imp.metadata.id === nodeData.id
+    );
+  }
+  
+  if (!implication) {
+    console.error('❌ Implication not found for:', nodeData.id);
+    console.error('   Tried className:', nodeData.metadata?.className);
+    console.error('   Available implications:', 
+      discoveryResult.files.implications.map(i => i.metadata.className)
+    );
+    alert(`Could not find implication for "${nodeData.id}"`);
+    return;
+  }
+  
+  console.log('✅ Found implication:', implication.metadata.className);
+  
+  const metadata = implication.metadata;
+  
+  // Check for xstateConfig
+  if (!metadata.hasXStateConfig) {
+    console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
+    alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
+    return;
+  }
+  
+  console.log('🔍 Modal data for', nodeData.id, ':', {
+    statusCode: metadata.statusCode,
+    statusNumber: metadata.statusNumber,
+    triggerButton: metadata.triggerButton
+  });
+  
+  // Extract transitions for this state
+  const stateTransitions = (discoveryResult.transitions || [])
+    .filter(t => {
+      // ✅ Match by className for reliability
+      const fromClassName = t.from;
+      return fromClassName === metadata.className || 
+             extractStateName(fromClassName) === nodeData.id;
+    })
+    .map(t => ({
+      event: t.event,
+      target: t.to
+    }));
+  
+  // Build state object for modal
+  const state = {
+    id: nodeData.id,
+    name: nodeData.id,
+    displayName: metadata.status || nodeData.label,
+    className: metadata.className,  // ✅ Add className for reference
+    meta: {
+      status: metadata.status,
+      triggerAction: metadata.triggerAction,
+      triggerButton: metadata.triggerButton,
+      afterButton: metadata.afterButton,
+      previousButton: metadata.previousButton,
+      platform: metadata.platform,
+      platforms: metadata.platforms,
+      notificationKey: metadata.notificationKey,
+      statusCode: metadata.statusCode,
+      statusNumber: metadata.statusNumber,
+      requiredFields: metadata.requiredFields,
+      requires: metadata.requires,
+      setup: metadata.setup,
+      xstateContext: metadata.xstateContext || {},
+      uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
+    },
+    transitions: stateTransitions,
+    files: {
+      implication: `${projectPath}/${implication.path}`,
+      test: (Array.isArray(metadata.setup) 
+        ? metadata.setup[0]?.testFile 
+        : metadata.setup?.testFile) || ''
+    },
   };
+  
+  console.log('✅ Selected state with full metadata:', state);
+  console.log('🔍 meta.uiCoverage:', state.meta.uiCoverage);
+  console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
+  
+  setSelectedState(state);
+};
 
 
   

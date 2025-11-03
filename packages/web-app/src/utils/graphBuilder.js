@@ -149,7 +149,7 @@ function extractStateName(className) {
   let name = className.replace(/Implications$/i, '');
   
   // Remove "Booking" prefix/suffix
-  name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
+  // name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
   
   // Convert PascalCase to snake_case
   name = name.replace(/([A-Z])/g, (match, p1, offset) => {

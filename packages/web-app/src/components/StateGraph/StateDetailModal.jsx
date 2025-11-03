@@ -545,31 +545,96 @@ const handleUIUpdate = async (uiData, editedScreensSet) => {
           continue;
         }
         
-        // ✅ FILTER: Extract only child overrides (not base elements)
-        const sourceInfo = screenData.sourceInfo || { visible: {}, hidden: {} };
+        // ✅ NEW: Track what changed from the ORIGINAL merged state
+        console.log(`🔍 Processing edited screen: ${screenKey}`);
         
-        const childVisible = (screenData.visible || []).filter(element => 
-          sourceInfo.visible[element]?.category === 'child'
-        );
+        // Get the original merged state (what the screen looked like when edit mode started)
+        const originalScreen = (
+  state.uiCoverage?.platforms?.[platformName]?.screens?.[screenName]?.[0] ||
+  state.meta?.uiCoverage?.platforms?.[platformName]?.screens?.[screenName]?.[0]
+);
+
+console.log('📋 Found original screen:', originalScreen);
         
-        const childHidden = (screenData.hidden || []).filter(element =>
-          sourceInfo.hidden[element]?.category === 'child'
-        );
-        
-        // ✅ INCLUDE: Even if empty (user removed all child overrides)
-        filteredUI[platformName].screens[screenName] = {
-          screenName: screenName,
-          description: screenData.description,
-          visible: childVisible,
-          hidden: childHidden,
-          checks: screenData.checks || { visible: [], hidden: [], text: {} }
-        };
-        
-        console.log(`✅ Including edited screen ${screenKey}:`, {
-          visible: childVisible,
-          hidden: childHidden,
-          wasEmptied: childVisible.length === 0 && childHidden.length === 0
+        console.log('   Original screen:', {
+          visible: originalScreen?.visible || [],
+          hidden: originalScreen?.hidden || []
         });
+        
+        // What's in the CURRENT edited screen
+        const currentVisible = screenData.visible || [];
+        const currentHidden = screenData.hidden || [];
+        
+        console.log('   Current screen:', {
+          visible: currentVisible,
+          hidden: currentHidden
+        });
+        
+        // What was in the ORIGINAL
+        const originalVisible = originalScreen?.visible || [];
+        const originalHidden = originalScreen?.hidden || [];
+        
+        // Find ADDITIONS (elements that are new)
+        const addedVisible = currentVisible.filter(el => !originalVisible.includes(el));
+        const addedHidden = currentHidden.filter(el => !originalHidden.includes(el));
+        
+        // Find REMOVALS (elements that were removed)
+        const removedVisible = originalVisible.filter(el => !currentVisible.includes(el));
+        const removedHidden = originalHidden.filter(el => !currentHidden.includes(el));
+        
+        console.log('   Changes detected:', {
+          addedVisible,
+          addedHidden,
+          removedVisible,
+          removedHidden
+        });
+        
+       // Build the child override object
+const childOverride = {
+  screenName: screenName,
+  description: screenData.description
+};
+
+// Calculate what should be in visible override
+// (new elements that weren't in original visible)
+const visibleOverride = addedVisible;
+
+// Calculate what should be in hidden override
+// (elements currently hidden that were originally visible = moved to hidden)
+const hiddenOverride = currentHidden.filter(el => originalVisible.includes(el));
+
+console.log('   🎯 Override calculation:', {
+  visibleOverride,
+  hiddenOverride,
+  reasoning: {
+    visible: 'Elements added to visible that were not originally visible',
+    hidden: 'Elements currently hidden that were originally visible (moved from visible to hidden)'
+  }
+});
+
+// Only include arrays that have content
+if (visibleOverride.length > 0) {
+  childOverride.visible = visibleOverride;
+  console.log('   ✅ Adding visible override:', visibleOverride);
+}
+
+if (hiddenOverride.length > 0) {
+  childOverride.hidden = hiddenOverride;
+  console.log('   ✅ Adding hidden override:', hiddenOverride);
+}
+
+// Always include checks (even if empty, to maintain structure)
+childOverride.checks = screenData.checks || { visible: [], hidden: [], text: {} };
+
+// If there are NO changes at all, skip this screen entirely
+if (visibleOverride.length === 0 && hiddenOverride.length === 0) {
+  console.log(`⏭️ Skipping ${screenKey} - no actual changes made`);
+  continue;
+}
+        
+        filteredUI[platformName].screens[screenName] = childOverride;
+        
+        console.log(`✅ Including edited screen ${screenKey}:`, childOverride);
       }
     }
     

@@ -1028,7 +1028,7 @@ function CustomBuildMode({
         />
       </FormGroup>
 
-      {/* Trigger Button */}
+      {/* Trigger Button
       <FormGroup label="Trigger Button" helper="Button text in UPPERCASE" theme={theme}>
         <input
           type="text"
@@ -1044,7 +1044,7 @@ function CustomBuildMode({
             width: '100%'
           }}
         />
-      </FormGroup>
+      </FormGroup> */}
 
       {/* Advanced Options Toggle */}
       <button

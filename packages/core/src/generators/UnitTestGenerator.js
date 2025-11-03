@@ -297,14 +297,22 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     transitions = xstateConfig.on || {};
     previousStatus = meta.requires?.previousStatus;
   }
+
+
   
 const actionDetails = this._extractActionDetailsFromTransition(
   xstateConfig,
   stateName || status,
   platform,
-  previousStatus || meta.requires?.previousStatus,  // ← ADD THIS
-  implFilePath  // ← ADD THIS (you need to pass this to _extractMetadata)
+  previousStatus || meta.requires?.previousStatus,
+  implFilePath
 );
+
+  console.log(`\n🐛 DEBUG actionDetails extraction:`);
+console.log(`   targetState: ${stateName || status}`);
+console.log(`   previousStatus: ${previousStatus || meta.requires?.previousStatus}`);
+console.log(`   implFilePath: ${implFilePath}`);
+console.log(`   actionDetails found: ${!!actionDetails}`);
   
   const metadata = {
     // Class info
@@ -397,18 +405,7 @@ const actionDetails = this._extractActionDetailsFromTransition(
     return previousStates[0] || null;
   }
 
-  /**
- * Extract actionDetails from the transition that leads to this state
- * 
- * Looks through all states for transitions TO the target state,
- * and extracts actionDetails from those transitions.
- * 
- * @param {object} xstateConfig - Full xstate configuration
- * @param {string} targetStateName - Target state we're generating for
- * @param {string} platform - Platform (web, mobile, etc.)
- * @returns {object|null} actionDetails or null
- */
-/**
+ /**
  * Extract actionDetails from the transition that leads to this state
  * 
  * Looks through all states for transitions TO the target state,
@@ -423,108 +420,181 @@ const actionDetails = this._extractActionDetailsFromTransition(
  * @returns {object|null} actionDetails or null
  */
 _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, previousStatus = null, implFilePath = null) {
-  console.log(`   🔍 Looking for actionDetails in transitions TO "${targetStateName}"`);
+  console.log(`\n🔍 === EXTRACTING ACTION DETAILS ===`);
+  console.log(`   Target State: "${targetStateName}"`);
+  console.log(`   Previous Status: "${previousStatus || 'none'}"`);
+  console.log(`   Impl File: ${implFilePath || 'none'}`);
+  console.log(`   Has xstateConfig: ${!!xstateConfig}`);
+  console.log(`   Has xstateConfig.on: ${!!xstateConfig?.on}`);
+  console.log(`   Has xstateConfig.states: ${!!xstateConfig?.states}`);
   
   let foundActionDetails = null;
   
-  // For multi-state machines, look through all states for transitions TO target
-  if (xstateConfig.states) {
+  // ✅ STEP 1: Check top-level transitions first (single-state machines)
+  if (xstateConfig.on) {
+    console.log(`\n📋 STEP 1: Checking top-level transitions...`);
+    console.log(`   Transitions found: ${Object.keys(xstateConfig.on).join(', ')}`);
+    
+    for (const [eventName, transitionConfig] of Object.entries(xstateConfig.on)) {
+      console.log(`\n   🔍 Checking event: ${eventName}`);
+      console.log(`      Type: ${typeof transitionConfig}`);
+      
+      let target, actionDetails;
+      
+      if (typeof transitionConfig === 'string') {
+        target = transitionConfig;
+        console.log(`      String target: ${target}`);
+      } else if (typeof transitionConfig === 'object') {
+        target = transitionConfig.target;
+        actionDetails = transitionConfig.actionDetails;
+        console.log(`      Object target: ${target}`);
+        console.log(`      Has actionDetails: ${!!actionDetails}`);
+        if (actionDetails) {
+          console.log(`      ActionDetails imports: ${actionDetails.imports?.length || 0}`);
+          console.log(`      ActionDetails steps: ${actionDetails.steps?.length || 0}`);
+        }
+      }
+      
+      const cleanTarget = target?.replace(/^#/, '');
+      console.log(`      Clean target: ${cleanTarget}`);
+      console.log(`      Matches target? ${cleanTarget === targetStateName}`);
+      
+      if (cleanTarget === targetStateName && actionDetails) {
+        console.log(`\n   ✅ FOUND actionDetails in top-level ${eventName} → ${targetStateName}`);
+        return actionDetails;
+      }
+    }
+    
+    console.log(`   ❌ No actionDetails found in top-level transitions`);
+  } else {
+    console.log(`\n⏭️  STEP 1 SKIPPED: No top-level transitions`);
+  }
+  
+  // ✅ STEP 2: Check nested states (multi-state machines)
+  if (!foundActionDetails && xstateConfig.states) {
+    console.log(`\n📋 STEP 2: Checking nested state transitions...`);
+    console.log(`   States: ${Object.keys(xstateConfig.states).join(', ')}`);
+    
     for (const [sourceStateName, sourceStateConfig] of Object.entries(xstateConfig.states)) {
       const transitions = sourceStateConfig.on || {};
       
+      if (Object.keys(transitions).length === 0) {
+        continue;
+      }
+      
+      console.log(`\n   🔍 Checking state: ${sourceStateName}`);
+      console.log(`      Transitions: ${Object.keys(transitions).join(', ')}`);
+      
       for (const [eventName, transitionConfig] of Object.entries(transitions)) {
-        // Handle both string and object format
         let target, actionDetails;
         
         if (typeof transitionConfig === 'string') {
           target = transitionConfig;
-          actionDetails = null;
         } else if (typeof transitionConfig === 'object') {
           target = transitionConfig.target;
           actionDetails = transitionConfig.actionDetails;
         }
         
-        // Remove leading # from target
         const cleanTarget = target?.replace(/^#/, '');
         
-        // Does this transition lead to our target state?
+        console.log(`      Event: ${eventName} → ${cleanTarget}`);
+        console.log(`      Has actionDetails: ${!!actionDetails}`);
+        
         if (cleanTarget === targetStateName && actionDetails) {
-          console.log(`   ✨ Found actionDetails in transition: ${sourceStateName} --${eventName}--> ${targetStateName}`);
+          console.log(`\n   ✅ FOUND actionDetails: ${sourceStateName} --${eventName}--> ${targetStateName}`);
           return actionDetails;
         }
       }
     }
-  }
-  
-  // For single-state machines, check root-level transitions
-  if (xstateConfig.on && !xstateConfig.states) {
-    for (const [eventName, transitionConfig] of Object.entries(xstateConfig.on)) {
-      let target, actionDetails;
-      
-      if (typeof transitionConfig === 'string') {
-        target = transitionConfig;
-        actionDetails = null;
-      } else if (typeof transitionConfig === 'object') {
-        target = transitionConfig.target;
-        actionDetails = transitionConfig.actionDetails;
-      }
-      
-      const cleanTarget = target?.replace(/^#/, '');
-      
-      if (cleanTarget === targetStateName && actionDetails) {
-        console.log(`   ✨ Found actionDetails in root transition: --${eventName}--> ${targetStateName}`);
-        return actionDetails;
-      }
-    }
+    
+    console.log(`   ❌ No actionDetails found in nested transitions`);
+  } else if (!foundActionDetails) {
+    console.log(`\n⏭️  STEP 2 SKIPPED: No nested states`);
   }
 
-  // If not found and we have previousStatus, look in previous state's file
+  // ✅ STEP 3: Check previous state's file
   if (!foundActionDetails && previousStatus && implFilePath) {
-    console.log(`   🔍 Checking previous state: ${previousStatus}`);
+    console.log(`\n📂 STEP 3: Checking previous state file...`);
+    console.log(`   Previous Status: ${previousStatus}`);
+    console.log(`   Current File: ${implFilePath}`);
     
     try {
-      // Find the previous state's Implication file
       const previousImplFile = this._findImplicationFile(previousStatus, implFilePath);
       
+      console.log(`   Previous File Result: ${previousImplFile || 'NOT FOUND'}`);
+      
       if (previousImplFile) {
-        console.log(`   📂 Loading previous state file: ${previousImplFile}`);
+        console.log(`\n   📂 Loading previous state file...`);
+        
+        // Clear cache to get fresh version
+        const require = createRequire(import.meta.url);
+        delete require.cache[require.resolve(previousImplFile)];
+        
         const PreviousImplClass = require(previousImplFile);
         const prevXstateConfig = PreviousImplClass.xstateConfig;
         
-        // Check transitions in previous state
-        const transitions = prevXstateConfig.on || {};
+        console.log(`   ✅ Loaded: ${PreviousImplClass.name}`);
+        console.log(`   Has xstateConfig: ${!!prevXstateConfig}`);
+        console.log(`   Has xstateConfig.on: ${!!prevXstateConfig?.on}`);
         
-        for (const [eventName, transitionConfig] of Object.entries(transitions)) {
-          let target, actionDetails;
+        if (prevXstateConfig?.on) {
+          const transitions = prevXstateConfig.on;
+          console.log(`   Transitions: ${Object.keys(transitions).join(', ')}`);
           
-          if (typeof transitionConfig === 'string') {
-            target = transitionConfig;
-          } else if (typeof transitionConfig === 'object') {
-            target = transitionConfig.target;
-            actionDetails = transitionConfig.actionDetails;
+          for (const [eventName, transitionConfig] of Object.entries(transitions)) {
+            console.log(`\n   🔍 Checking event: ${eventName}`);
+            
+            let target, actionDetails;
+            
+            if (typeof transitionConfig === 'string') {
+              target = transitionConfig;
+              console.log(`      String target: ${target}`);
+            } else if (typeof transitionConfig === 'object') {
+              target = transitionConfig.target;
+              actionDetails = transitionConfig.actionDetails;
+              console.log(`      Object target: ${target}`);
+              console.log(`      Has actionDetails: ${!!actionDetails}`);
+              if (actionDetails) {
+                console.log(`      ActionDetails imports: ${actionDetails.imports?.length || 0}`);
+                console.log(`      ActionDetails steps: ${actionDetails.steps?.length || 0}`);
+              }
+            }
+            
+            const cleanTarget = target?.replace(/^#/, '');
+            console.log(`      Clean target: ${cleanTarget}`);
+            console.log(`      Matches target? ${cleanTarget === targetStateName}`);
+            
+            if (cleanTarget === targetStateName && actionDetails) {
+              console.log(`\n   ✅ FOUND actionDetails in previous state: ${previousStatus} --${eventName}--> ${targetStateName}`);
+              return actionDetails;
+            }
           }
           
-          const cleanTarget = target?.replace(/^#/, '');
-          
-          if (cleanTarget === targetStateName && actionDetails) {
-            console.log(`   ✨ Found actionDetails in previous state: ${previousStatus} --${eventName}--> ${targetStateName}`);
-            return actionDetails;
-          }
+          console.log(`   ❌ No matching transition found in previous state`);
+        } else {
+          console.log(`   ❌ Previous state has no transitions`);
         }
+      } else {
+        console.log(`   ❌ Could not find previous state file`);
       }
     } catch (error) {
-      console.log(`   ⚠️  Could not load previous state file: ${error.message}`);
+      console.log(`   ❌ Error loading previous state: ${error.message}`);
+      console.log(`   Stack: ${error.stack}`);
     }
+  } else {
+    console.log(`\n⏭️  STEP 3 SKIPPED:`);
+    if (!previousStatus) console.log(`   - No previousStatus`);
+    if (!implFilePath) console.log(`   - No implFilePath`);
   }
   
-  // Fallback: check meta.actionDetails (for backward compatibility)
+  // ✅ STEP 4: Fallback to meta.actionDetails
   const meta = xstateConfig.states?.[targetStateName]?.meta || xstateConfig.meta || {};
   if (meta.actionDetails) {
-    console.log(`   📝 Using actionDetails from meta (fallback)`);
+    console.log(`\n📝 STEP 4: Using actionDetails from meta (fallback)`);
     return meta.actionDetails;
   }
   
-  console.log(`   ⚠️  No actionDetails found`);
+  console.log(`\n❌ === NO ACTION DETAILS FOUND ===\n`);
   return null;
 }
 

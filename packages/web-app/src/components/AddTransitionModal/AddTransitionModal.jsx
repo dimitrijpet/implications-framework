@@ -1,5 +1,5 @@
 // packages/web-app/src/components/AddTransitionModal/AddTransitionModal.jsx
-// ✨ ENHANCED VERSION with POM Discovery, Method Dropdowns, Constructor Auto-Fill
+// ✨ ENHANCED VERSION with POM Discovery, Method Dropdowns, Smart Args Parsing
 
 import { useState, useEffect } from 'react';
 import { defaultTheme } from '../../config/visualizerTheme';
@@ -12,7 +12,7 @@ export default function AddTransitionModal({
   onSubmit, 
   sourceState, 
   targetState,
-  projectPath  // ✨ NEW: Added projectPath prop
+  projectPath
 }) {
   const [formData, setFormData] = useState({
     event: '',
@@ -25,57 +25,52 @@ export default function AddTransitionModal({
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
-  // ✨ NEW: POM Discovery State
+  // POM Discovery State
   const [availablePOMs, setAvailablePOMs] = useState([]);
   const [loadingPOMs, setLoadingPOMs] = useState(false);
-  const [pomDetails, setPomDetails] = useState({}); // Cache POM details
+  const [pomDetails, setPomDetails] = useState({});
 
-  // ✨ NEW: Fetch available POMs when modal opens
+  // Fetch available POMs when modal opens
   useEffect(() => {
     if (isOpen && projectPath) {
       fetchAvailablePOMs();
     }
   }, [isOpen, projectPath]);
 
-  // ✨ NEW: Fetch POMs from API
-// ✨ NEW: Fetch POMs from API
-// ✨ FIXED: Fetch POMs from API
-const fetchAvailablePOMs = async () => {
-  setLoadingPOMs(true);
-  try {
-    const response = await fetch(`${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`);
-    if (response.ok) {
-      const data = await response.json();
-      
-      // ✨ Transform API response to match expected format
-      const transformedPOMs = data.poms.map(pom => {
-        // Get first class from classes array
-        const mainClass = pom.classes?.[0];
+  // Fetch POMs from API
+  const fetchAvailablePOMs = async () => {
+    setLoadingPOMs(true);
+    try {
+      const response = await fetch(`${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`);
+      if (response.ok) {
+        const data = await response.json();
         
-        return {
-          className: mainClass?.name || pom.name,
-          file: pom.path,
-          name: pom.name,
-          classes: pom.classes,
-          exports: pom.exports
-        };
-      });
-      
-      console.log('📦 Transformed POMs:', transformedPOMs);
-      setAvailablePOMs(transformedPOMs);
-    } else {
-      console.error('Failed to fetch POMs:', response.status);
+        const transformedPOMs = data.poms.map(pom => {
+          const mainClass = pom.classes?.[0];
+          
+          return {
+            className: mainClass?.name || pom.name,
+            file: pom.path,
+            name: pom.name,
+            classes: pom.classes,
+            exports: pom.exports
+          };
+        });
+        
+        console.log('📦 Transformed POMs:', transformedPOMs);
+        setAvailablePOMs(transformedPOMs);
+      } else {
+        console.error('Failed to fetch POMs:', response.status);
+      }
+    } catch (error) {
+      console.error('Error fetching POMs:', error);
+    } finally {
+      setLoadingPOMs(false);
     }
-  } catch (error) {
-    console.error('Error fetching POMs:', error);
-  } finally {
-    setLoadingPOMs(false);
-  }
-};
+  };
 
-  // ✨ NEW: Fetch POM details (instances, methods, constructor)
+  // Fetch POM details
   const fetchPOMDetails = async (pomName) => {
-    // Check cache first
     if (pomDetails[pomName]) {
       return pomDetails[pomName];
     }
@@ -86,7 +81,6 @@ const fetchAvailablePOMs = async () => {
         const data = await response.json();
         console.log(`📋 POM Details for ${pomName}:`, data);
         
-        // Cache it
         setPomDetails(prev => ({
           ...prev,
           [pomName]: data
@@ -125,7 +119,6 @@ const fetchAvailablePOMs = async () => {
           varName: '',
           path: '',
           constructor: '',
-          // ✨ NEW: Track selected POM for smart features
           selectedPOM: '',
           availableInstances: [],
           selectedInstance: ''
@@ -134,43 +127,35 @@ const fetchAvailablePOMs = async () => {
     }));
   };
 
-// ✨ ENHANCED: Handle POM selection
-// ✨ ENHANCED: Handle POM selection
-const handlePOMSelect = async (index, pomName) => {
-  console.log(`🔍 Selected POM: ${pomName}`);
-  
-  // Find the selected POM from availablePOMs
-  const selectedPOM = availablePOMs.find(p => p.className === pomName);
-  
-  if (selectedPOM) {
-    // Get the main class
-    const mainClass = selectedPOM.classes?.[0];
+  // Handle POM selection
+  const handlePOMSelect = async (index, pomName) => {
+    console.log(`🔍 Selected POM: ${pomName}`);
     
-    // ✨ Auto-fill constructor template
-    const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
+    const selectedPOM = availablePOMs.find(p => p.className === pomName);
     
-    // ✨ Auto-fill path (use the name field)
-    const pathTemplate = selectedPOM.name || selectedPOM.file.replace(/\\/g, '.').replace(/\.js$/, '');
-    
-    // ✨ Generate variable name (camelCase)
-    const varName = pomName.charAt(0).toLowerCase() + pomName.slice(1);
-    
-    setFormData(prev => ({
-      ...prev,
-      imports: prev.imports.map((imp, i) => 
-        i === index ? {
-          ...imp,
-          selectedPOM: pomName,
-          className: pomName,
-          varName: varName,
-          path: pathTemplate,
-          constructor: constructorTemplate,
-          functions: mainClass?.functions || []
-        } : imp
-      )
-    }));
-  }
-};
+    if (selectedPOM) {
+      const mainClass = selectedPOM.classes?.[0];
+      
+      const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
+      const pathTemplate = selectedPOM.name || selectedPOM.file.replace(/\\/g, '.').replace(/\.js$/, '');
+      const varName = pomName.charAt(0).toLowerCase() + pomName.slice(1);
+      
+      setFormData(prev => ({
+        ...prev,
+        imports: prev.imports.map((imp, i) => 
+          i === index ? {
+            ...imp,
+            selectedPOM: pomName,
+            className: pomName,
+            varName: varName,
+            path: pathTemplate,
+            constructor: constructorTemplate,
+            functions: mainClass?.functions || []
+          } : imp
+        )
+      }));
+    }
+  };
 
   // Update import field
   const handleImportChange = (index, field, value) => {
@@ -201,20 +186,17 @@ const handlePOMSelect = async (index, pomName) => {
           instance: '',
           method: '',
           args: [],
-          // ✨ NEW: Track available methods for dropdown
           availableMethods: []
         }
       ]
     }));
   };
 
-  // ✨ NEW: Handle instance selection for step
+  // Handle instance selection for step
   const handleStepInstanceSelect = (stepIndex, instanceVarName) => {
-    // Find the import that matches this instance
     const matchingImport = formData.imports.find(imp => imp.varName === instanceVarName);
     
     if (matchingImport) {
-      // Get available methods from the selected POM
       const availableMethods = matchingImport.functions || [];
       
       setFormData(prev => ({
@@ -224,7 +206,7 @@ const handlePOMSelect = async (index, pomName) => {
             ...step,
             instance: instanceVarName,
             availableMethods: availableMethods,
-            method: '', // Clear method when instance changes
+            method: '',
             args: []
           } : step
         )
@@ -232,10 +214,8 @@ const handlePOMSelect = async (index, pomName) => {
     }
   };
 
-  // ✨ NEW: Handle method selection with signature
+  // Handle method selection with signature
   const handleStepMethodSelect = (stepIndex, methodSignature) => {
-    // Parse method signature to extract name and params
-    // Example: "performSearch(locations, flightType, noOfPax)"
     const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
     
     if (match) {
@@ -249,11 +229,8 @@ const handlePOMSelect = async (index, pomName) => {
           i === stepIndex ? {
             ...step,
             method: methodName,
-            args: params.map(p => {
-              // ✨ Smart default: Try to match param name to context fields
-              // Example: if param is "locations", suggest "ctx.data.locations"
-              return `ctx.data.${p}`;
-            })
+            signature: methodSignature,
+            args: params.map(p => `ctx.data.${p}`)
           } : step
         )
       }));
@@ -270,9 +247,23 @@ const handlePOMSelect = async (index, pomName) => {
     }));
   };
 
-  // Update step args (comma-separated string)
+  // ✅ SMART: Update step args with assignment detection
   const handleStepArgsChange = (index, value) => {
-    const argsArray = value.split(',').map(arg => arg.trim()).filter(arg => arg);
+    const argsArray = value.split(',').map(arg => {
+      arg = arg.trim();
+      
+      // Detect assignment operator (common mistake)
+      if (arg.includes(' = ')) {
+        const [varPath, defaultValue] = arg.split(' = ').map(s => s.trim());
+        
+        // Convert: "ctx.data.field = 0" → "ctx.data.field || 0"
+        console.warn(`⚠️ Auto-fixing: "${arg}" → "${varPath} || ${defaultValue}"`);
+        return `${varPath} || ${defaultValue}`;
+      }
+      
+      return arg;
+    }).filter(arg => arg);
+    
     setFormData(prev => ({
       ...prev,
       steps: prev.steps.map((step, i) => 
@@ -304,7 +295,6 @@ const handlePOMSelect = async (index, pomName) => {
         newErrors.description = 'Description is required when adding action details';
       }
 
-      // Validate imports
       formData.imports.forEach((imp, index) => {
         if (!imp.className.trim()) {
           newErrors[`import_${index}_className`] = 'Class name is required';
@@ -320,7 +310,6 @@ const handlePOMSelect = async (index, pomName) => {
         }
       });
 
-      // Validate steps
       formData.steps.forEach((step, index) => {
         if (!step.description.trim()) {
           newErrors[`step_${index}_description`] = 'Step description is required';
@@ -349,7 +338,6 @@ const handlePOMSelect = async (index, pomName) => {
     setLoading(true);
 
     try {
-      // Build submission data
       const submitData = {
         event: formData.event.trim(),
         actionDetails: formData.hasActionDetails ? {
@@ -567,31 +555,31 @@ const handlePOMSelect = async (index, pomName) => {
                       </button>
                     </div>
 
-                    {/* ✨ NEW: POM Dropdown */}
-                   <div>
-  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-    Select POM (Screen Object) *
-  </label>
-  <select
-  value={imp.selectedPOM || ''}
-  onChange={(e) => handlePOMSelect(index, e.target.value)}
-  className="w-full px-3 py-2 rounded text-sm"
-  style={{
-    backgroundColor: defaultTheme.colors.background.tertiary,
-    color: defaultTheme.colors.text.primary,
-    border: `1px solid ${defaultTheme.colors.border}`
-  }}
->
-  <option value="">-- Select a POM --</option>
-  {availablePOMs.map((pom, idx) => (
-    <option key={idx} value={pom.className}>
-      {pom.className} ({pom.name})
-    </option>
-  ))}
-</select>
-</div>
+                    {/* POM Dropdown */}
+                    <div>
+                      <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                        Select POM (Screen Object) *
+                      </label>
+                      <select
+                        value={imp.selectedPOM || ''}
+                        onChange={(e) => handlePOMSelect(index, e.target.value)}
+                        className="w-full px-3 py-2 rounded text-sm"
+                        style={{
+                          backgroundColor: defaultTheme.colors.background.tertiary,
+                          color: defaultTheme.colors.text.primary,
+                          border: `1px solid ${defaultTheme.colors.border}`
+                        }}
+                      >
+                        <option value="">-- Select a POM --</option>
+                        {availablePOMs.map((pom, idx) => (
+                          <option key={idx} value={pom.className}>
+                            {pom.className} ({pom.name})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                    {/* Show auto-filled fields */}
+                    {/* Auto-filled fields */}
                     {imp.selectedPOM && (
                       <>
                         <div className="grid grid-cols-2 gap-3">
@@ -664,7 +652,7 @@ const handlePOMSelect = async (index, pomName) => {
                           </div>
                         </div>
 
-                        {/* ✨ Show available methods count */}
+                        {/* Show available methods count */}
                         {imp.functions && imp.functions.length > 0 && (
                           <p className="text-xs" style={{ color: defaultTheme.colors.accents.green }}>
                             ✓ Found {imp.functions.length} methods in this POM
@@ -704,15 +692,17 @@ const handlePOMSelect = async (index, pomName) => {
                   </button>
                 </div>
 
+                {/* Steps List */}
                 {formData.steps.map((step, index) => (
                   <div 
                     key={index}
-                    className="p-3 rounded-lg mb-3 space-y-2"
+                    className="p-3 rounded mb-3"
                     style={{ 
                       backgroundColor: defaultTheme.colors.background.secondary,
                       border: `1px solid ${defaultTheme.colors.border}`
                     }}
                   >
+                    {/* Step Header */}
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-semibold" style={{ color: defaultTheme.colors.text.secondary }}>
                         Step #{index + 1}
@@ -720,14 +710,18 @@ const handlePOMSelect = async (index, pomName) => {
                       <button
                         type="button"
                         onClick={() => handleRemoveStep(index)}
-                        className="text-sm px-2 py-1 rounded"
-                        style={{ color: defaultTheme.colors.accents.red }}
+                        className="px-2 py-1 rounded text-xs"
+                        style={{
+                          backgroundColor: defaultTheme.colors.accents.red + '20',
+                          color: defaultTheme.colors.accents.red
+                        }}
                       >
                         Remove
                       </button>
                     </div>
 
-                    <div>
+                    {/* Description */}
+                    <div className="mb-2">
                       <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
                         Description *
                       </label>
@@ -735,7 +729,7 @@ const handlePOMSelect = async (index, pomName) => {
                         type="text"
                         value={step.description}
                         onChange={(e) => handleStepChange(index, 'description', e.target.value)}
-                        placeholder="Open agency selector"
+                        placeholder="e.g., Fill search form"
                         className="w-full px-3 py-1 rounded text-sm"
                         style={{
                           backgroundColor: defaultTheme.colors.background.tertiary,
@@ -745,82 +739,98 @@ const handlePOMSelect = async (index, pomName) => {
                       />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
-                      {/* ✨ NEW: Instance Dropdown */}
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Instance * (from imports)
-                        </label>
-                        <select
-                          value={step.instance}
-                          onChange={(e) => handleStepInstanceSelect(index, e.target.value)}
-                          className="w-full px-3 py-1 rounded text-sm font-mono"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`step_${index}_instance`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-                          }}
-                        >
-                          <option value="">-- Select --</option>
-                          {formData.imports.map((imp, i) => (
-                            <option key={i} value={imp.varName}>
-                              {imp.varName} ({imp.className})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* ✨ NEW: Method Dropdown with Signatures */}
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Method * (with signature)
-                        </label>
-                        <select
-                          value={step.method ? `${step.method}(${step.args.join(', ')})` : ''}
-                          onChange={(e) => handleStepMethodSelect(index, e.target.value)}
-                          disabled={!step.instance}
-                          className="w-full px-3 py-1 rounded text-sm font-mono"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
-                            opacity: !step.instance ? 0.5 : 1
-                          }}
-                        >
-                          <option value="">-- Select method --</option>
-                          {step.availableMethods && step.availableMethods.map((method, i) => (
-                            <option key={i} value={method.signature}>
-                              {method.signature}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                          Args (comma-separated)
-                        </label>
-                        <input
-                          type="text"
-                          value={step.args.join(', ')}
-                          onChange={(e) => handleStepArgsChange(index, e.target.value)}
-                          placeholder="ctx.data.agencyName"
-                          className="w-full px-3 py-1 rounded text-sm font-mono"
-                          style={{
-                            backgroundColor: defaultTheme.colors.background.tertiary,
-                            color: defaultTheme.colors.text.primary,
-                            border: `1px solid ${defaultTheme.colors.border}`
-                          }}
-                        />
-                      </div>
+                    {/* Instance */}
+                    <div className="mb-2">
+                      <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                        Instance *
+                      </label>
+                      <select
+                        value={step.instance}
+                        onChange={(e) => handleStepInstanceSelect(index, e.target.value)}
+                        className="w-full px-3 py-1 rounded text-sm"
+                        style={{
+                          backgroundColor: defaultTheme.colors.background.tertiary,
+                          color: defaultTheme.colors.text.primary,
+                          border: `1px solid ${errors[`step_${index}_instance`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+                        }}
+                      >
+                        <option value="">-- Select instance --</option>
+                        {formData.imports.map((imp, i) => (
+                          <option key={i} value={imp.varName}>
+                            {imp.varName} ({imp.className})
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    {/* ✨ Show parameter hints */}
-                    {step.method && step.args.length > 0 && (
-                      <p className="text-xs mt-1" style={{ color: defaultTheme.colors.text.secondary }}>
-                        💡 Tip: Use ctx.data.fieldName to access context fields
-                      </p>
-                    )}
+                    {/* Method with Signature */}
+                    <div className="mb-2">
+                      <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                        Method * (with signature)
+                      </label>
+                      <select
+                        value={step.signature || ''}
+                        onChange={(e) => handleStepMethodSelect(index, e.target.value)}
+                        disabled={!step.instance}
+                        className="w-full px-3 py-1 rounded text-sm font-mono"
+                        style={{
+                          backgroundColor: defaultTheme.colors.background.tertiary,
+                          color: defaultTheme.colors.text.primary,
+                          border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
+                          opacity: !step.instance ? 0.5 : 1
+                        }}
+                      >
+                        <option value="">-- Select method --</option>
+                        {step.availableMethods && step.availableMethods.map((method, i) => (
+                          <option key={i} value={method.signature}>
+                            {method.signature}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* ✅ Args Input with Smart Validation */}
+                    <div>
+                      <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                        Arguments (comma-separated)
+                      </label>
+                      <input
+                        type="text"
+                        value={step.args.join(', ')}
+                        onChange={(e) => handleStepArgsChange(index, e.target.value)}
+                        placeholder="ctx.data.field1, ctx.data.field2 || defaultValue"
+                        className="w-full px-3 py-1 rounded text-sm font-mono"
+                        style={{
+                          backgroundColor: defaultTheme.colors.background.tertiary,
+                          color: defaultTheme.colors.text.primary,
+                          border: `1px solid ${defaultTheme.colors.border}`
+                        }}
+                      />
+                      
+                      {/* Helper Text */}
+                      <div className="text-xs mt-1" style={{ color: defaultTheme.colors.text.tertiary }}>
+                        💡 Use <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>||</code> for defaults, not <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>=</code>. 
+                        Example: <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>ctx.data.count || 0</code>
+                      </div>
+                      
+                      {/* Live Warning */}
+                      {step.args.some(arg => arg.includes(' = ')) && (
+                        <div 
+                          className="text-xs mt-2 px-2 py-1 rounded flex items-center gap-2"
+                          style={{ 
+                            backgroundColor: defaultTheme.colors.accents.yellow + '20',
+                            color: defaultTheme.colors.accents.yellow,
+                            border: `1px solid ${defaultTheme.colors.accents.yellow}`
+                          }}
+                        >
+                          <span>⚠️</span>
+                          <span>
+                            Detected <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.accents.yellow + '30' }}>=</code> operator. 
+                            Args will be auto-converted to use <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.accents.yellow + '30' }}>||</code> instead.
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
 

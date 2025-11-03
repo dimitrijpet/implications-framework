@@ -1316,31 +1316,39 @@ function mergeScreenData(baseData, overrides, options = {}) {
   // ============================================
   // MERGE HIDDEN ELEMENTS
   // ============================================
-  const combinedHidden = [];
-  
-  // From base: sometimesVisible → hidden (if not in visible)
   (baseData.sometimesVisible || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-      sourceInfo.hidden[element] = {
-        source: baseClassName,
-        type: 'sometimesVisible',
-        category: 'base'
-      };
-    }
-  });
+  // Skip if child explicitly hid this element
+  if ((overrides.hidden || []).includes(element)) {
+    return; // Will be added to hidden later
+  }
   
-  // From base: hidden → hidden
-  (baseData.hidden || []).forEach(element => {
-    if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
-      combinedHidden.push(element);
-      sourceInfo.hidden[element] = {
-        source: baseClassName,
-        type: 'hidden',
-        category: 'base'
-      };
-    }
-  });
+  // Add to visible
+  if (!combinedVisible.includes(element)) {
+    combinedVisible.push(element);
+    sourceInfo.visible[element] = {
+      source: baseClassName,
+      type: 'sometimesVisible',
+      category: 'base'
+    };
+  }
+});
+
+// ============================================
+// MERGE HIDDEN ELEMENTS
+// ============================================
+const combinedHidden = [];
+
+// From base: hidden → hidden
+(baseData.hidden || []).forEach(element => {
+  if (!combinedVisible.includes(element) && !combinedHidden.includes(element)) {
+    combinedHidden.push(element);
+    sourceInfo.hidden[element] = {
+      source: baseClassName,
+      type: 'hidden',
+      category: 'base'
+    };
+  }
+});
   
   // From child: sometimesVisible → hidden (if not in visible)
   (overrides.sometimesVisible || []).forEach(element => {

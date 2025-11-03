@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import nodePath from 'path';
 import fs from 'fs-extra';
 import * as parser from '@babel/parser';
 import { parse } from '@babel/parser';
@@ -2029,9 +2030,92 @@ traverse(sourceAst, {
     await fs.copy(sourceFile, backupPath);
     
     // Write updated file
-    await fs.writeFile(sourceFile, newCode, 'utf-8');
-    
-    console.log('✅ Transition added successfully');
+  console.log('📝 Updating target file with prerequisite...');
+  await fs.writeFile(sourceFile, newCode, 'utf-8');
+console.log('✅ Source file updated');
+
+// Parse target file AST (already loaded above)
+let targetUpdated = false;
+
+traverse(targetAst, {
+  ClassProperty(path) {
+    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+      const configValue = path.node.value;
+      
+      if (configValue?.type === 'ObjectExpression') {
+        // Find or create meta property
+        let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        
+        if (!metaProperty) {
+          // Create meta if doesn't exist
+          metaProperty = {
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'meta' },
+            value: { type: 'ObjectExpression', properties: [] }
+          };
+          configValue.properties.unshift(metaProperty); // Add at start
+        }
+        
+        // Find or create requires property in meta
+        let requiresProperty = metaProperty.value.properties.find(p => p.key?.name === 'requires');
+        
+        if (!requiresProperty) {
+          // Create requires if doesn't exist
+          requiresProperty = {
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'requires' },
+            value: { type: 'ObjectExpression', properties: [] }
+          };
+          metaProperty.value.properties.push(requiresProperty);
+        }
+        
+        // Extract source state name from source file
+       const sourceStateName = nodePath.basename(sourceFile, '.js')  // ✅ Use nodePath!
+  .replace(/Implications$/, '')
+          .replace(/([A-Z])/g, '_$1')
+          .toLowerCase()
+          .replace(/^_/, '');
+        
+        // Find or create previousStatus in requires
+        let prevStatusProperty = requiresProperty.value.properties.find(
+          p => p.key?.name === 'previousStatus'
+        );
+        
+        if (!prevStatusProperty) {
+          // Add previousStatus
+          requiresProperty.value.properties.push({
+            type: 'ObjectProperty',
+            key: { type: 'Identifier', name: 'previousStatus' },
+            value: { type: 'StringLiteral', value: sourceStateName }
+          });
+          
+          console.log(`✅ Added requires.previousStatus = '${sourceStateName}'`);
+          targetUpdated = true;
+        } else {
+          console.log(`ℹ️  previousStatus already exists, not overwriting`);
+        }
+      }
+    }
+  }
+});
+
+// Write updated target file if modified
+if (targetUpdated) {
+  const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+    retainLines: true,
+    comments: true
+  });
+  
+  // Create backup of target
+  const targetBackupPath = `${targetFile}.backup-${timestamp}`;
+  await fs.copy(targetFile, targetBackupPath);
+  
+  // Write updated target file
+  await fs.writeFile(targetFile, newTargetCode, 'utf-8');
+  
+  console.log('✅ Target file updated with prerequisite');
+  console.log('📦 Target backup:', targetBackupPath);
+}
     console.log('📦 Backup:', backupPath);
     
     res.json({
