@@ -215,27 +215,32 @@ export default function AddTransitionModal({
   };
 
   // Handle method selection with signature
-  const handleStepMethodSelect = (stepIndex, methodSignature) => {
-    const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
+const handleStepMethodSelect = (stepIndex, methodSignature) => {
+  const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
+  
+  if (match) {
+    const methodName = match[1];
+    const paramsStr = match[2];
+    const params = paramsStr ? paramsStr.split(',').map(p => p.trim()) : [];
     
-    if (match) {
-      const methodName = match[1];
-      const paramsStr = match[2];
-      const params = paramsStr ? paramsStr.split(',').map(p => p.trim()) : [];
-      
-      setFormData(prev => ({
-        ...prev,
-        steps: prev.steps.map((step, i) => 
-          i === stepIndex ? {
-            ...step,
-            method: methodName,
-            signature: methodSignature,
-            args: params.map(p => `ctx.data.${p}`)
-          } : step
-        )
-      }));
-    }
-  };
+    setFormData(prev => ({
+      ...prev,
+      steps: prev.steps.map((step, i) => 
+        i === stepIndex ? {
+          ...step,
+          method: methodName,
+          signature: methodSignature,
+          // ✅ FIX: Strip default values from params!
+          args: params.map(p => {
+            // Remove default value: "param = 0" → "param"
+            const paramName = p.split('=')[0].trim();
+            return `ctx.data.${paramName}`;
+          })
+        } : step
+      )
+    }));
+  }
+};
 
   // Update step field
   const handleStepChange = (index, field, value) => {
