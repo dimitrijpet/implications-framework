@@ -541,22 +541,53 @@ buildPrerequisiteChain(ImplicationClass, currentStatus, targetStatus, visited = 
   return chain;
 }
   
-  findImplicationFile(className) {
-    const searchPaths = [
-      path.join(process.cwd(), 'tests/implications'),
-      path.join(process.cwd(), 'tests/ai-testing/implications'),
-      path.join(__dirname, '..')
-    ];
-    
-    for (const basePath of searchPaths) {
-      const filePath = path.join(basePath, \`\${className}.js\`);
-      if (fs.existsSync(filePath)) {
-        return filePath;
-      }
+findImplicationFile(className) {
+  const searchPaths = [
+    path.join(process.cwd(), 'tests/implications'),
+    path.join(process.cwd(), 'tests/ai-testing/implications'),
+    path.join(__dirname, '..')
+  ];
+  
+  for (const basePath of searchPaths) {
+    // Try direct path first
+    const filePath = path.join(basePath, \`\${className}.js\`);
+    if (fs.existsSync(filePath)) {
+      return filePath;
     }
     
-    return null;
+    // ✅ Search recursively in subdirectories
+    if (fs.existsSync(basePath)) {
+      const files = this.findFilesRecursive(basePath, \`\${className}.js\`);
+      if (files.length > 0) {
+        return files[0];
+      }
+    }
   }
+  
+  return null;
+}
+
+  findFilesRecursive(dir, filename) {
+  const results = [];
+  
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      
+      if (item.isDirectory()) {
+        results.push(...this.findFilesRecursive(fullPath, filename));
+      } else if (item.name === filename) {
+        results.push(fullPath);
+      }
+    }
+  } catch (error) {
+    // Skip directories we can't read
+  }
+  
+  return results;
+}
   
   isReady(chain, currentStatus) {
     const incompleteSteps = chain.filter(step => !step.complete);
@@ -696,13 +727,15 @@ buildPrerequisiteChain(ImplicationClass, currentStatus, targetStatus, visited = 
         });
         
         if (result && result.save) {
-          result.save(testDataPath);
-          console.log('   💾 Prerequisite state saved');
-        }
-        
-        const TestContext = require('./TestContext');
-        const reloadedCtx = TestContext.load(ImplicationClass, testDataPath);
-        Object.assign(testData, reloadedCtx.data);
+  result.save(testDataPath);
+  console.log('   💾 Prerequisite state saved');
+}
+
+const TestContext = require('./TestContext');
+// ✅ Load from DELTA file, not master!
+const deltaPath = TestContext.getDeltaPath(testDataPath);
+const reloadedCtx = TestContext.load(ImplicationClass, deltaPath);
+Object.assign(testData, reloadedCtx.data);
         
         const newAnalysis = planner.analyze(ImplicationClass, reloadedCtx.data);
         
