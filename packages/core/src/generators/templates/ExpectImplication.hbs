@@ -20,7 +20,7 @@ class ExpectImplication {
    * Main validation entry point
    * Validates all screens for a given implication
    */
-  static async validateImplications(screenDef, testData, page) {
+  static async validateImplications(screenDef, testData, screenObject) {
     if (!screenDef || screenDef.length === 0) {
       console.log('   ⚠️  No screen definition to validate');
       return;
@@ -61,7 +61,7 @@ class ExpectImplication {
       console.log(`   ✅ Checking ${def.hidden.length} hidden elements...`);
       for (const elementSelector of def.hidden) {
         try {
-          const element = page.locator(`[data-testid="${elementSelector}"]`);
+            const element = await this.getElement(screenObject, elementSelector);
           const count = await element.count();
           
           if (count === 0) {

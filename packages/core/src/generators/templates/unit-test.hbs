@@ -298,12 +298,11 @@ if (!shouldSkipRegistration) {
         {{#each ../validationScreens}}
         console.log('   🔍 Validating {{screenKey}}...');
         
-        await ExpectImplication.validateImplications(
-          {{../../implClassName}}.mirrorsOn.UI.{{../../platform}}.{{screenKey}},
-          result.data,
-          page
-        );
-        
+       await ExpectImplication.validateImplications(
+  {{../../implClassName}}.mirrorsOn.UI.{{../../platform}}.{{screenKey}},
+  result.data,
+  {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}  // ✅ Pass screen object!
+);
         console.log('   ✅ {{screenKey}} validation passed');
         {{/each}}
         
