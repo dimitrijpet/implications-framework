@@ -236,7 +236,7 @@ async function {{name}}({{params}}) {
 {{/if}}
 
 // ═══════════════════════════════════════════════════════════
-// TEST REGISTRATION - REPLACE LINES 113-169 in unit-test.hbs
+// TEST REGISTRATION
 // ═══════════════════════════════════════════════════════════
 
 const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
@@ -248,7 +248,6 @@ if (!shouldSkipRegistration) {
     
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
-    {{#if hasEntityLogic}}
     test("Process first {{entityName}}", async ({ page }) => {
       // ✅ Load context
       const ctx = TestContext.load({{implClassName}}, testDataPath);
@@ -270,13 +269,12 @@ if (!shouldSkipRegistration) {
         {{#each validationScreens}}
         console.log('   🔍 Validating {{screenKey}}...');
         
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
         
         await ExpectImplication.validateImplications(
           {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
@@ -313,13 +311,12 @@ const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.dat
         {{#each validationScreens}}
         console.log('   🔍 Validating {{screenKey}}...');
         
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
         
         await ExpectImplication.validateImplications(
           {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
@@ -334,47 +331,6 @@ const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.dat
       result.save(testDataPath);
       console.log('   💾 State saved to:', testDataPath);
     });
-    {{else}}
-    test("Execute {{targetStatus}} transition", async ({ page }) => {
-      // ✅ Load context
-      const ctx = TestContext.load({{implClassName}}, testDataPath);
-      
-      // ✅ AUTO-EXECUTE prerequisites if needed
-      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
-        page, 
-        testDataPath 
-      });
-      
-      // ✅ Call function (handles navigation internally)
-      const result = await {{actionName}}(testDataPath, { page });
-      
-      {{#if hasUIValidation}}
-      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
-        {{#each validationScreens}}
-        console.log('   🔍 Validating {{screenKey}}...');
-        
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
-        
-        await ExpectImplication.validateImplications(
-          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
-          result.data,
-          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
-        );
-        console.log('   ✅ {{screenKey}} validation passed');
-        {{/each}}
-      });
-      {{/if}}
-      
-      result.save(testDataPath);
-      console.log('   💾 State saved to:', testDataPath);
-    });
-    {{/if}}
     
   });
   {{else}}

@@ -1055,17 +1055,16 @@ return {
    * Should we generate entity logic (e.g., bookings[0])?
    */
 _shouldGenerateEntityLogic(metadata) {
-  // Heuristic: if entry: assign modifies arrays or has indices
-  
-  // ✅ Safety check added - prevents "Cannot read properties of undefined"
-  if (!metadata || !metadata.entry) {
-    return false;
-  }
+  // ✅ GENERIC - checks for any array operations
+  if (!metadata || !metadata.entry) return false;
   
   const entryStr = metadata.entry?.toString() || '';
-  return entryStr.includes('bookings') || 
-         entryStr.includes('[') ||
-         entryStr.includes('map(');
+  
+  // Check for array operations (any entity type)
+  return entryStr.includes('[') && 
+         (entryStr.includes('map(') || 
+          entryStr.includes('filter(') ||
+          entryStr.includes('forEach('));
 }
 
   /**
@@ -1225,25 +1224,34 @@ _shouldGenerateEntityLogic(metadata) {
    * 
    * NO HARDCODED DOMAIN MAPPINGS!
    */
-  _generateActionName(statusOrMetadata) {
-    // Handle both old API (string) and new API (metadata object)
-    const metadata = typeof statusOrMetadata === 'string' 
-      ? { status: statusOrMetadata }
-      : statusOrMetadata;
-    
-    // 1. Check if explicitly provided
-    if (metadata.actionName) {
-      return metadata.actionName;
-    }
-    
-    // 2. Check in platformSetup (not setup[0])
-    if (metadata.platformSetup?.actionName) {
-      return metadata.platformSetup.actionName;
-    }
-    
-    // 3. Infer from status using generic conventions
-    return this._inferActionName(metadata.status);
+/**
+ * Generate action name (GENERIC - uses metadata or conventions)
+ * 
+ * Priority:
+ * 1. Use metadata.actionName if provided
+ * 2. Check meta.setup[0].actionName
+ * 3. Just convert to camelCase - that's it!
+ */
+_generateActionName(statusOrMetadata) {
+  // Handle both old API (string) and new API (metadata object)
+  const metadata = typeof statusOrMetadata === 'string' 
+    ? { status: statusOrMetadata }
+    : statusOrMetadata;
+  
+  // 1. Check if explicitly provided
+  if (metadata.actionName) {
+    return metadata.actionName;
   }
+  
+  // 2. Check in platformSetup
+  if (metadata.platformSetup?.actionName) {
+    return metadata.platformSetup.actionName;
+  }
+  
+  // 3. Just convert to camelCase - that's it!
+  const status = metadata.status || metadata;
+  return this._toCamelCase(status);
+}
   
   /**
    * Generate file name (GENERIC - uses metadata or conventions)
@@ -1573,39 +1581,111 @@ _extractSuggestedScreens(uiScreens) {
   
   return suggestedScreens;
 }
-/**
- * Calculate relative path from generated test to screen object
- */
 _calculateScreenObjectPath(implFilePath, screenFile) {
   const path = require('path');
+  const fs = require('fs');
   
-  // Example:
-  // implFilePath: /project/tests/implications/bookings/status/AgencySelectedImplications.js
-  // screenFile: searchBar.wrapper
-  // screenObjectsDir: /project/tests/screenObjects/
-  // Generated test: /project/tests/implications/bookings/status/AgencySelect-Web-UNIT.spec.js
-  
+  // Get directory of Implication file (where test will be generated)
   const implDir = path.dirname(implFilePath);
-  const testFile = path.join(implDir, 'AgencySelect-Web-UNIT.spec.js');
   
-  // Try to find screenObjects directory
+  // ✅ STEP 1: Find screenObjects directory by walking up
   let screenObjectsDir = this._findScreenObjectsDir(implFilePath);
   
   if (!screenObjectsDir) {
-    // Fallback: assume it's at tests/screenObjects
-    screenObjectsDir = path.join(path.dirname(implDir), 'screenObjects');
+    // ✅ FALLBACK: Try common patterns
+    const projectRoot = this._findProjectRoot(implFilePath);
+    
+    // Try different possible locations:
+    const possiblePaths = [
+      path.join(projectRoot, 'tests/web/current/screenObjects'),
+      path.join(projectRoot, 'tests/screenObjects'),
+      path.join(projectRoot, 'screenObjects'),
+      path.join(projectRoot, 'tests/mobile/current/screenObjects')
+    ];
+    
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        screenObjectsDir = possiblePath;
+        console.log(`   📂 Found screenObjects at: ${possiblePath}`);
+        break;
+      }
+    }
   }
   
+  if (!screenObjectsDir) {
+    // Last resort fallback - assume relative to tests/
+    console.warn(`   ⚠️  Could not find screenObjects directory, using fallback`);
+    return `../screenObjects/${screenFile}.js`;
+  }
+  
+  // ✅ STEP 2: Build full path to screen object file
   const screenObjectFile = path.join(screenObjectsDir, `${screenFile}.js`);
   
-  // Calculate relative path
-  const relativePath = path.relative(implDir, screenObjectFile);
+  // ✅ STEP 3: Calculate relative path from test location to screen object
+  let relativePath = path.relative(implDir, screenObjectFile);
+  
+  // Normalize for require() - use forward slashes
+  relativePath = relativePath.split(path.sep).join('/');
+  
+  // Ensure it starts with ./ or ../
+  if (!relativePath.startsWith('.')) {
+    relativePath = './' + relativePath;
+  }
+  
+  console.log(`   📍 Screen path: ${screenFile} → ${relativePath}`);
   
   return relativePath;
 }
 
 /**
+ * Find screenObjects directory by walking up from impl file
+ * 
+ * @param {string} startPath - Starting path (Implication file)
+ * @returns {string|null} Path to screenObjects directory or null
+ */
+_findScreenObjectsDir(startPath) {
+  const path = require('path');
+  const fs = require('fs');
+  
+  let currentDir = path.dirname(startPath);
+  
+  // Walk up max 10 levels
+  for (let i = 0; i < 10; i++) {
+    // Check multiple possible names
+    const possibleNames = [
+      'screenObjects',
+      'web/current/screenObjects',
+      'mobile/current/screenObjects'
+    ];
+    
+    for (const name of possibleNames) {
+      const screenObjectsPath = path.join(currentDir, name);
+      
+      if (fs.existsSync(screenObjectsPath) && fs.statSync(screenObjectsPath).isDirectory()) {
+        console.log(`   ✅ Found screenObjects: ${screenObjectsPath}`);
+        return screenObjectsPath;
+      }
+    }
+    
+    // Go up one level
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break; // Reached filesystem root
+    currentDir = parentDir;
+  }
+  
+  return null;
+}
+
+/**
  * Process actionDetails imports with calculated paths
+ * 
+ * This takes the imports array from actionDetails and calculates
+ * the correct relative path for each import.
+ * 
+ * @param {object} actionDetails - Action details with imports array
+ * @param {string} screenObjectsPath - Base screenObjects path (optional)
+ * @param {string} implFilePath - Path to Implication file
+ * @returns {object} Processed actionDetails with relativePath added
  */
 _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
   if (!actionDetails || !actionDetails.imports) {
@@ -1617,8 +1697,9 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
   
   // Calculate paths for each import
   processed.imports = processed.imports.map(imp => {
+    // imp.path is like "clubs.screen" or "searchBar.wrapper"
     const relativePath = this._calculateScreenObjectPath(
-      this.implFilePath,
+      implFilePath,
       imp.path
     );
     
