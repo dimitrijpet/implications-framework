@@ -15,10 +15,23 @@ const { expect } = require('@wdio/globals');
 const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
 const TestPlanner = require('{{testPlannerPath}}');
-const TestSetup = require('{{testSetupPath}}');
 {{#if hasUIValidation}}
 const ExpectImplication = require('{{expectImplicationPath}}');
 {{/if}}
+
+// ═══════════════════════════════════════════════════════════
+// ✅ PRE-FLIGHT CHECK - Runs BEFORE app starts!
+// ═══════════════════════════════════════════════════════════
+// This fails fast if prerequisites aren't met, saving time
+const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+
+{{#unless isPlaywright}}
+// ⚡ Only run pre-flight for WebdriverIO (expensive app launch)
+if (!process.env.SKIP_PREFLIGHT_CHECK) {
+  console.log('🚀 Running pre-flight check...');
+  TestPlanner.preFlightCheck({{implClassName}}, testDataPath);
+}
+{{/unless}}
 
 /**
  * ✅ EXPORTED FUNCTION - {{actionDescription}}
@@ -53,9 +66,10 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log(`   Target Status: {{targetStatus}}`);
   console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
   
-  // ────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
   // STEP 2: Smart Navigation (only if needed)
   // ────────────────────────────────────────────────────────
+  {{#if isPlaywright}}
   const currentUrl = page.url();
   // ✅ Check if already on app (adjust pattern for your domain)
   const needsNavigation = !currentUrl || 
@@ -69,7 +83,33 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   } else {
     console.log('✅ Already on application, skipping navigation');
   }
-  
+  {{else}}
+  // ────────────────────────────────────────────────────────
+  // 📱 Mobile App Navigation
+  // ────────────────────────────────────────────────────────
+  // TODO: Implement screen navigation for mobile app
+  // 
+  // Mobile apps don't have URLs - navigation is done via UI:
+  // 
+  // Example navigation patterns:
+  // 
+  // 1. Check current screen:
+  //    const isOnCorrectScreen = await driver.$('~screen-identifier').isDisplayed();
+  // 
+  // 2. Navigate if needed:
+  //    if (!isOnCorrectScreen) {
+  //      await driver.$('~tab-bookings').click();
+  //      await driver.$('~btn-request-booking').click();
+  //    }
+  // 
+  // 3. Use TestSetup helper (if available):
+  //    await TestSetup.navigateToScreen(driver, 'RequestBookingScreen');
+  // 
+  // For now, assuming app starts on correct screen or
+  // action handles navigation internally.
+  console.log('✅ Mobile app ready (navigation handled by action)');
+  {{/if}}
+
   // ────────────────────────────────────────────────────────
   // STEP 3: Determine Action Scope
   // ────────────────────────────────────────────────────────
@@ -127,7 +167,11 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 // Initialize screen objects
 {{#each actionDetails.imports}}
 const {{className}} = require('{{{relativePath}}}');
+{{#if ../isPlaywright}}
 const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+const {{varName}} = new {{className}}(driver);
+{{/if}}
 {{/each}}
 {{/if}}
 
@@ -236,137 +280,77 @@ async function {{name}}({{params}}) {
 {{/if}}
 
 // ═══════════════════════════════════════════════════════════
-// TEST REGISTRATION - REPLACE LINES 113-169 in unit-test.hbs
+// TEST REGISTRATION
 // ═══════════════════════════════════════════════════════════
 
 const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
 
 if (!shouldSkipRegistration) {
   {{#if isPlaywright}}
+  // ════════════════════════════════════════════════════════
+  // PLAYWRIGHT TEST REGISTRATION
+  // ════════════════════════════════════════════════════════
   test.describe("UNIT: {{targetStatus}} State Transition", () => {
     test.setTimeout(120000);
     
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
-    {{#if hasEntityLogic}}
-    test("Process first {{entityName}}", async ({ page }) => {
-      // ✅ Load context
-      const ctx = TestContext.load({{implClassName}}, testDataPath);
-      
-      // ✅ AUTO-EXECUTE prerequisites if needed
-      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
-        page, 
-        testDataPath 
-      });
-      
-      // ✅ Call function (handles navigation internally)
-      const result = await {{actionName}}(testDataPath, { 
-        page,
-        index: 0
-      });
-      
-      {{#if hasUIValidation}}
-      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
-        {{#each validationScreens}}
-        console.log('   🔍 Validating {{screenKey}}...');
-        
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
-        
-        await ExpectImplication.validateImplications(
-          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
-          result.data,
-          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
-        );
-        console.log('   ✅ {{screenKey}} validation passed');
-        {{/each}}
-      });
-      {{/if}}
-      
-      result.save(testDataPath);
-      console.log('   💾 State saved to:', testDataPath);
-    });
-    
-    test("Process multiple {{entityName}}s", async ({ page }) => {
-      // ✅ Load context
-      const ctx = TestContext.load({{implClassName}}, testDataPath);
-      
-      // ✅ AUTO-EXECUTE prerequisites if needed
-      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
-        page, 
-        testDataPath 
-      });
-      
-      // ✅ Call function (handles navigation internally)
-      const result = await {{actionName}}(testDataPath, { 
-        page,
-        indices: [0, 1, 2]
-      });
-      
-      {{#if hasUIValidation}}
-      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
-        {{#each validationScreens}}
-        console.log('   🔍 Validating {{screenKey}}...');
-        
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
-        
-        await ExpectImplication.validateImplications(
-          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
-          result.data,
-          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
-        );
-        console.log('   ✅ {{screenKey}} validation passed');
-        {{/each}}
-      });
-      {{/if}}
-      
-      result.save(testDataPath);
-      console.log('   💾 State saved to:', testDataPath);
-    });
-    {{else}}
     test("Execute {{targetStatus}} transition", async ({ page }) => {
-      // ✅ Load context
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
-      // ✅ AUTO-EXECUTE prerequisites if needed
       await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         page, 
         testDataPath 
       });
       
-      // ✅ Call function (handles navigation internally)
       const result = await {{actionName}}(testDataPath, { page });
       
       {{#if hasUIValidation}}
       await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
         {{#each validationScreens}}
+        {{#if @first}}
+        // ✅ Screen from action - auto-validated
         console.log('   🔍 Validating {{screenKey}}...');
         
-{{#if @first}}
-// ✅ Require screen object for validation
-{{#with ../actionDetails.imports.[0]}}
-const {{className}} = require('{{{relativePath}}}');
-const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/with}}
-{{/if}}
+        {{#if pomClassName}}
+        const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
+        const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, result.data.lang || 'en', result.data.device || 'desktop');
+        {{else}}
+        const {{screenKey}} = {{#with ../actionDetails.imports.[0]}}new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop'){{/with}};
+        {{/if}}
         
         await ExpectImplication.validateImplications(
           {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
           result.data,
-          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+          {{screenKey}}
         );
         console.log('   ✅ {{screenKey}} validation passed');
+        {{else}}
+        
+        // ⏭️ TODO: Uncomment and add navigation to {{screenKey}}
+        // console.log('   🔍 Validating {{screenKey}}...');
+        // 
+        // // 1. Navigate to {{screenKey}}
+        // // await page.goto('/path/to/{{screenKey}}');
+        // // OR
+        // // await someScreen.navigateTo{{pascalCase screenKey}}();
+        // 
+        // // 2. Initialize screen
+        // {{#if pomClassName}}
+        // const {{pascalCase screenKey}}Screen = require('../../../path/to/{{screenKey}}.screen.js');
+        // const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, result.data.lang || 'en', result.data.device || 'desktop');
+        // {{else}}
+        // const {{screenKey}} = new SomeScreen(page, result.data.lang || 'en', result.data.device || 'desktop');
+        // {{/if}}
+        // 
+        // // 3. Validate
+        // await ExpectImplication.validateImplications(
+        //   {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+        //   result.data,
+        //   {{screenKey}}
+        // );
+        // console.log('   ✅ {{screenKey}} validation passed');
+        {{/if}}
         {{/each}}
       });
       {{/if}}
@@ -374,19 +358,78 @@ const {{varName}} = new {{className}}(page, result.data.lang || 'en', result.dat
       result.save(testDataPath);
       console.log('   💾 State saved to:', testDataPath);
     });
-    {{/if}}
     
   });
   {{else}}
-  describe("UNIT: {{testDescription}}", () => {
-    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+  // ════════════════════════════════════════════════════════
+  // WEBDRIVERIO TEST REGISTRATION
+  // ════════════════════════════════════════════════════════
+  describe("UNIT: {{targetStatus}} State Transition", () => {
+    const testDataPath = process.env.TEST_DATA_PATH || "tests/data/shared.json";
     
-    {{#each testCases}}
-    it("{{description}}", async () => {
-      await {{../actionName}}(testDataPath{{#if params}}, { {{params}} }{{/if}});
+    it("Execute {{targetStatus}} transition", async () => {
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        driver,
+        testDataPath 
+      });
+      
+      const result = await {{actionName}}(testDataPath);
+      
+      {{#if hasUIValidation}}
+      // Validate {{targetStatus}} State UI ({{platform}})
+      {{#each validationScreens}}
+      {{#if @first}}
+      // ✅ Screen from action - auto-validated
+      console.log('   🔍 Validating {{screenKey}}...');
+      
+      {{#if pomClassName}}
+      const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver);
+      {{else}}
+      const {{screenKey}} = {{#with ../actionDetails.imports.[0]}}new {{className}}(driver){{/with}};
+      {{/if}}
+      
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+        result.data,
+        {{screenKey}}
+      );
+      console.log('   ✅ {{screenKey}} validation passed');
+      {{else}}
+      
+      // ⏭️ TODO: Uncomment and add navigation to {{screenKey}}
+      // console.log('   🔍 Validating {{screenKey}}...');
+      // 
+      // // 1. Navigate to {{screenKey}}
+      // // await driver.url('/path/to/{{screenKey}}');
+      // // OR
+      // // await someScreen.navigateTo{{pascalCase screenKey}}();
+      // 
+      // // 2. Initialize screen
+      // {{#if pomClassName}}
+      // const {{pascalCase screenKey}}Screen = require('../../../mobile/android/dancer/screenObjects/{{screenKey}}.screen.js');
+      // const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver);
+      // {{else}}
+      // const {{screenKey}} = new SomeScreen(driver);
+      // {{/if}}
+      // 
+      // // 3. Validate
+      // await ExpectImplication.validateImplications(
+      //   {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+      //   result.data,
+      //   {{screenKey}}
+      // );
+      // console.log('   ✅ {{screenKey}} validation passed');
+      {{/if}}
+      {{/each}}
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
     });
     
-    {{/each}}
   });
   {{/if}}
 }
