@@ -1677,6 +1677,49 @@ function buildScreenAst(screen, screenName, platformName, className) {
     }
   }
   
+   // ✅ ADD THIS: Functions
+  if (screen.functions && Object.keys(screen.functions).length > 0) {
+    const functionProps = [];
+    
+    for (const [funcName, funcData] of Object.entries(screen.functions)) {
+      const funcObjectProps = [];
+      
+      // signature
+      if (funcData.signature) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('signature'),
+          t.stringLiteral(funcData.signature)
+        ));
+      }
+      
+      // parameters object
+      if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
+        const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
+          t.objectProperty(
+            t.identifier(key),
+            t.stringLiteral(String(value))
+          )
+        );
+        
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('parameters'),
+          t.objectExpression(paramProps)
+        ));
+      }
+      
+      functionProps.push(t.objectProperty(
+        t.identifier(funcName),
+        t.objectExpression(funcObjectProps)
+      ));
+    }
+    
+    overrideProps.push(t.objectProperty(
+      t.identifier('functions'),
+      t.objectExpression(functionProps)
+    ));
+    
+    console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
+  }
   // ✨ NEW: prerequisites (preserved from original AST)
   if (screen._originalPrerequisites) {
     console.log('    📦 Including preserved prerequisites');

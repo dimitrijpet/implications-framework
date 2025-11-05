@@ -575,41 +575,33 @@ console.log('📋 Found original screen:', originalScreen);
         const originalHidden = originalScreen?.hidden || [];
         
         // Find ADDITIONS (elements that are new)
-        const addedVisible = currentVisible.filter(el => !originalVisible.includes(el));
-        const addedHidden = currentHidden.filter(el => !originalHidden.includes(el));
-        
-        // Find REMOVALS (elements that were removed)
-        const removedVisible = originalVisible.filter(el => !currentVisible.includes(el));
-        const removedHidden = originalHidden.filter(el => !currentHidden.includes(el));
-        
-        console.log('   Changes detected:', {
-          addedVisible,
-          addedHidden,
-          removedVisible,
-          removedHidden
-        });
-        
-       // Build the child override object
+      const addedVisible = currentVisible.filter(el => !originalVisible.includes(el));
+const addedHidden = currentHidden.filter(el => !originalHidden.includes(el));
+
+// Find REMOVALS (elements that were removed)
+const removedVisible = originalVisible.filter(el => !currentVisible.includes(el));
+const removedHidden = originalHidden.filter(el => !currentHidden.includes(el));
+
+console.log('   Changes detected:', {
+  addedVisible,
+  addedHidden,
+  removedVisible,
+  removedHidden
+});
+
+// Build the child override object
 const childOverride = {
   screenName: screenName,
   description: screenData.description
 };
 
-// Calculate what should be in visible override
-// (new elements that weren't in original visible)
+// ✅ FIXED: Use addedVisible and addedHidden directly
 const visibleOverride = addedVisible;
-
-// Calculate what should be in hidden override
-// (elements currently hidden that were originally visible = moved to hidden)
-const hiddenOverride = currentHidden.filter(el => originalVisible.includes(el));
+const hiddenOverride = addedHidden;
 
 console.log('   🎯 Override calculation:', {
   visibleOverride,
-  hiddenOverride,
-  reasoning: {
-    visible: 'Elements added to visible that were not originally visible',
-    hidden: 'Elements currently hidden that were originally visible (moved from visible to hidden)'
-  }
+  hiddenOverride
 });
 
 // Only include arrays that have content
@@ -626,8 +618,33 @@ if (hiddenOverride.length > 0) {
 // Always include checks (even if empty, to maintain structure)
 childOverride.checks = screenData.checks || { visible: [], hidden: [], text: {} };
 
+// ✅ ADD THIS: Include functions if they exist
+if (screenData.functions && Object.keys(screenData.functions).length > 0) {
+  childOverride.functions = screenData.functions;
+  console.log('   ✅ Adding functions:', screenData.functions);
+}
+
 // If there are NO changes at all, skip this screen entirely
-if (visibleOverride.length === 0 && hiddenOverride.length === 0) {
+// ✅ FIXED: If functions exist, ALWAYS include visible/hidden for checks
+const hasFunctions = screenData.functions && Object.keys(screenData.functions).length > 0;
+
+if (hasFunctions) {
+  // When functions present, include CURRENT visible/hidden (not just overrides)
+  // Because these define what to CHECK after calling functions
+  if (currentVisible.length > 0 && visibleOverride.length === 0) {
+    childOverride.visible = currentVisible;
+    console.log('   ✅ Including visible for function checks:', currentVisible);
+  }
+  
+  if (currentHidden.length > 0 && hiddenOverride.length === 0) {
+    childOverride.hidden = currentHidden;
+    console.log('   ✅ Including hidden for function checks:', currentHidden);
+  }
+}
+
+// If there are NO changes at all, skip this screen entirely
+if (visibleOverride.length === 0 && hiddenOverride.length === 0 && !hasFunctions &&
+    currentVisible.length === 0 && currentHidden.length === 0) {
   console.log(`⏭️ Skipping ${screenKey} - no actual changes made`);
   continue;
 }
