@@ -201,9 +201,9 @@ export function buildSampleGraph() {
         pattern: 'booking',
         color: '#eab308',
         icon: '⏳',
-        platform: 'mobile-dancer',
+        platform: 'dancer',
         platformColor: '#a855f7',
-        allPlatforms: ['mobile-dancer'],
+        allPlatforms: ['dancer'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#a855f7',
@@ -229,9 +229,9 @@ export function buildSampleGraph() {
         pattern: 'booking',
         color: '#10b981',
         icon: '✅',
-        platform: 'mobile-manager',
+        platform: 'manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['mobile-manager', 'web'],  // ✅ Multi-platform!
+        allPlatforms: ['manager', 'web'],  // ✅ Multi-platform!
         borderStyle: 'multi',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -257,9 +257,9 @@ export function buildSampleGraph() {
         pattern: 'booking',
         color: '#ef4444',
         icon: '❌',
-        platform: 'mobile-manager',
+        platform: 'manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['mobile-manager'],
+        allPlatforms: ['manager'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -285,9 +285,9 @@ export function buildSampleGraph() {
         pattern: 'booking',
         color: '#8b5cf6',
         icon: '🎯',
-        platform: 'mobile-manager',
+        platform: 'manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['mobile-manager'],
+        allPlatforms: ['manager'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -322,7 +322,7 @@ export function buildSampleGraph() {
         target: 'accepted', 
         label: 'ACCEPT',
         platformColor: '#3b82f6',
-        platform: 'mobile-manager'
+        platform: 'manager'
       } 
     },
     { 
@@ -331,7 +331,7 @@ export function buildSampleGraph() {
         target: 'rejected', 
         label: 'REJECT',
         platformColor: '#3b82f6',
-        platform: 'mobile-manager'
+        platform: 'manager'
       } 
     },
     { 
@@ -340,7 +340,7 @@ export function buildSampleGraph() {
         target: 'checkedIn', 
         label: 'CHECK_IN',
         platformColor: '#3b82f6',
-        platform: 'mobile-manager'
+        platform: 'manager'
       } 
     },
     { 
@@ -349,7 +349,7 @@ export function buildSampleGraph() {
         target: 'pending', 
         label: 'UNDO',
         platformColor: '#3b82f6',
-        platform: 'mobile-manager'
+        platform: 'manager'
       } 
     },
   ];

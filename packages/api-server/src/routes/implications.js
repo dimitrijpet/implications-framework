@@ -29,6 +29,262 @@ Handlebars.registerHelper('camelCase', function(str) {
   return str.charAt(0).toLowerCase() + str.slice(1);
 });
 
+function normalizePlatform(platform) {
+  if (!platform) return 'web';
+  
+  // Convert old names to new names
+  const normalized = platform
+    .replace('mobile-manager', 'manager')
+    .replace('mobile-dancer', 'dancer');
+  
+  return normalized;
+}
+
+/**
+ * Convert mirrorsOn.UI AST back to template-friendly structure
+ */
+function astToTemplateUI(uiNode) {
+  if (uiNode.type !== 'ObjectExpression') return {};
+  
+  const result = {};
+  
+  // For each platform (web, dancer, clubApp, etc.)
+  uiNode.properties.forEach(platformProp => {
+    const platformName = platformProp.key?.name;
+    if (!platformName || platformProp.value.type !== 'ObjectExpression') return;
+    
+    const screens = {};
+    
+    // For each screen in this platform
+    platformProp.value.properties.forEach(screenProp => {
+      const screenName = screenProp.key?.name;
+      if (!screenName) return;
+      
+      // Check if screen value is an array
+      if (screenProp.value.type === 'ArrayExpression') {
+        screens[screenName] = screenProp.value.elements.map(el => {
+          // Handle both direct objects and mergeWithBase calls
+          if (el.type === 'CallExpression' && 
+              el.callee?.property?.name === 'mergeWithBase') {
+            // It's a mergeWithBase call - mark it as extending base
+            return {
+              screenKey: screenName,
+              extendsBase: true,
+              // Can't easily extract overrides from AST, will use base
+            };
+          } else if (el.type === 'ObjectExpression') {
+            // Direct object - extract properties
+            return extractScreenDataFromAstNode(el, screenName);
+          }
+          return null;
+        }).filter(Boolean);
+      }
+    });
+    
+    result[platformName] = screens;
+  });
+  
+  return result;
+}
+
+/**
+ * Extract screen data from AST node
+ */
+function extractScreenDataFromAstNode(node, screenName) {
+  const screen = { screenKey: screenName };
+  
+  node.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    if (key === 'description' && prop.value.type === 'StringLiteral') {
+      screen.description = prop.value.value;
+    } else if (key === 'visible' && prop.value.type === 'ArrayExpression') {
+      screen.visible = prop.value.elements
+        .filter(el => el.type === 'StringLiteral')
+        .map(el => el.value);
+    } else if (key === 'hidden' && prop.value.type === 'ArrayExpression') {
+      screen.hidden = prop.value.elements
+        .filter(el => el.type === 'StringLiteral')
+        .map(el => el.value);
+    } else if (key === 'checks' && prop.value.type === 'ObjectExpression') {
+      screen.checks = {};
+      
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        
+        if (checkKey === 'text' && checkProp.value.type === 'ObjectExpression') {
+          screen.checks.text = {};
+          checkProp.value.properties.forEach(textProp => {
+            if (textProp.value.type === 'StringLiteral') {
+              screen.checks.text[textProp.key.name] = textProp.value.value;
+            }
+          });
+        } else if (checkProp.value.type === 'ArrayExpression') {
+          screen.checks[checkKey] = checkProp.value.elements
+            .filter(el => el.type === 'StringLiteral')
+            .map(el => el.value);
+        } 
+      });
+    } else if (key === 'functions' && prop.value.type === 'ObjectExpression') {
+      screen.functions = {};
+      
+      prop.value.properties.forEach(funcProp => {
+        const funcName = funcProp.key?.name;
+        if (!funcName) return;
+        
+        if (funcProp.value.type === 'ObjectExpression') {
+          screen.functions[funcName] = {};
+          
+          funcProp.value.properties.forEach(funcDetailProp => {
+            const detailKey = funcDetailProp.key?.name;
+            
+            // Extract signature
+            if (detailKey === 'signature' && funcDetailProp.value.type === 'StringLiteral') {
+              screen.functions[funcName].signature = funcDetailProp.value.value;
+            }
+            // Extract parameters object
+            else if (detailKey === 'parameters' && funcDetailProp.value.type === 'ObjectExpression') {
+              screen.functions[funcName].parameters = {};
+              
+              funcDetailProp.value.properties.forEach(paramProp => {
+                const paramKey = paramProp.key?.name;
+                if (paramProp.value.type === 'StringLiteral') {
+                  screen.functions[funcName].parameters[paramKey] = paramProp.value.value;
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  console.log(`      📋 Screen data:`, JSON.stringify(screen, null, 2));
+return screen;
+}
+
+/**
+ * Extract UI structure from source implication file
+ */
+async function extractUIFromSource(sourceFilePath) {
+  try {
+    const content = await fs.readFile(sourceFilePath, 'utf-8');
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let uiStructure = null;
+    let needsImplicationHelper = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
+          const mirrorsOnValue = path.node.value;
+          
+          if (mirrorsOnValue?.type === 'ObjectExpression') {
+            const uiProp = mirrorsOnValue.properties.find(
+              p => p.key?.name === 'UI'
+            );
+            
+            if (uiProp) {
+              console.log('  ✅ Found UI property in mirrorsOn');
+              
+              // Check if UI uses ImplicationHelper
+              const uiCode = babelGenerate.default(uiProp.value).code;
+              console.log('  📋 Raw UI code preview:', uiCode.substring(0, 150) + '...');
+              
+              if (uiCode.includes('ImplicationHelper') || uiCode.includes('mergeWithBase')) {
+                needsImplicationHelper = true;
+                console.log('  ✅ Detected ImplicationHelper usage');
+              }
+              
+              // Extract platform→screens structure
+              uiStructure = extractUIPlatforms(uiProp.value);
+              console.log('  📦 Extracted platforms:', Object.keys(uiStructure || {}));
+              
+              // Debug: Show full structure
+              if (uiStructure) {
+                Object.entries(uiStructure).forEach(([platform, screens]) => {
+                  console.log(`     - ${platform}: ${Object.keys(screens).length} screen(s)`);
+                });
+              }
+            } else {
+              console.log('  ⚠️ No UI property found in mirrorsOn');
+            }
+          }
+        }
+      }
+    });
+    
+    return { uiStructure, needsImplicationHelper };
+  } catch (error) {
+    console.error('Failed to extract UI from source:', error);
+    return { uiStructure: null, needsImplicationHelper: false };
+  }
+}
+
+/**
+ * Extract platforms from UI AST node
+ */
+/**
+ * Extract complete UI structure from AST node
+ */
+function extractUIPlatforms(uiNode) {
+  if (uiNode.type !== 'ObjectExpression') return null;
+  
+  const result = {};
+  
+  uiNode.properties.forEach(platformProp => {
+    const platformName = platformProp.key?.name || platformProp.key?.value;
+    if (!platformName || platformProp.value.type !== 'ObjectExpression') return;
+    
+    // Extract screens for this platform
+    const screens = {};
+    
+    platformProp.value.properties.forEach(screenProp => {
+      const screenName = screenProp.key?.name;
+      if (!screenName) return;
+      
+      // Check if screen value is an array
+      if (screenProp.value.type === 'ArrayExpression') {
+        screens[screenName] = screenProp.value.elements.map(el => {
+  // Handle mergeWithBase calls
+  if (el.type === 'CallExpression' && 
+      el.callee?.property?.name === 'mergeWithBase') {
+    
+    // ✅ NEW: Extract overrides from 2nd argument
+    const overridesArg = el.arguments[1];
+    if (overridesArg && overridesArg.type === 'ObjectExpression') {
+      const overrides = extractScreenDataFromAstNode(overridesArg, screenName);
+      return {
+        screenKey: screenName,
+        extendsBase: true,
+        ...overrides  // ✅ Include extracted overrides!
+      };
+    }
+    
+    // Fallback if can't extract
+    return {
+      screenKey: screenName,
+      extendsBase: true
+    };
+  }
+          // Handle direct objects
+          else if (el.type === 'ObjectExpression') {
+            return extractScreenDataFromAstNode(el, screenName);
+          }
+          return null;
+        }).filter(Boolean);
+      }
+    });
+    
+    result[platformName] = screens;  // ✅ Store screens, not just true!
+  });
+  
+  return result;  // ✅ Returns { clubApp: { StatusRequestsScreen: [...] } }
+}
+
 /**
  * POST /api/implications/create-state
  * Generate a new implication file from template
@@ -72,10 +328,10 @@ router.post('/create-state', async (req, res) => {
     const stateId = stateName.toLowerCase();
     
     // Build template data
-    const templateData = {
-      className,
-      stateId,
-      timestamp: new Date().toISOString(),
+   const templateData = {
+  className,
+  stateId,
+  timestamp: new Date().toISOString(),
       initial: 'idle',
       status: status || null,                    // ✅ Use status field
       platform: platform || 'web',
@@ -100,7 +356,68 @@ router.post('/create-state', async (req, res) => {
     };
     
     console.log('📝 Template data:', templateData);
+       // ✅ NEW: Copy UI from source if provided
+    if (copyFrom) {
+      console.log('📋 Attempting to copy UI from:', copyFrom);
+      
+      try {
+        // Find source file
+        const sourceClassName = toPascalCase(copyFrom) + 'Implications';
+        const searchPatterns = [
+          path.join(projectPath, `**/*${sourceClassName}.js`),
+          path.join(projectPath, `**/${sourceClassName}.js`)
+        ];
+        
+        let sourceFile = null;
+        for (const pattern of searchPatterns) {
+          const files = await glob(pattern, { ignore: ['**/node_modules/**'] });
+          if (files.length > 0) {
+            sourceFile = files[0];
+            break;
+          }
+        }
+        
+      if (sourceFile) {
+  console.log('  ✅ Found source file:', path.basename(sourceFile));
+  
+  const { uiStructure, needsImplicationHelper } = await extractUIFromSource(sourceFile);
+  
+  if (uiStructure && Object.keys(uiStructure).length > 0) {
+    console.log('  ✅ Source has UI platforms:', Object.keys(uiStructure));
     
+    // ✅ Try exact platform match first
+    if (uiStructure[platform]) {
+      templateData.screens = uiStructure[platform];
+      console.log(`  ✅ Copied screens from matching platform '${platform}':`, Object.keys(uiStructure[platform]));
+    } 
+    // ✅ Fallback: Use first available platform
+    else {
+      const firstPlatform = Object.keys(uiStructure)[0];
+      templateData.screens = uiStructure[firstPlatform];
+      console.log(`  ⚠️ No UI for '${platform}', using '${firstPlatform}' instead`);
+      console.log(`  ✅ Copied screens:`, Object.keys(uiStructure[firstPlatform]));
+      
+      // Update template to use correct platform
+      templateData.sourcePlatform = firstPlatform;
+    }
+  }
+  
+  if (needsImplicationHelper) {
+    console.log('  ✅ Source uses ImplicationHelper');
+    templateData.helpers = {
+      needsImplicationHelper: true,
+      implicationHelperPath: '../../ImplicationsHelper.js'
+    };
+  }
+} else {
+          console.log('  ⚠️ Source file not found');
+        }
+      } catch (error) {
+        console.warn('  ⚠️ Could not extract UI from source:', error.message);
+      }
+    }
+    
+    console.log('📝 Template data:', templateData);
     // Load template
     const templatePath = path.join(__dirname, '../templates/implication.hbs');
     const templateContent = await fs.readFile(templatePath, 'utf-8');
@@ -1010,53 +1327,80 @@ const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, class
 });
 
 /**
- * ✅ SMART: Build UI AST while preserving original structure where possible
+ * ✅ SMART: Build UI AST while preserving untouched platforms and screens
  */
 function buildSmartUIAst(newData, originalUINode, originalContent, className) {
   const platformProps = [];
   
-  // For each platform in new data
-  for (const [platformName, platformData] of Object.entries(newData)) {
-    // Find original platform node
+  // ✅ Step 1: Get all original platform names
+  const originalPlatformNames = originalUINode.properties.map(p => p.key?.name).filter(Boolean);
+  console.log('  📋 Original platforms:', originalPlatformNames);
+  console.log('  📋 Updated platforms:', Object.keys(newData));
+  
+  // ✅ Step 2: Process all original platforms
+  for (const platformName of originalPlatformNames) {
     const originalPlatformProp = originalUINode.properties.find(
       p => p.key?.name === platformName
     );
     
-    let platformScreenProps;
+    if (!originalPlatformProp) continue;
     
-      if (originalPlatformProp && t.isObjectExpression(originalPlatformProp.value)) {
-      // ✅ CONVERT: screens object → array with screenName property
-      const screensArray = Object.entries(platformData.screens || {}).map(([screenName, screenData]) => ({
+    // Check if this platform is being updated
+    if (newData[platformName]) {
+      // ✅ Platform is in update - use new data
+      console.log(`  🔧 Updating platform: ${platformName}`);
+      
+      const screensArray = Object.entries(newData[platformName].screens || {}).map(([screenName, screenData]) => ({
         ...screenData,
-        screenName: screenName  // ← Add the name!
+        screenName: screenName
       }));
       
-      console.log(`  📋 Platform ${platformName}: converted ${Object.keys(platformData.screens || {}).length} screens to array`);
+      const platformScreenProps = buildSmartScreenProps(
+        screensArray,
+        originalPlatformProp.value,
+        originalContent,
+        platformName,
+        className
+      );
       
-      // Platform exists in original - preserve what we can
-      platformScreenProps = buildSmartScreenProps(
-      screensArray,
-      originalPlatformProp.value,
-      originalContent,
-      platformName,  // ← Add this
-      className      // ← Add this
-    );
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          t.objectExpression(platformScreenProps)
+        )
+      );
     } else {
-      // New platform - build from scratch
+      // ✅ Platform NOT in update - preserve original completely!
+      console.log(`  ♻️  Preserving untouched platform: ${platformName}`);
+      
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          originalPlatformProp.value  // Use original AST node!
+        )
+      );
+    }
+  }
+  
+  // ✅ Step 3: Add any NEW platforms that weren't in original
+  for (const [platformName, platformData] of Object.entries(newData)) {
+    if (!originalPlatformNames.includes(platformName)) {
+      console.log(`  ➕ Adding new platform: ${platformName}`);
+      
       const screensArray = Object.entries(platformData.screens || {}).map(([screenName, screenData]) => ({
         ...screenData,
         screenName: screenName
       }));
       
-      platformScreenProps = buildScreenPropsFromData(screensArray);
+      const platformScreenProps = buildScreenPropsFromData(screensArray);
+      
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          t.objectExpression(platformScreenProps)
+        )
+      );
     }
-    
-    platformProps.push(
-      t.objectProperty(
-        t.identifier(platformName),
-        t.objectExpression(platformScreenProps)
-      )
-    );
   }
   
   return t.objectExpression(platformProps);

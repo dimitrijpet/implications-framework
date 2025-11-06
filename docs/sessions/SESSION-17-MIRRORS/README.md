@@ -220,8 +220,8 @@ static mirrorsOn = {
 ### Platform Key Mapping
 - `web` → `Web`
 - `cms` → `CMS`
-- `mobile-dancer` → `dancer`
-- `mobile-manager` → `clubApp`
+- `dancer` → `dancer`
+- `manager` → `clubApp`
 
 ### Validation Types
 1. **visible** - Elements that must be visible

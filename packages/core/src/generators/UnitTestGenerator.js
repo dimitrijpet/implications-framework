@@ -42,7 +42,7 @@ class UnitTestGenerator {
    * 
    * @param {string} implFilePath - Path to Implication file
    * @param {object} options - Generation options
-   * @param {string} options.platform - Platform: 'web', 'cms', 'mobile-dancer', 'mobile-manager'
+   * @param {string} options.platform - Platform: 'web', 'cms', 'dancer', 'manager'
    * @param {string} options.state - Target state (for multi-state machines)
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
@@ -315,18 +315,21 @@ console.log(`   implFilePath: ${implFilePath}`);
 console.log(`   actionDetails found: ${!!actionDetails}`);
   
   const metadata = {
-    // Class info
-    className: ImplClass.name,
-    
-    // Status info
-    status: status,
-    previousStatus: previousStatus || meta.requires?.previousStatus,
-    
-    // Fields
-    requiredFields: meta.requiredFields || [],
-    
-    // Setup info
-    setup: meta.setup || [],
+  // Class info
+  className: ImplClass.name,
+  
+  // Status info
+  status: status,
+  previousStatus: previousStatus || meta.requires?.previousStatus,
+  
+  // ✅ ADD THIS LINE
+  meta: meta,  // Include the meta object!
+  
+  // Fields
+  requiredFields: meta.requiredFields || [],
+  
+  // Setup info
+  setup: meta.setup || [],
     
     // Buttons
     triggerButton: meta.triggerButton,
@@ -780,6 +783,7 @@ if (metadata.mirrorsOn?.UI) {
       platform,
       targetStatus,
       previousStatus: metadata.previousStatus,
+      meta: metadata.meta || {},
       
       // Platform
       isPlaywright,
@@ -845,7 +849,12 @@ suggestedScreens,
       // Change log
       changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : 'State'}`,
     };
-    
+    // ✅ ADD THIS DEBUG
+console.log('\n🐛 DEBUG Context:');
+console.log(`   meta:`, context.meta);
+console.log(`   meta.entity:`, context.meta?.entity);
+console.log(`   hasDeltaLogic:`, context.hasDeltaLogic);
+console.log(`   deltaFields:`, context.deltaFields);
     return context;
   }
   
@@ -966,46 +975,59 @@ return {
     for (const [fieldName, fieldValue] of Object.entries(assignmentObj)) {
       let value;
       
-      if (typeof fieldValue === 'string') {
-        // Literal string: status: "published"
-        value = `'${fieldValue}'`;
-        
-      } else if (typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
-        // Literal number/boolean
-        value = String(fieldValue);
-        
-      } else if (typeof fieldValue === 'function') {
-        // Function: ({event}) => event.publishedAt
-        const fnStr = fieldValue.toString();
-        
-        // Try to extract event fields
-        const eventMatch = fnStr.match(/event\.(\w+)/);
-        if (eventMatch) {
-          const eventField = eventMatch[1];
-          
-          // Check if this is a timestamp field
-          if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
-            // Use 'now' as default, but allow override from event
-            value = `options.${eventField} || now`;
-          } else {
-            // Regular event field
-            value = `options.${eventField}`;
-          }
-        } else {
-          // Couldn't parse - check for common patterns
-          if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
-            value = 'now';
-          } else if (fieldName === 'status') {
-            value = `'${targetStatus}'`;
-          } else {
-            value = `undefined  // TODO: Set ${fieldName}`;
-          }
-        }
-        
-      } else {
-        // Unknown type
-        value = 'undefined  // TODO: Set value';
-      }
+     if (typeof fieldValue === 'string') {
+  // ✅ Check if it's a template placeholder like {{email}} or {{timestamp}}
+  if (fieldValue.startsWith('{{') && fieldValue.endsWith('}}')) {
+    const varName = fieldValue.slice(2, -2); // Remove {{ and }}
+    
+    // Special case: {{timestamp}} → now
+    if (varName === 'timestamp') {
+      value = 'now';
+    } else {
+      // Convert {{email}} → ctx.data.email
+      value = `ctx.data.${varName}`;
+    }
+  } else {
+    // Literal string: status: "published"
+    value = `'${fieldValue}'`;
+  }
+  
+} else if (typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
+  // Literal number/boolean
+  value = String(fieldValue);
+  
+} else if (typeof fieldValue === 'function') {
+  // Function: ({event}) => event.publishedAt
+  const fnStr = fieldValue.toString();
+  
+  // Try to extract event fields
+  const eventMatch = fnStr.match(/event\.(\w+)/);
+  if (eventMatch) {
+    const eventField = eventMatch[1];
+    
+    // Check if this is a timestamp field
+    if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
+      // Use 'now' as default, but allow override from event
+      value = `options.${eventField} || now`;
+    } else {
+      // Regular event field
+      value = `options.${eventField}`;
+    }
+  } else {
+    // Couldn't parse - check for common patterns
+    if (fieldName.endsWith('At') || fieldName.endsWith('Time')) {
+      value = 'now';
+    } else if (fieldName === 'status') {
+      value = `'${targetStatus}'`;
+    } else {
+      value = `undefined  // TODO: Set ${fieldName}`;
+    }
+  }
+  
+} else {
+  // Unknown type
+  value = 'undefined  // TODO: Set value';
+}
       
       fields.push({
         name: fieldName,
@@ -1291,8 +1313,8 @@ _generateActionName(statusOrMetadata) {
     const mapping = {
       'web': 'Web',
       'cms': 'CMS',
-      'mobile-dancer': 'Dancer',
-      'mobile-manager': 'Manager'
+      'dancer': 'Dancer',
+      'manager': 'Manager'
     };
     
     return mapping[platform] || 'Web';
@@ -1836,7 +1858,7 @@ screens.forEach((screen, index) => {
       return result;
     }
     
-    // Get platform key (convert web → web, mobile-dancer → dancer, etc.)
+    // Get platform key (convert web → web, dancer → dancer, etc.)
     const platformKey = this._getPlatformKeyForMirrorsOn(platform);
     console.log(`   📝 Platform key: ${platform} → ${platformKey}`);
     
@@ -1907,15 +1929,15 @@ screens.forEach((screen, index) => {
    * Maps platform to mirrorsOn.UI key:
    *   web → web
    *   cms → cms  
-   *   mobile-dancer → dancer
-   *   mobile-manager → clubApp (or manager?)
+   *   dancer → dancer
+   *   manager → clubApp (or manager?)
    */
   _getPlatformKeyForMirrorsOn(platform) {
     const mapping = {
       'web': 'web',
       'cms': 'cms',
-      'mobile-dancer': 'dancer',
-      'mobile-manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
+      'dancer': 'dancer',
+      'manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
     };
     
     return mapping[platform] || platform;

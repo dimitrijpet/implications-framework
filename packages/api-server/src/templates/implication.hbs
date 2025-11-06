@@ -13,7 +13,7 @@ const {{className}} = require('{{relativePath}}');
 const {{baseClass.className}} = require('{{baseClass.relativePath}}');
 {{/if}}
 {{#if helpers.needsImplicationHelper}}
-const ImplicationHelper = require('../ImplicationsHelper.js');
+const ImplicationHelper = require('{{{helpers.implicationHelperPath}}}');
 {{/if}}
 
 /**
@@ -109,107 +109,86 @@ class {{className}} {
       }
     }],
     
-    UI: {
-      {{#if meta.platform}}
-      {{meta.platform}}: {
-        {{#if composedBehaviors}}
-        // Composed behaviors
-        {{#each composedBehaviors}}
-        ...{{className}}.{{methodName}}().{{platformKey}},
-        {{/each}}
-        
+  UI: {
+  {{#if meta.platform}}
+  {{meta.platform}}: {
+    {{#if screens}}
+    {{#each screens}}
+    {{@key}}: [{{#if this.[0].extendsBase}}ImplicationHelper.mergeWithBase(  {{!-- ✅ Add [ here --}} {{!-- ✅ FIXED --}}
+      BaseBookingImplications.{{../sourcePlatform}}.{{@key}},
+      {
+        {{#if this.[0].description}}
+        description: '{{this.[0].description}}',
         {{/if}}
-        {{#if screens}}
-        {{#each screens}}
-        {{screenKey}}: {{#if extendsBase}}ImplicationHelper.mergeWithBase(
-          {{baseClass.className}}.{{platformKey}}.{{screenKey}},
-          {
-            {{#if description}}
-            description: '{{description}}',
-            {{/if}}
-            {{#if visible}}
-            visible: [{{#each visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
-            {{/if}}
-            {{#if hidden}}
-            hidden: [{{#each hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]
-            {{/if}}
-            {{#if checks}}
-            {{#if checks.visible}}
-            ,
-            checks: {
-              {{#if checks.visible}}
-              visible: [{{#each checks.visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if checks.hidden}},{{/if}}
-              {{/if}}
-              {{#if checks.hidden}}
-              hidden: [{{#each checks.hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if checks.text}},{{/if}}
-              {{/if}}
-              {{#if checks.text}}
-              text: {
-                {{#each checks.text}}
-                {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
-                {{/each}}
-              }
-              {{/if}}
-            }
-            {{/if}}
-            {{/if}}
-          }
-        ){{else}}[
-          {
-            screen: (app) => app.{{screenKey}},
-            
-            prerequisites: [{
-              description: 'Navigate to {{screenKey}}',
-              setup: async (testData, app) => {
-                // TODO: Add navigation logic
-              }
-            }],
-            
-            {{#if description}}
-            description: '{{description}}',
-            {{/if}}
-            
-            {{#if visible}}
-            visible: [{{#each visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
-            {{/if}}
-            
-            {{#if hidden}}
-            hidden: [{{#each hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
-            {{/if}}
-            
-            {{#if checks}}
-            checks: {
-              {{#if checks.visible}}
-              visible: [{{#each checks.visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if checks.hidden}},{{/if}}
-              {{/if}}
-              {{#if checks.hidden}}
-              hidden: [{{#each checks.hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if checks.text}},{{/if}}
-              {{/if}}
-              {{#if checks.text}}
-              text: {
-                {{#each checks.text}}
-                {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
-                {{/each}}
-              }
-              {{/if}}
-            },
-            {{/if}}
-            
-            expect: async (testData, screen) => {
-              // TODO: Add custom validation logic
-            }
-          }
-        ]{{/if}}{{#unless @last}},{{/unless}}
-        
-        {{/each}}
-        {{else}}
-        // TODO: Add screen definitions
+        {{#if this.[0].visible}}
+        visible: [{{#each this.[0].visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
         {{/if}}
+        {{#if this.[0].hidden}}
+        hidden: [{{#each this.[0].hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
+        {{/if}}
+          {{! ✅ ADD THIS: Functions block }}
+    {{#if this.[0].functions}}
+    functions: {
+      {{#each this.[0].functions}}
+      {{@key}}: {
+        {{#if this.signature}}
+        signature: '{{this.signature}}',
+        {{/if}}
+        {{#if this.parameters}}
+        parameters: {
+          {{#each this.parameters}}
+          {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
+          {{/each}}
+        }
+        {{/if}}
+      }{{#unless @last}},{{/unless}}
+      {{/each}}
+    },
+    {{/if}}
+        {{#if this.[0].checks}}
+        checks: {
+          {{#if this.[0].checks.visible}}
+          visible: [{{#each this.[0].checks.visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.hidden}},{{/if}}
+          {{/if}}
+          {{#if this.[0].checks.hidden}}
+          hidden: [{{#each this.[0].checks.hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.text}},{{/if}}
+          {{/if}}
+          {{#if this.[0].checks.text}}
+          text: {
+            {{#each this.[0].checks.text}}
+            {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
+            {{/each}}
+          }
+          {{/if}}
+        }
+        {{/if}}
+      },
+      { parentClass: {{../className}} }
+    )]{{else}}[  {{!-- ✅ Add ] here --}}
+      {
+        screen: (app) => app.{{@key}},  {{!-- ✅ Use @key here too --}}
+        
+        prerequisites: [{
+          description: 'Navigate to {{@key}}',
+          setup: async (testData, app) => {
+            // TODO: Add navigation logic
+          }
+        }],
+        
+        expect: async (testData, screen) => {
+          // TODO: Add custom validation logic
+        }
       }
-      {{/if}}
-    }
+    ]{{/if}}{{#unless @last}},{{/unless}}
+    
+    {{/each}}
+    {{else}}
+    // TODO: Add screen definitions
+    {{/if}}
+  }
+  {{/if}}
+}
   };
-  
   static meta = {
     status: '{{meta.status}}',
     {{#if meta.platform}}

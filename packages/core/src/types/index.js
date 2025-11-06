@@ -10,8 +10,8 @@ export const PROJECT_TYPES = {
 
 export const PLATFORMS = {
   WEB: 'web',
-  MOBILE_DANCER: 'mobile-dancer',
-  MOBILE_MANAGER: 'mobile-manager',
+  MOBILE_DANCER: 'dancer',
+  MOBILE_MANAGER: 'manager',
 };
 
 export const FILE_PATTERNS = {

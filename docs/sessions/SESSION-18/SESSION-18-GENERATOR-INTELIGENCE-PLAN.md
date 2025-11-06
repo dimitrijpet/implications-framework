@@ -96,18 +96,18 @@ actor.send({
 setup: {
   testFile: "tests/implications/bookings/status/PendingBooking-Dancer-UNIT.spec.js",
   actionName: "requestBooking",
-  platform: "mobile-dancer"
+  platform: "dancer"
 }
 ```
 
 **Extract:**
-- Platform: `mobile-dancer` → import mobile helpers
+- Platform: `dancer` → import mobile helpers
 - Action name: `requestBooking` → function name
 - Test file: path info
 
 **Generate platform-specific imports:**
 ```javascript
-// For mobile-dancer:
+// For dancer:
 const App = require("../../../mobile/android/dancer/screenObjects/App.js");
 const NavigationActions = require("../../../mobile/android/dancer/actions/NavigationActions.js");
 
@@ -219,7 +219,7 @@ actor.send({
 ```javascript
 Handlebars.registerHelper('platformSpecificImports', function(platform) {
   const imports = {
-    'mobile-dancer': [
+    'dancer': [
       'const App = require("...");',
       'const NavigationActions = require("...");'
     ],

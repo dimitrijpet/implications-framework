@@ -7,6 +7,7 @@ import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import { useSuggestions } from '../../hooks/useSuggestions';
 
+
 export default function AddStateModal({ 
   isOpen, 
   onClose, 
@@ -46,6 +47,13 @@ export default function AddStateModal({
 
   // Get pattern analysis for suggestions
   const { analysis, loading: analysisLoading } = useSuggestions(projectPath);
+
+  useEffect(() => {
+  if (existingStates && existingStates.length > 0) {
+    console.log('🔍 DEBUG: existingStates sample:', existingStates[0]);
+    console.log('🔍 Available fields:', Object.keys(existingStates[0]));
+  }
+}, [existingStates]);
 
   // ========================================
   // EFFECTS
@@ -741,12 +749,21 @@ function QuickCopyMode({
             cursor: 'pointer'
           }}
         >
-          <option value="">-- Select a state --</option>
-          {existingStates?.map(state => (
-            <option key={state.id} value={state.id}>
-              {state.name} ({state.meta?.platform || 'web'})
-            </option>
-          ))}
+         <option value="">-- Select a state --</option>
+{existingStates?.map((state, index) => {
+  const platform = state.meta?.setup?.[0]?.platform || 
+                   state.meta?.platform || 
+                   'web';
+  
+  return (
+    <option 
+      key={`${state.className || state.id}-${index}`}
+      value={state.id}
+    >
+      {state.className || state.name} ({platform})
+    </option>
+  );
+})}
         </select>
       </FormGroup>
 
@@ -965,7 +982,7 @@ function CustomBuildMode({
       {/* Platform Selection */}
       <FormGroup label="Platform" required theme={theme}>
         <div style={{ display: 'flex', gap: '12px' }}>
-          {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
+          {['web', 'dancer', 'manager'].map(platform => (
             <label 
               key={platform} 
               style={{ 

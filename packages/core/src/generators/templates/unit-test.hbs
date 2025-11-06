@@ -221,8 +221,14 @@ console.log('✅ Action steps completed');
       const delta = {};
       const now = new Date().toISOString();
       
-      {{#if hasDeltaLogic}}
+     {{#if hasDeltaLogic}}
       // ✨ Generated delta from entry: assign
+      {{#if meta.entity}}
+      // ✅ Entity-scoped state change ({{meta.entity}})
+      {{#each deltaFields}}
+      delta['{{../meta.entity}}.{{name}}'] = {{{value}}};
+      {{/each}}
+      {{else}}
       {{#if hasEntityLogic}}
       if (isGlobalAction) {
         // Global state change
@@ -230,7 +236,7 @@ console.log('✅ Action steps completed');
         delta.{{name}} = {{{value}}};
         {{/each}}
       } else {
-        // Entity-based state change
+        // Array-based entity change
         for (const target of targets) {
           const entityPath = `{{entityName}}s[${target.index || 0}]`;
           delta[entityPath] = {
@@ -245,6 +251,7 @@ console.log('✅ Action steps completed');
       {{#each deltaFields}}
       delta.{{name}} = {{{value}}};
       {{/each}}
+      {{/if}}
       {{/if}}
       {{else}}
       // TODO: Customize delta based on what changed

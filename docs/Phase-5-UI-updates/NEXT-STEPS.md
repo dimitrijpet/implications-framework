@@ -254,7 +254,7 @@ function CreateStateModal({ onClose, onCreate, discoveryResult }) {
     stateName: '',
     status: '',
     triggerButton: '',
-    platform: 'mobile-manager',
+    platform: 'manager',
     requiredFields: [],
     copyFrom: null  // Optional: copy from existing state
   });
@@ -283,8 +283,8 @@ function CreateStateModal({ onClose, onCreate, discoveryResult }) {
         value={formData.platform}
         onChange={(e) => setFormData({...formData, platform: e.target.value})}
       >
-        <option value="mobile-manager">📲 Manager App</option>
-        <option value="mobile-dancer">📱 Dancer App</option>
+        <option value="manager">📲 Manager App</option>
+        <option value="dancer">📱 Dancer App</option>
         <option value="web">🌐 Web</option>
       </select>
       
@@ -427,7 +427,7 @@ module.exports = {{stateName}}BookingImplications;
 ```javascript
 function TransitionForm({ fromState, toState, onSave, onCancel }) {
   const [event, setEvent] = useState('');
-  const [platform, setPlatform] = useState('mobile-manager');
+  const [platform, setPlatform] = useState('manager');
   
   return (
     <div className="transition-form">
@@ -441,8 +441,8 @@ function TransitionForm({ fromState, toState, onSave, onCancel }) {
       />
       
       <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
-        <option value="mobile-manager">Manager App</option>
-        <option value="mobile-dancer">Dancer App</option>
+        <option value="manager">Manager App</option>
+        <option value="dancer">Dancer App</option>
         <option value="web">Web</option>
       </select>
       
@@ -650,8 +650,8 @@ function FilterPanel({ onFilterChange }) {
       
       <select onChange={(e) => onFilterChange({ platform: e.target.value })}>
         <option value="">All Platforms</option>
-        <option value="mobile-manager">📲 Manager</option>
-        <option value="mobile-dancer">📱 Dancer</option>
+        <option value="manager">📲 Manager</option>
+        <option value="dancer">📱 Dancer</option>
         <option value="web">🌐 Web</option>
       </select>
       
