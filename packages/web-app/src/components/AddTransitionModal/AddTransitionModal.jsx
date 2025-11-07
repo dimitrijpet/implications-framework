@@ -14,13 +14,14 @@ export default function AddTransitionModal({
   targetState,
   projectPath
 }) {
-  const [formData, setFormData] = useState({
-    event: '',
-    description: '',
-    hasActionDetails: false,
-    imports: [],
-    steps: []
-  });
+const [formData, setFormData] = useState({
+  event: '',
+  description: '',
+  platforms: [],  // ✅ ADD THIS
+  hasActionDetails: false,
+  imports: [],
+  steps: []
+});
   
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -344,7 +345,8 @@ const handleStepMethodSelect = (stepIndex, methodSignature) => {
 
     try {
       const submitData = {
-        event: formData.event.trim(),
+  event: formData.event.trim(),
+  platforms: formData.platforms?.length > 0 ? formData.platforms : null,  
         actionDetails: formData.hasActionDetails ? {
           description: formData.description.trim(),
           imports: formData.imports.map(imp => ({
@@ -434,32 +436,70 @@ const handleStepMethodSelect = (stepIndex, methodSignature) => {
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           
-          {/* Event Name */}
-          <div>
-            <label 
-              className="block text-sm font-semibold mb-2"
-              style={{ color: defaultTheme.colors.text.primary }}
-            >
-              Event Name *
-            </label>
-            <input
-              type="text"
-              value={formData.event}
-              onChange={(e) => setFormData(prev => ({ ...prev, event: e.target.value.toUpperCase() }))}
-              placeholder="e.g., SUBMIT_SEARCH, SELECT_AGENCY"
-              className="w-full px-4 py-2 rounded-lg font-mono"
-              style={{
-                backgroundColor: defaultTheme.colors.background.tertiary,
-                color: defaultTheme.colors.text.primary,
-                border: `1px solid ${errors.event ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
-              }}
-            />
-            {errors.event && (
-              <p className="text-sm mt-1" style={{ color: defaultTheme.colors.accents.red }}>
-                {errors.event}
-              </p>
-            )}
-          </div>
+{/* Event Name */}
+<div>
+  <label className="block text-sm font-semibold mb-2" style={{ color: defaultTheme.colors.text.primary }}>
+    Event Name *
+  </label>
+  <input
+    type="text"
+    value={formData.event}
+    onChange={(e) => setFormData(prev => ({ ...prev, event: e.target.value.toUpperCase() }))}
+    placeholder="e.g., SUBMIT_SEARCH, SELECT_AGENCY"
+    className="w-full px-4 py-2 rounded-lg font-mono"
+    style={{
+      backgroundColor: defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${errors.event ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`
+    }}
+  />
+  {errors.event && (
+    <p className="text-sm mt-1" style={{ color: defaultTheme.colors.accents.red }}>
+      {errors.event}
+    </p>
+  )}
+</div>
+
+{/* ✨ ADD THIS: Platform Selection */}
+<div>
+  <label className="block text-sm font-semibold mb-2" style={{ color: defaultTheme.colors.text.primary }}>
+    Available on Platforms
+  </label>
+  <div className="flex gap-3">
+    {['web', 'dancer', 'manager'].map(platform => (
+      <label 
+        key={platform}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"
+        style={{
+          backgroundColor: formData.platforms?.includes(platform) 
+            ? `${defaultTheme.colors.accents.blue}20` 
+            : defaultTheme.colors.background.tertiary,
+          border: `2px solid ${formData.platforms?.includes(platform) 
+            ? defaultTheme.colors.accents.blue 
+            : defaultTheme.colors.border}`
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={formData.platforms?.includes(platform) || false}
+          onChange={(e) => {
+            const newPlatforms = e.target.checked
+              ? [...(formData.platforms || []), platform]
+              : (formData.platforms || []).filter(p => p !== platform);
+            setFormData(prev => ({ ...prev, platforms: newPlatforms }));
+          }}
+          className="w-4 h-4"
+        />
+        <span style={{ color: defaultTheme.colors.text.primary }}>
+          {platform === 'web' ? '🌐' : '📱'} {platform}
+        </span>
+      </label>
+    ))}
+  </div>
+  <p className="text-xs mt-1" style={{ color: defaultTheme.colors.text.tertiary }}>
+    💡 Leave unchecked to make available on all platforms
+  </p>
+</div>
 
           {/* Action Details Toggle */}
           <div className="flex items-center gap-3">

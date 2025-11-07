@@ -1087,41 +1087,70 @@ console.log('🔍 state.meta?.uiCoverage:', state.meta?.uiCoverage);
           </div>
           
           {/* TRANSITIONS */}
-          {currentState.transitions && currentState.transitions.length > 0 && (
-            <div>
-              <h3 
-                className="text-2xl font-bold mb-4" 
-                style={{ color: theme.colors.accents.green }}
+        {currentState.transitions && currentState.transitions.length > 0 && (
+  <div>
+    <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
+      🔄 Transitions ({currentState.transitions.length})
+    </h3>
+    <div className="space-y-2">
+      {currentState.transitions.map((transition, idx) => (
+        <div 
+          key={idx}
+          className="p-3 rounded flex items-center justify-between"
+          style={{ 
+            background: `${theme.colors.background.tertiary}80`,
+            border: `1px solid ${theme.colors.border}`
+          }}
+        >
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span 
+                className="px-2 py-1 rounded text-xs font-mono"
+                style={{ 
+                  background: theme.colors.accents.blue,
+                  color: 'white'
+                }}
               >
-                🔄 Transitions ({currentState.transitions.length})
-              </h3>
-              <div className="space-y-2">
-                {currentState.transitions.map((transition, idx) => (
-                  <div 
-                    key={idx}
-                    className="p-3 rounded flex items-center justify-between"
-                    style={{ 
-                      background: `${theme.colors.background.tertiary}80`,
-                      border: `1px solid ${theme.colors.border}`
-                    }}
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span 
-                          className="px-2 py-1 rounded text-xs font-mono"
-                          style={{ 
-                            background: theme.colors.accents.blue,
-                            color: 'white'
-                          }}
-                        >
-                          {transition.event}
-                        </span>
-                        <span style={{ color: theme.colors.text.secondary }}>→</span>
-                        <span style={{ color: theme.colors.text.primary }}>
-                          {transition.target}
-                        </span>
-                      </div>
-                    </div>
+                {transition.event}
+              </span>
+              <span style={{ color: theme.colors.text.secondary }}>→</span>
+              <span style={{ color: theme.colors.text.primary }}>
+                {transition.target}
+              </span>
+              
+              {/* ✨ ADD THIS: Platform Badges */}
+              {transition.platforms && transition.platforms.length > 0 && (
+                <div className="flex gap-1 ml-2">
+                  {transition.platforms.map((platform, i) => (
+                    <span 
+                      key={i}
+                      className="px-2 py-1 rounded text-xs font-semibold"
+                      style={{
+                        background: `${theme.colors.accents.purple}20`,
+                        color: theme.colors.accents.purple,
+                        border: `1px solid ${theme.colors.accents.purple}`
+                      }}
+                    >
+                      {platform === 'web' ? '🌐' : '📱'} {platform}
+                    </span>
+                  ))}
+                </div>
+              )}
+              
+              {/* Show "All" badge if no platforms specified */}
+              {(!transition.platforms || transition.platforms.length === 0) && (
+                <span 
+                  className="px-2 py-1 rounded text-xs"
+                  style={{
+                    background: `${theme.colors.text.tertiary}20`,
+                    color: theme.colors.text.tertiary
+                  }}
+                >
+                  All platforms
+                </span>
+              )}
+            </div>
+          </div>
                     
                     <div className="flex gap-2">
                       <button

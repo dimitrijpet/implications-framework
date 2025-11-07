@@ -2,7 +2,7 @@ import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '.
 
 /**
  * Build Cytoscape graph from discovery results
- * ✨ Enhanced with screen grouping support
+ * ✨ Enhanced with screen grouping support and platform-specific transitions
  */
 export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
@@ -10,7 +10,7 @@ export function buildGraphFromDiscovery(discoveryResult) {
   const projectPath = discoveryResult.projectPath;
   
   const nodes = [];
-  const edges = [];
+  const edges = [];  // ✅ Initialize empty, build AFTER nodes
   
   // Create a map of state names to class names
   const stateMap = new Map();
@@ -32,7 +32,7 @@ export function buildGraphFromDiscovery(discoveryResult) {
       triggerButton: imp.metadata.triggerButton,
       platform: imp.metadata.platform,
       setup: imp.metadata.setup,
-      screen: imp.metadata.screen,  // ✨ NEW
+      screen: imp.metadata.screen,
     });
   });
   
@@ -80,7 +80,7 @@ export function buildGraphFromDiscovery(discoveryResult) {
         
         // File paths
         files: {
-          implication: projectPath + '/' + imp.path,  // Make absolute!
+          implication: projectPath + '/' + imp.path,
           test: projectPath + '/' + (Array.isArray(metadata.setup) 
             ? metadata.setup[0]?.testFile 
             : metadata.setup?.testFile)
@@ -105,36 +105,64 @@ export function buildGraphFromDiscovery(discoveryResult) {
     });
   });
   
-  // Create edges from transitions
-  if (transitions && transitions.length > 0) {
-    transitions.forEach(transition => {
-      const fromState = extractStateName(transition.from).toLowerCase();
-      const toState = transition.to.toLowerCase();
-      
-      // Only add edge if both nodes exist
-      if (stateMap.has(fromState) && stateMap.has(toState)) {
-        // Determine platform color for edge
-        const sourceNode = nodes.find(n => n.data.id === fromState);
-        const platformColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
-        
-        edges.push({
-          data: {
-            id: `${fromState}-${toState}-${transition.event}`,
-            source: fromState,
-            target: toState,
-            label: transition.event,
-            platformColor: platformColor,
-            platform: sourceNode?.data.platform || 'web'
-          },
-        });
-      }
+  // ✅ NOW Build edges from transitions (AFTER nodes are built!)
+  console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
+  
+// ✅ NOW Build edges from transitions (AFTER nodes are built!)
+console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
+
+if (transitions && transitions.length > 0) {
+  transitions.forEach(transition => {
+    console.log(`\n🔍 Processing transition:`, {
+      from: transition.from,
+      to: transition.to,
+      event: transition.event,
+      platforms: transition.platforms  // ✅ Debug: See what we got!
     });
-  }
+    
+    const fromState = extractStateName(transition.from).toLowerCase();
+    const toState = transition.to.toLowerCase();
+    
+    // Only add edge if both nodes exist
+    if (stateMap.has(fromState) && stateMap.has(toState)) {
+      // ✅ FIX: Define sourceNode OUTSIDE if/else
+      const sourceNode = nodes.find(n => n.data.id === fromState);
+      let edgeColor;
+      
+      // ✅ Use transition's platforms if specified
+      if (transition.platforms && transition.platforms.length > 0) {
+        // Use first platform's color
+        const platform = transition.platforms[0];
+        edgeColor = getPlatformStyle(platform, defaultTheme).color;
+        console.log(`   ✅ Using transition platform: ${platform} → ${edgeColor}`);
+      } else {
+        // Fallback: use source state's platform
+        edgeColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
+        console.log(`   ⚠️ No platforms on transition, using source: ${sourceNode?.data.platform} → ${edgeColor}`);
+      }
+      
+      edges.push({
+        data: {
+          id: `${fromState}-${toState}-${transition.event}`,
+          source: fromState,
+          target: toState,
+          label: transition.event,
+          platformColor: edgeColor,
+          platforms: transition.platforms,  // ✅ Pass platforms for badges!
+          platform: sourceNode?.data.platform || 'web'
+        },
+      });
+      
+      console.log(`   ✅ Edge added: ${edgeColor}`);
+    } else {
+      console.warn(`   ⚠️ Skipping edge: ${fromState}→${toState} (nodes not found)`);
+    }
+  });
+}
   
   console.log(`✅ Built graph: ${nodes.length} nodes, ${edges.length} edges`);
   console.log(`📺 Screen groups:`, Object.keys(screenGroups).length, screenGroups);
   
-  // ✨ NEW: Return screen groups
   return { nodes, edges, screenGroups };
 }
 

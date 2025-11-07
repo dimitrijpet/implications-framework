@@ -116,29 +116,48 @@ export function extractXStateTransitions(parsed, className) {
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
-                const eventName = transitionProp.key?.name || transitionProp.key?.value;
-                let targetState = null;
-                
-                // Handle different formats
-                if (transitionProp.value?.type === 'StringLiteral') {
-                  targetState = transitionProp.value.value;
-                } else if (transitionProp.value?.type === 'ObjectExpression') {
-                  const targetProp = transitionProp.value.properties.find(
-                    p => p.key?.name === 'target'
-                  );
-                  if (targetProp?.value?.type === 'StringLiteral') {
-                    targetState = targetProp.value.value;
-                  }
-                }
-                
-                if (eventName && targetState) {
-                  transitions.push({
-                    from: className,
-                    to: targetState,
-                    event: eventName,
-                  });
-                }
-              });
+  const eventName = transitionProp.key?.name || transitionProp.key?.value;
+  let targetState = null;
+  let platforms = null;  // ✅ Initialize!
+  
+  // Handle different formats
+  if (transitionProp.value?.type === 'StringLiteral') {
+    // Simple format: CANCEL: 'pending'
+    targetState = transitionProp.value.value;
+  } else if (transitionProp.value?.type === 'ObjectExpression') {
+    // Object format: CANCEL: { target: 'pending', platforms: ['dancer'] }
+    
+    // Extract target
+    const targetProp = transitionProp.value.properties.find(
+      p => p.key?.name === 'target'
+    );
+    if (targetProp?.value?.type === 'StringLiteral') {
+      targetState = targetProp.value.value;
+    }
+    
+    // ✅ NEW: Extract platforms
+    const platformsProp = transitionProp.value.properties.find(
+      p => p.key?.name === 'platforms'
+    );
+    
+    if (platformsProp && platformsProp.value?.type === 'ArrayExpression') {
+      platforms = platformsProp.value.elements
+        .filter(el => el.type === 'StringLiteral')
+        .map(el => el.value);
+      
+      console.log(`      📱 Found platforms for ${eventName}:`, platforms);
+    }
+  }
+  
+  if (eventName && targetState) {
+    transitions.push({
+      from: className,
+      to: targetState,
+      event: eventName,
+      platforms: platforms  // ✅ Now properly extracted!
+    });
+  }
+});
             }
           }
         }
