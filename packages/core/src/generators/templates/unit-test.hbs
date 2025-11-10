@@ -40,10 +40,10 @@ const NavigationActions = require('{{navigationActionsPath}}');
 const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
 
 {{#unless isPlaywright}}
-// ⚡ Only run pre-flight for WebdriverIO (expensive app launch)
+// ⚡ Pre-flight check runs BEFORE test registration (SYNCHRONOUS)
 if (!process.env.SKIP_PREFLIGHT_CHECK) {
   console.log('🚀 Running pre-flight check...');
-  TestPlanner.preFlightCheck({{implClassName}}, testDataPath);
+  TestPlanner.preFlightCheck({{implClassName}}, testDataPath);  // ✅ Now synchronous!
 }
 {{/unless}}
 
