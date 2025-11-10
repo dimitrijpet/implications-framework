@@ -97,30 +97,31 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log(`   Test Mode: INDUCER (action + checks)`);
   {{/if}}
   
-   // ────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────
   // STEP 2: Smart Navigation (only if needed)
   // ────────────────────────────────────────────────────────
-{{#if isPlaywright}}
-  // ────────────────────────────────────────────────────────
-  // 🌐 Web/CMS Navigation
-  // ────────────────────────────────────────────────────────
-  // Web apps use URLs for navigation
-  console.log('✅ Browser navigation (handled by Playwright)');
-{{else}}
+  {{#if isPlaywright}}
+  const currentUrl = page.url();
+  // ✅ Check if already on app (adjust pattern for your domain)
+  const needsNavigation = !currentUrl || 
+    (!currentUrl.includes('poleposition.app') && 
+     !currentUrl.includes('localhost') &&
+     !currentUrl.includes('127.0.0.1'));
+  
+  if (needsNavigation) {
+    console.log('🚀 Navigating to application...');
+    await TestSetup.navigateToApp(page, ctx.config);
+  } else {
+    console.log('✅ Already on application, skipping navigation');
+  }
+  {{else}}
   // ────────────────────────────────────────────────────────
   // 📱 Mobile App Navigation
   // ────────────────────────────────────────────────────────
-{{#if hasNavigation}}
-  // Using navigation helper: {{navigation.instance}}
-  const {{navigation.instance}} = new {{actionDetails.navigationFile}}(config);
-  await {{navigation.instance}}.{{navigation.method}};
-  console.log('✅ Navigated using {{navigation.method}}');
-{{else}}
   // Mobile apps don't have URLs - navigation is done via UI.
   // Assuming app starts on correct screen or action handles navigation.
   console.log('✅ Mobile app ready (navigation handled by action)');
-{{/if}}
-{{/if}}
+  {{/if}}
 
   {{#if isVerify}}
   // ────────────────────────────────────────────────────────
@@ -200,23 +201,14 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   let isGlobalAction = true;
   {{/if}}
   
-   // ────────────────────────────────────────────────────────
-  // STEP 4: Perform Action{{#if isInducer}} (INDUCER mode){{else}} (VERIFY mode){{/if}}
+  // ────────────────────────────────────────────────────────
+  // STEP 4: Perform Action (INDUCER mode)
   // ────────────────────────────────────────────────────────
   
-{{#if hasNavigation}}
+  {{#if hasActionDetails}}
   // ═══════════════════════════════════════════════════════════
-  // 🧭 NAVIGATION
+  // 🎬 ACTION LOGIC - Generated from actionDetails
   // ═══════════════════════════════════════════════════════════
-  console.log('\n🧭 Navigating to action screen...');
-  await {{navigation.instance}}.{{navigation.method}}({{#each navigation.args}}{{this}}{{#unless @last}}, {{/unless}}{{/each}});
-  console.log('✅ Navigation complete');
-  
-{{/if}}
-{{#if hasActionDetails}}
-// ═══════════════════════════════════════════════════════════
-// 🎬 ACTION LOGIC - Generated from actionDetails
-// ═══════════════════════════════════════════════════════════
   
   {{#if actionDetails.imports}}
   // Initialize screen objects

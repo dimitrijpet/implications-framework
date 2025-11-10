@@ -2236,9 +2236,20 @@ function extractValueFromNode(node) {
 // Replace lines 1547-1676 in implications.js with this
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event, actionDetails } = req.body;  // ✨ Added actionDetails
+    const { sourceFile, targetFile, event, platforms, actionDetails } = req.body;
     
-    console.log('➕ Adding transition:', { sourceFile, targetFile, event });
+    // ✅ ADD THESE DEBUG LOGS
+    console.log('═══════════════════════════════════════');
+    console.log('🔍 ADD-TRANSITION DEBUG');
+    console.log('═══════════════════════════════════════');
+    console.log('📦 Raw req.body:', JSON.stringify(req.body, null, 2));
+    console.log('🎯 Extracted platforms:', platforms);
+    console.log('📊 Platforms type:', typeof platforms);
+    console.log('📊 Platforms is array?', Array.isArray(platforms));
+    console.log('📊 Platforms length:', platforms?.length);
+    console.log('═══════════════════════════════════════');
+    
+    console.log('➕ Adding transition:', { sourceFile, targetFile, event, platforms });
     
     // Validate inputs
     if (!sourceFile || !targetFile || !event) {
@@ -2247,40 +2258,27 @@ router.post('/add-transition', async (req, res) => {
       });
     }
     
+    // Read both files
     const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    const targetContent = await fs.readFile(targetFile, 'utf-8');
 
+    // Parse both files
     const sourceAst = parse(sourceContent, {
       sourceType: 'module',
       plugins: ['classProperties', 'objectRestSpread'],
     });
-
-    // Read target file to extract actual state ID
-    const targetContent = await fs.readFile(targetFile, 'utf-8');
+    
     const targetAst = parse(targetContent, {
       sourceType: 'module',
       plugins: ['classProperties', 'objectRestSpread']
     });
 
-    let targetStateName = null;
-
-    // Extract ID from target file's xstateConfig
-    traverse(targetAst, {
-      ClassProperty(path) {
-        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          const config = path.node.value;
-          if (config?.type === 'ObjectExpression') {
-            const idProp = config.properties.find(p => p.key?.name === 'id');
-            if (idProp?.value?.value) {
-              targetStateName = idProp.value.value;
-            }
-          }
-        }
-      }
-    });
-
+    // Extract target state name from target file
+    let targetStateName = extractStateName(targetAst);
+    
     // Fallback: derive from filename
     if (!targetStateName) {
-      targetStateName = path.basename(targetFile, '.js')
+      targetStateName = nodePath.basename(targetFile, '.js')
         .replace(/Implications$/, '')
         .replace(/Booking$/, '')
         .replace(/([A-Z])/g, '_$1')
@@ -2290,229 +2288,63 @@ router.post('/add-transition', async (req, res) => {
 
     console.log('🎯 Target state name:', targetStateName);
     
-  let transitionAdded = false;
-
-// ✅ NEW: Handle BOTH simple and complex xstateCsonfig structures
-traverse(sourceAst, {
-  ClassProperty(path) {
-    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-      const configValue = path.node.value;
-      
-      if (configValue?.type === 'ObjectExpression') {
-        let onProperty = null;
-        
-        // Try to find 'on' at root level (SIMPLE structure)
-        onProperty = configValue.properties.find(p => p.key?.name === 'on');
-        
-        if (onProperty) {
-          console.log('✅ Found simple structure: xstateConfig.on');
-        } else {
-          // Try to find 'on' inside states.idle (COMPLEX structure)
-          console.log('🔍 Looking for complex structure: xstateConfig.states.*.on');
-          
-          const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
-          
-          if (statesProperty && statesProperty.value?.type === 'ObjectExpression') {
-            // Find 'idle' or first state
-            let targetState = statesProperty.value.properties.find(p => p.key?.name === 'idle');
-            
-            if (!targetState && statesProperty.value.properties.length > 0) {
-              targetState = statesProperty.value.properties[0];
-              console.log(`✅ Using first state: ${targetState.key?.name}`);
-            }
-            
-            if (targetState && targetState.value?.type === 'ObjectExpression') {
-              onProperty = targetState.value.properties.find(p => p.key?.name === 'on');
-              
-              if (!onProperty) {
-                // Create 'on' property inside state
-                console.log('📝 Creating new "on" property inside state');
-                onProperty = {
-                  type: 'ObjectProperty',
-                  key: { type: 'Identifier', name: 'on' },
-                  value: { type: 'ObjectExpression', properties: [] }
-                };
-                targetState.value.properties.push(onProperty);
-              }
-            }
-          }
-        }
-        
-        // If still no 'on' found, create it at root level
-        if (!onProperty) {
-          console.log('📝 Creating new "on" property at root level');
-          onProperty = {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'on' },
-            value: { type: 'ObjectExpression', properties: [] }
-          };
-          configValue.properties.push(onProperty);
-        }
-        
-        // Check if transition already exists
-        const existingTransition = onProperty.value.properties?.find(
-          p => p.key?.name === event || p.key?.value === event
-        );
-        
-        if (existingTransition) {
-          console.log('⚠️ Transition already exists');
-          return;
-        }
-        
-        // Build transition value
-        const transitionProperties = [
-          {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'target' },
-            value: { type: 'StringLiteral', value: `${targetStateName}` }
-          }
-        ];
-        
-        // ✨ Add actionDetails if provided
-        if (actionDetails) {
-          console.log('✨ Adding actionDetails to transition');
-          
-          // Convert actionDetails to AST
-          const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
-          
-          transitionProperties.push({
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'actionDetails' },
-            value: actionDetailsAST
-          });
-        }
-        
-        // Add new transition
-        console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
-        onProperty.value.properties.push({
-          type: 'ObjectProperty',
-          key: { type: 'Identifier', name: event },
-          value: {
-            type: 'ObjectExpression',
-            properties: transitionProperties
-          }
-        });
-        
-        transitionAdded = true;
-      }
-    }
-  }
-});
+    // Add transition to source file
+    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platforms, actionDetails);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
-        error: 'Could not add transition - failed to modify xstateConfig.states.idle.on' 
+        error: 'Could not add transition - failed to modify xstateConfig.on' 
       });
     }
     
-    // Generate updated code
-    const { code: newCode } = (babelGenerate.default || babelGenerate)(sourceAst, {
+    // Generate updated source code
+    const { code: newSourceCode } = (babelGenerate.default || babelGenerate)(sourceAst, {
       retainLines: true,
       comments: true
     });
     
-    // Create backup
+    // Create backup and write source file
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${sourceFile}.backup-${timestamp}`;
-    await fs.copy(sourceFile, backupPath);
+    const sourceBackupPath = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, sourceBackupPath);
+    await fs.writeFile(sourceFile, newSourceCode, 'utf-8');
+    console.log('✅ Source file updated');
     
-    // Write updated file
-  console.log('📝 Updating target file with prerequisite...');
-  await fs.writeFile(sourceFile, newCode, 'utf-8');
-console.log('✅ Source file updated');
-
-// Parse target file AST (already loaded above)
-let targetUpdated = false;
-
-traverse(targetAst, {
-  ClassProperty(path) {
-    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-      const configValue = path.node.value;
+    // Update target file with prerequisite
+    const sourceStateName = nodePath.basename(sourceFile, '.js')
+      .replace(/Implications$/, '')
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '');
+    
+    const targetUpdated = addPrerequisiteToAST(targetAst, sourceStateName);
+    
+    // Write updated target file if modified
+    if (targetUpdated) {
+      const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+        retainLines: true,
+        comments: true
+      });
       
-      if (configValue?.type === 'ObjectExpression') {
-        // Find or create meta property
-        let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
-        
-        if (!metaProperty) {
-          // Create meta if doesn't exist
-          metaProperty = {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'meta' },
-            value: { type: 'ObjectExpression', properties: [] }
-          };
-          configValue.properties.unshift(metaProperty); // Add at start
-        }
-        
-        // Find or create requires property in meta
-        let requiresProperty = metaProperty.value.properties.find(p => p.key?.name === 'requires');
-        
-        if (!requiresProperty) {
-          // Create requires if doesn't exist
-          requiresProperty = {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'requires' },
-            value: { type: 'ObjectExpression', properties: [] }
-          };
-          metaProperty.value.properties.push(requiresProperty);
-        }
-        
-        // Extract source state name from source file
-       const sourceStateName = nodePath.basename(sourceFile, '.js')  // ✅ Use nodePath!
-  .replace(/Implications$/, '')
-          .replace(/([A-Z])/g, '_$1')
-          .toLowerCase()
-          .replace(/^_/, '');
-        
-        // Find or create previousStatus in requires
-        let prevStatusProperty = requiresProperty.value.properties.find(
-          p => p.key?.name === 'previousStatus'
-        );
-        
-        if (!prevStatusProperty) {
-          // Add previousStatus
-          requiresProperty.value.properties.push({
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'previousStatus' },
-            value: { type: 'StringLiteral', value: sourceStateName }
-          });
-          
-          console.log(`✅ Added requires.previousStatus = '${sourceStateName}'`);
-          targetUpdated = true;
-        } else {
-          console.log(`ℹ️  previousStatus already exists, not overwriting`);
-        }
-      }
+      const targetBackupPath = `${targetFile}.backup-${timestamp}`;
+      await fs.copy(targetFile, targetBackupPath);
+      await fs.writeFile(targetFile, newTargetCode, 'utf-8');
+      
+      console.log('✅ Target file updated with prerequisite');
+      console.log('📦 Target backup:', targetBackupPath);
     }
-  }
-});
-
-// Write updated target file if modified
-if (targetUpdated) {
-  const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
-    retainLines: true,
-    comments: true
-  });
-  
-  // Create backup of target
-  const targetBackupPath = `${targetFile}.backup-${timestamp}`;
-  await fs.copy(targetFile, targetBackupPath);
-  
-  // Write updated target file
-  await fs.writeFile(targetFile, newTargetCode, 'utf-8');
-  
-  console.log('✅ Target file updated with prerequisite');
-  console.log('📦 Target backup:', targetBackupPath);
-}
-    console.log('📦 Backup:', backupPath);
+    
+    console.log('📦 Source backup:', sourceBackupPath);
     
     res.json({
       success: true,
       transition: {
         event,
-        from: path.basename(sourceFile),
-        to: `#${targetStateName}`
+        from: nodePath.basename(sourceFile),
+        to: `#${targetStateName}`,
+        platforms: platforms || []
       },
-      backup: backupPath
+      backup: sourceBackupPath
     });
     
   } catch (error) {
@@ -2523,6 +2355,294 @@ if (targetUpdated) {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+function extractStateName(ast) {
+  let stateName = null;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const config = path.node.value;
+        if (config?.type === 'ObjectExpression') {
+          const idProp = config.properties.find(p => p.key?.name === 'id');
+          if (idProp?.value?.value) {
+            stateName = idProp.value.value;
+          }
+        }
+      }
+    }
+  });
+  
+  return stateName;
+}
+
+function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails) {
+  let transitionAdded = false;
+  
+  // ✅ BUILD transitionObj OUTSIDE traverse!
+  const transitionObj = t.objectExpression([
+    t.objectProperty(
+      t.identifier('target'),
+      t.stringLiteral(targetStateName)
+    )
+  ]);
+  
+  // Add platforms if specified
+  if (platforms && Array.isArray(platforms) && platforms.length > 0) {
+    console.log('✅ Adding platforms to transition:', platforms);
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('platforms'),
+        t.arrayExpression(platforms.map(p => t.stringLiteral(p)))
+      )
+    );
+  }
+  
+  // Add actionDetails if provided
+  if (actionDetails) {
+    console.log('✅ Adding actionDetails to transition');
+    
+    const actionDetailsObj = buildActionDetailsAST(actionDetails);
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('actionDetails'),
+        actionDetailsObj
+      )
+    );
+  }
+  
+  // NOW traverse and add the transition
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type === 'ObjectExpression') {
+          // Find or create 'on' property
+          let onProperty = findOrCreateOnProperty(configValue);
+          
+          // Check if transition already exists
+          const existingTransition = onProperty.value.properties?.find(
+            p => p.key?.name === event || p.key?.value === event
+          );
+          
+          if (existingTransition) {
+            console.log('⚠️  Transition already exists');
+            return;
+          }
+          
+          // Add transition to 'on' property
+          console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
+          
+          onProperty.value.properties.push(
+            t.objectProperty(
+              t.identifier(event),
+              transitionObj  // ✅ Use the pre-built object!
+            )
+          );
+          
+          transitionAdded = true;
+        }
+      }
+    }
+  });
+  
+  return transitionAdded;
+}
+
+// ✅ ADD THIS NEW HELPER FUNCTION
+function buildActionDetailsAST(actionDetails) {
+  const properties = [];
+  
+  // Description
+  if (actionDetails.description) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('description'),
+        t.stringLiteral(actionDetails.description)
+      )
+    );
+  }
+  
+  // Navigation method
+  if (actionDetails.navigationMethod) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('navigationMethod'),
+        t.stringLiteral(actionDetails.navigationMethod)
+      )
+    );
+  }
+  
+  // Navigation file
+  if (actionDetails.navigationFile) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('navigationFile'),
+        t.stringLiteral(actionDetails.navigationFile)
+      )
+    );
+  }
+  
+  // Imports
+  if (actionDetails.imports && actionDetails.imports.length > 0) {
+    const importsArray = t.arrayExpression(
+      actionDetails.imports.map(imp => 
+        t.objectExpression([
+          t.objectProperty(t.identifier('className'), t.stringLiteral(imp.className)),
+          t.objectProperty(t.identifier('varName'), t.stringLiteral(imp.varName)),
+          t.objectProperty(t.identifier('path'), t.stringLiteral(imp.path)),
+          t.objectProperty(t.identifier('constructor'), t.stringLiteral(imp.constructor))
+        ])
+      )
+    );
+    
+    properties.push(
+      t.objectProperty(
+        t.identifier('imports'),
+        importsArray
+      )
+    );
+  }
+  
+  // Steps
+  if (actionDetails.steps && actionDetails.steps.length > 0) {
+    const stepsArray = t.arrayExpression(
+      actionDetails.steps.map(step => 
+        t.objectExpression([
+          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description)),
+          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance)),
+          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method)),
+          t.objectProperty(
+            t.identifier('args'),
+            t.arrayExpression(step.args.map(arg => t.stringLiteral(arg)))
+          )
+        ])
+      )
+    );
+    
+    properties.push(
+      t.objectProperty(
+        t.identifier('steps'),
+        stepsArray
+      )
+    );
+  }
+  
+  return t.objectExpression(properties);
+}
+
+function findOrCreateOnProperty(configValue) {
+  // Try to find 'on' at root level
+  let onProperty = configValue.properties.find(p => p.key?.name === 'on');
+  
+  if (onProperty) {
+    console.log('✅ Found simple structure: xstateConfig.on');
+    return onProperty;
+  }
+  
+  // Try to find 'on' inside states
+  console.log('🔍 Looking for complex structure: xstateConfig.states.*.on');
+  
+  const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
+  
+  if (statesProperty && statesProperty.value?.type === 'ObjectExpression') {
+    // Find first state
+    let targetState = statesProperty.value.properties[0];
+    
+    if (targetState && targetState.value?.type === 'ObjectExpression') {
+      onProperty = targetState.value.properties.find(p => p.key?.name === 'on');
+      
+      if (!onProperty) {
+        // Create 'on' property inside state
+        console.log('📝 Creating new "on" property inside state');
+        onProperty = {
+          type: 'ObjectProperty',
+          key: { type: 'Identifier', name: 'on' },
+          value: { type: 'ObjectExpression', properties: [] }
+        };
+        targetState.value.properties.push(onProperty);
+      }
+      
+      return onProperty;
+    }
+  }
+  
+  // Create at root level as fallback
+  console.log('📝 Creating new "on" property at root level');
+  onProperty = {
+    type: 'ObjectProperty',
+    key: { type: 'Identifier', name: 'on' },
+    value: { type: 'ObjectExpression', properties: [] }
+  };
+  configValue.properties.push(onProperty);
+  
+  return onProperty;
+}
+
+function addPrerequisiteToAST(ast, sourceStateName) {
+  let targetUpdated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type === 'ObjectExpression') {
+          // Find or create meta property
+          let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+          
+          if (!metaProperty) {
+            metaProperty = {
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: 'meta' },
+              value: { type: 'ObjectExpression', properties: [] }
+            };
+            configValue.properties.unshift(metaProperty);
+          }
+          
+          // Find or create requires property
+          let requiresProperty = metaProperty.value.properties.find(p => p.key?.name === 'requires');
+          
+          if (!requiresProperty) {
+            requiresProperty = {
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: 'requires' },
+              value: { type: 'ObjectExpression', properties: [] }
+            };
+            metaProperty.value.properties.push(requiresProperty);
+          }
+          
+          // Check if previousStatus already exists
+          let prevStatusProperty = requiresProperty.value.properties.find(
+            p => p.key?.name === 'previousStatus'
+          );
+          
+          if (!prevStatusProperty) {
+            requiresProperty.value.properties.push({
+              type: 'ObjectProperty',
+              key: { type: 'Identifier', name: 'previousStatus' },
+              value: { type: 'StringLiteral', value: sourceStateName }
+            });
+            
+            console.log(`✅ Added requires.previousStatus = '${sourceStateName}'`);
+            targetUpdated = true;
+          } else {
+            console.log(`ℹ️  previousStatus already exists, not overwriting`);
+          }
+        }
+      }
+    }
+  });
+  
+  return targetUpdated;
+}
 
 /**
  * GET /api/implications/analyze-composition

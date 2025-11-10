@@ -7,6 +7,9 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { prepareValidationScreens, pascalCaseHelper } from './templateHelpers.js';
 import Handlebars from 'handlebars';
+import { parse } from '@babel/parser';
+import traverseModule from '@babel/traverse';
+const traverse = traverseModule.default || traverseModule;
 
 // Create require for loading user files dynamically
 const __filename = fileURLToPath(import.meta.url);
@@ -146,7 +149,7 @@ class UnitTestGenerator {
     const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
     
     // 3. Build template context
-    const context = this._buildContext(metadata, platform);
+    const context = this._buildContext(metadata, platform, ImplClass);  // ✅ Pass ImplClass!
     
     // 4. Validate context
     this._validateContext(context);
@@ -176,6 +179,59 @@ class UnitTestGenerator {
       state: stateName
     };
   }
+
+  /**
+ * Determine if this is an INDUCER or VERIFY test
+ * 
+ * Logic:
+ * - If this platform is in transition.platforms → INDUCER
+ * - If this platform is NOT in transition.platforms but has mirrorsOn.UI → VERIFY
+ * 
+ * @returns {object} { mode: 'inducer'|'verify', transition: {...} }
+ */
+_determineTestMode(ImplClass, platform, stateName) {
+  console.log(`\n🔍 Determining test mode for ${stateName} on ${platform}`);
+  
+  // Find transition TO this state
+  const xstateConfig = ImplClass.xstateConfig;
+  let transition = null;
+  
+  // Check all states for transitions TO stateName
+  if (xstateConfig.states) {
+    for (const [sourceState, sourceConfig] of Object.entries(xstateConfig.states)) {
+      for (const [event, target] of Object.entries(sourceConfig.on || {})) {
+        const targetState = typeof target === 'string' ? target : target.target;
+        if (targetState === stateName) {
+          transition = {
+            event,
+            from: sourceState,
+            platforms: target.platforms || [],
+            actionDetails: target.actionDetails
+          };
+          break;
+        }
+      }
+      if (transition) break;
+    }
+  }
+  
+  // No transition found = initial state (always inducer)
+  if (!transition) {
+    console.log(`   ✅ Mode: INDUCER (initial state)`);
+    return { mode: 'inducer', transition: null };
+  }
+  
+  // Check if this platform can induce
+  const canInduce = transition.platforms.includes(platform);
+  
+  if (canInduce) {
+    console.log(`   ✅ Mode: INDUCER (${platform} in platforms: ${transition.platforms})`);
+    return { mode: 'inducer', transition };
+  } else {
+    console.log(`   ✅ Mode: VERIFY (${platform} NOT in platforms: ${transition.platforms})`);
+    return { mode: 'verify', transition };
+  }
+}
   
   /**
    * Load Implication class from file
@@ -187,43 +243,166 @@ class UnitTestGenerator {
    * - Relative: require('../../../something')
    * - Project-relative: require('tests/mobile/i18n/en.json')
    */
-  _loadImplication(implFilePath) {
-    if (!fs.existsSync(implFilePath)) {
-      throw new Error(`Implication file not found: ${implFilePath}`);
-    }
-    
-    // Get absolute path
-    const absolutePath = path.resolve(implFilePath);
-    
-    // Find project root (directory containing tests/)
-    const projectRoot = this._findProjectRoot(absolutePath);
-    
-    // Save current directory
-    const originalCwd = process.cwd();
-    
-    try {
-      // Change to PROJECT ROOT so all imports work
-      process.chdir(projectRoot);
-      
-      console.log(`   📁 Changed to project root: ${projectRoot}`);
-      
-      // Clear require cache to get fresh version
-      delete require.cache[require.resolve(absolutePath)];
-      
-      // Require from the project root context
-      const ImplClass = require(absolutePath);
-      
-      if (!ImplClass.xstateConfig) {
-        throw new Error(`Invalid Implication: missing xstateConfig in ${absolutePath}`);
-      }
-      
-      return ImplClass;
-      
-    } finally {
-      // ALWAYS restore original directory
-      process.chdir(originalCwd);
-    }
+ _loadImplication(implFilePath) {
+  if (!fs.existsSync(implFilePath)) {
+    throw new Error(`Implication file not found: ${implFilePath}`);
   }
+  
+  const absolutePath = path.resolve(implFilePath);
+  const projectRoot = this._findProjectRoot(absolutePath);
+  const originalCwd = process.cwd();
+  
+  try {
+    process.chdir(projectRoot);
+    console.log(`   📁 Changed to project root: ${projectRoot}`);
+    
+    // Clear cache
+    delete require.cache[require.resolve(absolutePath)];
+    
+    // ✅ TRY to require, but have fallback
+    let ImplClass;
+    
+   try {
+  ImplClass = require(absolutePath);
+} catch (requireError) {
+  console.warn(`   ⚠️  Could not require file:`);
+  console.warn(`   Error: ${requireError.message}`);
+  console.warn(`   Stack: ${requireError.stack}`); // ✅ ADD THIS
+  console.warn(`   📖 Falling back to AST parsing...`);
+      
+      // Parse the file directly with AST
+      const content = fs.readFileSync(absolutePath, 'utf-8');
+      ImplClass = this._parseImplicationFromAST(content);
+    }
+    
+    if (!ImplClass || !ImplClass.xstateConfig) {
+      throw new Error(`Invalid Implication: missing xstateConfig in ${absolutePath}`);
+    }
+    
+    return ImplClass;
+    
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
+/**
+ * Parse Implication from AST (when require() fails)
+ */
+_parseImplicationFromAST(content) {
+  const ast = parse(content, {
+    sourceType: 'module',
+    plugins: ['classProperties', 'objectRestSpread']
+  });
+  
+  let className = null;
+  let xstateConfig = null;
+  let mirrorsOn = null;
+  let triggeredBy = null;
+  
+  // ✅ Store 'this' reference
+  const self = this;
+  
+  traverse(ast, {
+    ClassDeclaration(path) {
+      className = path.node.id?.name;
+      
+      path.node.body.body.forEach(member => {
+        if (member.type === 'ClassProperty' && member.static) {
+          const propName = member.key?.name;
+          
+          if (propName === 'xstateConfig') {
+            xstateConfig = self._astNodeToObject(member.value);  // ✅ Use self
+          } else if (propName === 'mirrorsOn') {
+            mirrorsOn = self._astNodeToObject(member.value);     // ✅ Use self
+          } else if (propName === 'triggeredBy') {
+            triggeredBy = self._astNodeToObject(member.value);   // ✅ Use self
+          }
+        }
+      });
+    }
+  });
+  
+  return {
+    name: className,
+    xstateConfig,
+    mirrorsOn,
+    triggeredBy
+  };
+}
+
+/**
+ * Convert AST node to plain JavaScript object
+ */
+_astNodeToObject(node) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'StringLiteral':
+      return node.value;
+    
+    case 'NumericLiteral':
+      return node.value;
+    
+    case 'BooleanLiteral':
+      return node.value;
+    
+    case 'NullLiteral':
+      return null;
+    
+    case 'ObjectExpression':
+      const obj = {};
+      const debugKeys = node.properties.map(p => p.key?.name).filter(Boolean);
+  if (debugKeys.includes('CANCEL_REQUEST') || debugKeys.includes('CHECK_IN')) {
+    console.log('   🔍 PARSING TRANSITIONS OBJECT!');
+    console.log('   📊 Properties:', debugKeys);
+    console.log('   📊 Property count:', node.properties.length);
+    
+    node.properties.forEach((prop, i) => {
+      const key = prop.key?.name || prop.key?.value;
+      console.log(`   📍 Property ${i}: ${key}`);
+      console.log(`      Value type: ${prop.value?.type}`);
+      
+      if (prop.value?.type === 'ObjectExpression') {
+        const innerKeys = prop.value.properties.map(p => p.key?.name).filter(Boolean);
+        console.log(`      Inner keys: ${innerKeys.join(', ')}`);
+      }
+    });
+  }
+  
+  node.properties.forEach(prop => {
+    if (prop.key) {
+      const key = prop.key.name || prop.key.value;
+      const value = this._astNodeToObject(prop.value);
+      
+      obj[key] = value;
+    }
+  });
+  return obj;
+    
+    case 'ArrayExpression':
+      return node.elements.map(el => this._astNodeToObject(el));
+    
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+      return '<function>';
+    
+    case 'CallExpression':
+      return '<call>';
+    
+    case 'TemplateLiteral':
+      // Handle template strings like `new ${ClassName}()`
+      return '<template>';
+      
+    case 'Identifier':
+      // Handle identifiers (variable names)
+      return node.name;
+    
+    default:
+      // Return empty object for unknown types instead of null
+      return {};
+  }
+}
   
   /**
    * Find project root by looking for tests/ directory
@@ -426,10 +605,20 @@ _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, pre
   console.log(`\n🔍 === EXTRACTING ACTION DETAILS ===`);
   console.log(`   Target State: "${targetStateName}"`);
   console.log(`   Previous Status: "${previousStatus || 'none'}"`);
-  console.log(`   Impl File: ${implFilePath || 'none'}`);
-  console.log(`   Has xstateConfig: ${!!xstateConfig}`);
-  console.log(`   Has xstateConfig.on: ${!!xstateConfig?.on}`);
-  console.log(`   Has xstateConfig.states: ${!!xstateConfig?.states}`);
+  console.log(`   Platform: "${platform}"`);
+  
+  // ✅ ADD THIS: Check what the xstateConfig looks like
+  console.log(`\n📊 xstateConfig structure:`);
+  console.log(`   Has .on? ${!!xstateConfig.on}`);
+  console.log(`   Has .states? ${!!xstateConfig.states}`);
+  
+  if (xstateConfig.on) {
+    console.log(`   Top-level transitions:`, Object.keys(xstateConfig.on));
+  }
+  
+  if (xstateConfig.states) {
+    console.log(`   States:`, Object.keys(xstateConfig.states));
+  }
   
   let foundActionDetails = null;
   
@@ -462,10 +651,11 @@ _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, pre
       console.log(`      Clean target: ${cleanTarget}`);
       console.log(`      Matches target? ${cleanTarget === targetStateName}`);
       
-      if (cleanTarget === targetStateName && actionDetails) {
-        console.log(`\n   ✅ FOUND actionDetails in top-level ${eventName} → ${targetStateName}`);
-        return actionDetails;
-      }
+     if ((cleanTarget === targetStateName || cleanTarget.endsWith('_' + targetStateName)) 
+    && transitionConfig.actionDetails) {
+  console.log(`\n   ✅ FOUND via AST: ${eventName} → ${targetStateName}`);
+  return transitionConfig.actionDetails;
+}
     }
     
     console.log(`   ❌ No actionDetails found in top-level transitions`);
@@ -590,15 +780,84 @@ _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, pre
     if (!implFilePath) console.log(`   - No implFilePath`);
   }
   
-  // ✅ STEP 4: Fallback to meta.actionDetails
-  const meta = xstateConfig.states?.[targetStateName]?.meta || xstateConfig.meta || {};
-  if (meta.actionDetails) {
-    console.log(`\n📝 STEP 4: Using actionDetails from meta (fallback)`);
-    return meta.actionDetails;
+ // ✅ STEP 4: Parse previous file with AST (if require failed)
+if (!foundActionDetails && previousStatus && implFilePath) {
+  console.log(`\n📂 STEP 4: Parsing previous state with AST...`);
+  
+  const previousFile = this._findImplicationFile(previousStatus, implFilePath);
+  
+  if (previousFile && fs.existsSync(previousFile)) {
+    console.log(`   📄 File: ${path.basename(previousFile)}`);
+    
+    try {
+      const prevContent = fs.readFileSync(previousFile, 'utf-8');
+      const prevAst = parse(prevContent, {
+        sourceType: 'module',
+        plugins: ['classProperties', 'objectRestSpread']
+      });
+      
+      const prevXstateConfig = this._extractXStateFromAST(prevAst);
+      
+      if (prevXstateConfig && prevXstateConfig.on) {
+        console.log(`   ✅ Found transitions via AST:`, Object.keys(prevXstateConfig.on));
+        
+        for (const [eventName, transitionConfig] of Object.entries(prevXstateConfig.on)) {
+          const target = typeof transitionConfig === 'string' 
+            ? transitionConfig 
+            : transitionConfig.target;
+         const cleanTarget = target?.replace(/^#/, '');
+
+// ✅ ADD DEBUG
+console.log(`      Checking: "${cleanTarget}" vs "${targetStateName}"`);
+
+// ✅ FLEXIBLE MATCHING: Try exact match OR partial match
+const isMatch = cleanTarget === targetStateName || 
+                cleanTarget === `booking_${targetStateName}` ||
+                cleanTarget.endsWith(`_${targetStateName}`);
+
+console.log(`      Match result: ${isMatch}`);
+
+if (isMatch && transitionConfig.actionDetails) {
+  console.log(`\n   ✅ FOUND via AST: ${eventName} → ${targetStateName}`);
+  return transitionConfig.actionDetails;
+}
+        }
+      }
+    } catch (err) {
+      console.log(`   ❌ AST parsing failed: ${err.message}`);
+    }
   }
+}
   
   console.log(`\n❌ === NO ACTION DETAILS FOUND ===\n`);
   return null;
+}
+
+_extractXStateFromAST(ast) {
+  const self = this;
+  let xstateConfig = null;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.static && path.node.key?.name === 'xstateConfig') {
+        console.log('   🔍 Found xstateConfig property in AST');
+        console.log('   📊 Value type:', path.node.value.type);
+        
+        xstateConfig = self._astNodeToObject(path.node.value);
+        
+        console.log('   📊 Parsed xstateConfig keys:', Object.keys(xstateConfig || {}));
+        
+        if (xstateConfig?.on) {
+          console.log('   📊 on keys:', Object.keys(xstateConfig.on));
+          console.log('   📊 on object:', JSON.stringify(xstateConfig.on, null, 2));
+        } else {
+          console.log('   ❌ No "on" property found after parsing!');
+        }
+      }
+    }
+  });
+  
+  return xstateConfig;
 }
 
 /**
@@ -691,9 +950,19 @@ _findImplicationFile(status, currentFilePath) {
   /**
    * Build template context from metadata
    */
-  _buildContext(metadata, platform) {
-    const implClassName = metadata.className;
-    const targetStatus = metadata.status;
+_buildContext(metadata, platform, ImplClass) {  // ✅ Add ImplClass parameter!
+  const implClassName = metadata.className;
+  const targetStatus = metadata.status;
+  
+  // ✅ NEW: Determine test mode
+  const { mode, transition } = this._determineTestMode(
+    ImplClass,  // ✅ Use parameter, not metadata.ImplClass!
+    platform,
+    targetStatus
+  );
+  
+  const isInducer = mode === 'inducer';
+  const isVerify = mode === 'verify';
     const actionName = this._generateActionName(targetStatus);
     const testFileName = this._generateFileName(metadata, platform);
     
@@ -730,8 +999,13 @@ console.log(`   deltaFields:`, deltaFields);
 
     const hasDeltaLogic = deltaFields.length > 0;
     
-    // Action details
+     // Action details
     const hasActionDetails = !!metadata.actionDetails;
+    
+    // ✅ ADD NAVIGATION EXTRACTION
+    const navigation = hasActionDetails 
+      ? this._extractNavigation(metadata.actionDetails)
+      : null;
     
     // Test cases
     const testCases = this._generateTestCases(metadata, entityName);
@@ -788,6 +1062,10 @@ if (metadata.mirrorsOn?.UI) {
       // Platform
       isPlaywright,
       isMobile,
+
+      testMode: mode,
+    isInducer,
+    isVerify,
       
       // Paths (âœ¨ SMART - calculated based on file location)
 testContextPath: paths.testContext,
@@ -814,8 +1092,10 @@ testSetupPath: paths.testSetup,
       entityName,
       
       // Action
-   hasActionDetails,
-actionDetails: metadata.actionDetails,  // ✅ Already extracted!
+     hasActionDetails: isInducer && !!metadata.actionDetails,
+  actionDetails: isInducer ? metadata.actionDetails : null,
+      hasNavigation: !!navigation, // ✅ ADD THIS
+      navigation: navigation,       // ✅ ADD THIS
       triggerButton: metadata.triggerButton,
       navigationExample: this._generateNavigationExample(platform, metadata),
       actionExample: this._generateActionExample(metadata, platform),
@@ -855,6 +1135,14 @@ console.log(`   meta:`, context.meta);
 console.log(`   meta.entity:`, context.meta?.entity);
 console.log(`   hasDeltaLogic:`, context.hasDeltaLogic);
 console.log(`   deltaFields:`, context.deltaFields);
+// ✅ ADD THIS DEBUG RIGHT BEFORE return context;
+console.log('\n🐛 DEBUG Navigation Context:');
+console.log('   hasNavigation:', context.hasNavigation);
+console.log('   navigation:', JSON.stringify(context.navigation, null, 2));
+console.log('   hasActionDetails:', context.hasActionDetails);
+console.log('   actionDetails.navigationMethod:', context.actionDetails?.navigationMethod);
+console.log('   actionDetails.navigationFile:', context.actionDetails?.navigationFile);
+console.log('');
     return context;
   }
   
@@ -1732,6 +2020,47 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
   });
   
   return processed;
+}
+
+/**
+ * Extract navigation from actionDetails
+ * 
+ * @param {object} actionDetails - Action details with optional navigationMethod
+ * @returns {object|null} { method, instance, args } or null
+ */
+/**
+ * Extract navigation from actionDetails
+ */
+_extractNavigation(actionDetails) {
+  if (!actionDetails?.navigationMethod || !actionDetails?.navigationFile) {
+    return null;
+  }
+
+  const navMethod = actionDetails.navigationMethod;
+  const navFile = actionDetails.navigationFile;
+  
+  // Parse signature: "navigateToManageRequests()"
+  const match = navMethod.match(/^([^(]+)\(([^)]*)\)/);
+  
+  if (!match) {
+    console.warn('⚠️ Could not parse navigation method:', navMethod);
+    return null;
+  }
+
+  const methodName = match[1];
+  const paramsStr = match[2];
+  const params = paramsStr ? paramsStr.split(',').map(p => p.trim()) : [];
+
+  // Build instance name from file: NavigationActions → navigationActions
+  const instanceName = navFile.charAt(0).toLowerCase() + navFile.slice(1);
+
+  return {
+    method: methodName,
+    signature: navMethod,  // ✅ Keep full signature
+    instance: instanceName,
+    className: navFile,
+    args: params.length > 0 ? params.map(p => `ctx.data.${p}`) : []
+  };
 }
 
 /**

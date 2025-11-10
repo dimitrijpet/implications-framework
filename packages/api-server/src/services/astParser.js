@@ -67,6 +67,73 @@ export async function parseFile(filePath) {
 }
 
 /**
+ * Parse file and extract class methods WITH PARAMETERS
+ */
+export async function parseFileWithMethods(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    const classes = [];
+    
+    traverse.default(ast, {
+      ClassDeclaration(path) {
+        const className = path.node.id?.name;
+        
+        const functions = [];
+        
+        path.node.body.body.forEach(member => {
+          if (member.type === 'ClassMethod') {
+            // Extract parameters
+            const params = member.params.map(param => {
+              if (param.type === 'Identifier') {
+                return param.name;
+              } else if (param.type === 'AssignmentPattern') {
+                // Has default value
+                return `${param.left.name} = ${extractValueFromNode(param.right)}`;
+              }
+              return 'unknown';
+            });
+            
+            const signature = `${member.key?.name}(${params.join(', ')})`;
+            
+            functions.push({
+              name: member.key?.name,
+              signature: signature,
+              params: params,
+              static: member.static,
+              async: member.async,
+            });
+          }
+        });
+        
+        classes.push({
+          name: className,
+          functions: functions,
+        });
+      },
+    });
+    
+    return {
+      path: filePath,
+      classes,
+      error: null,
+    };
+    
+  } catch (error) {
+    return {
+      path: filePath,
+      classes: [],
+      error: error.message,
+    };
+  }
+}
+
+/**
  * Check if parsed file has a specific pattern
  */
 export function hasPattern(parsed, patternName) {

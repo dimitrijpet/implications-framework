@@ -753,6 +753,7 @@ const handleTransitionSubmit = async (formData) => {
         sourceFile: transitionModalData.source.file,
         targetFile: transitionModalData.target.file,
         event: formData.event,
+        platforms: formData.platforms,
         actionDetails: formData.actionDetails
       })
     });
