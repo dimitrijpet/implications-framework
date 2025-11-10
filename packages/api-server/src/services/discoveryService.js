@@ -111,15 +111,24 @@ if (result.files.implications.length > 0) {
   );
 }
 
+// ✅ ADD THIS: Save discovery result to cache
+console.log('\n💾 Saving discovery cache...');
+const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+fs.ensureDirSync(cacheDir);
+
+const cacheFile = path.join(cacheDir, 'discovery-result.json');
+fs.writeJsonSync(cacheFile, result, { spaces: 2 });
+
+console.log(`   ✅ Cache saved: ${cacheFile}`);
+
 console.log(`✅ Discovery complete`);
-    console.log(`✅ Discovery complete`);
-    console.log(`   - Implications: ${result.files.implications.length}`);
-    console.log(`   - Sections: ${result.files.sections.length}`);
-    console.log(`   - Screens: ${result.files.screens.length}`);
-    console.log(`   - Project Type: ${result.projectType}`);
-    console.log(`   - Transitions: ${result.transitions.length}`);
-    console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`);
-    
+console.log(`✅ Discovery complete`);
+console.log(`   - Implications: ${result.files.implications.length}`);
+console.log(`   - Sections: ${result.files.sections.length}`);
+console.log(`   - Screens: ${result.files.screens.length}`);
+console.log(`   - Project Type: ${result.projectType}`);
+console.log(`   - Transitions: ${result.transitions.length}`);
+console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`)
     return result;
     
   } catch (error) {

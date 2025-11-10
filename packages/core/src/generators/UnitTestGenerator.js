@@ -51,22 +51,27 @@ class UnitTestGenerator {
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
    */
   generate(implFilePath, options = {}) {
-    const {
-      platform = 'web',
-      state = null,
-      preview = false
-    } = options;
-    
-    console.log('\nðŸŽ¯ UnitTestGenerator.generate()');
-    console.log(`   Implication: ${implFilePath}`);
-    console.log(`   Platform: ${platform}`);
-    if (state) console.log(`   State: ${state}`);
-    
-    // ✅ FIX #3: Auto-detect output directory from implication file location
-    if (!this.options.outputDir) {
-      this.options.outputDir = path.dirname(path.resolve(implFilePath));
-      console.log(`   ðŸ" Auto-detected output: ${this.options.outputDir}`);
-    }
+  const {
+    platform = 'web',
+    state = null,
+    preview = false,
+    projectPath  // ✅ ADD THIS
+  } = options;
+  
+  console.log('\n🎯 UnitTestGenerator.generate()');
+  console.log(`   Implication: ${implFilePath}`);
+  console.log(`   Platform: ${platform}`);
+  if (state) console.log(`   State: ${state}`);
+  
+  // ✅ ADD THIS: Store projectPath as instance variable
+  this.projectPath = projectPath || this._findProjectRoot(implFilePath);
+  console.log(`   📁 Project root: ${this.projectPath}`);
+  
+  // ✅ Auto-detect output directory from implication file location
+  if (!this.options.outputDir) {
+    this.options.outputDir = path.dirname(path.resolve(implFilePath));
+    console.log(`   🗂️ Auto-detected output: ${this.options.outputDir}`);
+  }
     
     // 1. Load Implication class
     const ImplClass = this._loadImplication(implFilePath);
@@ -450,7 +455,7 @@ _astNodeToObject(node) {
 _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
   const xstateConfig = ImplClass.xstateConfig;
   
-  let meta, status, entry, transitions, previousStatus;
+  let meta, status, entry, transitions, previousStatus, targetStateName;
   
   if (stateName) {
     // Multi-state machine: extract from specific state
@@ -464,8 +469,9 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     status = meta.status || stateName;
     entry = stateConfig.entry;
     transitions = stateConfig.on || {};
+    targetStateName = stateName;
     
-    // ✨ NEW: Find previous state by looking at ALL transitions
+    // ✨ Find previous state by looking at ALL transitions
     previousStatus = this._findPreviousState(xstateConfig.states, stateName);
     
   } else {
@@ -475,40 +481,59 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     entry = xstateConfig.entry;
     transitions = xstateConfig.on || {};
     previousStatus = meta.requires?.previousStatus;
+    targetStateName = status;
   }
 
-
-  
-const actionDetails = this._extractActionDetailsFromTransition(
-  xstateConfig,
-  stateName || status,
-  platform,
-  previousStatus || meta.requires?.previousStatus,
-  implFilePath
-);
+  // ✅ NEW: Get ALL transitions that lead to this state
+  const allTransitions = this._extractActionDetailsFromTransition(
+    xstateConfig,
+    targetStateName,
+    platform,
+    previousStatus,
+    implFilePath
+  );
 
   console.log(`\n🐛 DEBUG actionDetails extraction:`);
-console.log(`   targetState: ${stateName || status}`);
-console.log(`   previousStatus: ${previousStatus || meta.requires?.previousStatus}`);
-console.log(`   implFilePath: ${implFilePath}`);
-console.log(`   actionDetails found: ${!!actionDetails}`);
+  console.log(`   targetState: ${targetStateName}`);
+  console.log(`   previousStatus: ${previousStatus}`);
+  console.log(`   implFilePath: ${implFilePath}`);
+  console.log(`   transitions found: ${allTransitions.length}`);
+
+  // For now, use first transition (we'll support multiple later)
+ // Prefer transition from previousStatus, fallback to first
+let actionDetails = null;
+
+if (allTransitions.length > 0) {
+  // Try to find transition from previousStatus
+  const preferredTransition = allTransitions.find(
+    t => t.fromState === previousStatus
+  );
+  
+  actionDetails = preferredTransition 
+    ? preferredTransition.actionDetails 
+    : allTransitions[0].actionDetails;
+    
+  console.log(`   ✅ Using transition from: ${preferredTransition ? preferredTransition.fromState : allTransitions[0].fromState}`);
+}
+
+  console.log(`   actionDetails found: ${!!actionDetails}`);
   
   const metadata = {
-  // Class info
-  className: ImplClass.name,
-  
-  // Status info
-  status: status,
-  previousStatus: previousStatus || meta.requires?.previousStatus,
-  
-  // ✅ ADD THIS LINE
-  meta: meta,  // Include the meta object!
-  
-  // Fields
-  requiredFields: meta.requiredFields || [],
-  
-  // Setup info
-  setup: meta.setup || [],
+    // Class info
+    className: ImplClass.name,
+    
+    // Status info
+    status: status,
+    previousStatus: previousStatus,
+    
+    // Meta object
+    meta: meta,
+    
+    // Fields
+    requiredFields: meta.requiredFields || [],
+    
+    // Setup info
+    setup: meta.setup || [],
     
     // Buttons
     triggerButton: meta.triggerButton,
@@ -521,7 +546,10 @@ console.log(`   actionDetails found: ${!!actionDetails}`);
     // Entry actions (for delta)
     entry: entry,
     
-    // Action details (if provided) - ✅ NEW: From transition
+    // ✅ NEW: Store ALL transitions
+    allTransitions: allTransitions,
+    
+    // Action details (backward compatibility - first transition)
     actionDetails: actionDetails,
     
     // Triggered by (multi-platform actions)
@@ -547,6 +575,55 @@ console.log(`   actionDetails found: ${!!actionDetails}`);
   metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
   
   return metadata;
+}
+
+/**
+ * Get all transitions that lead to a target state
+ * Uses discovery cache instead of searching files
+ * 
+ * @param {string} targetState - Target state name (e.g., "booking_accepted")
+ * @param {string} projectPath - Project root path
+ * @returns {Array} Array of transitions TO this state
+ */
+_getIncomingTransitions(targetState, projectPath) {
+  console.log(`\n🗺️  Finding transitions TO "${targetState}"...`);
+  
+  try {
+    // Load discovery cache
+    const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+    const discoveryCache = path.join(cacheDir, 'discovery-result.json');
+    
+    if (!fs.existsSync(discoveryCache)) {
+      console.log(`   ⚠️  No discovery cache found`);
+      return [];
+    }
+    
+    const discovery = JSON.parse(fs.readFileSync(discoveryCache, 'utf-8'));
+    
+    if (!discovery.transitions) {
+      console.log(`   ⚠️  No transitions in cache`);
+      return [];
+    }
+    
+    // Filter transitions that go TO our target
+    const incoming = discovery.transitions.filter(t => {
+      // Handle both exact match and partial match
+      return t.to === targetState || 
+             t.to === `booking_${targetState}` ||
+             t.to.endsWith(`_${targetState}`);
+    });
+    
+    console.log(`   ✅ Found ${incoming.length} incoming transition(s):`);
+    incoming.forEach(t => {
+      console.log(`      ${t.from} --${t.event}--> ${t.to}`);
+    });
+    
+    return incoming;
+    
+  } catch (error) {
+    console.log(`   ❌ Error loading discovery cache: ${error.message}`);
+    return [];
+  }
 }
   
   
@@ -601,235 +678,279 @@ console.log(`   actionDetails found: ${!!actionDetails}`);
  * @param {string} implFilePath - Path to current Implication file
  * @returns {object|null} actionDetails or null
  */
+/**
+ * Extract ALL actionDetails from transitions that lead to this state
+ * Uses discovery cache to find ALL incoming transitions
+ * 
+ * @returns {Array} Array of transition objects with actionDetails
+ */
 _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, previousStatus = null, implFilePath = null) {
-  console.log(`\n🔍 === EXTRACTING ACTION DETAILS ===`);
+  console.log(`\n🔍 === EXTRACTING ALL ACTION DETAILS ===`);
   console.log(`   Target State: "${targetStateName}"`);
-  console.log(`   Previous Status: "${previousStatus || 'none'}"`);
   console.log(`   Platform: "${platform}"`);
   
-  // ✅ ADD THIS: Check what the xstateConfig looks like
-  console.log(`\n📊 xstateConfig structure:`);
-  console.log(`   Has .on? ${!!xstateConfig.on}`);
-  console.log(`   Has .states? ${!!xstateConfig.states}`);
+  const allTransitions = [];
   
-  if (xstateConfig.on) {
-    console.log(`   Top-level transitions:`, Object.keys(xstateConfig.on));
+  // ✅ STEP 1: Get ALL incoming transitions from discovery cache
+  const incomingTransitions = this._getIncomingTransitions(targetStateName, this.projectPath);
+  
+  if (incomingTransitions.length === 0) {
+    console.log(`   ⚠️  No incoming transitions found in discovery cache`);
+    console.log(`   ⚠️  Falling back to previousStatus search...`);
   }
   
-  if (xstateConfig.states) {
-    console.log(`   States:`, Object.keys(xstateConfig.states));
-  }
+  // ✅ STEP 2: For each incoming transition, load the source file and extract actionDetails
+  // ✅ RIGHT - transition.from is already the status!
+for (const transition of incomingTransitions) {
+  console.log(`\n📂 Processing transition: ${transition.from} --${transition.event}--> ${transition.to}`);
   
-  let foundActionDetails = null;
+  // ✅ transition.from contains the status name (e.g., "booking_pending")
+  // But discovery is returning className, not status! Let's check the cache structure...
   
-  // ✅ STEP 1: Check top-level transitions first (single-state machines)
-  if (xstateConfig.on) {
-    console.log(`\n📋 STEP 1: Checking top-level transitions...`);
-    console.log(`   Transitions found: ${Object.keys(xstateConfig.on).join(', ')}`);
+  // Find the source file using the "from" state
+  const sourceFile = this._findImplicationFile(transition.from, implFilePath);
     
-    for (const [eventName, transitionConfig] of Object.entries(xstateConfig.on)) {
-      console.log(`\n   🔍 Checking event: ${eventName}`);
-      console.log(`      Type: ${typeof transitionConfig}`);
-      
-      let target, actionDetails;
-      
-      if (typeof transitionConfig === 'string') {
-        target = transitionConfig;
-        console.log(`      String target: ${target}`);
-      } else if (typeof transitionConfig === 'object') {
-        target = transitionConfig.target;
-        actionDetails = transitionConfig.actionDetails;
-        console.log(`      Object target: ${target}`);
-        console.log(`      Has actionDetails: ${!!actionDetails}`);
-        if (actionDetails) {
-          console.log(`      ActionDetails imports: ${actionDetails.imports?.length || 0}`);
-          console.log(`      ActionDetails steps: ${actionDetails.steps?.length || 0}`);
-        }
-      }
-      
-      const cleanTarget = target?.replace(/^#/, '');
-      console.log(`      Clean target: ${cleanTarget}`);
-      console.log(`      Matches target? ${cleanTarget === targetStateName}`);
-      
-     if ((cleanTarget === targetStateName || cleanTarget.endsWith('_' + targetStateName)) 
-    && transitionConfig.actionDetails) {
-  console.log(`\n   ✅ FOUND via AST: ${eventName} → ${targetStateName}`);
-  return transitionConfig.actionDetails;
-}
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      console.log(`   ❌ Source file not found for: ${transition.from}`);
+      continue;
     }
     
-    console.log(`   ❌ No actionDetails found in top-level transitions`);
-  } else {
-    console.log(`\n⏭️  STEP 1 SKIPPED: No top-level transitions`);
-  }
-  
-  // ✅ STEP 2: Check nested states (multi-state machines)
-  if (!foundActionDetails && xstateConfig.states) {
-    console.log(`\n📋 STEP 2: Checking nested state transitions...`);
-    console.log(`   States: ${Object.keys(xstateConfig.states).join(', ')}`);
+    // Try loading with require first
+    let actionDetails = this._extractActionDetailsViaRequire(sourceFile, transition.event, targetStateName);
     
-    for (const [sourceStateName, sourceStateConfig] of Object.entries(xstateConfig.states)) {
-      const transitions = sourceStateConfig.on || {};
-      
-      if (Object.keys(transitions).length === 0) {
-        continue;
-      }
-      
-      console.log(`\n   🔍 Checking state: ${sourceStateName}`);
-      console.log(`      Transitions: ${Object.keys(transitions).join(', ')}`);
-      
-      for (const [eventName, transitionConfig] of Object.entries(transitions)) {
-        let target, actionDetails;
-        
-        if (typeof transitionConfig === 'string') {
-          target = transitionConfig;
-        } else if (typeof transitionConfig === 'object') {
-          target = transitionConfig.target;
-          actionDetails = transitionConfig.actionDetails;
-        }
-        
-        const cleanTarget = target?.replace(/^#/, '');
-        
-        console.log(`      Event: ${eventName} → ${cleanTarget}`);
-        console.log(`      Has actionDetails: ${!!actionDetails}`);
-        
-        if (cleanTarget === targetStateName && actionDetails) {
-          console.log(`\n   ✅ FOUND actionDetails: ${sourceStateName} --${eventName}--> ${targetStateName}`);
-          return actionDetails;
-        }
-      }
+    // Fallback to AST if require fails
+    if (!actionDetails) {
+      actionDetails = this._extractActionDetailsViaAST(sourceFile, transition.event, targetStateName);
     }
     
-    console.log(`   ❌ No actionDetails found in nested transitions`);
-  } else if (!foundActionDetails) {
-    console.log(`\n⏭️  STEP 2 SKIPPED: No nested states`);
-  }
-
-  // ✅ STEP 3: Check previous state's file
-  if (!foundActionDetails && previousStatus && implFilePath) {
-    console.log(`\n📂 STEP 3: Checking previous state file...`);
-    console.log(`   Previous Status: ${previousStatus}`);
-    console.log(`   Current File: ${implFilePath}`);
-    
-    try {
-      const previousImplFile = this._findImplicationFile(previousStatus, implFilePath);
-      
-      console.log(`   Previous File Result: ${previousImplFile || 'NOT FOUND'}`);
-      
-      if (previousImplFile) {
-        console.log(`\n   📂 Loading previous state file...`);
-        
-        // Clear cache to get fresh version
-        const require = createRequire(import.meta.url);
-        delete require.cache[require.resolve(previousImplFile)];
-        
-        const PreviousImplClass = require(previousImplFile);
-        const prevXstateConfig = PreviousImplClass.xstateConfig;
-        
-        console.log(`   ✅ Loaded: ${PreviousImplClass.name}`);
-        console.log(`   Has xstateConfig: ${!!prevXstateConfig}`);
-        console.log(`   Has xstateConfig.on: ${!!prevXstateConfig?.on}`);
-        
-        if (prevXstateConfig?.on) {
-          const transitions = prevXstateConfig.on;
-          console.log(`   Transitions: ${Object.keys(transitions).join(', ')}`);
-          
-          for (const [eventName, transitionConfig] of Object.entries(transitions)) {
-            console.log(`\n   🔍 Checking event: ${eventName}`);
-            
-            let target, actionDetails;
-            
-            if (typeof transitionConfig === 'string') {
-              target = transitionConfig;
-              console.log(`      String target: ${target}`);
-            } else if (typeof transitionConfig === 'object') {
-              target = transitionConfig.target;
-              actionDetails = transitionConfig.actionDetails;
-              console.log(`      Object target: ${target}`);
-              console.log(`      Has actionDetails: ${!!actionDetails}`);
-              if (actionDetails) {
-                console.log(`      ActionDetails imports: ${actionDetails.imports?.length || 0}`);
-                console.log(`      ActionDetails steps: ${actionDetails.steps?.length || 0}`);
-              }
-            }
-            
-            const cleanTarget = target?.replace(/^#/, '');
-            console.log(`      Clean target: ${cleanTarget}`);
-            console.log(`      Matches target? ${cleanTarget === targetStateName}`);
-            
-            if (cleanTarget === targetStateName && actionDetails) {
-              console.log(`\n   ✅ FOUND actionDetails in previous state: ${previousStatus} --${eventName}--> ${targetStateName}`);
-              return actionDetails;
-            }
-          }
-          
-          console.log(`   ❌ No matching transition found in previous state`);
-        } else {
-          console.log(`   ❌ Previous state has no transitions`);
-        }
-      } else {
-        console.log(`   ❌ Could not find previous state file`);
-      }
-    } catch (error) {
-      console.log(`   ❌ Error loading previous state: ${error.message}`);
-      console.log(`   Stack: ${error.stack}`);
-    }
-  } else {
-    console.log(`\n⏭️  STEP 3 SKIPPED:`);
-    if (!previousStatus) console.log(`   - No previousStatus`);
-    if (!implFilePath) console.log(`   - No implFilePath`);
-  }
-  
- // ✅ STEP 4: Parse previous file with AST (if require failed)
-if (!foundActionDetails && previousStatus && implFilePath) {
-  console.log(`\n📂 STEP 4: Parsing previous state with AST...`);
-  
-  const previousFile = this._findImplicationFile(previousStatus, implFilePath);
-  
-  if (previousFile && fs.existsSync(previousFile)) {
-    console.log(`   📄 File: ${path.basename(previousFile)}`);
-    
-    try {
-      const prevContent = fs.readFileSync(previousFile, 'utf-8');
-      const prevAst = parse(prevContent, {
-        sourceType: 'module',
-        plugins: ['classProperties', 'objectRestSpread']
+    if (actionDetails) {
+      allTransitions.push({
+        event: transition.event,
+        fromState: transition.from,
+        target: transition.to,
+        platforms: actionDetails.platforms || transition.platforms || [],
+        actionDetails: actionDetails
       });
       
-      const prevXstateConfig = this._extractXStateFromAST(prevAst);
-      
-      if (prevXstateConfig && prevXstateConfig.on) {
-        console.log(`   ✅ Found transitions via AST:`, Object.keys(prevXstateConfig.on));
-        
-        for (const [eventName, transitionConfig] of Object.entries(prevXstateConfig.on)) {
-          const target = typeof transitionConfig === 'string' 
-            ? transitionConfig 
-            : transitionConfig.target;
-         const cleanTarget = target?.replace(/^#/, '');
-
-// ✅ ADD DEBUG
-console.log(`      Checking: "${cleanTarget}" vs "${targetStateName}"`);
-
-// ✅ FLEXIBLE MATCHING: Try exact match OR partial match
-const isMatch = cleanTarget === targetStateName || 
-                cleanTarget === `booking_${targetStateName}` ||
-                cleanTarget.endsWith(`_${targetStateName}`);
-
-console.log(`      Match result: ${isMatch}`);
-
-if (isMatch && transitionConfig.actionDetails) {
-  console.log(`\n   ✅ FOUND via AST: ${eventName} → ${targetStateName}`);
-  return transitionConfig.actionDetails;
-}
-        }
-      }
-    } catch (err) {
-      console.log(`   ❌ AST parsing failed: ${err.message}`);
+      console.log(`   ✅ Extracted actionDetails for ${transition.event}`);
+    } else {
+      console.log(`   ⚠️  No actionDetails found for ${transition.event}`);
     }
   }
-}
   
-  console.log(`\n❌ === NO ACTION DETAILS FOUND ===\n`);
+  // ✅ STEP 3: Fallback - if discovery cache had no results, use old method
+  if (allTransitions.length === 0 && previousStatus && implFilePath) {
+    console.log(`\n📂 Fallback: Checking previous state file...`);
+    console.log(`   Previous Status: ${previousStatus}`);
+    
+    const previousFile = this._findImplicationFile(previousStatus, implFilePath);
+    
+    if (previousFile && fs.existsSync(previousFile)) {
+      // Try require
+      let actionDetails = this._extractActionDetailsViaRequire(previousFile, null, targetStateName);
+      
+      // Try AST
+      if (!actionDetails) {
+        actionDetails = this._extractActionDetailsViaAST(previousFile, null, targetStateName);
+      }
+      
+      if (actionDetails) {
+        allTransitions.push({
+          event: 'UNKNOWN',
+          fromState: previousStatus,
+          target: targetStateName,
+          platforms: [],
+          actionDetails: actionDetails
+        });
+      }
+    }
+  }
+  
+  // ✅ STEP 4: Remove duplicates (same event + fromState)
+  const uniqueTransitions = [];
+  const seen = new Set();
+  
+  for (const transition of allTransitions) {
+    const key = `${transition.fromState}:${transition.event}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueTransitions.push(transition);
+    }
+  }
+  
+  console.log(`\n✅ === FOUND ${uniqueTransitions.length} UNIQUE TRANSITION(S) ===\n`);
+  
+  return uniqueTransitions;
+}
+
+/**
+ * Extract actionDetails via require (fast but may fail)
+ */
+_extractActionDetailsViaRequire(filePath, eventName, targetStateName) {
+  try {
+    const require = createRequire(import.meta.url);
+    delete require.cache[require.resolve(filePath)];
+    
+    const ImplClass = require(filePath);
+    const xstateConfig = ImplClass.xstateConfig;
+    
+    if (!xstateConfig?.on) return null;
+    
+    for (const [event, config] of Object.entries(xstateConfig.on)) {
+      // If eventName specified, match it
+      if (eventName && event !== eventName) continue;
+      
+      const transition = this._parseTransition(event, config, null, targetStateName);
+      if (transition) {
+        return transition.actionDetails;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Extract actionDetails via AST (fallback when require fails)
+ */
+_extractActionDetailsViaAST(filePath, eventName, targetStateName) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+    
+    const xstateConfig = this._extractXStateFromAST(ast);
+    
+    if (!xstateConfig?.on) return null;
+    
+    for (const [event, config] of Object.entries(xstateConfig.on)) {
+      // If eventName specified, match it
+      if (eventName && event !== eventName) continue;
+      
+      const transition = this._parseTransition(event, config, null, targetStateName);
+      if (transition) {
+        return transition.actionDetails;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Get all transitions that lead to a target state from discovery cache
+ */
+_getIncomingTransitions(targetState, projectPath) {
+  console.log(`\n🗺️  Finding transitions TO "${targetState}"...`);
+  
+  try {
+    const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+    const discoveryCache = path.join(cacheDir, 'discovery-result.json');
+    
+    if (!fs.existsSync(discoveryCache)) {
+      console.log(`   ⚠️  No discovery cache found`);
+      return [];
+    }
+    
+    const discovery = JSON.parse(fs.readFileSync(discoveryCache, 'utf-8'));
+    
+    if (!discovery.transitions) {
+      console.log(`   ⚠️  No transitions in cache`);
+      return [];
+    }
+    
+    // Filter transitions that go TO our target (with flexible matching)
+    const incoming = discovery.transitions.filter(t => {
+      const cleanTarget = t.to.replace(/^booking_/, '').replace(/_/g, '');
+      const cleanSearch = targetState.replace(/^booking_/, '').replace(/_/g, '');
+      return cleanTarget === cleanSearch;
+    });
+    
+    console.log(`   ✅ Found ${incoming.length} incoming transition(s):`);
+    incoming.forEach(t => {
+      console.log(`      ${t.from} --${t.event}--> ${t.to}`);
+    });
+    
+    return incoming;
+    
+  } catch (error) {
+    console.log(`   ❌ Error loading discovery cache: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Parse a single transition and check if it matches target
+ */
+_parseTransition(eventName, transitionConfig, fromState, targetStateName) {
+  let target, actionDetails, platforms;
+  
+  if (typeof transitionConfig === 'string') {
+    target = transitionConfig;
+  } else if (typeof transitionConfig === 'object') {
+    target = transitionConfig.target;
+    actionDetails = transitionConfig.actionDetails;
+    platforms = transitionConfig.platforms || [];
+  }
+  
+  const cleanTarget = target?.replace(/^#/, '');
+  
+  // Flexible matching
+  const isMatch = cleanTarget === targetStateName || 
+                  cleanTarget === `booking_${targetStateName}` ||
+                  cleanTarget.endsWith(`_${targetStateName}`);
+  
+  if (isMatch && actionDetails) {
+    return {
+      event: eventName,
+      fromState: fromState || 'root',
+      target: cleanTarget,
+      platforms: platforms,
+      actionDetails: actionDetails
+    };
+  }
+  
+  return null;
+}
+/**
+ * Parse a single transition and check if it matches target
+ * 
+ * @returns {Object|null} Transition object or null if no match
+ */
+_parseTransition(eventName, transitionConfig, fromState, targetStateName) {
+  let target, actionDetails, platforms;
+  
+  if (typeof transitionConfig === 'string') {
+    target = transitionConfig;
+  } else if (typeof transitionConfig === 'object') {
+    target = transitionConfig.target;
+    actionDetails = transitionConfig.actionDetails;
+    platforms = transitionConfig.platforms || [];
+  }
+  
+  const cleanTarget = target?.replace(/^#/, '');
+  
+  // ✅ Flexible matching
+  const isMatch = cleanTarget === targetStateName || 
+                  cleanTarget === `booking_${targetStateName}` ||
+                  cleanTarget.endsWith(`_${targetStateName}`);
+  
+  if (isMatch && actionDetails) {
+    return {
+      event: eventName,
+      fromState: fromState || 'root',
+      target: cleanTarget,
+      platforms: platforms,
+      actionDetails: actionDetails
+    };
+  }
+  
   return null;
 }
 
@@ -1092,8 +1213,13 @@ testSetupPath: paths.testSetup,
       entityName,
       
       // Action
-     hasActionDetails: isInducer && !!metadata.actionDetails,
-  actionDetails: isInducer ? metadata.actionDetails : null,
+     // ✅ NEW: Support multiple transitions
+  allTransitions: metadata.allTransitions || [],
+  hasMultipleTransitions: (metadata.allTransitions || []).length > 1,
+  
+  // Keep backward compatibility (first transition)
+  hasActionDetails: !!metadata.actionDetails,
+  actionDetails: metadata.actionDetails,
       hasNavigation: !!navigation, // ✅ ADD THIS
       navigation: navigation,       // ✅ ADD THIS
       triggerButton: metadata.triggerButton,

@@ -175,6 +175,24 @@ export function extractXStateTransitions(parsed, className) {
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
+            // ✅ STEP 1: Extract status from meta.status
+            let fromStatus = className; // Fallback to className
+            
+            const metaProperty = value.properties.find(
+              p => p.key?.name === 'meta'
+            );
+            
+            if (metaProperty && metaProperty.value?.type === 'ObjectExpression') {
+              const statusProp = metaProperty.value.properties.find(
+                p => p.key?.name === 'status'
+              );
+              
+              if (statusProp?.value?.type === 'StringLiteral') {
+                fromStatus = statusProp.value.value;
+                console.log(`   📍 Extracted status: "${fromStatus}" from meta`);
+              }
+            }
+            
             // Find 'on' property
             const onProperty = value.properties.find(
               p => p.key?.name === 'on'
@@ -183,48 +201,45 @@ export function extractXStateTransitions(parsed, className) {
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
-  const eventName = transitionProp.key?.name || transitionProp.key?.value;
-  let targetState = null;
-  let platforms = null;  // ✅ Initialize!
-  
-  // Handle different formats
-  if (transitionProp.value?.type === 'StringLiteral') {
-    // Simple format: CANCEL: 'pending'
-    targetState = transitionProp.value.value;
-  } else if (transitionProp.value?.type === 'ObjectExpression') {
-    // Object format: CANCEL: { target: 'pending', platforms: ['dancer'] }
-    
-    // Extract target
-    const targetProp = transitionProp.value.properties.find(
-      p => p.key?.name === 'target'
-    );
-    if (targetProp?.value?.type === 'StringLiteral') {
-      targetState = targetProp.value.value;
-    }
-    
-    // ✅ NEW: Extract platforms
-    const platformsProp = transitionProp.value.properties.find(
-      p => p.key?.name === 'platforms'
-    );
-    
-    if (platformsProp && platformsProp.value?.type === 'ArrayExpression') {
-      platforms = platformsProp.value.elements
-        .filter(el => el.type === 'StringLiteral')
-        .map(el => el.value);
-      
-      console.log(`      📱 Found platforms for ${eventName}:`, platforms);
-    }
-  }
-  
-  if (eventName && targetState) {
-    transitions.push({
-      from: className,
-      to: targetState,
-      event: eventName,
-      platforms: platforms  // ✅ Now properly extracted!
-    });
-  }
-});
+                const eventName = transitionProp.key?.name || transitionProp.key?.value;
+                let targetState = null;
+                let platforms = null;
+                
+                // Handle different formats
+                if (transitionProp.value?.type === 'StringLiteral') {
+                  targetState = transitionProp.value.value;
+                } else if (transitionProp.value?.type === 'ObjectExpression') {
+                  // Extract target
+                  const targetProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'target'
+                  );
+                  if (targetProp?.value?.type === 'StringLiteral') {
+                    targetState = targetProp.value.value;
+                  }
+                  
+                  // Extract platforms
+                  const platformsProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'platforms'
+                  );
+                  
+                  if (platformsProp && platformsProp.value?.type === 'ArrayExpression') {
+                    platforms = platformsProp.value.elements
+                      .filter(el => el.type === 'StringLiteral')
+                      .map(el => el.value);
+                    
+                    console.log(`      📱 Found platforms for ${eventName}:`, platforms);
+                  }
+                }
+                
+                if (eventName && targetState) {
+                  transitions.push({
+                    from: fromStatus,  // ✅ NOW USES STATUS!
+                    to: targetState,
+                    event: eventName,
+                    platforms: platforms
+                  });
+                }
+              });
             }
           }
         }
