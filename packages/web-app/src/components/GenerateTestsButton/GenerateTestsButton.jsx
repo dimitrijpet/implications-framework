@@ -12,31 +12,63 @@ export default function GenerateTestsButton({ state, projectPath }) {
   const [error, setError] = useState(null);
   
   const handleGenerate = async () => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
+  setLoading(true);
+  setError(null);
+  setResult(null);
+  
+  try {
+    console.log('🎯 Generating tests for:', state.name);
+    console.log('📋 xstateConfig:', state.meta?.xstateConfig);
     
-    try {
-      console.log('🎯 Generating test for:', state.name);
+    // ✅ Extract transitions with platforms
+    const transitions = [];
+    const xstateOn = state.meta?.xstateConfig?.on || {};
+    
+    Object.entries(xstateOn).forEach(([event, config]) => {
+      const target = typeof config === 'string' ? config : config.target;
+      const platforms = config.platforms || [state.meta?.platform || 'web'];
       
-      const response = await axios.post(`${API_URL}/api/generate/unit-test`, {
-        implPath: state.files?.implication,
-        platform: state.meta?.platform || 'web',
-        // Don't pass state - let generator handle all states in multi-state machine
-        projectPath
+      // Create one transition entry per platform
+      platforms.forEach(platform => {
+        transitions.push({
+          event,
+          target,
+          platform,
+          actionDetails: config.actionDetails
+        });
       });
-      
-      setResult(response.data);
-      const count = response.data.results?.length || 1;
-      console.log(`✅ Generated ${count} test(s)`);
-      
-    } catch (err) {
-      console.error('❌ Generation failed:', err);
-      setError(err.response?.data?.error || err.message);
-    } finally {
-      setLoading(false);
+    });
+    
+    console.log('🔄 Extracted transitions:', transitions);
+    
+    // ✅ If no transitions, generate for main platform only
+    if (transitions.length === 0) {
+      transitions.push({
+        event: null,
+        target: null,
+        platform: state.meta?.platform || 'web',
+        actionDetails: null
+      });
     }
-  };
+    
+    const response = await axios.post(`${API_URL}/api/generate/unit-test`, {
+      implPath: state.files?.implication,
+      platform: state.meta?.platform || 'web',  // Main platform
+      transitions: transitions,  // ✅ Pass all transitions!
+      projectPath
+    });
+    
+    setResult(response.data);
+    const count = response.data.results?.length || 1;
+    console.log(`✅ Generated ${count} test(s)`);
+    
+  } catch (err) {
+    console.error('❌ Generation failed:', err);
+    setError(err.response?.data?.error || err.message);
+  } finally {
+    setLoading(false);
+  }
+};
   
   return (
     <div className="generate-tests-section">

@@ -23,7 +23,8 @@ router.post('/unit-test', async (req, res) => {
       implFilePath,
       platform = 'web', 
       state = null, 
-      targetState = null 
+      targetState = null,
+      transitions = []  // ✅ Extract transitions!
     } = req.body;
     
     const implFilePathFinal = implPath || filePath || implFilePath;
@@ -33,6 +34,7 @@ router.post('/unit-test', async (req, res) => {
     console.log(`   implFilePath: ${implFilePathFinal}`);
     console.log(`   platform: ${platform}`);
     console.log(`   state: ${stateToUse}`);
+    console.log(`   transitions: ${transitions.length}`);  // ✅ Log it!
     
     if (!implFilePathFinal) {
       console.error('❌ Missing file path in request body!');
@@ -46,25 +48,50 @@ router.post('/unit-test', async (req, res) => {
     console.log(`   Implication: ${implFilePathFinal}`);
     console.log(`   Platform: ${platform}`);
     console.log(`   State: ${stateToUse || 'all states'}`);
+    console.log(`   Transitions to generate: ${transitions.length}`);
     
     const generator = new UnitTestGenerator({});
     
-    const result = generator.generate(implFilePathFinal, {
-      platform,
-      state: stateToUse,
-      preview: false
-    });
+    // ✅ Generate multiple tests - one per transition!
+    const results = [];
     
-    const results = Array.isArray(result) ? result : [result];
+    if (transitions.length > 0) {
+      console.log('\n🔄 Generating transition tests...');
+      
+      for (const transition of transitions) {
+        console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
+        
+        const result = generator.generate(implFilePathFinal, {
+          platform: transition.platform,  // ✅ Use transition's platform!
+          state: stateToUse,
+          transition: transition,  // ✅ Pass the transition!
+          preview: false
+        });
+        
+        results.push(result);
+      }
+    } else {
+      // Fallback: Generate single test (old behavior)
+      console.log('\n📝 Generating single test (no transitions)');
+      
+      const result = generator.generate(implFilePathFinal, {
+        platform,
+        state: stateToUse,
+        preview: false
+      });
+      
+      results.push(result);
+    }
     
     console.log(`\n✅ Generated ${results.length} test(s)`);
     
     return res.json({
       success: true,
       count: results.length,
-      tests: results.map(r => ({
+      results: results.map(r => ({
         fileName: r.fileName,
         filePath: r.filePath,
+        code: r.code,
         size: r.code?.length || 0,
         state: r.state
       }))

@@ -256,6 +256,10 @@ export function extractXStateTransitions(parsed, className) {
 /**
  * Extract metadata from xstateConfig.meta
  */
+/**
+ * Extract metadata from xstateConfig.meta
+ * ✨ NOW INCLUDES FULL XSTATE CONFIG WITH TRANSITIONS!
+ */
 export function extractXStateMetadata(content) {
   const metadata = {
     status: null,
@@ -271,6 +275,7 @@ export function extractXStateMetadata(content) {
     requiredFields: [],
     requires: null,
     setup: null,
+    xstateConfig: null  // ✅ ADD THIS!
   };
   
   try {
@@ -285,34 +290,77 @@ export function extractXStateMetadata(content) {
           const value = path.node.value;
           
           if (value?.type === 'ObjectExpression') {
-            // Find 'meta' property
-            const metaProperty = value.properties.find(
-              p => p.key?.name === 'meta'
-            );
             
-            if (metaProperty && metaProperty.value?.type === 'ObjectExpression') {
-              // Extract each field from meta
-              metaProperty.value.properties.forEach(prop => {
-                const key = prop.key?.name;
-                const value = extractValueFromNode(prop.value);
-                
-                if (key && value !== undefined) {
-                  metadata[key] = value;
-                }
-              });
+            // ✅ STEP 1: Extract the FULL xstateConfig as an object
+            const fullConfig = {
+              id: null,
+              meta: {},
+              on: {},
+              entry: null
+            };
+            
+            // Parse all top-level properties
+            value.properties.forEach(prop => {
+              const key = prop.key?.name;
               
-              // Handle special cases
-              if (metadata.setup) {
-                // Extract platforms from setup if present
-                if (Array.isArray(metadata.setup.platforms)) {
-                  metadata.platforms = metadata.setup.platforms;
-                  if (metadata.platforms.length > 0) {
-                    metadata.platform = metadata.platforms[0];
+              if (key === 'id') {
+                fullConfig.id = extractValueFromNode(prop.value);
+              } else if (key === 'entry') {
+                fullConfig.entry = extractValueFromNode(prop.value);
+              } else if (key === 'on' && prop.value?.type === 'ObjectExpression') {
+                // ✅ Extract transitions from 'on'
+                prop.value.properties.forEach(transitionProp => {
+                  const eventName = transitionProp.key?.name || transitionProp.key?.value;
+                  
+                  if (transitionProp.value?.type === 'StringLiteral') {
+                    // Simple: UNDO: 'pending'
+                    fullConfig.on[eventName] = {
+                      target: transitionProp.value.value
+                    };
+                  } else if (transitionProp.value?.type === 'ObjectExpression') {
+                    // Complex: { target: 'x', platforms: [...] }
+                    const transitionObj = {};
+                    
+                    transitionProp.value.properties.forEach(transProp => {
+                      const transKey = transProp.key?.name;
+                      const transValue = extractValueFromNode(transProp.value);
+                      
+                      if (transValue !== undefined) {
+                        transitionObj[transKey] = transValue;
+                      }
+                    });
+                    
+                    fullConfig.on[eventName] = transitionObj;
                   }
-                } else if (metadata.setup?.platform) {
-                  metadata.platform = metadata.setup.platform;
-                  metadata.platforms = [metadata.setup.platform];
+                });
+              } else if (key === 'meta' && prop.value?.type === 'ObjectExpression') {
+                // Extract meta fields
+                prop.value.properties.forEach(metaProp => {
+                  const metaKey = metaProp.key?.name;
+                  const metaValue = extractValueFromNode(metaProp.value);
+                  
+                  if (metaKey && metaValue !== undefined) {
+                    metadata[metaKey] = metaValue;
+                    fullConfig.meta[metaKey] = metaValue;
+                  }
+                });
+              }
+            });
+            
+            // ✅ STEP 2: Store the full config!
+            metadata.xstateConfig = fullConfig;
+            
+            // Handle special cases
+            if (metadata.setup) {
+              // Extract platforms from setup if present
+              if (Array.isArray(metadata.setup.platforms)) {
+                metadata.platforms = metadata.setup.platforms;
+                if (metadata.platforms.length > 0) {
+                  metadata.platform = metadata.platforms[0];
                 }
+              } else if (metadata.setup?.platform) {
+                metadata.platform = metadata.setup.platform;
+                metadata.platforms = [metadata.setup.platform];
               }
             }
           }

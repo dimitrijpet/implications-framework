@@ -10,6 +10,11 @@ import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discove
  * Discover all patterns in a project
  */
 export async function discoverProject(projectPath) {
+  const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+if (fs.existsSync(cacheDir)) {
+  console.log('🗑️ Clearing discovery cache for fresh scan...');
+  fs.rmSync(cacheDir, { recursive: true, force: true });
+}
   console.log(`🔍 Discovering project at: ${projectPath}`);
   
   const result = new DiscoveryResult();

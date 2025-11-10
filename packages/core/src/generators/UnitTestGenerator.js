@@ -995,21 +995,24 @@ _extractXStateFromAST(ast) {
  * @param {string} currentFilePath - Path to current Implication file
  * @returns {string|null} Path to Implication file or null
  */
+/**
+ * Find Implication file for a given status using state registry
+ */
 _findImplicationFile(status, currentFilePath) {
   const path = require('path');
   const fs = require('fs');
   
-  // ✅ Use canonical registry path
+  // ✅ STEP 1: Try state registry (BEST)
   const { REGISTRY_PATH } = require('../constants.js');
-  const registryPath = REGISTRY_PATH;
   
-  if (fs.existsSync(registryPath)) {
+  if (fs.existsSync(REGISTRY_PATH)) {
     try {
-      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+      const registry = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8'));
       
       // Try exact match first
       if (registry[status]) {
-        const implFile = path.join(dir, `${registry[status]}.js`);
+        const implDir = path.dirname(currentFilePath);
+        const implFile = path.join(implDir, `${registry[status]}.js`);
         if (fs.existsSync(implFile)) {
           console.log(`   ✅ Found via registry: ${status} → ${registry[status]}`);
           return implFile;
@@ -1019,7 +1022,8 @@ _findImplicationFile(status, currentFilePath) {
       // Try normalized match (without underscores)
       const normalized = status.replace(/_/g, '').toLowerCase();
       if (registry[normalized]) {
-        const implFile = path.join(dir, `${registry[normalized]}.js`);
+        const implDir = path.dirname(currentFilePath);
+        const implFile = path.join(implDir, `${registry[normalized]}.js`);
         if (fs.existsSync(implFile)) {
           console.log(`   ✅ Found via registry (normalized): ${status} → ${registry[normalized]}`);
           return implFile;
@@ -1036,7 +1040,8 @@ _findImplicationFile(status, currentFilePath) {
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join('');
   
-  const conventionPath = path.join(dir, `${className}Implications.js`);
+  const implDir = path.dirname(currentFilePath);
+  const conventionPath = path.join(implDir, `${className}Implications.js`);
   
   if (fs.existsSync(conventionPath)) {
     console.log(`   ✅ Found via convention: ${status} → ${className}Implications`);
@@ -1045,11 +1050,11 @@ _findImplicationFile(status, currentFilePath) {
   
   // ✅ STEP 3: Last resort - scan directory
   try {
-    const files = fs.readdirSync(dir)
+    const files = fs.readdirSync(implDir)
       .filter(f => f.endsWith('Implications.js'));
     
     for (const file of files) {
-      const filePath = path.join(dir, file);
+      const filePath = path.join(implDir, file);
       const content = fs.readFileSync(filePath, 'utf8');
       
       // Look for id: 'status' in xstateConfig

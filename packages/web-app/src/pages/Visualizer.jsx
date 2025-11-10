@@ -605,35 +605,36 @@ const handleNodeClick = (nodeData) => {
   
   // Build state object for modal
   const state = {
-    id: nodeData.id,
-    name: nodeData.id,
-    displayName: metadata.status || nodeData.label,
-    className: metadata.className,  // ✅ Add className for reference
-    meta: {
-      status: metadata.status,
-      triggerAction: metadata.triggerAction,
-      triggerButton: metadata.triggerButton,
-      afterButton: metadata.afterButton,
-      previousButton: metadata.previousButton,
-      platform: metadata.platform,
-      platforms: metadata.platforms,
-      notificationKey: metadata.notificationKey,
-      statusCode: metadata.statusCode,
-      statusNumber: metadata.statusNumber,
-      requiredFields: metadata.requiredFields,
-      requires: metadata.requires,
-      setup: metadata.setup,
-      xstateContext: metadata.xstateContext || {},
-      uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} }
-    },
-    transitions: stateTransitions,
-    files: {
-      implication: `${projectPath}/${implication.path}`,
-      test: (Array.isArray(metadata.setup) 
-        ? metadata.setup[0]?.testFile 
-        : metadata.setup?.testFile) || ''
-    },
-  };
+  id: nodeData.id,
+  name: nodeData.id,
+  displayName: metadata.status || nodeData.label,
+  className: metadata.className,
+  meta: {
+    status: metadata.status,
+    triggerAction: metadata.triggerAction,
+    triggerButton: metadata.triggerButton,
+    afterButton: metadata.afterButton,
+    previousButton: metadata.previousButton,
+    platform: metadata.platform,
+    platforms: metadata.platforms,
+    notificationKey: metadata.notificationKey,
+    statusCode: metadata.statusCode,
+    statusNumber: metadata.statusNumber,
+    requiredFields: metadata.requiredFields,
+    requires: metadata.requires,
+    setup: metadata.setup,
+    xstateContext: metadata.xstateContext || {},
+    uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
+    xstateConfig: metadata.xstateConfig || null  // ✅ ADD THIS LINE!
+  },
+  transitions: stateTransitions,
+  files: {
+    implication: `${projectPath}/${implication.path}`,
+    test: (Array.isArray(metadata.setup) 
+      ? metadata.setup[0]?.testFile 
+      : metadata.setup?.testFile) || ''
+  },
+};
   
   console.log('✅ Selected state with full metadata:', state);
   console.log('🔍 meta.uiCoverage:', state.meta.uiCoverage);

@@ -87,6 +87,16 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   }, [state?.files?.implication]);
 
   if (!state) return null;
+  // ✅ DEBUG: Log the entire state object
+console.log('🐛 StateDetailModal - Full State:', {
+  name: state.name,
+  transitions: state.transitions,
+  meta: state.meta,
+  metaKeys: state.meta ? Object.keys(state.meta) : [],
+  hasXstateConfig: !!state.meta?.xstateConfig,
+  xstateConfigOn: state.meta?.xstateConfig?.on,
+  fullState: JSON.stringify(state, null, 2)
+});
   
   const currentState = isEditMode ? editedState : state;
   if (!currentState) return null;
@@ -1086,102 +1096,131 @@ console.log('🔍 state.meta?.uiCoverage:', state.meta?.uiCoverage);
 />
           </div>
           
-          {/* TRANSITIONS */}
-        {currentState.transitions && currentState.transitions.length > 0 && (
-  <div>
-    <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
-      🔄 Transitions ({currentState.transitions.length})
-    </h3>
-    <div className="space-y-2">
-      {currentState.transitions.map((transition, idx) => (
-        <div 
-          key={idx}
-          className="p-3 rounded flex items-center justify-between"
-          style={{ 
-            background: `${theme.colors.background.tertiary}80`,
-            border: `1px solid ${theme.colors.border}`
-          }}
-        >
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <span 
-                className="px-2 py-1 rounded text-xs font-mono"
-                style={{ 
-                  background: theme.colors.accents.blue,
-                  color: 'white'
-                }}
-              >
-                {transition.event}
-              </span>
-              <span style={{ color: theme.colors.text.secondary }}>→</span>
-              <span style={{ color: theme.colors.text.primary }}>
-                {transition.target}
-              </span>
-              
-              {/* ✨ ADD THIS: Platform Badges */}
-              {transition.platforms && transition.platforms.length > 0 && (
-                <div className="flex gap-1 ml-2">
-                  {transition.platforms.map((platform, i) => (
-                    <span 
-                      key={i}
-                      className="px-2 py-1 rounded text-xs font-semibold"
-                      style={{
-                        background: `${theme.colors.accents.purple}20`,
-                        color: theme.colors.accents.purple,
-                        border: `1px solid ${theme.colors.accents.purple}`
-                      }}
-                    >
-                      {platform === 'web' ? '🌐' : '📱'} {platform}
-                    </span>
-                  ))}
-                </div>
-              )}
-              
-              {/* Show "All" badge if no platforms specified */}
-              {(!transition.platforms || transition.platforms.length === 0) && (
+        ✅ Here's the Complete Replacement
+Replace that entire section (lines 866-934) with this:
+jsx{/* TRANSITIONS */}
+{(() => {
+  // ✅ Extract transitions from xstateConfig.on if not in state.transitions
+  const transitions = currentState.transitions || [];
+  
+  // ✅ If no transitions array, try to extract from meta or raw config
+  const xstateOn = currentState.meta?.xstateConfig?.on || 
+                   currentState.xstateConfig?.on || 
+                   {};
+  
+  const extractedTransitions = Object.entries(xstateOn).map(([event, config]) => ({
+    event,
+    target: typeof config === 'string' ? config : config.target,
+    platforms: typeof config === 'object' ? (config.platforms || []) : []
+  }));
+  
+  const allTransitions = transitions.length > 0 ? transitions : extractedTransitions;
+  
+  console.log('🔍 Transitions debug:', {
+    stateTransitions: transitions,
+    extractedTransitions,
+    allTransitions,
+    hasXstateOn: Object.keys(xstateOn).length
+  });
+  
+  if (allTransitions.length === 0) return null;
+  
+  return (
+    <div>
+      <h3 className="text-2xl font-bold mb-4" style={{ color: theme.colors.accents.green }}>
+        🔄 Transitions ({allTransitions.length})
+      </h3>
+      <div className="space-y-2">
+        {allTransitions.map((transition, idx) => (
+          <div 
+            key={idx}
+            className="p-3 rounded flex items-center justify-between"
+            style={{ 
+              background: `${theme.colors.background.tertiary}80`,
+              border: `1px solid ${theme.colors.border}`
+            }}
+          >
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
                 <span 
-                  className="px-2 py-1 rounded text-xs"
-                  style={{
-                    background: `${theme.colors.text.tertiary}20`,
-                    color: theme.colors.text.tertiary
+                  className="px-2 py-1 rounded text-xs font-mono"
+                  style={{ 
+                    background: theme.colors.accents.blue,
+                    color: 'white'
                   }}
                 >
-                  All platforms
+                  {transition.event}
                 </span>
-              )}
-            </div>
-          </div>
-                    
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleEditTransition(transition)}
-                        className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+                <span style={{ color: theme.colors.text.secondary }}>→</span>
+                <span style={{ color: theme.colors.text.primary }}>
+                  {transition.target}
+                </span>
+                
+                {/* ✨ Platform Badges */}
+                {transition.platforms && transition.platforms.length > 0 && (
+                  <div className="flex gap-1 ml-2">
+                    {transition.platforms.map((platform, i) => (
+                      <span 
+                        key={i}
+                        className="px-2 py-1 rounded text-xs font-semibold"
                         style={{
-                          background: theme.colors.background.secondary,
-                          color: theme.colors.text.primary,
-                          border: `1px solid ${theme.colors.border}`
+                          background: `${theme.colors.accents.purple}20`,
+                          color: theme.colors.accents.purple,
+                          border: `1px solid ${theme.colors.accents.purple}`
                         }}
-                        title="Edit transition"
                       >
-                        ✏️ Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteTransition(transition)}
-                        className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
-                        style={{
-                          background: theme.colors.accents.red,
-                          color: 'white'
-                        }}
-                        title="Delete transition"
-                      >
-                        🗑️ Delete
-                      </button>
-                    </div>
+                        {platform === 'web' ? '🌐' : platform === 'dancer' ? '💃' : '📱'} {platform}
+                      </span>
+                    ))}
                   </div>
-                ))}
+                )}
+                
+                {/* Show "All" badge if no platforms specified */}
+                {(!transition.platforms || transition.platforms.length === 0) && (
+                  <span 
+                    className="px-2 py-1 rounded text-xs"
+                    style={{
+                      background: `${theme.colors.text.tertiary}20`,
+                      color: theme.colors.text.tertiary
+                    }}
+                  >
+                    All platforms
+                  </span>
+                )}
               </div>
             </div>
-          )}
+            
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEditTransition(transition)}
+                className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+                style={{
+                  background: theme.colors.background.secondary,
+                  color: theme.colors.text.primary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
+                title="Edit transition"
+              >
+                ✏️ Edit
+              </button>
+              <button
+                onClick={() => handleDeleteTransition(transition)}
+                className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+                style={{
+                  background: theme.colors.accents.red,
+                  color: 'white'
+                }}
+                title="Delete transition"
+              >
+                🗑️ Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+})()}
 
           {/* TEST GENERATION */}
           <div>

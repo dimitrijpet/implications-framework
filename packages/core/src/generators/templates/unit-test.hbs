@@ -44,6 +44,35 @@ if (!process.env.SKIP_PREFLIGHT_CHECK) {
 }
 {{/unless}}
 
+// ════════════════════════════════════════════════════════════
+// 🔧 ENTITY FIELD REQUIREMENTS (Setup Concerns)
+// ════════════════════════════════════════════════════════════
+//
+{{#if meta.requires}}
+{{#each meta.requires}}
+{{#if (contains @key '.')}}
+// ⚠️  Required: {{@key}} = {{this}}
+{{/if}}
+{{/each}}
+//
+// These are NOT separate states - they're runtime requirements.
+// Handle them in your test setup or beforeEach() hook.
+//
+// Example setup:
+{{#each meta.requires}}
+{{#if (contains @key '.')}}
+//   const parts = '{{@key}}'.split('.');
+//   if (!testData[parts[0]]) testData[parts[0]] = {};
+//   testData[parts[0]][parts[1]] = {{this}};
+{{/if}}
+{{/each}}
+//
+// Or use TestSetup helper:
+//   await TestSetup.ensure(ctx.data, '{{targetStatus}}');
+//
+{{/if}}
+// ════════════════════════════════════════════════════════════
+
 /**
  * ✅ EXPORTED FUNCTION - {{actionDescription}}
  * 

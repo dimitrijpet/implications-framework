@@ -1,3 +1,90 @@
+// packages/core/src/generators/templateHelpers.js
+
+/**
+ * Template Helpers for Handlebars
+ * 
+ * Provides utility functions for template rendering including:
+ * - String transformations (PascalCase, camelCase, snake_case)
+ * - UI validation data preparation
+ * - String utilities (contains, replace)
+ */
+
+/**
+ * Convert to PascalCase
+ * Usage: "btn_calendar_day" → "BtnCalendarDay"
+ */
+export function toPascalCase(str) {
+  if (!str || typeof str !== 'string') return '';
+  
+  return str
+    .split(/[-_.\s]/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+}
+
+/**
+ * Convert to camelCase
+ * Usage: "btn_calendar_day" → "btnCalendarDay"
+ */
+export function toCamelCase(str) {
+  if (!str || typeof str !== 'string') return '';
+  
+  const pascal = toPascalCase(str);
+  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+/**
+ * Convert to snake_case
+ * Usage: "BtnCalendarDay" → "btn_calendar_day"
+ */
+export function toSnakeCase(str) {
+  if (!str || typeof str !== 'string') return '';
+  
+  return str
+    .replace(/([A-Z])/g, '_$1')
+    .toLowerCase()
+    .replace(/^_/, '');
+}
+
+/**
+ * Check if string contains substring
+ * Usage: contains("manager.logged_in", ".") → true
+ */
+export function containsHelper(str, substring) {
+  if (!str || !substring) return false;
+  return String(str).includes(String(substring));
+}
+
+/**
+ * Replace string
+ * Usage: replace("manager.logged_in", ".", " = { ") → "manager = { logged_in"
+ */
+export function replaceHelper(str, search, replace) {
+  if (!str) return '';
+  return String(str).replace(new RegExp(search, 'g'), replace);
+}
+
+/**
+ * Handlebars helper wrapper for PascalCase
+ */
+export function pascalCaseHelper(str) {
+  return toPascalCase(str);
+}
+
+/**
+ * Handlebars helper wrapper for camelCase
+ */
+export function camelCaseHelper(str) {
+  return toCamelCase(str);
+}
+
+/**
+ * Handlebars helper wrapper for snake_case
+ */
+export function snakeCaseHelper(str) {
+  return toSnakeCase(str);
+}
+
 /**
  * Helper: Prepare UI Validation Data for Template
  * 
@@ -5,9 +92,13 @@
  * - Regular fields (direct POM properties)
  * - Function calls (need to be called and stored)
  * - Which checks reference which functions
+ * 
+ * @param {object} mirrorsOnUI - mirrorsOn.UI object
+ * @param {string} platform - Platform key (web, dancer, clubApp, etc.)
+ * @param {object} testData - Test data for resolving function parameters
+ * @returns {Array} Array of validation screen objects
  */
-
-function prepareValidationScreens(mirrorsOnUI, platform, testData) {
+export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
   // ✅ DEFENSIVE: Check all inputs
   if (!mirrorsOnUI || typeof mirrorsOnUI !== 'object') {
     console.warn('⚠️  prepareValidationScreens: mirrorsOnUI is null or invalid');
@@ -173,27 +264,3 @@ function prepareValidationScreens(mirrorsOnUI, platform, testData) {
 
   return validationScreens;
 }
-
-/**
- * Helper: Convert to PascalCase
- */
-function toPascalCase(str) {
-  if (!str || typeof str !== 'string') return '';
-  
-  return str
-    .split(/[-_.\s]/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('');
-}
-
-/**
- * Handlebars helper: Convert to PascalCase
- */
-function pascalCaseHelper(str) {
-  return toPascalCase(str);
-}
-
-export {
-  prepareValidationScreens,
-  pascalCaseHelper
-};
