@@ -12,7 +12,13 @@ import TestDataPanel from '../TestDataPanel/TestDataPanel';
 import TestDataLinker from '../TestDataLinker/TestDataLinker';
 import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWithEdit';
 
-export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
+export default function StateDetailModal({ 
+  state, 
+  onClose, 
+  theme = defaultTheme, 
+  projectPath,
+  discoveryResult  // ← Add this parameter
+}) {
   // Edit mode state
   const [editedScreens, setEditedScreens] = useState(new Set()); // Add this with other state
   const [isEditMode, setIsEditMode] = useState(false);
@@ -1232,10 +1238,11 @@ jsx{/* TRANSITIONS */}
             </h2>
             
             <GenerateTestsButton 
-              state={state} 
-              projectPath={projectPath}
-              theme={theme}
-            />
+  state={state} 
+  projectPath={projectPath}
+  theme={theme}
+  discoveryResult={discoveryResult}  // ← ADD THIS LINE
+/>
           </div>
           
           {/* SUGGESTIONS PANEL */}

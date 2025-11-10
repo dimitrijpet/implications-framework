@@ -6,55 +6,67 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:3000';
 
-export default function GenerateTestsButton({ state, projectPath }) {
+export default function GenerateTestsButton({ state, projectPath, discoveryResult }) {  // ← ADD discoveryResult HERE
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   
-  const handleGenerate = async () => {
+const handleGenerate = async () => {
   setLoading(true);
   setError(null);
   setResult(null);
   
   try {
     console.log('🎯 Generating tests for:', state.name);
-    console.log('📋 xstateConfig:', state.meta?.xstateConfig);
+    console.log('📊 Discovery available:', !!discoveryResult);
     
-    // ✅ Extract transitions with platforms
-    const transitions = [];
-    const xstateOn = state.meta?.xstateConfig?.on || {};
+    // ✅ Find transitions that ARRIVE AT this state
+    const incomingTransitions = discoveryResult?.transitions?.filter(t => 
+      t.to === state.name || t.target === state.name
+    ) || [];
     
-    Object.entries(xstateOn).forEach(([event, config]) => {
-      const target = typeof config === 'string' ? config : config.target;
-      const platforms = config.platforms || [state.meta?.platform || 'web'];
+    console.log(`📥 Found ${incomingTransitions.length} incoming transition(s)`);
+    console.log('📋 Raw transitions:', incomingTransitions);  // ← ADD THIS DEBUG
+    
+    if (incomingTransitions.length === 0) {
+      console.log('⚠️ No incoming transitions found, generating default test');
+    }
+    
+    // ✅ Expand transitions with multiple platforms
+    const transitionsToGenerate = [];
+    
+    for (const t of incomingTransitions) {
+      const platforms = t.platforms || [t.platform || state.meta?.platform || 'web'];
       
-      // Create one transition entry per platform
-      platforms.forEach(platform => {
-        transitions.push({
-          event,
-          target,
-          platform,
-          actionDetails: config.actionDetails
+      // Create one transition per platform
+      for (const platform of platforms) {
+        transitionsToGenerate.push({
+          event: t.event,
+          fromState: t.from || t.fromState,
+          target: state.name,
+          platform: platform,
+          actionDetails: t.actionDetails
         });
-      });
-    });
+      }
+    }
     
-    console.log('🔄 Extracted transitions:', transitions);
-    
-    // ✅ If no transitions, generate for main platform only
-    if (transitions.length === 0) {
-      transitions.push({
+    // ✅ Fallback: If no incoming transitions, generate for main platform
+    if (transitionsToGenerate.length === 0) {
+      transitionsToGenerate.push({
         event: null,
-        target: null,
+        fromState: null,
+        target: state.name,
         platform: state.meta?.platform || 'web',
         actionDetails: null
       });
     }
     
+    console.log('🔄 Transitions to generate:', transitionsToGenerate);
+    
     const response = await axios.post(`${API_URL}/api/generate/unit-test`, {
       implPath: state.files?.implication,
-      platform: state.meta?.platform || 'web',  // Main platform
-      transitions: transitions,  // ✅ Pass all transitions!
+      platform: state.meta?.platform || 'web',
+      transitions: transitionsToGenerate,
       projectPath
     });
     

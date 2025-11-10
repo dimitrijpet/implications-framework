@@ -1112,8 +1112,10 @@ _buildContext(metadata, platform, ImplClass) {  // ✅ Add ImplClass parameter!
   
   const isInducer = mode === 'inducer';
   const isVerify = mode === 'verify';
-    const actionName = this._generateActionName(targetStatus);
-    const testFileName = this._generateFileName(metadata, platform);
+    const actionName = this._generateActionName(metadata); 
+    const testFileName = this._generateFileName(metadata, platform, { 
+  event: this.currentTransition?.event 
+});
     
     // Platform detection
     const isPlaywright = platform === 'web' || platform === 'cms';
@@ -1200,33 +1202,47 @@ if (metadata.mirrorsOn?.UI) {
     
     // Build context
     const context = {
-      // Header
-      timestamp: new Date().toISOString(),
-      implClassName,
-      platform,
-      targetStatus,
-      previousStatus: metadata.previousStatus,
-      meta: metadata.meta || {},
-      
-      // Platform
-      isPlaywright,
-      isMobile,
+  // Header
+  timestamp: new Date().toISOString(),
+  implClassName,
+  platform,
+  targetStatus,
+  previousStatus: metadata.previousStatus,
+  meta: metadata.meta || {},
+  
+  // ✅ NEW: Transition context
+  transitionEvent: this.currentTransition?.event || null,
+  transitionFrom: this.currentTransition?.fromState || metadata.previousStatus || null,
+  transitionTo: targetStatus,
+  hasTransitionContext: !!(this.currentTransition?.event),
+  
+  // Platform
+  isPlaywright,
+  isMobile,
 
-      testMode: mode,
-    isInducer,
-    isVerify,
-      
-      // Paths (âœ¨ SMART - calculated based on file location)
-testContextPath: paths.testContext,
-expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
-testPlannerPath: paths.testPlanner,
-testSetupPath: paths.testSetup,
-      
-      // Function
-      actionName,
-      actionDescription,
-      testFileName,
-      testDescription: `${targetStatus} State Transition`,
+  testMode: mode,
+  isInducer,
+  isVerify,
+  
+  // Paths
+  testContextPath: paths.testContext,
+  expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
+  testPlannerPath: paths.testPlanner,
+  testSetupPath: paths.testSetup,
+  
+  // Function
+  actionName,
+  actionDescription,  // Keep this for backward compatibility
+  testFileName,
+  testDescription: `${targetStatus} State Transition`,
+  
+  // ✅ NEW: Better descriptions
+  transitionDescription: this.currentTransition?.event 
+    ? `${this.currentTransition.event} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+    : `Transition to ${targetStatus} state`,
+  deltaLabel: this.currentTransition?.event
+    ? `${this._toTitleCase(this.currentTransition.event.replace(/_/g, ' '))} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+    : `${targetStatus} State`,
       
       // Prerequisites
       requiresPrerequisites,
@@ -1696,25 +1712,67 @@ _shouldGenerateEntityLogic(metadata) {
  * 2. Check meta.setup[0].actionName
  * 3. Just convert to camelCase - that's it!
  */
-_generateActionName(statusOrMetadata) {
-  // Handle both old API (string) and new API (metadata object)
-  const metadata = typeof statusOrMetadata === 'string' 
-    ? { status: statusOrMetadata }
-    : statusOrMetadata;
+/**
+ * Generate action name from transition context
+ * 
+ * Format: {targetState}Via{sourceState}
+ * Examples:
+ *   bookingAcceptedViaBookingPending
+ *   bookingRejectedViaBookingAccepted
+ * 
+ * Fallback: If no source state, just use target (camelCase)
+ */
+/**
+ * Generate action name from transition context
+ * 
+ * Format: {targetState}Via{sourceState}
+ * Examples:
+ *   bookingAcceptedViaBookingPending
+ *   bookingRejectedViaBookingAccepted
+ *   bookingAcceptedViaBookingStandby
+ * 
+ * Fallback: If no source state, just use target (camelCase)
+ */
+_generateActionName(metadata) {
+  console.log('\n🏷️  === _generateActionName called ===');
+  console.log('   metadata.status:', metadata.status);
+  console.log('   typeof metadata.status:', typeof metadata.status);
+  console.log('   this.currentTransition:', this.currentTransition);
+  console.log('   this.currentTransition?.fromState:', this.currentTransition?.fromState);
   
-  // 1. Check if explicitly provided
+  // Check if we have transition context
+  if (this.currentTransition?.fromState) {
+    const targetCamel = this._toCamelCase(metadata.status);
+    console.log('   🎯 targetCamel:', targetCamel);
+    
+    const sourceCamel = this._toCamelCase(this.currentTransition.fromState);
+    console.log('   🎯 sourceCamel:', sourceCamel);
+    
+    // Capitalize first letter of source for "Via" style
+    const sourceCapitalized = sourceCamel.charAt(0).toUpperCase() + sourceCamel.slice(1);
+    console.log('   🎯 sourceCapitalized:', sourceCapitalized);
+    
+    const fullName = `${targetCamel}Via${sourceCapitalized}`;
+    console.log('   ✅ fullName:', fullName);
+    
+    return fullName;
+  }
+  
+  console.log('   ⚠️  No transition context, falling back...');
+  
+  // Fallback: Check metadata
   if (metadata.actionName) {
     return metadata.actionName;
   }
   
-  // 2. Check in platformSetup
   if (metadata.platformSetup?.actionName) {
     return metadata.platformSetup.actionName;
   }
   
-  // 3. Just convert to camelCase - that's it!
-  const status = metadata.status || metadata;
-  return this._toCamelCase(status);
+  // Last resort: Just convert to camelCase
+  const fallback = this._toCamelCase(metadata.status);
+  console.log('   ⚠️  Using fallback:', fallback);
+  return fallback;
 }
   
   /**
@@ -1747,10 +1805,10 @@ _generateFileName(metadata, platform, options = {}) {
   const platformSuffix = this._getPlatformSuffix(platform);
   
   // ✅ If event provided, include it in filename
-  if (event) {
-    const eventName = this._toPascalCase(event);
-    return `${action}-${eventName}-${platformSuffix}-UNIT.spec.js`;
-  }
+if (event) {
+  const eventName = this._toPascalCase(event);
+  return `${action}-${eventName}-${platformSuffix}-UNIT.spec.js`;
+}
   
   // Fallback: no event
   return `${action}-${platformSuffix}-UNIT.spec.js`;
@@ -1798,17 +1856,31 @@ _generateFileName(metadata, platform, options = {}) {
    *   in-review â†’ inReview
    *   Published â†’ published
    */
-  _toCamelCase(str) {
-    if (!str) return '';
-    
-    // First lowercase
-    let result = str.charAt(0).toLowerCase() + str.slice(1);
-    
-    // Replace _X or -X with X
-    result = result.replace(/[_-](\w)/g, (_, c) => c.toUpperCase());
-    
-    return result;
-  }
+ /**
+ * Convert string to camelCase
+ * Handles: snake_case, spaces, hyphens, PascalCase
+ * 
+ * Examples:
+ *   approved → approved
+ *   checked_in → checkedIn
+ *   Booking Standby → bookingStandby
+ *   in-review → inReview
+ *   Published → published
+ */
+_toCamelCase(str) {
+  if (!str) return '';
+  
+  // First, normalize: replace spaces and hyphens with underscores
+  let normalized = str.replace(/[\s-]/g, '_');
+  
+  // Lowercase first character
+  let result = normalized.charAt(0).toLowerCase() + normalized.slice(1);
+  
+  // Replace _X with X (uppercase)
+  result = result.replace(/[_](\w)/g, (_, c) => c.toUpperCase());
+  
+  return result;
+}
   
   /**
    * Convert string to PascalCase
@@ -2434,6 +2506,22 @@ screens.forEach((screen, index) => {
     
     return mapping[platform] || platform;
   }
+
+  /**
+ * Convert string to Title Case
+ * Examples:
+ *   ACCEPT_BOOKING → Accept Booking
+ *   cancel_request → Cancel Request
+ */
+_toTitleCase(str) {
+  if (!str) return '';
+  
+  return str
+    .toLowerCase()
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 }
 
 export default UnitTestGenerator;

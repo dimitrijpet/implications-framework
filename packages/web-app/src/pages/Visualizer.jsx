@@ -1348,7 +1348,8 @@ const disableTransitionMode = () => {
     state={selectedState}
     onClose={closeDetail}
     theme={defaultTheme}
-    projectPath={projectPath}  // ✅ ADD THIS LINE
+    projectPath={projectPath}
+    discoveryResult={discoveryResult}  // ← ADD THIS LINE
   />
 )}
       

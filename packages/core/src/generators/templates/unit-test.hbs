@@ -2,6 +2,9 @@
 // AUTO-GENERATED UNIT TEST
 // ═══════════════════════════════════════════════════════════
 // Generated at: {{timestamp}}
+{{#if hasTransitionContext}}
+// Transition: {{transitionFrom}} → {{transitionTo}} ({{transitionEvent}})
+{{/if}}
 // From: {{implClassName}}
 // Platform: {{platform}}
 // Target Status: {{targetStatus}}
@@ -74,7 +77,7 @@ if (!process.env.SKIP_PREFLIGHT_CHECK) {
 // ════════════════════════════════════════════════════════════
 
 /**
- * ✅ EXPORTED FUNCTION - {{actionDescription}}
+ * ✅ EXPORTED FUNCTION - {{transitionDescription}}
  * 
  * {{#if isVerify}}
  * This function VERIFIES the "{{targetStatus}}" state by:
@@ -117,15 +120,19 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   const ctx = TestContext.load({{implClassName}}, testDataPath);
   
-  console.log('\n🎯 Starting: {{actionDescription}}');
-  console.log(`   Target Status: {{targetStatus}}`);
-  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
-  {{#if isVerify}}
-  console.log(`   Test Mode: VERIFY (checks only)`);
-  {{else}}
-  console.log(`   Test Mode: INDUCER (action + checks)`);
-  {{/if}}
-  
+  console.log('\n🎯 Starting: {{transitionDescription}}');
+console.log(`   Target Status: {{targetStatus}}`);
+console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
+{{#if hasTransitionContext}}
+console.log(`   Transition: {{transitionFrom}} → {{transitionTo}}`);
+console.log(`   Event: {{transitionEvent}}`);
+{{/if}}
+{{#if isVerify}}
+console.log(`   Test Mode: VERIFY (checks only)`);
+{{else}}
+console.log(`   Test Mode: INDUCER (action + checks)`);
+{{/if}}
+
    // ────────────────────────────────────────────────────────
   // STEP 2: Smart Navigation (only if needed)
   // ────────────────────────────────────────────────────────
@@ -405,9 +412,9 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   
   return ctx.executeAndSave(
-    '{{changeLogLabel}}',
-    '{{testFileName}}',
-    async () => {
+  '{{deltaLabel}}',
+  '{{testFileName}}',
+  async () => {
       const delta = {};
       const now = new Date().toISOString();
       
@@ -488,12 +495,12 @@ if (!shouldSkipRegistration) {
   // ════════════════════════════════════════════════════════
   // PLAYWRIGHT TEST REGISTRATION
   // ════════════════════════════════════════════════════════
-  test.describe("UNIT: {{targetStatus}} State Transition ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
+  test.describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
     test.setTimeout(120000);
     
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
-    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{targetStatus}} transition", async ({ page }) => {
+    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async ({ page }) => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
       {{#if isVerify}}
@@ -524,10 +531,10 @@ if (!shouldSkipRegistration) {
   // ════════════════════════════════════════════════════════
   // WEBDRIVERIO TEST REGISTRATION
   // ════════════════════════════════════════════════════════
-  describe("UNIT: {{targetStatus}} State Transition ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
+  describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
     const testDataPath = process.env.TEST_DATA_PATH || "tests/data/shared.json";
     
-    it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{targetStatus}} transition", async () => {
+    it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
       {{#if isVerify}}
