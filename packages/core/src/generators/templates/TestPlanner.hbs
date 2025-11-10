@@ -30,15 +30,12 @@ class TestPlanner {
   }
   
   loadStateRegistry() {
-    try {
-      const possiblePaths = [
-        path.join(process.cwd(), 'tests/implications/.state-registry.json'),
-        path.join(process.cwd(), 'tests/ai-testing/implications/.state-registry.json'),
-        path.join(__dirname, '../.state-registry.json'),
-        path.join(__dirname, '../../.state-registry.json')
-      ];
-      
-      for (const registryPath of possiblePaths) {
+  try {
+    // ✅ Use canonical registry path
+    const REGISTRY_PATH = path.join(process.cwd(), 'tests/implications/.state-registry.json');
+    const possiblePaths = [REGISTRY_PATH];
+    
+    for (const registryPath of possiblePaths) {
         if (fs.existsSync(registryPath)) {
           const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
           if (this.options.verbose) {

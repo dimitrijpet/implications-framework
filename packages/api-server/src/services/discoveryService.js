@@ -6,7 +6,6 @@ import { isImplication, extractImplicationMetadata } from '../../../core/src/pat
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
 import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discovery.js';
-
 /**
  * Discover all patterns in a project
  */
@@ -328,19 +327,17 @@ export function buildAndWriteStateRegistry(implications, projectPath) {
   console.log(`✅ State Registry built: ${Object.keys(registry).length} mappings\n`);
   
   // Write to each directory containing Implications
-  const directories = new Set();
-  implications.forEach(imp => {
-    if (imp.metadata?.hasXStateConfig) {
-      const dir = path.dirname(imp.path);
-      directories.add(dir);
-    }
-  });
-  
-  directories.forEach(dir => {
-    const registryPath = path.join(projectPath, dir, '.state-registry.json');
-    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
-    console.log(`   💾 Wrote registry: ${registryPath}`);
-  });
-  
+ 
+
+// ✅ Write to canonical location in the PROJECT being scanned
+const registryPath = path.join(projectPath, 'tests/implications/.state-registry.json');
+const registryDir = path.dirname(registryPath);
+
+// Ensure directory exists
+fs.ensureDirSync(registryDir);
+
+// Write registry
+fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+console.log(`   💾 Wrote registry: ${registryPath}`);
   return registry;
 }

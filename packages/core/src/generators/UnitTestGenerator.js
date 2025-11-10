@@ -999,10 +999,9 @@ _findImplicationFile(status, currentFilePath) {
   const path = require('path');
   const fs = require('fs');
   
-  const dir = path.dirname(currentFilePath);
-  
-  // ✅ STEP 1: Try state registry (BEST)
-  const registryPath = path.join(dir, '.state-registry.json');
+  // ✅ Use canonical registry path
+  const { REGISTRY_PATH } = require('../constants.js');
+  const registryPath = REGISTRY_PATH;
   
   if (fs.existsSync(registryPath)) {
     try {
