@@ -50,48 +50,52 @@ class UnitTestGenerator {
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
    */
-  generate(implFilePath, options = {}) {
+ generate(implFilePath, options = {}) {
   const {
     platform = 'web',
     state = null,
     preview = false,
-    projectPath  // ✅ ADD THIS
+    projectPath,
+    transition = null  // ✅ ADD THIS!
   } = options;
   
   console.log('\n🎯 UnitTestGenerator.generate()');
   console.log(`   Implication: ${implFilePath}`);
   console.log(`   Platform: ${platform}`);
   if (state) console.log(`   State: ${state}`);
+  if (transition) console.log(`   🔄 Transition: ${transition.event} (${transition.platform})`);  // ✅ ADD THIS!
   
-  // ✅ ADD THIS: Store projectPath as instance variable
+  // ✅ Store projectPath and transition
   this.projectPath = projectPath || this._findProjectRoot(implFilePath);
+  this.currentTransition = transition;  // ✅ ADD THIS!
+  
   console.log(`   📁 Project root: ${this.projectPath}`);
   
-  // ✅ Auto-detect output directory from implication file location
+  // ✅ Auto-detect output directory
   if (!this.options.outputDir) {
     this.options.outputDir = path.dirname(path.resolve(implFilePath));
     console.log(`   🗂️ Auto-detected output: ${this.options.outputDir}`);
   }
     
-    // 1. Load Implication class
-    const ImplClass = this._loadImplication(implFilePath);
-    
-    // 2. Detect if multi-state machine
-    const isMultiState = this._isMultiStateMachine(ImplClass);
-    
-    if (isMultiState && !state) {
-      // Generate for ALL states
-      console.log(`   âœ¨ Multi-state machine detected`);
-      return this._generateMultiState(ImplClass, implFilePath, platform, preview);
-    } else if (isMultiState && state) {
-      // Generate for specific state
-      console.log(`   âœ¨ Generating for state: ${state}`);
-      return this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
-    } else {
-      // Single-state machine (original behavior)
-      return this._generateSingleState(ImplClass, implFilePath, platform, null, preview);
-    }
+  // 1. Load Implication class
+  const ImplClass = this._loadImplication(implFilePath);
+  
+  // 2. Detect if multi-state machine
+  const isMultiState = this._isMultiStateMachine(ImplClass);
+  
+  if (isMultiState && !state) {
+    // Generate for ALL states
+    console.log(`   ✨ Multi-state machine detected`);
+    return this._generateMultiState(ImplClass, implFilePath, platform, preview);
+  } else if (isMultiState && state) {
+    // Generate for specific state
+    console.log(`   ✨ Generating for state: ${state}`);
+    return this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
+  } else {
+    // Single-state machine (original behavior)
+    return this._generateSingleState(ImplClass, implFilePath, platform, null, preview);
   }
+}
   
   /**
    * Check if this is a multi-state machine
@@ -146,12 +150,12 @@ class UnitTestGenerator {
   /**
    * Generate test for a single state
    */
-  _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
-    // Store implFilePath for smart path calculation
-    this.implFilePath = implFilePath;
-    
-    // 2. Extract metadata
-    const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
+_generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
+  // Store implFilePath for smart path calculation
+  this.implFilePath = implFilePath;
+  
+  // 2. Extract metadata
+  const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
     
     // 3. Build template context
     const context = this._buildContext(metadata, platform, ImplClass);  // ✅ Pass ImplClass!
@@ -163,8 +167,15 @@ class UnitTestGenerator {
     const engine = new TemplateEngine();
     const code = engine.render('unit-test.hbs', context);
     
-    // 6. Generate file name
-    const fileName = this._generateFileName(metadata, platform);
+  // 6. Generate file name
+const event = this.currentTransition?.event;
+console.log(`🐛 DEBUG _generateFileName inputs:`);
+console.log(`   event: ${event}`);
+console.log(`   platform: ${platform}`);
+console.log(`   metadata.status: ${metadata.status}`);
+
+const fileName = this._generateFileName(metadata, platform, { event });
+console.log(`   ✅ Generated fileName: ${fileName}`);
     
     // 7. Optionally write file
     let filePath = null;
@@ -471,11 +482,10 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     transitions = stateConfig.on || {};
     targetStateName = stateName;
     
-    // ✨ Find previous state by looking at ALL transitions
     previousStatus = this._findPreviousState(xstateConfig.states, stateName);
     
   } else {
-    // Single-state machine: extract from root
+    // Single-state machine
     meta = xstateConfig.meta || {};
     status = meta.status;
     entry = xstateConfig.entry;
@@ -484,49 +494,58 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     targetStateName = status;
   }
 
-  // ✅ NEW: Get ALL transitions that lead to this state
-  const allTransitions = this._extractActionDetailsFromTransition(
-    xstateConfig,
-    targetStateName,
-    platform,
-    previousStatus,
-    implFilePath
-  );
-
-  console.log(`\n🐛 DEBUG actionDetails extraction:`);
-  console.log(`   targetState: ${targetStateName}`);
-  console.log(`   previousStatus: ${previousStatus}`);
-  console.log(`   implFilePath: ${implFilePath}`);
-  console.log(`   transitions found: ${allTransitions.length}`);
-
-  // For now, use first transition (we'll support multiple later)
- // Prefer transition from previousStatus, fallback to first
-let actionDetails = null;
-
-if (allTransitions.length > 0) {
-  // Try to find transition from previousStatus
-  const preferredTransition = allTransitions.find(
-    t => t.fromState === previousStatus
-  );
+  // ✅ NEW: Check if we have a specific transition to use
+  let actionDetails = null;
+  let allTransitions = [];
   
-  actionDetails = preferredTransition 
-    ? preferredTransition.actionDetails 
-    : allTransitions[0].actionDetails;
+  if (this.currentTransition) {
+    console.log(`\n✅ USING PROVIDED TRANSITION: ${this.currentTransition.event}`);
+    console.log(`   From frontend, not searching!`);
     
-  console.log(`   ✅ Using transition from: ${preferredTransition ? preferredTransition.fromState : allTransitions[0].fromState}`);
-}
+    // Use the transition that was passed in
+    actionDetails = this.currentTransition.actionDetails;
+    allTransitions = [this.currentTransition];
+    
+  } else {
+    console.log(`\n🔍 NO TRANSITION PROVIDED - searching...`);
+    
+    // ✅ OLD WAY: Get ALL transitions that lead to this state
+    allTransitions = this._extractActionDetailsFromTransition(
+      xstateConfig,
+      targetStateName,
+      platform,
+      previousStatus,
+      implFilePath
+    );
 
-  console.log(`   actionDetails found: ${!!actionDetails}`);
+    console.log(`\n🐛 DEBUG actionDetails extraction:`);
+    console.log(`   targetState: ${targetStateName}`);
+    console.log(`   previousStatus: ${previousStatus}`);
+    console.log(`   implFilePath: ${implFilePath}`);
+    console.log(`   transitions found: ${allTransitions.length}`);
+
+    // For now, use first transition (backward compatibility)
+    if (allTransitions.length > 0) {
+      const preferredTransition = allTransitions.find(
+        t => t.fromState === previousStatus
+      );
+      
+      actionDetails = preferredTransition 
+        ? preferredTransition.actionDetails 
+        : allTransitions[0].actionDetails;
+        
+      console.log(`   ✅ Using transition from: ${preferredTransition ? preferredTransition.fromState : allTransitions[0].fromState}`);
+    }
+
+    console.log(`   actionDetails found: ${!!actionDetails}`);
+  }
+
   
-  const metadata = {
-    // Class info
+  // Rest of function continues...
+ const metadata = {
     className: ImplClass.name,
-    
-    // Status info
     status: status,
     previousStatus: previousStatus,
-    
-    // Meta object
     meta: meta,
     
     // Fields
@@ -573,6 +592,11 @@ if (allTransitions.length > 0) {
   
   // Filter setup for this platform
   metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
+
+    if (platform && metadata.meta) {
+    console.log(`   🔧 Overriding platform: ${metadata.meta.platform} → ${platform}`);
+    metadata.meta.platform = platform;
+  }
   
   return metadata;
 }
@@ -1704,25 +1728,33 @@ _generateActionName(statusOrMetadata) {
    * Format: ActionName-Platform-UNIT.spec.js
    * Example: Approve-Web-UNIT.spec.js
    */
-  _generateFileName(metadata, platform) {
-    // 1. Check if explicitly provided
-    if (metadata.testFile) {
-      return metadata.testFile;
-    }
-    
-    // 2. Check in platformSetup (not setup[0])
-    if (metadata.platformSetup?.testFile) {
-      return path.basename(metadata.platformSetup.testFile);
-    }
-    
-    // 3. Generate from action name
-    const actionName = this._generateActionName(metadata);
-    const action = this._toPascalCase(actionName);  // approve â†’ Approve
-    const platformSuffix = this._getPlatformSuffix(platform);
-    
-    // Format: Approve-Web-UNIT.spec.js
-    return `${action}-${platformSuffix}-UNIT.spec.js`;
+_generateFileName(metadata, platform, options = {}) {
+  const { event } = options;
+  
+  // 1. Check if explicitly provided (and no event - means not a transition test)
+  if (metadata.testFile && !event) {
+    return metadata.testFile;
   }
+  
+  // 2. Check in platformSetup (but only if no event)
+  if (metadata.platformSetup?.testFile && !event) {
+    return path.basename(metadata.platformSetup.testFile);
+  }
+  
+  // 3. Generate from action name + event + platform
+  const actionName = this._generateActionName(metadata);
+  const action = this._toPascalCase(actionName);
+  const platformSuffix = this._getPlatformSuffix(platform);
+  
+  // ✅ If event provided, include it in filename
+  if (event) {
+    const eventName = this._toPascalCase(event);
+    return `${action}-${eventName}-${platformSuffix}-UNIT.spec.js`;
+  }
+  
+  // Fallback: no event
+  return `${action}-${platformSuffix}-UNIT.spec.js`;
+}
   
   /**
    * Get platform suffix for file name
@@ -1732,7 +1764,8 @@ _generateActionName(statusOrMetadata) {
       'web': 'Web',
       'cms': 'CMS',
       'dancer': 'Dancer',
-      'manager': 'Manager'
+      'manager': 'Manager',
+      'clubApp': 'ClubApp'
     };
     
     return mapping[platform] || 'Web';

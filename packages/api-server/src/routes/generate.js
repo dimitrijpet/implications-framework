@@ -59,17 +59,18 @@ router.post('/unit-test', async (req, res) => {
       console.log('\n🔄 Generating transition tests...');
       
       for (const transition of transitions) {
-        console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
-        
-        const result = generator.generate(implFilePathFinal, {
-          platform: transition.platform,  // ✅ Use transition's platform!
-          state: stateToUse,
-          transition: transition,  // ✅ Pass the transition!
-          preview: false
-        });
-        
-        results.push(result);
-      }
+  console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
+  
+  const result = generator.generate(implFilePathFinal, {
+    platform: transition.platform,
+    state: stateToUse,
+    transition: transition,
+    event: transition.event,  // ✅ ADD THIS!
+    preview: false
+  });
+  
+  results.push(result);
+}
     } else {
       // Fallback: Generate single test (old behavior)
       console.log('\n📝 Generating single test (no transitions)');
