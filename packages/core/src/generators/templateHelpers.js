@@ -235,12 +235,12 @@ export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
     }
     
     // Build screen validation object
-    validationScreens.push({
-      screenKey,
-      // ✅ FIX: Convert "passengers.field" → "PassengersField"
-      pomClassName: screen.screen && typeof screen.screen === 'string' 
-        ? toPascalCase(screen.screen.replace(/\./g, '')) 
-        : null,
+validationScreens.push({
+  screenKey,
+  platformKey: platform,  // ✅ ADD THIS LINE!
+  pomClassName: screen.screen && typeof screen.screen === 'string' 
+    ? toPascalCase(screen.screen.replace(/\./g, '')) 
+    : null,
       
       // Functions
       hasFunctions: functionsWithParams.length > 0,

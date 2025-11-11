@@ -1233,6 +1233,7 @@ if (metadata.mirrorsOn?.UI) {
   timestamp: new Date().toISOString(),
   implClassName,
   platform,
+  platformKey: this._getPlatformKeyForMirrorsOn(platform),
   targetStatus,
   previousStatus: metadata.previousStatus,
   meta: metadata.meta || {},
@@ -1339,6 +1340,11 @@ console.log('   navigation:', JSON.stringify(context.navigation, null, 2));
 console.log('   hasActionDetails:', context.hasActionDetails);
 console.log('   actionDetails.navigationMethod:', context.actionDetails?.navigationMethod);
 console.log('   actionDetails.navigationFile:', context.actionDetails?.navigationFile);
+console.log('');
+// ✅ ADD THIS DEBUG RIGHT BEFORE return context;
+console.log('\n🐛 DEBUG CONTEXT BEFORE TEMPLATE:');
+console.log('   platformKey:', context.platformKey);
+console.log('   platform:', context.platform);
 console.log('');
     return context;
   }

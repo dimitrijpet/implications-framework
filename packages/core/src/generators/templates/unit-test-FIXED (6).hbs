@@ -281,7 +281,6 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   
 {{#if pomClassName}}
   const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
-
 {{#if ../isPlaywright}}
   const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
 {{else}}
