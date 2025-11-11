@@ -709,14 +709,23 @@ _getIncomingTransitions(targetState, projectPath) {
  * @returns {Array} Array of transition objects with actionDetails
  */
 _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, previousStatus = null, implFilePath = null) {
-  console.log(`\n🔍 === EXTRACTING ALL ACTION DETAILS ===`);
-  console.log(`   Target State: "${targetStateName}"`);
-  console.log(`   Platform: "${platform}"`);
+  console.log(`\n🔍 === _extractActionDetailsFromTransition ===`);
+  console.log(`   targetStateName: ${targetStateName}`);
+  console.log(`   platform: ${platform}`);
+  console.log(`   previousStatus: ${previousStatus}`);
+  console.log(`   implFilePath: ${implFilePath}`);
+  console.log(`   this.projectPath: ${this.projectPath}`);
+  console.log(`   this.currentTransition:`, this.currentTransition);
   
   const allTransitions = [];
   
   // ✅ STEP 1: Get ALL incoming transitions from discovery cache
   const incomingTransitions = this._getIncomingTransitions(targetStateName, this.projectPath);
+  
+  console.log(`   📥 Got ${incomingTransitions.length} incoming transitions`);
+  incomingTransitions.forEach(t => {
+    console.log(`      - ${t.from} --${t.event}--> ${t.to}`);
+  });
   
   if (incomingTransitions.length === 0) {
     console.log(`   ⚠️  No incoming transitions found in discovery cache`);
@@ -1023,15 +1032,28 @@ _extractXStateFromAST(ast) {
  * Find Implication file for a given status using state registry
  */
 _findImplicationFile(status, currentFilePath) {
+  console.log(`\n🔍 _findImplicationFile:`);
+  console.log(`   status: "${status}"`);
+  console.log(`   currentFilePath: ${currentFilePath}`);
+  console.log(`   this.projectPath: ${this.projectPath}`);
+  
   const path = require('path');
   const fs = require('fs');
   
-  // ✅ STEP 1: Try state registry (BEST)
-  const { REGISTRY_PATH } = require('../constants.js');
+  // ✅ Use project path instead of process.cwd()
+  const registryPath = path.join(
+    this.projectPath,
+    'tests/implications/.state-registry.json'
+  );
   
-  if (fs.existsSync(REGISTRY_PATH)) {
+  console.log(`   📁 Registry path: ${registryPath}`);
+  console.log(`   📁 Exists? ${fs.existsSync(registryPath)}`);
+  
+  console.log(`   📁 Registry path: ${registryPath}`);
+  
+  if (fs.existsSync(registryPath)) {
     try {
-      const registry = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8'));
+      const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
       
       // Try exact match first
       if (registry[status]) {
@@ -1056,6 +1078,8 @@ _findImplicationFile(status, currentFilePath) {
     } catch (error) {
       console.log(`   ⚠️  Could not read registry: ${error.message}`);
     }
+  } else {
+    console.log(`   ⚠️  Registry not found at: ${registryPath}`);
   }
   
   // ✅ STEP 2: Fallback to convention (snake_case → PascalCase)

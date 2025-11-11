@@ -22,7 +22,7 @@ const { expect } = require('@wdio/globals');
 {{/if}}
 const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
-const TestPlanner = require('{{testPlannerPath}}');
+{{!-- const TestSetup = require('{{testSetupPath}}'); --}}
 {{#if isPlaywright}}
 const TestSetup = require('{{testSetupPath}}');
 {{/if}}
