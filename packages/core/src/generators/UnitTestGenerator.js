@@ -580,6 +580,9 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     // State name (for multi-state)
     stateName: stateName
   };
+
+   // ✅ Store metadata so _processActionDetailsImports can access entity
+  this.currentMetadata = metadata;
   
   // Process actionDetails if present
   if (metadata.actionDetails) {
@@ -2247,40 +2250,59 @@ _findScreenObjectsDir(startPath) {
 
 /**
  * Process actionDetails imports with calculated paths
- * 
- * This takes the imports array from actionDetails and calculates
- * the correct relative path for each import.
- * 
- * @param {object} actionDetails - Action details with imports array
- * @param {string} screenObjectsPath - Base screenObjects path (optional)
- * @param {string} implFilePath - Path to Implication file
- * @returns {object} Processed actionDetails with relativePath added
+ * AND add entity to each step for template access
  */
 _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
-  if (!actionDetails || !actionDetails.imports) {
+  if (!actionDetails) {
     return actionDetails;
   }
   
   // Clone to avoid mutation
   const processed = JSON.parse(JSON.stringify(actionDetails));
   
-  // Calculate paths for each import
-  processed.imports = processed.imports.map(imp => {
-    // imp.path is like "clubs.screen" or "searchBar.wrapper"
-    const relativePath = this._calculateScreenObjectPath(
-      implFilePath,
-      imp.path
-    );
+  // Process imports if they exist
+  if (processed.imports) {
+    processed.imports = processed.imports.map(imp => {
+      const relativePath = this._calculateScreenObjectPath(
+        implFilePath,
+        imp.path
+      );
+      
+      return {
+        ...imp,
+        relativePath
+      };
+    });
+  }
+  
+  // ✅ Get entity from metadata that's ALREADY in context
+  // (Don't call _extractMetadata again - that causes recursion!)
+  const entity = this.currentMetadata?.meta?.entity || null;
+  
+  // Process steps with dual args format AND entity
+  if (processed.steps) {
+    processed.steps = processed.steps.map(step => {
+      const argsArray = Array.isArray(step.args) 
+        ? step.args 
+        : (step.args || '').split(',').map(s => s.trim()).filter(Boolean);
+      
+      const argsString = Array.isArray(step.args)
+        ? step.args.join(', ')
+        : step.args || '';
+      
+      return {
+        ...step,
+        args: argsString,
+        argsArray: argsArray,
+        entity: entity  // ✅ Use entity from stored metadata
+      };
+    });
     
-    return {
-      ...imp,
-      relativePath  // Add calculated path
-    };
-  });
+    console.log(`   ✅ Processed ${processed.steps.length} step(s) with entity: ${entity}`);
+  }
   
   return processed;
 }
-
 /**
  * Extract navigation from actionDetails
  * 

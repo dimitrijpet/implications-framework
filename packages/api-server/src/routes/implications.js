@@ -2513,21 +2513,37 @@ function buildActionDetailsAST(actionDetails) {
   
   // Steps
   if (actionDetails.steps && actionDetails.steps.length > 0) {
-    const stepsArray = t.arrayExpression(
-      actionDetails.steps.map(step => 
-        t.objectExpression([
-          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description)),
-          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance)),
-          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method)),
-          t.objectProperty(
-            t.identifier('args'),
-            t.arrayExpression(step.args.map(arg => t.stringLiteral(arg)))
+  const stepsArray = t.arrayExpression(
+    actionDetails.steps.map(step => {
+      // ✅ CRITICAL: Store BOTH formats!
+      // args: string for template (backward compat)
+      // argsArray: array for entity-scoped logic
+      const argsString = Array.isArray(step.args) 
+        ? step.args.join(', ')  // Convert array to string
+        : step.args;  // Already a string
+      
+      return t.objectExpression([
+        t.objectProperty(t.identifier('description'), t.stringLiteral(step.description)),
+        t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance)),
+        t.objectProperty(t.identifier('method'), t.stringLiteral(step.method)),
+        // ✅ Store as STRING for backward compatibility
+        t.objectProperty(
+          t.identifier('args'),
+          t.stringLiteral(argsString)
+        ),
+        // ✅ ALSO store as ARRAY for entity-scoped templates
+        t.objectProperty(
+          t.identifier('argsArray'),
+          t.arrayExpression(
+            (Array.isArray(step.args) ? step.args : step.args.split(',').map(s => s.trim()))
+              .map(arg => t.stringLiteral(arg))
           )
-        ])
-      )
-    );
-    
-    properties.push(
+        )
+      ]);
+    })
+  );
+  
+  properties.push(
       t.objectProperty(
         t.identifier('steps'),
         stepsArray

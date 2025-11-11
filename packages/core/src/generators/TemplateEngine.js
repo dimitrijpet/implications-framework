@@ -50,13 +50,17 @@ class TemplateEngine {
    * @param {object} context - Template context/data
    * @returns {string} Rendered output
    */
-  render(templateName, context) {
-    console.log(`\n📝 TemplateEngine.render()`);
-    console.log(`   Template: ${templateName}`);
-    console.log(`   Context keys: ${Object.keys(context).length}`);
-    
-    // Get compiled template
-    const template = this._getTemplate(templateName);
+render(templateName, context) {
+  console.log(`\n📝 TemplateEngine.render()`);
+  console.log(`   Template: ${templateName}`);
+  console.log(`   Context keys: ${Object.keys(context).length}`);
+  
+  // ✅ CLEAR CACHE BEFORE RENDERING (temporary debug)
+  this.templateCache.clear();
+  console.log('   🗑️  Cache cleared');
+  
+  // Get compiled template
+  const template = this._getTemplate(templateName);
     
     // Render
     const output = template(context);
@@ -314,8 +318,52 @@ class TemplateEngine {
     hbs.registerHelper('json', (obj) => {
       return JSON.stringify(obj, null, 2);
     });
-    
-    console.log('✅ Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers');
+
+    // ═══════════════════════════════════════════════════════════
+// ENTITY-SCOPED HELPERS (for nested paths like dancer.email)
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Check if value is a ctx.data reference
+ */
+hbs.registerHelper('isContextField', (value) => {
+  const result = typeof value === 'string' && value.includes('ctx.data.');
+  console.log(`🔍 isContextField("${value}") = ${result}`);
+  return result;
+});
+
+/**
+ * Remove ctx.data. prefix and extract field name
+ * Usage: ctx.data.email → email
+ *        ctx.data.dancer.email → dancer.email
+ */
+hbs.registerHelper('removeCtxDataPrefix', (value) => {
+  if (typeof value === 'string') {
+    const result = value.replace('ctx.data.', '');
+    console.log(`🔧 removeCtxDataPrefix("${value}") = "${result}"`);
+    return result;
+  }
+  console.log(`⚠️ removeCtxDataPrefix non-string: ${typeof value}`);
+  return value;
+});
+
+/**
+ * Convert field path to entity-scoped path
+ * Usage: email → dancer.email (if entity is 'dancer')
+ *        status → dancer.status
+ */
+hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
+  if (!entity) return fieldPath;
+  
+  // If already has entity prefix, return as-is
+  if (fieldPath.startsWith(entity + '.')) {
+    return fieldPath;
+  }
+  
+  return `${entity}.${fieldPath}`;
+});
+    // ✅ MOVED: Final count AFTER all helpers registered
+    console.log('✅ Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers (including 3 entity-scoped)');
   }
   
   /**
