@@ -225,10 +225,6 @@ static load(ImplicationClass, testDataPath) {
   const fileContents = fs.readFileSync(actualPath, 'utf8');
   const data = JSON.parse(fileContents);
   
-  console.log(\`   🐛 DEBUG: Has _original? \${!!data._original}\`);
-  console.log(\`   🐛 DEBUG: Has _changeLog? \${!!data._changeLog}\`);
-  console.log(\`   🐛 DEBUG: File keys: \${Object.keys(data).join(', ')}\`);
-  
   if (data._changeLog && data._changeLog.length > 0) {
     const original = data._original || {};
     let current = { ...original };
@@ -925,13 +921,6 @@ static _getCurrentStatus(testData, targetImplication = null) {
   const meta = targetImplication?.xstateConfig?.meta || targetImplication?.meta;
   
   if (meta?.entity) {
-    console.log(\`   🐛 DEBUG testData keys:\`, Object.keys(testData));
-    console.log(\`   🐛 DEBUG _entityStatus:\`, testData._entityStatus);
-    console.log(\`   🐛 DEBUG dancer.status:\`, testData.dancer?.status);
-    console.log(\`   🐛 DEBUG flat path:\`, testData['dancer.status']);
-  }
-  
-  if (meta?.entity) {
     const entity = meta.entity;
     
     const entityStatus = testData._entityStatus ||
@@ -1345,11 +1334,6 @@ static _getCurrentStatus(testData, targetImplication = null) {
   try {
     const TestContext = require('./TestContext');
     const ctx = TestContext.load(ImplicationClass, testDataPath);
-    
-    console.log('   🐛 DEBUG ctx.data type:', typeof ctx.data);
-    console.log('   🐛 DEBUG ctx.data is array?', Array.isArray(ctx.data));
-    console.log(\`   🐛 DEBUG ctx.data.status: \${ctx.data.status}\`);
-    console.log('   🐛 DEBUG ctx.data.dancer:', ctx.data.dancer);
     
     const planner = new TestPlanner({ verbose: true });
       const meta = ImplicationClass.xstateConfig?.meta || {};
