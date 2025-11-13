@@ -14,16 +14,16 @@ export default function AddTransitionModal({
   targetState,
   projectPath,
 }) {
-  const [formData, setFormData] = useState({
-    event: "",
-    description: "",
-    platforms: [],
-    hasActionDetails: false,
-    navigationMethod: "",
-    navigationFile: "",
-    imports: [],
-    steps: [],
-  });
+const [formData, setFormData] = useState({
+  event: "",
+  description: "",
+  platform: "web",  // ✅ NEW - single platform, default web
+  hasActionDetails: false,
+  navigationMethod: "",
+  navigationFile: "",
+  imports: [],
+  steps: [],
+});
 
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -46,52 +46,59 @@ export default function AddTransitionModal({
   }, [isOpen, projectPath]);
 
   // Fetch navigation files when platform is selected
+useEffect(() => {
+  if (isOpen && projectPath && formData.platform) {  // ✅ NEW
+    fetchNavigationFiles();
+  }
+}, [isOpen, projectPath, formData.platform]);  // ✅ NEW
+
   useEffect(() => {
-    if (isOpen && projectPath && formData.platforms.length > 0) {
-      fetchNavigationFiles();
-    }
-  }, [isOpen, projectPath, formData.platforms]);
+  if (isOpen && projectPath && formData.platform) {
+    console.log(`♻️ Platform changed to: ${formData.platform}, re-fetching POMs...`);
+    fetchAvailablePOMs();
+  }
+}, [formData.platform]);
 
   // Fetch POMs from API
-  const fetchAvailablePOMs = async () => {
-    setLoadingPOMs(true);
-    try {
-      const response = await fetch(
-        `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
-      );
-      if (response.ok) {
-        const data = await response.json();
+const fetchAvailablePOMs = async () => {
+  setLoadingPOMs(true);
+  try {
+    const response = await fetch(
+      `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    if (response.ok) {
+      const data = await response.json();
 
-        const transformedPOMs = data.poms.map((pom) => {
-          const mainClass = pom.classes?.[0];
-
-          return {
-            className: mainClass?.name || pom.name,
-            file: pom.path,
-            name: pom.name,
-            classes: pom.classes,
-            exports: pom.exports,
-          };
-        });
-
-        console.log("📦 Transformed POMs:", transformedPOMs);
-        setAvailablePOMs(transformedPOMs);
-      } else {
-        console.error("Failed to fetch POMs:", response.status);
-      }
-    } catch (error) {
-      console.error("Error fetching POMs:", error);
-    } finally {
-      setLoadingPOMs(false);
-    }
+ const transformedPOMs = data.poms.map((pom) => {
+  const mainClass = pom.classes?.[0];
+  return {
+    name: mainClass?.name || pom.name,
+    className: mainClass?.name || pom.name,  // ✅ ADD THIS LINE
+    path: pom.path,
+    filePath: pom.path,  // ✅ Keep full path for filtering
+    classes: pom.classes,
   };
+});
+
+      // ✅ NEW: Filter by selected platform
+      const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
+      
+      setAvailablePOMs(filteredPOMs);
+    }
+  } catch (error) {
+    console.error("Failed to fetch POMs:", error);
+    setAvailablePOMs([]);
+  } finally {
+    setLoadingPOMs(false);
+  }
+};
 
   // Fetch navigation files
-  const fetchNavigationFiles = async () => {
-    setLoadingNavigation(true);
-    try {
-      const platform = formData.platforms[0] || "web";
-      console.log("🧭 Fetching navigation files for platform:", platform);
+const fetchNavigationFiles = async () => {
+  setLoadingNavigation(true);
+  try {
+    const platform = formData.platform || "web";  // ✅ NEW
+    console.log("🧭 Fetching navigation files for platform:", platform);
 
       const response = await fetch(
         `${API_URL}/api/navigation?projectPath=${encodeURIComponent(projectPath)}&platform=${platform}`
@@ -110,6 +117,32 @@ export default function AddTransitionModal({
       setLoadingNavigation(false);
     }
   };
+
+  const filterPOMsByPlatform = (poms, platform) => {
+  if (!platform || !poms) return poms;
+  
+  console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
+  
+  const filtered = poms.filter(pom => {
+    const path = pom.path || pom.filePath || '';
+    
+    // Check if POM path contains platform directory
+    if (platform === 'web') {
+      return path.includes('/web/') || path.includes('\\web\\');
+    } else if (platform === 'dancer') {
+      return path.includes('/dancer/') || path.includes('\\dancer\\') || 
+             path.includes('/android/dancer/') || path.includes('\\android\\dancer\\');
+    } else if (platform === 'manager') {
+      return path.includes('/manager/') || path.includes('\\manager\\') ||
+             path.includes('/android/manager/') || path.includes('\\android\\manager\\');
+    }
+    
+    return false;
+  });
+  
+  console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
+  return filtered;
+};
 
   // Fetch POM details
   const fetchPOMDetails = async (pomName) => {
@@ -404,29 +437,32 @@ export default function AddTransitionModal({
     setLoading(true);
 
     try {
-      const submitData = {
-        event: formData.event.trim(),
-        platforms: formData.platforms?.length > 0 ? formData.platforms : null,
-        actionDetails: formData.hasActionDetails
-          ? {
-              description: formData.description.trim(),
-              navigationMethod: formData.navigationMethod || null,
-              navigationFile: formData.navigationFile || null,
-              imports: formData.imports.map((imp) => ({
-                className: imp.className,
-                varName: imp.varName,
-                path: imp.path,
-                constructor: imp.constructor,
-              })),
-              steps: formData.steps.map((step) => ({
-                description: step.description,
-                instance: step.instance,
-                method: step.method,
-                args: step.args,
-              })),
-            }
-          : null,
-      };
+   const submitData = {
+  event: formData.event.trim(),
+  platform: formData.platform,  // ✅ CHANGED: single platform
+  actionDetails: formData.hasActionDetails
+    ? {
+        description: formData.description.trim(),
+        platform: formData.platform,  // ✅ NEW: include platform in actionDetails
+        navigationMethod: formData.navigationMethod || null,
+        navigationFile: formData.navigationFile || null,
+        imports: formData.imports.map((imp) => ({
+          className: imp.className,
+          varName: imp.varName,
+          path: imp.path,
+          constructor: imp.constructor,
+        })),
+        steps: formData.steps.map((step) => ({
+          description: step.description,
+          instance: step.instance,
+          method: step.method,
+          args: step.args,
+        })),
+      }
+    : null,
+};
+
+console.log("🚀 Submitting transition with platform:", submitData.platform);
 
       console.log("═══════════════════════════════════════");
       console.log("🚀 MODAL DEBUG");
@@ -546,59 +582,63 @@ export default function AddTransitionModal({
             )}
           </div>
 
-          {/* Platform Selection */}
-          <div>
-            <label
-              className="block text-sm font-semibold mb-2"
-              style={{ color: defaultTheme.colors.text.primary }}
-            >
-              Available on Platforms
-            </label>
-            <div className="flex gap-3">
-              {["web", "dancer", "manager"].map((platform) => (
-                <label
-                  key={platform}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"
-                  style={{
-                    backgroundColor: formData.platforms?.includes(platform)
-                      ? `${defaultTheme.colors.accents.blue}20`
-                      : defaultTheme.colors.background.tertiary,
-                    border: `2px solid ${
-                      formData.platforms?.includes(platform)
-                        ? defaultTheme.colors.accents.blue
-                        : defaultTheme.colors.border
-                    }`,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={formData.platforms?.includes(platform) || false}
-                    onChange={(e) => {
-                      const newPlatforms = e.target.checked
-                        ? [...(formData.platforms || []), platform]
-                        : (formData.platforms || []).filter(
-                            (p) => p !== platform
-                          );
-                      setFormData((prev) => ({
-                        ...prev,
-                        platforms: newPlatforms,
-                      }));
-                    }}
-                    className="w-4 h-4"
-                  />
-                  <span style={{ color: defaultTheme.colors.text.primary }}>
-                    {platform === "web" ? "🌐" : "📱"} {platform}
-                  </span>
-                </label>
-              ))}
-            </div>
-            <p
-              className="text-xs mt-1"
-              style={{ color: defaultTheme.colors.text.tertiary }}
-            >
-              💡 Leave unchecked to make available on all platforms
-            </p>
-          </div>
+      {/* Platform Selection - SINGLE CHOICE */}
+<div>
+  <label
+    className="block text-sm font-semibold mb-2"
+    style={{ color: defaultTheme.colors.text.primary }}
+  >
+    Platform *{" "}
+    <span
+      className="text-xs font-normal"
+      style={{ color: defaultTheme.colors.text.tertiary }}
+    >
+      (select one - POMs will be filtered)
+    </span>
+  </label>
+  <div className="flex gap-3">
+    {["web", "dancer", "manager"].map((platform) => (
+      <label
+        key={platform}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"
+        style={{
+          backgroundColor:
+            formData.platform === platform
+              ? `${defaultTheme.colors.accents.blue}20`
+              : defaultTheme.colors.background.tertiary,
+          border: `2px solid ${
+            formData.platform === platform
+              ? defaultTheme.colors.accents.blue
+              : defaultTheme.colors.border
+          }`,
+        }}
+      >
+        <input
+          type="radio"
+          name="platform"
+          value={platform}
+          checked={formData.platform === platform}
+          onChange={(e) =>
+            setFormData((prev) => ({
+              ...prev,
+              platform: e.target.value,
+            }))
+          }
+          className="w-4 h-4 cursor-pointer"
+        />
+        <span style={{ color: defaultTheme.colors.text.primary }}>
+          {platform === "web" ? "🌐" : "📱"} {platform}
+        </span>
+      </label>
+    ))}
+  </div>
+  <p
+    className="text-xs mt-1"
+    style={{ color: defaultTheme.colors.text.tertiary }}
+  >
+    💡 This transition will only work on the selected platform
+  </p>
+</div>
 
           {/* Action Details Toggle */}
           <div className="flex items-center gap-3">
@@ -750,14 +790,14 @@ export default function AddTransitionModal({
                   </>
                 )}
 
-                {formData.platforms.length === 0 && (
-                  <p
-                    className="text-xs mt-2"
-                    style={{ color: defaultTheme.colors.text.tertiary }}
-                  >
-                    ℹ️ Select a platform first to see navigation options
-                  </p>
-                )}
+              {!formData.platform && (  // ✅ NEW
+  <p
+    className="text-xs mt-2"
+    style={{ color: defaultTheme.colors.text.tertiary }}
+  >
+    ℹ️ Select a platform first to see navigation options
+  </p>
+)}
               </div>
 
               {/* Screen Objects / Imports */}
