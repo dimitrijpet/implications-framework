@@ -21,6 +21,7 @@ const { test, expect } = require('@playwright/test');
 const { expect } = require('@wdio/globals');
 {{/if}}
 const TestContext = require('{{testContextPath}}');
+const TestPlanner = require('{{testPlannerPath}}');  {{!-- ✅ MOVED HERE --}}
 const {{implClassName}} = require('./{{implClassName}}.js');
 {{#if hasUIValidation}}
 const ExpectImplication = require('{{expectImplicationPath}}');
@@ -51,13 +52,9 @@ if (!process.env.SKIP_PREFLIGHT_CHECK) {
 {{#if meta.requires}}
 {{#each meta.requires}}
 {{#if (contains @key '.')}}
-// ⚠️  Required: {{@key}} = {{this}}
+// ⚠️  Required: {{@key}} {{formatRequirement @key this}}
 {{/if}}
 {{/each}}
-//
-// These are NOT separate states - they're runtime requirements.
-// Handle them in your test setup or beforeEach() hook.
-//
 {{/if}}
 // ════════════════════════════════════════════════════════════
 

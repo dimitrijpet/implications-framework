@@ -154,6 +154,53 @@ render(templateName, context) {
       if (!str) return [];
       return str.split(separator || ',');
     });
+
+    hbs.registerHelper('formatRequirement', function(key, value) {
+      // Handle boolean
+      if (typeof value === 'boolean') {
+        return `must be ${value}`;
+      }
+      
+      // Handle string
+      if (typeof value === 'string') {
+        return `must equal "${value}"`;
+      }
+      
+      // Handle object
+      if (typeof value === 'object' && value !== null) {
+        // Contains pattern: { contains: 'ctx.data.x' }
+        if (value.contains) {
+          const isNegated = key.startsWith('!');
+          return isNegated 
+            ? `must NOT contain ${value.contains}`
+            : `must contain ${value.contains}`;
+        }
+        
+        // Equals pattern: { equals: 'value' }
+        if (value.equals !== undefined) {
+          return `must equal ${value.equals}`;
+        }
+        
+        // OneOf pattern: { oneOf: ['a', 'b'] }
+        if (value.oneOf && Array.isArray(value.oneOf)) {
+          return `must be one of: ${value.oneOf.join(', ')}`;
+        }
+        
+        // Min/Max patterns
+        if (value.min !== undefined || value.max !== undefined) {
+          const parts = [];
+          if (value.min !== undefined) parts.push(`>= ${value.min}`);
+          if (value.max !== undefined) parts.push(`<= ${value.max}`);
+          return `must be ${parts.join(' and ')}`;
+        }
+        
+        // Fallback
+        return `must match ${JSON.stringify(value)}`;
+      }
+      
+      // Fallback
+      return `= ${value}`;
+    });
     
     // ═══════════════════════════════════════════════════════════
     // COMPARISON HELPERS

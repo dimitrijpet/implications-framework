@@ -16,6 +16,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 Handlebars.registerHelper('pascalCase', pascalCaseHelper);
+/**
+ * Handlebars helper: Format requirement values
+ */
+Handlebars.registerHelper('formatRequirement', function(key, value) {
+  // Handle boolean
+  if (typeof value === 'boolean') {
+    return `must be ${value}`;
+  }
+  
+  // Handle string
+  if (typeof value === 'string') {
+    return `must equal "${value}"`;
+  }
+  
+  // Handle object (THE MAIN FIX!)
+  if (typeof value === 'object' && value !== null) {
+    // Contains pattern: { contains: 'ctx.data.x' }
+    if (value.contains) {
+      const isNegated = key.startsWith('!');
+      return isNegated 
+        ? `must NOT contain ${value.contains}`
+        : `must contain ${value.contains}`;
+    }
+    
+    // Equals pattern: { equals: 'value' }
+    if (value.equals !== undefined) {
+      return `must equal ${value.equals}`;
+    }
+    
+    // OneOf pattern: { oneOf: ['a', 'b'] }
+    if (value.oneOf && Array.isArray(value.oneOf)) {
+      return `must be one of: ${value.oneOf.join(', ')}`;
+    }
+    
+    // Fallback
+    return `must match ${JSON.stringify(value)}`;
+  }
+  
+  // Fallback
+  return `= ${value}`;
+});
 
 /**
  * UnitTestGenerator
@@ -1427,6 +1468,60 @@ return {
   testSetup: `${helpersRelativePath}/TestSetup`
 };
   }
+
+  /**
+ * Format requirement value for human-readable display
+ * 
+ * @param {string} key - Requirement key (e.g., '!dancer.blocked_clubs')
+ * @param {*} value - Requirement value (string, boolean, or object)
+ * @returns {string} Human-readable description
+ */
+_formatRequirementValue(key, value) {
+  // Handle boolean
+  if (typeof value === 'boolean') {
+    return `must be ${value}`;
+  }
+  
+  // Handle string
+  if (typeof value === 'string') {
+    return `must equal "${value}"`;
+  }
+  
+  // Handle object
+  if (typeof value === 'object' && value !== null) {
+    // Contains pattern: { contains: 'ctx.data.x' }
+    if (value.contains) {
+      const isNegated = key.startsWith('!');
+      return isNegated 
+        ? `must NOT contain ${value.contains}`
+        : `must contain ${value.contains}`;
+    }
+    
+    // Equals pattern: { equals: 'value' }
+    if (value.equals !== undefined) {
+      return `must equal ${value.equals}`;
+    }
+    
+    // OneOf pattern: { oneOf: ['a', 'b'] }
+    if (value.oneOf && Array.isArray(value.oneOf)) {
+      return `must be one of: ${value.oneOf.join(', ')}`;
+    }
+    
+    // Min/Max patterns
+    if (value.min !== undefined || value.max !== undefined) {
+      const parts = [];
+      if (value.min !== undefined) parts.push(`>= ${value.min}`);
+      if (value.max !== undefined) parts.push(`<= ${value.max}`);
+      return `must be ${parts.join(' and ')}`;
+    }
+    
+    // Fallback: stringify nicely
+    return `must match ${JSON.stringify(value)}`;
+  }
+  
+  // Fallback
+  return `= ${value}`;
+}
   
   /**
    * Extract delta fields from entry: assign
@@ -2440,6 +2535,8 @@ screens.forEach((screen, index) => {
   
   return lines.join('\n');
 }
+
+
   
   /**
    * âœ¨ FIX #6: Extract UI validation screens from mirrorsOn
