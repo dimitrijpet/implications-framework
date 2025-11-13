@@ -200,8 +200,49 @@ export function extractXStateTransitions(parsed, className) {
             
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
+             // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
                 const eventName = transitionProp.key?.name || transitionProp.key?.value;
+                
+                // ✅ NEW: Handle array of transitions (multi-platform)
+                if (transitionProp.value?.type === 'ArrayExpression') {
+                  console.log(`      📦 Found array transition for ${eventName}, extracting ${transitionProp.value.elements.length} variants`);
+                  
+                  transitionProp.value.elements.forEach((element, index) => {
+                    if (element.type === 'ObjectExpression') {
+                      let targetState = null;
+                      let platforms = null;
+                      
+                      // Extract target
+                      const targetProp = element.properties.find(p => p.key?.name === 'target');
+                      if (targetProp?.value?.type === 'StringLiteral') {
+                        targetState = targetProp.value.value;
+                      }
+                      
+                      // Extract platforms
+                      const platformsProp = element.properties.find(p => p.key?.name === 'platforms');
+                      if (platformsProp && platformsProp.value?.type === 'ArrayExpression') {
+                        platforms = platformsProp.value.elements
+                          .filter(el => el.type === 'StringLiteral')
+                          .map(el => el.value);
+                        console.log(`         📱 Variant ${index + 1} platforms:`, platforms);
+                      }
+                      
+                      if (targetState) {
+                        transitions.push({
+                          from: fromStatus,
+                          to: targetState,
+                          event: eventName,
+                          platforms: platforms
+                        });
+                      }
+                    }
+                  });
+                  
+                  return; // Skip rest of processing for this transition
+                }
+                
+                // Original handling for single transitions
                 let targetState = null;
                 let platforms = null;
                 
@@ -217,7 +258,7 @@ export function extractXStateTransitions(parsed, className) {
                     targetState = targetProp.value.value;
                   }
                   
-                  // Extract platforms
+                  // Extract platforms (new format)
                   const platformsProp = transitionProp.value.properties.find(
                     p => p.key?.name === 'platforms'
                   );
@@ -229,11 +270,29 @@ export function extractXStateTransitions(parsed, className) {
                     
                     console.log(`      📱 Found platforms for ${eventName}:`, platforms);
                   }
+                  
+                  // ✅ FALLBACK: Check old format meta.platform
+                  if (!platforms) {
+                    const metaProp = transitionProp.value.properties.find(
+                      p => p.key?.name === 'meta'
+                    );
+                    
+                    if (metaProp && metaProp.value?.type === 'ObjectExpression') {
+                      const platformProp = metaProp.value.properties.find(
+                        p => p.key?.name === 'platform'
+                      );
+                      
+                      if (platformProp?.value?.type === 'StringLiteral') {
+                        platforms = [platformProp.value.value];
+                        console.log(`      📱 Found legacy meta.platform for ${eventName}:`, platforms);
+                      }
+                    }
+                  }
                 }
                 
                 if (eventName && targetState) {
                   transitions.push({
-                    from: fromStatus,  // ✅ NOW USES STATUS!
+                    from: fromStatus,
                     to: targetState,
                     event: eventName,
                     platforms: platforms

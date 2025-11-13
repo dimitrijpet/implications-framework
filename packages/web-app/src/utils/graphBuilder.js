@@ -2,7 +2,9 @@ import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '.
 
 /**
  * Build Cytoscape graph from discovery results
- * ✨ Enhanced with screen grouping support and platform-specific transitions
+ */
+/**
+ * Build Cytoscape graph from discovery results
  */
 export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
@@ -10,39 +12,44 @@ export function buildGraphFromDiscovery(discoveryResult) {
   const projectPath = discoveryResult.projectPath;
   
   const nodes = [];
-  const edges = [];  // ✅ Initialize empty, build AFTER nodes
+  const edges = [];
   
   // Create a map of state names to class names
   const stateMap = new Map();
   
-  // ✨ NEW: Track screens for grouping
-  const screenGroups = {};
-  
-  // ✅ FILTER: Only use implications with xstateConfig
-  const statefulImplications = implications.filter(imp => 
-    imp.metadata?.hasXStateConfig === true
-  );
+  // âœ… FILTER: Only use implications with xstateConfig
+const statefulImplications = implications.filter(imp => 
+  imp.metadata?.hasXStateConfig === true
+);
 
-  console.log(`✅ Filtered to ${statefulImplications.length} stateful implications (from ${implications.length} total)`);
+console.log(`âœ… Filtered to ${statefulImplications.length} stateful implications (from ${implications.length} total)`);
 
-  // ✅ Check what metadata we have
-  statefulImplications.forEach(imp => {
-    console.log(`📋 ${imp.metadata.className}:`, {
-      status: imp.metadata.status,
-      triggerButton: imp.metadata.triggerButton,
-      platform: imp.metadata.platform,
-      setup: imp.metadata.setup,
-      screen: imp.metadata.screen,
-    });
+// âœ… ADD THIS - Check what metadata we have
+statefulImplications.forEach(imp => {
+  console.log(`ðŸ“‹ ${imp.metadata.className}:`, {
+    status: imp.metadata.status,
+    triggerButton: imp.metadata.triggerButton,
+    platform: imp.metadata.platform,
+    setup: imp.metadata.setup,
   });
+});
   
   // Create nodes from stateful implications only
   statefulImplications.forEach(imp => {
     const metadata = imp.metadata || {};
     const stateName = extractStateName(metadata.className);
     
+    console.log(`📝 Creating node: className="${metadata.className}" → stateName="${stateName}"`);
+    console.log(`   Also mapping status="${metadata.status}" if exists`);
+    
     stateMap.set(metadata.className, stateName.toLowerCase());
     stateMap.set(stateName.toLowerCase(), stateName.toLowerCase());
+    
+    // ✅ CRITICAL: Also map the status field!
+    if (metadata.status) {
+      stateMap.set(metadata.status.toLowerCase(), stateName.toLowerCase());
+      console.log(`   ✅ Mapped status: "${metadata.status}" → "${stateName.toLowerCase()}"`);
+    }
     
     // Get platform styling
     const platform = metadata.setup?.platform || metadata.platform || 'web';
@@ -54,37 +61,23 @@ export function buildGraphFromDiscovery(discoveryResult) {
     const allPlatforms = metadata.platforms || [platform];
     const isMultiPlatform = allPlatforms.length > 1;
     
-    // ✨ NEW: Get screen from metadata
-    const screen = metadata.screen || null;
-    
-    // ✨ NEW: Track screen grouping
-    if (screen) {
-      if (!screenGroups[screen]) {
-        screenGroups[screen] = [];
-      }
-      screenGroups[screen].push(stateName.toLowerCase());
-    }
-    
     nodes.push({
-      data: {
-        id: stateName.toLowerCase(),
-        label: stateName,
-        type: 'state',
-        isStateful: metadata.isStateful,
-        pattern: metadata.pattern,
-        hasXState: metadata.hasXStateConfig,
-        metadata: metadata,
-        
-        // ✨ NEW: Screen information
-        screen: screen,
-        
-        // File paths
-        files: {
-          implication: projectPath + '/' + imp.path,
-          test: projectPath + '/' + (Array.isArray(metadata.setup) 
-            ? metadata.setup[0]?.testFile 
-            : metadata.setup?.testFile)
-        },
+  data: {
+    id: metadata.status.toLowerCase(),
+    label: stateName,
+    type: 'state',
+    isStateful: metadata.isStateful,
+    pattern: metadata.pattern,
+    hasXState: metadata.hasXStateConfig,
+    metadata: metadata,
+    
+    // âœ… ADD THIS - File paths!
+    files: {
+     implication: projectPath + '/' + imp.path,  // Make absolute!
+  test: projectPath + '/' + (Array.isArray(metadata.setup) 
+    ? metadata.setup[0]?.testFile 
+    : metadata.setup?.testFile)
+},
         
         // Visual styling data
         color: statusColor,
@@ -105,67 +98,82 @@ export function buildGraphFromDiscovery(discoveryResult) {
     });
   });
   
-  // ✅ NOW Build edges from transitions (AFTER nodes are built!)
+  // Create edges from transitions
   console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
   
-// ✅ NOW Build edges from transitions (AFTER nodes are built!)
-console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
-
-if (transitions && transitions.length > 0) {
-  transitions.forEach(transition => {
-    console.log(`\n🔍 Processing transition:`, {
-      from: transition.from,
-      to: transition.to,
-      event: transition.event,
-      platforms: transition.platforms  // ✅ Debug: See what we got!
-    });
-    
-    const fromState = extractStateName(transition.from).toLowerCase();
-    const toState = transition.to.toLowerCase();
-    
-    // Only add edge if both nodes exist
-    if (stateMap.has(fromState) && stateMap.has(toState)) {
-      // ✅ FIX: Define sourceNode OUTSIDE if/else
-      const sourceNode = nodes.find(n => n.data.id === fromState);
-      let edgeColor;
-      
-      // ✅ Use transition's platforms if specified
-      if (transition.platforms && transition.platforms.length > 0) {
-        // Use first platform's color
-        const platform = transition.platforms[0];
-        edgeColor = getPlatformStyle(platform, defaultTheme).color;
-        console.log(`   ✅ Using transition platform: ${platform} → ${edgeColor}`);
-      } else {
-        // Fallback: use source state's platform
-        edgeColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
-        console.log(`   ⚠️ No platforms on transition, using source: ${sourceNode?.data.platform} → ${edgeColor}`);
-      }
-      
-      edges.push({
-        data: {
-          id: `${fromState}-${toState}-${transition.event}`,
-          source: fromState,
-          target: toState,
-          label: transition.event,
-          platformColor: edgeColor,
-          platforms: transition.platforms,  // ✅ Pass platforms for badges!
-          platform: sourceNode?.data.platform || 'web'
-        },
+  if (transitions && transitions.length > 0) {
+    transitions.forEach(transition => {
+      console.log(`  📊 Transition:`, {
+        event: transition.event,
+        from: transition.from,
+        to: transition.to,
+        platforms: transition.platforms,
+        hasPlatforms: !!transition.platforms
       });
       
-      console.log(`   ✅ Edge added: ${edgeColor}`);
-    } else {
-      console.warn(`   ⚠️ Skipping edge: ${fromState}→${toState} (nodes not found)`);
+      const fromState = extractStateName(transition.from).toLowerCase();
+      const toState = transition.to.toLowerCase();
+      
+      console.log(`    🔍 Checking: ${fromState} → ${toState}`);
+      console.log(`      fromState in map: ${stateMap.has(fromState)}`);
+      console.log(`      toState in map: ${stateMap.has(toState)}`);
+      
+      // Only add edge if both nodes exist
+      if (stateMap.has(fromState) && stateMap.has(toState)) {
+        // ✅ DOUBLE CHECK: Also verify nodes array has these IDs
+        const sourceExists = nodes.find(n => n.data.id === fromState);
+        const targetExists = nodes.find(n => n.data.id === toState);
+        
+        if (!sourceExists || !targetExists) {
+          console.warn(`   ⚠️ Skipping edge - node missing in array! source: ${!!sourceExists}, target: ${!!targetExists}`);
+          return;
+        }
+        
+        // ✅ Use transition's platform (not source node's platform)
+        const transitionPlatform = transition.platforms?.[0] || 'web';
+        const platformStyle = getPlatformStyle(transitionPlatform, defaultTheme);
+        
+        // ✅ Include platform in ID to allow multiple arrows for same event
+        const edgeId = transition.platforms 
+          ? `${fromState}-${toState}-${transition.event}-${transition.platforms.join(',')}`
+          : `${fromState}-${toState}-${transition.event}`;
+        
+        edges.push({
+          data: {
+            id: edgeId,
+            source: fromState,
+            target: toState,
+            label: transition.event,
+            platformColor: platformStyle.color,  // ✅ Use transition's platform color!
+            platform: transitionPlatform,        // ✅ Use transition's platform!
+            platforms: transition.platforms      // ✅ Store all platforms for tooltip
+          },
+        });
+      } else {
+        console.warn(`   ⚠️ Skipping edge - states not in map! from: ${stateMap.has(fromState)}, to: ${stateMap.has(toState)}`);
+      }
+    });
+  }
+  
+  console.log(`âœ… Built graph: ${nodes.length} nodes, ${edges.length} edges`);
+  
+  // CRITICAL FIX: Filter out edges that reference non-existent nodes
+  const nodeIds = new Set(nodes.map(n => n.data.id));
+  const validEdges = edges.filter(edge => {
+    const hasSource = nodeIds.has(edge.data.source);
+    const hasTarget = nodeIds.has(edge.data.target);
+    
+    if (!hasSource || !hasTarget) {
+      console.warn(`REMOVED invalid edge: ${edge.data.source} to ${edge.data.target}`);
+      return false;
     }
+    return true;
   });
-}
   
-  console.log(`✅ Built graph: ${nodes.length} nodes, ${edges.length} edges`);
-  console.log(`📺 Screen groups:`, Object.keys(screenGroups).length, screenGroups);
+  console.log(`Valid edges: ${validEdges.length} (removed ${edges.length - validEdges.length} invalid)`);
   
-  return { nodes, edges, screenGroups };
+  return { nodes, edges: validEdges };
 }
-
 /**
  * Extract state name from class name
  * "AcceptedBookingImplications" -> "accepted"
@@ -173,18 +181,27 @@ if (transitions && transitions.length > 0) {
 function extractStateName(className) {
   if (!className) return 'Unknown';
   
+  // ✅ CRITICAL FIX: Don't process if already snake_case!
+  if (className.includes('_')) {
+    // Already snake_case, just lowercase it
+    return className.toLowerCase();
+  }
+  
+  // Only process PascalCase names
+  let name = className;
+  
   // Remove "Implications" suffix
-  let name = className.replace(/Implications$/i, '');
+  name = name.replace(/Implications$/i, '');
   
   // Remove "Booking" prefix/suffix
-  // name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
+  name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
   
   // Convert PascalCase to snake_case
   name = name.replace(/([A-Z])/g, (match, p1, offset) => {
     return offset > 0 ? '_' + p1.toLowerCase() : p1.toLowerCase();
   });
   
-  return name || className;  // ✅ Fallback to className
+  return name || className;
 }
 
 /**
@@ -200,7 +217,7 @@ export function buildSampleGraph() {
         isStateful: true,
         pattern: 'booking',
         color: '#6b7280',
-        icon: '📝',
+        icon: 'ðŸ“',
         platform: 'web',
         platformColor: '#f1f5f9',
         allPlatforms: ['web'],
@@ -228,10 +245,10 @@ export function buildSampleGraph() {
         isStateful: true,
         pattern: 'booking',
         color: '#eab308',
-        icon: '⏳',
-        platform: 'dancer',
+        icon: 'â³',
+        platform: 'mobile-dancer',
         platformColor: '#a855f7',
-        allPlatforms: ['dancer'],
+        allPlatforms: ['mobile-dancer'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#a855f7',
@@ -256,10 +273,10 @@ export function buildSampleGraph() {
         isStateful: true,
         pattern: 'booking',
         color: '#10b981',
-        icon: '✅',
-        platform: 'manager',
+        icon: 'âœ…',
+        platform: 'mobile-manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['manager', 'web'],  // ✅ Multi-platform!
+        allPlatforms: ['mobile-manager', 'web'],  // âœ… Multi-platform!
         borderStyle: 'multi',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -284,10 +301,10 @@ export function buildSampleGraph() {
         isStateful: true,
         pattern: 'booking',
         color: '#ef4444',
-        icon: '❌',
-        platform: 'manager',
+        icon: 'âŒ',
+        platform: 'mobile-manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['manager'],
+        allPlatforms: ['mobile-manager'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -312,10 +329,10 @@ export function buildSampleGraph() {
         isStateful: true,
         pattern: 'booking',
         color: '#8b5cf6',
-        icon: '🎯',
-        platform: 'manager',
+        icon: 'ðŸŽ¯',
+        platform: 'mobile-manager',
         platformColor: '#3b82f6',
-        allPlatforms: ['manager'],
+        allPlatforms: ['mobile-manager'],
         borderStyle: 'solid',
         shadowBlur: 20,
         shadowColor: '#3b82f6',
@@ -350,7 +367,7 @@ export function buildSampleGraph() {
         target: 'accepted', 
         label: 'ACCEPT',
         platformColor: '#3b82f6',
-        platform: 'manager'
+        platform: 'mobile-manager'
       } 
     },
     { 
@@ -359,7 +376,7 @@ export function buildSampleGraph() {
         target: 'rejected', 
         label: 'REJECT',
         platformColor: '#3b82f6',
-        platform: 'manager'
+        platform: 'mobile-manager'
       } 
     },
     { 
@@ -368,7 +385,7 @@ export function buildSampleGraph() {
         target: 'checkedIn', 
         label: 'CHECK_IN',
         platformColor: '#3b82f6',
-        platform: 'manager'
+        platform: 'mobile-manager'
       } 
     },
     { 
@@ -377,7 +394,7 @@ export function buildSampleGraph() {
         target: 'pending', 
         label: 'UNDO',
         platformColor: '#3b82f6',
-        platform: 'manager'
+        platform: 'mobile-manager'
       } 
     },
   ];

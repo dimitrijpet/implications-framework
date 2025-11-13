@@ -46,7 +46,7 @@ export default function Visualizer() {
 const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
 const transitionModeRef = useRef(transitionMode);
 
-// ✅ Keep ref in sync with state
+// âœ… Keep ref in sync with state
 useEffect(() => {
   transitionModeRef.current = transitionMode;
 }, [transitionMode]);
@@ -98,16 +98,16 @@ const checkInitialization = async (path) => {
     const result = await response.json();
     const { initialized, missing } = result;
     
-    console.log('🔍 Init check:', { initialized, missing });
+    console.log('ðŸ” Init check:', { initialized, missing });
     
-    // ✅ If initialized, just return true - don't show banner
+    // âœ… If initialized, just return true - don't show banner
     if (initialized) {
       setNeedsInit(false);
       setInitChecked(false);
       return true;
     }
     
-    // ❌ Not initialized - show banner
+    // âŒ Not initialized - show banner
     setNeedsInit(true);
     setInitChecked(true);
     
@@ -125,7 +125,7 @@ const handleInitialize = async () => {
   setInitError(null);
 
   try {
-    console.log('🚀 Initializing project:', projectPath);
+    console.log('ðŸš€ Initializing project:', projectPath);
     
     const response = await fetch(`${API_URL}/api/init/setup`, {
       method: 'POST',
@@ -139,7 +139,7 @@ const handleInitialize = async () => {
     if (!response.ok) {
       const error = await response.json();
       
-      // ✅ If already initialized, show the error but don't treat as failure
+      // âœ… If already initialized, show the error but don't treat as failure
       if (error.error?.includes('already initialized')) {
         setInitError(error.error);
         setInitLoading(false);
@@ -150,7 +150,7 @@ const handleInitialize = async () => {
     }
 
     const result = await response.json();
-    console.log('✅ Initialization complete:', result);
+    console.log('âœ… Initialization complete:', result);
     
     setInitSuccess(true);
     setCreatedFiles(result.files || []);
@@ -163,7 +163,7 @@ const handleInitialize = async () => {
     }, 2000);
 
   } catch (err) {
-    console.error('❌ Initialization failed:', err);
+    console.error('âŒ Initialization failed:', err);
     setInitError(err.message);
   } finally {
     setInitLoading(false);
@@ -175,14 +175,14 @@ const handleReInitialize = async () => {
   setInitError(null);
 
   try {
-    console.log('🔄 Re-initializing project with force:', projectPath);
+    console.log('ðŸ”„ Re-initializing project with force:', projectPath);
     
     const response = await fetch(`${API_URL}/api/init/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         projectPath,
-        force: true  // ✅ This is the key difference
+        force: true  // âœ… This is the key difference
       })
     });
 
@@ -192,7 +192,7 @@ const handleReInitialize = async () => {
     }
 
     const result = await response.json();
-    console.log('✅ Re-initialization complete:', result);
+    console.log('âœ… Re-initialization complete:', result);
     
     setInitSuccess(true);
     setCreatedFiles(result.files || []);
@@ -205,7 +205,7 @@ const handleReInitialize = async () => {
     }, 2000);
 
   } catch (err) {
-    console.error('❌ Re-initialization failed:', err);
+    console.error('âŒ Re-initialization failed:', err);
     setInitError(err.message);
   } finally {
     setInitLoading(false);
@@ -213,15 +213,15 @@ const handleReInitialize = async () => {
 };
 
 const loadGraphLayout = async () => {
-  // ✨ ADD VALIDATION
+  // âœ¨ ADD VALIDATION
   if (!projectPath) {
-    console.log('⏭️  Skipping layout load - no projectPath yet');
+    console.log('â­ï¸  Skipping layout load - no projectPath yet');
     return;
   }
   
   try {
-    console.log('📂 Loading saved graph layout...');
-    console.log('📍 Project path:', projectPath);
+    console.log('ðŸ“‚ Loading saved graph layout...');
+    console.log('ðŸ“ Project path:', projectPath);
     
     const response = await fetch(
       `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`
@@ -229,41 +229,41 @@ const loadGraphLayout = async () => {
     
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('❌ Backend error:', errorData);
+      console.error('âŒ Backend error:', errorData);
       throw new Error(`HTTP ${response.status}: ${errorData.error || 'Unknown error'}`);
     }
     
     const data = await response.json();
     
     if (data.success && data.layout) {
-      console.log('✅ Layout loaded:', data.layout);
+      console.log('âœ… Layout loaded:', data.layout);
       
-      // ✅ CRITICAL: Store in window globals (Session 21 pattern)
+      // âœ… CRITICAL: Store in window globals (Session 21 pattern)
       window.__savedGraphLayout = data.layout;
       window.__savedGraphLayoutVersion = Date.now();
       
       setSavedLayout(data.layout);
     } else {
-      console.log('ℹ️  No saved layout found');
+      console.log('â„¹ï¸  No saved layout found');
       setSavedLayout(null);
     }
   } catch (error) {
-    console.error('❌ Load layout failed:', error);
+    console.error('âŒ Load layout failed:', error);
   }
 };
 
-// ✨ Load saved layout when graph data or project changes
+// âœ¨ Load saved layout when graph data or project changes
 useEffect(() => {
-  // ✅ Only load when BOTH exist
+  // âœ… Only load when BOTH exist
   if (graphData && projectPath && projectPath.trim() !== '') {
-    console.log('🔄 Loading layout:', {
+    console.log('ðŸ”„ Loading layout:', {
       projectPath,
       hasGraphData: !!graphData,
       nodeCount: graphData.nodes?.length || 0
     });
     loadGraphLayout();
   } else {
-    console.log('⏭️  Skipping layout load:', {
+    console.log('â­ï¸  Skipping layout load:', {
       hasGraphData: !!graphData,
       hasProjectPath: !!projectPath,
       projectPathValue: projectPath
@@ -271,14 +271,14 @@ useEffect(() => {
   }
 }, [graphData, projectPath]);
 
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 3. ADD SAVE LAYOUT FUNCTION
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const saveGraphLayout = async () => {
   if (!projectPath) return;
   
   if (!window.cytoscapeGraph) {
-    alert('⚠️ Graph not ready yet. Please wait and try again.');
+    alert('âš ï¸ Graph not ready yet. Please wait and try again.');
     return;
   }
   
@@ -289,12 +289,12 @@ const saveGraphLayout = async () => {
     
     // Try using getLayout() if it exists
     if (typeof window.cytoscapeGraph.getLayout === 'function') {
-      console.log('💾 Using getLayout() method...');
+      console.log('ðŸ’¾ Using getLayout() method...');
       layout = window.cytoscapeGraph.getLayout();
       layout.screenGroupsEnabled = showScreenGroups;
     } else {
       // Fallback: manual extraction
-      console.log('💾 Manually extracting positions...');
+      console.log('ðŸ’¾ Manually extracting positions...');
       const positions = {};
       
       if (typeof window.cytoscapeGraph.nodes === 'function') {
@@ -310,7 +310,7 @@ const saveGraphLayout = async () => {
       layout = { positions, screenGroupsEnabled: showScreenGroups };
     }
     
-    console.log(`💾 Saving ${Object.keys(layout.positions).length} node positions`);
+    console.log(`ðŸ’¾ Saving ${Object.keys(layout.positions).length} node positions`);
     
     const response = await fetch(`${API_URL}/api/implications/graph/layout`, {
       method: 'POST',
@@ -323,26 +323,26 @@ const saveGraphLayout = async () => {
     }
     
     await response.json();
-    console.log('✅ Layout saved to file!');
+    console.log('âœ… Layout saved to file!');
     
-    // ✅ CRITICAL: Update window globals (Session 21 pattern)
+    // âœ… CRITICAL: Update window globals (Session 21 pattern)
     window.__savedGraphLayout = layout;
     window.__savedGraphLayoutVersion = Date.now();
     
     setSavedLayout(layout);
-    alert('✅ Graph layout saved! It will be loaded automatically next time.');
+    alert('âœ… Graph layout saved! It will be loaded automatically next time.');
     
   } catch (error) {
-    console.error('❌ Save layout failed:', error);
-    alert('❌ Failed to save: ' + error.message);
+    console.error('âŒ Save layout failed:', error);
+    alert('âŒ Failed to save: ' + error.message);
   } finally {
     setIsSavingLayout(false);
   }
 };
 
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 4. ADD RESET LAYOUT FUNCTION
-// ────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const resetGraphLayout = async () => {
   if (!projectPath) return;
   
@@ -350,7 +350,7 @@ const resetGraphLayout = async () => {
   if (!confirmed) return;
   
   try {
-    console.log('🗑️  Resetting graph layout...');
+    console.log('ðŸ—‘ï¸  Resetting graph layout...');
     
     const response = await fetch(
   `${API_URL}/api/implications/graph/layout?projectPath=${encodeURIComponent(projectPath)}`,
@@ -364,9 +364,9 @@ const resetGraphLayout = async () => {
     const data = await response.json();
     
     if (data.success) {
-      console.log('✅ Layout reset!');
+      console.log('âœ… Layout reset!');
       
-      // ✅ CRITICAL: Clear window globals (Session 21 pattern)
+      // âœ… CRITICAL: Clear window globals (Session 21 pattern)
       delete window.__savedGraphLayout;
       delete window.__savedGraphLayoutVersion;
       delete window.__lastAppliedVersion;
@@ -378,11 +378,11 @@ const resetGraphLayout = async () => {
         window.cytoscapeGraph.relayout();
       }
       
-      alert('✅ Layout reset to default!');
+      alert('âœ… Layout reset to default!');
     }
   } catch (error) {
-    console.error('❌ Reset layout failed:', error);
-    alert('❌ Failed to reset layout: ' + error.message);
+    console.error('âŒ Reset layout failed:', error);
+    alert('âŒ Failed to reset layout: ' + error.message);
   }
 };
 
@@ -396,19 +396,19 @@ const handleScan = async () => {
   setInitError(null);
   
   try {
-    console.log('🔍 Starting discovery scan...');
+    console.log('ðŸ” Starting discovery scan...');
     
     // First, check if project is initialized
     const isInitialized = await checkInitialization(projectPath);
     
     if (!isInitialized) {
-      console.log('⚠️  Project needs initialization');
+      console.log('âš ï¸  Project needs initialization');
       setLoading(false);
       return; // Stop here, show init banner
     }
     
     // Pro``ject is initialized, proceed with scan
-    console.log('✅ Project is initialized, scanning...');
+    console.log('âœ… Project is initialized, scanning...');
 
     const response = await fetch(`${API_URL}/api/discovery/scan`, {
       method: 'POST',
@@ -428,7 +428,7 @@ const handleScan = async () => {
     setAnalysisResult(result.analysis || null);
     setStateRegistry(result.stateRegistry || null);
 
-    await loadGraphLayout();  // ✨ Load saved layout
+    await loadGraphLayout();  // âœ¨ Load saved layout
     
     // Build graph data
     if (result.files?.implications) {
@@ -443,13 +443,13 @@ const handleScan = async () => {
       localStorage.setItem('lastGraphData', JSON.stringify(graph));
     }
     
-    console.log('✅ Scan complete');
+    console.log('âœ… Scan complete');
     console.log('   - States:', result.files?.implications?.length || 0);
     console.log('   - Issues:', result.analysis?.issues?.length || 0);
     console.log('   - Mappings:', result.stateRegistry?.mappings ? Object.keys(result.stateRegistry.mappings).length : 0);
     
   } catch (err) {
-    console.error('❌ Scan failed:', err);
+    console.error('âŒ Scan failed:', err);
     setError(err.message);
   } finally {
     setLoading(false);
@@ -457,7 +457,7 @@ const handleScan = async () => {
 };
 
   const handleRefreshSingleState = async (filePath) => {
-  console.log('⚡ Fast refresh for:', filePath.split('/').pop());
+  console.log('âš¡ Fast refresh for:', filePath.split('/').pop());
   
   try {
     // Re-parse just this one file
@@ -502,12 +502,12 @@ const handleScan = async () => {
       localStorage.setItem('lastDiscoveryResult', JSON.stringify(updated));
       localStorage.setItem('lastGraphData', JSON.stringify(graph));
       
-      console.log('✅ Fast refresh complete');
+      console.log('âœ… Fast refresh complete');
       return updated;
     });
     
   } catch (error) {
-    console.error('❌ Fast refresh error:', error);
+    console.error('âŒ Fast refresh error:', error);
     // Fallback to full scan
     handleScan();
   }
@@ -515,7 +515,7 @@ const handleScan = async () => {
 
 
 
-  // ✅ Expose refresh function globally for StateDetailModal
+  // âœ… Expose refresh function globally for StateDetailModal
 useEffect(() => {
   // Expose refresh functions globally
   window.refreshDiscovery = handleScan;
@@ -524,24 +524,24 @@ useEffect(() => {
     return () => {
       delete window.refreshDiscovery;
     };
-  }, [projectPath]);  // ✅ FIXED: Dependency array
+  }, [projectPath]);  // âœ… FIXED: Dependency array
   
   // Handle node click in graph
 const handleNodeClick = (nodeData) => {
   setSelectedNodeId(nodeData.id);
-  console.log('🖱️ Node clicked:', nodeData);
+  console.log('ðŸ–±ï¸ Node clicked:', nodeData);
   
   if (!discoveryResult) {
-    console.warn('⚠️ No discovery result available');
+    console.warn('âš ï¸ No discovery result available');
     return;
   }
   
-  // ✅ Try multiple ways to find the implication (most reliable first)
+  // âœ… Try multiple ways to find the implication (most reliable first)
   let implication = null;
   
   // Method 1: Use className from node metadata (most reliable!)
   if (nodeData.metadata?.className) {
-    console.log('🔍 Looking up by className:', nodeData.metadata.className);
+    console.log('ðŸ” Looking up by className:', nodeData.metadata.className);
     implication = discoveryResult.files.implications.find(
       imp => imp.metadata.className === nodeData.metadata.className
     );
@@ -549,7 +549,7 @@ const handleNodeClick = (nodeData) => {
   
   // Method 2: Fall back to extractStateName comparison (backward compatibility)
   if (!implication) {
-    console.log('🔍 Fallback: Looking up by extracted name:', nodeData.id);
+    console.log('ðŸ” Fallback: Looking up by extracted name:', nodeData.id);
     implication = discoveryResult.files.implications.find(
       imp => extractStateName(imp.metadata.className) === nodeData.id
     );
@@ -557,14 +557,14 @@ const handleNodeClick = (nodeData) => {
   
   // Method 3: Last resort - try matching xstateConfig.id
   if (!implication) {
-    console.log('🔍 Last resort: Looking up by xstateConfig.id:', nodeData.id);
+    console.log('ðŸ” Last resort: Looking up by xstateConfig.id:', nodeData.id);
     implication = discoveryResult.files.implications.find(
       imp => imp.metadata.id === nodeData.id
     );
   }
   
   if (!implication) {
-    console.error('❌ Implication not found for:', nodeData.id);
+    console.error('âŒ Implication not found for:', nodeData.id);
     console.error('   Tried className:', nodeData.metadata?.className);
     console.error('   Available implications:', 
       discoveryResult.files.implications.map(i => i.metadata.className)
@@ -573,18 +573,18 @@ const handleNodeClick = (nodeData) => {
     return;
   }
   
-  console.log('✅ Found implication:', implication.metadata.className);
+  console.log('âœ… Found implication:', implication.metadata.className);
   
   const metadata = implication.metadata;
   
   // Check for xstateConfig
   if (!metadata.hasXStateConfig) {
-    console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
+    console.warn('âš ï¸ This implication has no xstateConfig:', nodeData.id);
     alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
     return;
   }
   
-  console.log('🔍 Modal data for', nodeData.id, ':', {
+  console.log('ðŸ” Modal data for', nodeData.id, ':', {
     statusCode: metadata.statusCode,
     statusNumber: metadata.statusNumber,
     triggerButton: metadata.triggerButton
@@ -593,7 +593,7 @@ const handleNodeClick = (nodeData) => {
   // Extract transitions for this state
   const stateTransitions = (discoveryResult.transitions || [])
     .filter(t => {
-      // ✅ Match by className for reliability
+      // âœ… Match by className for reliability
       const fromClassName = t.from;
       return fromClassName === metadata.className || 
              extractStateName(fromClassName) === nodeData.id;
@@ -625,7 +625,7 @@ const handleNodeClick = (nodeData) => {
     setup: metadata.setup,
     xstateContext: metadata.xstateContext || {},
     uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
-    xstateConfig: metadata.xstateConfig || null  // ✅ ADD THIS LINE!
+    xstateConfig: metadata.xstateConfig || null  // âœ… ADD THIS LINE!
   },
   transitions: stateTransitions,
   files: {
@@ -636,9 +636,9 @@ const handleNodeClick = (nodeData) => {
   },
 };
   
-  console.log('✅ Selected state with full metadata:', state);
-  console.log('🔍 meta.uiCoverage:', state.meta.uiCoverage);
-  console.log('🔍 platforms:', state.meta.uiCoverage?.platforms);
+  console.log('âœ… Selected state with full metadata:', state);
+  console.log('ðŸ” meta.uiCoverage:', state.meta.uiCoverage);
+  console.log('ðŸ” platforms:', state.meta.uiCoverage?.platforms);
   
   setSelectedState(state);
 };
@@ -657,8 +657,8 @@ const handleNodeClick = (nodeData) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...formData,                        // ✅ All form fields (stateName, status, etc.)
-        projectPath: projectPath            // ✅ Add the project path from state!
+        ...formData,                        // âœ… All form fields (stateName, status, etc.)
+        projectPath: projectPath            // âœ… Add the project path from state!
       })
     });
     
@@ -668,7 +668,7 @@ const handleNodeClick = (nodeData) => {
     }
     
     const result = await response.json();
-    console.log('✅ State created:', result);
+    console.log('âœ… State created:', result);
     
     // Show success notification
     const notification = document.createElement('div');
@@ -684,7 +684,7 @@ const handleNodeClick = (nodeData) => {
       z-index: 9999;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     `;
-    notification.textContent = `✅ Created ${result.fileName}! Re-scan to see it.`;
+    notification.textContent = `âœ… Created ${result.fileName}! Re-scan to see it.`;
     document.body.appendChild(notification);
     
     setTimeout(() => {
@@ -694,7 +694,7 @@ const handleNodeClick = (nodeData) => {
     setShowAddStateModal(false);
     
   } catch (error) {
-    console.error('❌ Create failed:', error);
+    console.error('âŒ Create failed:', error);
     throw error;
   }
 };
@@ -706,8 +706,8 @@ const handleTransitionModeClick = async (nodeData) => {
   
   if (!currentMode.source) {
     // First click - select source
-    console.log('🎯 Source selected:', nodeData.id);
-    console.log('📊 Source data:', nodeData);
+    console.log('ðŸŽ¯ Source selected:', nodeData.id);
+    console.log('ðŸ“Š Source data:', nodeData);
     
     setTransitionMode({ 
       enabled: true, 
@@ -716,21 +716,21 @@ const handleTransitionModeClick = async (nodeData) => {
     
   } else {
     // Second click - select target, open modal
-    console.log('👉 Target selected:', nodeData.id);
-    console.log('📊 Target data:', nodeData);
+    console.log('ðŸ‘‰ Target selected:', nodeData.id);
+    console.log('ðŸ“Š Target data:', nodeData);
     
     const sourceFile = currentMode.source.files?.implication;
     const targetFile = nodeData.files?.implication;
     
-    console.log('📤 Files:', { sourceFile, targetFile });
+    console.log('ðŸ“¤ Files:', { sourceFile, targetFile });
     
     if (!sourceFile || !targetFile) {
-      alert('❌ Could not find file paths for states');
+      alert('âŒ Could not find file paths for states');
       setTransitionMode({ enabled: false, source: null });
       return;
     }
     
-    // ✨ NEW: Open modal instead of prompt
+    // âœ¨ NEW: Open modal instead of prompt
     setTransitionModalData({
       source: { 
         id: currentMode.source.id, 
@@ -754,7 +754,7 @@ const handleTransitionSubmit = async (formData) => {
         sourceFile: transitionModalData.source.file,
         targetFile: transitionModalData.target.file,
         event: formData.event,
-        platforms: formData.platforms,
+        platform: formData.platform,
         actionDetails: formData.actionDetails
       })
     });
@@ -771,8 +771,8 @@ const handleTransitionSubmit = async (formData) => {
     notification.style.backgroundColor = defaultTheme.colors.accents.green;
     notification.style.color = 'white';
     notification.innerHTML = `
-      <div class="font-bold">✅ Transition Added!</div>
-      <div class="text-sm mt-1">${formData.event}: ${transitionModalData.source.id} → ${transitionModalData.target.id}</div>
+      <div class="font-bold">âœ… Transition Added!</div>
+      <div class="text-sm mt-1">${formData.event}: ${transitionModalData.source.id} â†’ ${transitionModalData.target.id}</div>
     `;
     document.body.appendChild(notification);
     
@@ -787,7 +787,7 @@ const handleTransitionSubmit = async (formData) => {
     setTransitionMode({ enabled: false, source: null });
     
   } catch (error) {
-    console.error('❌ Add transition failed:', error);
+    console.error('âŒ Add transition failed:', error);
     throw error; // Let modal handle the error
   }
 };
@@ -795,12 +795,12 @@ const handleTransitionSubmit = async (formData) => {
 // 3. ADD THESE HELPER FUNCTIONS
 const enableTransitionMode = () => {
   setTransitionMode({ enabled: true, source: null });
-  console.log('🔗 Transition mode enabled - click two nodes to connect');
+  console.log('ðŸ”— Transition mode enabled - click two nodes to connect');
 };
 
 const disableTransitionMode = () => {
   setTransitionMode({ enabled: false, source: null });
-  console.log('👁️ View mode enabled');
+  console.log('ðŸ‘ï¸ View mode enabled');
 };
   
   return (
@@ -824,7 +824,7 @@ const disableTransitionMode = () => {
               <h1 
                 className="text-4xl font-bold bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent"
               >
-                🎯 State Machine Viewer
+                ðŸŽ¯ State Machine Viewer
               </h1>
               <p className="text-sm mt-1" style={{ color: defaultTheme.colors.text.tertiary }}>
                 Interactive visualization & documentation
@@ -845,14 +845,14 @@ const disableTransitionMode = () => {
                     }}
                     title="Clear cached data and start fresh"
                   >
-                    🗑️ Clear
+                    ðŸ—‘ï¸ Clear
                   </button>
                   
                   {/* Mode Buttons */}
                   <div className="flex gap-2 ml-2 pl-2 border-l" style={{ borderColor: defaultTheme.colors.border }}>
                     <button
                       onClick={() => {
-                        console.log('🔘 Add State button clicked');
+                        console.log('ðŸ”˜ Add State button clicked');
                         setShowAddStateModal(true);
                       }}
                       className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
@@ -861,7 +861,7 @@ const disableTransitionMode = () => {
                         color: 'white'
                       }}
                     >
-                      ➕ Add State
+                      âž• Add State
                     </button>       
                     <button
                       onClick={() => {
@@ -878,7 +878,7 @@ const disableTransitionMode = () => {
                         border: `2px solid ${transitionMode.enabled ? defaultTheme.colors.accents.orange : defaultTheme.colors.border}`
                       }}
                     >
-                      {transitionMode.enabled ? '✓ Adding Transition...' : '🔗 Add Transition'}
+                      {transitionMode.enabled ? 'âœ“ Adding Transition...' : 'ðŸ”— Add Transition'}
                     </button>
                   </div>
                 </>
@@ -892,7 +892,7 @@ const disableTransitionMode = () => {
                   color: 'white'
                 }}
               >
-                🔄 Refresh
+                ðŸ”„ Refresh
               </button>
             </div>
           </div>
@@ -930,7 +930,7 @@ const disableTransitionMode = () => {
                   opacity: loading ? 0.6 : 1
                 }}
               >
-                {loading ? '⏳ Scanning...' : '🔍 Scan Project'}
+                {loading ? 'â³ Scanning...' : 'ðŸ” Scan Project'}
               </button>
             </div>
             
@@ -942,7 +942,7 @@ const disableTransitionMode = () => {
                   color: defaultTheme.colors.accents.red 
                 }}
               >
-                ❌ {error}
+                âŒ {error}
               </div>
             )}
           </div>
@@ -968,7 +968,7 @@ const disableTransitionMode = () => {
   >
     <div className="flex items-start gap-4">
       <div className="text-4xl">
-        {initError?.includes('already initialized') ? 'ℹ️' : '⚠️'}
+        {initError?.includes('already initialized') ? 'â„¹ï¸' : 'âš ï¸'}
       </div>
       <div className="flex-1">
         <h3 
@@ -996,15 +996,15 @@ const disableTransitionMode = () => {
               </p>
               <div className="grid gap-2">
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>✓</span>
+                  <span>âœ“</span>
                   <code className="font-mono">tests/implications/utils/TestContext.js</code>
                 </div>
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>✓</span>
+                  <span>âœ“</span>
                   <code className="font-mono">tests/implications/utils/ExpectImplication.js</code>
                 </div>
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>✓</span>
+                  <span>âœ“</span>
                   <code className="font-mono">ai-testing.config.js</code>
                 </div>
               </div>
@@ -1042,12 +1042,12 @@ const disableTransitionMode = () => {
               >
                 {initLoading ? (
                   <span className="flex items-center gap-2">
-                    <span className="animate-spin">⏳</span>
+                    <span className="animate-spin">â³</span>
                     Re-initializing...
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">
-                    <span>🔄</span>
+                    <span>ðŸ”„</span>
                     Re-Initialize (Overwrite)
                   </span>
                 )}
@@ -1066,17 +1066,17 @@ const disableTransitionMode = () => {
               </p>
               <div className="grid gap-2">
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>📄</span>
+                  <span>ðŸ“„</span>
                   <code className="font-mono">tests/implications/utils/TestContext.js</code>
                   <span className="text-xs opacity-60">- Data management</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>📄</span>
+                  <span>ðŸ“„</span>
                   <code className="font-mono">tests/implications/utils/ExpectImplication.js</code>
                   <span className="text-xs opacity-60">- Validation engine</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                  <span>⚙️</span>
+                  <span>âš™ï¸</span>
                   <code className="font-mono">ai-testing.config.js</code>
                   <span className="text-xs opacity-60">- Configuration</span>
                 </div>
@@ -1086,7 +1086,7 @@ const disableTransitionMode = () => {
             {initError && !initError.includes('already initialized') && (
               <div className="mb-4 p-3 rounded" style={{ backgroundColor: `${defaultTheme.colors.accents.red}15` }}>
                 <p className="text-sm" style={{ color: defaultTheme.colors.accents.red }}>
-                  ❌ {initError}
+                  âŒ {initError}
                 </p>
               </div>
             )}
@@ -1104,12 +1104,12 @@ const disableTransitionMode = () => {
             >
               {initLoading ? (
                 <span className="flex items-center gap-2">
-                  <span className="animate-spin">⏳</span>
+                  <span className="animate-spin">â³</span>
                   Initializing Project...
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
-                  <span>🚀</span>
+                  <span>ðŸš€</span>
                   Initialize Project
                 </span>
               )}
@@ -1135,7 +1135,7 @@ const disableTransitionMode = () => {
     onClick={() => setShowScreenGroups(!showScreenGroups)}
     title="Group states by screen"
   >
-    <span>📺</span> {showScreenGroups ? 'Hide' : 'Show'} Screen Groups
+    <span>ðŸ“º</span> {showScreenGroups ? 'Hide' : 'Show'} Screen Groups
   </button>
 )}
 
@@ -1149,7 +1149,7 @@ const disableTransitionMode = () => {
     }}
   >
     <div className="flex items-start gap-4">
-      <div className="text-4xl">✅</div>
+      <div className="text-4xl">âœ…</div>
       <div className="flex-1">
         <h3 className="text-xl font-bold mb-2" style={{ color: defaultTheme.colors.accents.green }}>
           Setup Complete!
@@ -1164,7 +1164,7 @@ const disableTransitionMode = () => {
           </p>
           {createdFiles.map((file, idx) => (
             <div key={idx} className="flex items-center gap-2 text-xs" style={{ color: defaultTheme.colors.accents.green }}>
-              <span>✅</span>
+              <span>âœ…</span>
               <code className="font-mono">{file}</code>
             </div>
           ))}
@@ -1209,7 +1209,7 @@ const disableTransitionMode = () => {
       cursor: transitionMode.enabled ? 'default' : 'pointer'
     }}
   >
-    🔗 Add Transition Mode
+    ðŸ”— Add Transition Mode
     {transitionMode.enabled && transitionMode.source && ' (Select target)'}
     {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
   </button>
@@ -1226,7 +1226,7 @@ const disableTransitionMode = () => {
         cursor: 'pointer'
       }}
     >
-      ❌ Cancel
+      âŒ Cancel
     </button>
   )}
 </div>
@@ -1239,10 +1239,10 @@ const disableTransitionMode = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-2xl font-bold mb-1" style={{ color: defaultTheme.colors.accents.blue }}>
-                📊 Interactive State Graph
+                ðŸ“Š Interactive State Graph
               </h2>
               <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
-                💡 {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+                ðŸ’¡ {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
               </p>
             </div>
             
@@ -1250,16 +1250,16 @@ const disableTransitionMode = () => {
 {graphData && (
   <div className="flex gap-2">
     <button onClick={() => window.cytoscapeGraph?.fit()}>
-      <span>🎯</span> Fit
+      <span>ðŸŽ¯</span> Fit
     </button>
     <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
-      <span>🔍</span> Reset
+      <span>ðŸ”</span> Reset
     </button>
     <button onClick={() => window.cytoscapeGraph?.relayout()}>
-      <span>🔄</span> Layout
+      <span>ðŸ”„</span> Layout
     </button>
     
-    {/* ✨ ADD THESE */}
+    {/* âœ¨ ADD THESE */}
     <button 
       onClick={saveGraphLayout}
       disabled={isSavingLayout}
@@ -1271,7 +1271,7 @@ const disableTransitionMode = () => {
         opacity: isSavingLayout ? 0.6 : 1
       }}
     >
-      <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
+      <span>{isSavingLayout ? 'â³' : savedLayout ? 'âœ…' : 'ðŸ’¾'}</span>
       {isSavingLayout ? 'Saving...' : 'Save Layout'}
     </button>
     
@@ -1280,7 +1280,7 @@ const disableTransitionMode = () => {
         onClick={resetGraphLayout}
         title="Reset to default layout"
       >
-        <span>🔄</span> Reset
+        <span>ðŸ”„</span> Reset
       </button>
     )}
   </div>
@@ -1291,20 +1291,20 @@ const disableTransitionMode = () => {
    <StateGraph
   graphData={graphData}
   onNodeClick={(nodeData) => {
-    // ✅ Use ref to get current value, avoiding stale closure
+    // âœ… Use ref to get current value, avoiding stale closure
     const currentMode = transitionModeRef.current;
     
-    console.log('🔵 onNodeClick fired:', { 
+    console.log('ðŸ”µ onNodeClick fired:', { 
       nodeId: nodeData.id, 
       transitionModeEnabled: currentMode.enabled,
       hasSource: !!currentMode.source 
     });
     
     if (currentMode.enabled) {
-      console.log('🟢 Calling handleTransitionModeClick');
+      console.log('ðŸŸ¢ Calling handleTransitionModeClick');
       handleTransitionModeClick(nodeData);
     } else {
-      console.log('🟡 Calling handleNodeClick (open modal)');
+      console.log('ðŸŸ¡ Calling handleNodeClick (open modal)');
       handleNodeClick(nodeData);
     }
   }}
@@ -1323,7 +1323,7 @@ const disableTransitionMode = () => {
                 color: defaultTheme.colors.text.tertiary
               }}
             >
-              <p>🔍 {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
+              <p>ðŸ” {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
             </div>
           )}
         </div>
@@ -1349,7 +1349,7 @@ const disableTransitionMode = () => {
     onClose={closeDetail}
     theme={defaultTheme}
     projectPath={projectPath}
-    discoveryResult={discoveryResult}  // ← ADD THIS LINE
+    discoveryResult={discoveryResult}  // â† ADD THIS LINE
   />
 )}
       

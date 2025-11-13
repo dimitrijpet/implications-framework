@@ -2236,20 +2236,18 @@ function extractValueFromNode(node) {
 // Replace lines 1547-1676 in implications.js with this
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event, platforms, actionDetails } = req.body;
+    const { sourceFile, targetFile, event, platform, actionDetails } = req.body;  // ✅ CHANGED: platforms → platform
     
-    // ✅ ADD THESE DEBUG LOGS
+    // ✅ UPDATED DEBUG LOGS
     console.log('═══════════════════════════════════════');
     console.log('🔍 ADD-TRANSITION DEBUG');
     console.log('═══════════════════════════════════════');
     console.log('📦 Raw req.body:', JSON.stringify(req.body, null, 2));
-    console.log('🎯 Extracted platforms:', platforms);
-    console.log('📊 Platforms type:', typeof platforms);
-    console.log('📊 Platforms is array?', Array.isArray(platforms));
-    console.log('📊 Platforms length:', platforms?.length);
+    console.log('🎯 Extracted platform:', platform);
+    console.log('📊 Platform type:', typeof platform);
     console.log('═══════════════════════════════════════');
     
-    console.log('➕ Adding transition:', { sourceFile, targetFile, event, platforms });
+    console.log('➕ Adding transition:', { sourceFile, targetFile, event, platform });
     
     // Validate inputs
     if (!sourceFile || !targetFile || !event) {
@@ -2288,8 +2286,12 @@ router.post('/add-transition', async (req, res) => {
 
     console.log('🎯 Target state name:', targetStateName);
     
+    // ✅ NEW: Convert single platform to array for AST (backward compatible)
+    const platformsArray = platform ? [platform] : null;
+    console.log('✅ Converting platform to array:', platform, '→', platformsArray);
+    
     // Add transition to source file
-    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platforms, actionDetails);
+    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
@@ -2342,7 +2344,7 @@ router.post('/add-transition', async (req, res) => {
         event,
         from: nodePath.basename(sourceFile),
         to: `#${targetStateName}`,
-        platforms: platforms || []
+        platforms: platformsArray || []  // ✅ CHANGED: use platformsArray
       },
       backup: sourceBackupPath
     });
@@ -2432,8 +2434,28 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
             p => p.key?.name === event || p.key?.value === event
           );
           
-          if (existingTransition) {
-            console.log('⚠️  Transition already exists');
+           if (existingTransition) {
+            console.log('Converting transition to array for multiple platforms...');
+            
+            // Convert single transition to array with multiple platform versions
+            if (existingTransition.value.type === 'ObjectExpression') {
+              // Current value is a single object - wrap it in an array
+              console.log('   Wrapping existing transition in array');
+              existingTransition.value = t.arrayExpression([
+                existingTransition.value,  // Keep existing
+                transitionObj              // Add new platform version
+              ]);
+              transitionAdded = true;
+              console.log(`Converted ${event} to array with 2 platform versions`);
+            } else if (existingTransition.value.type === 'ArrayExpression') {
+              // Already an array - just push
+              console.log('   Adding to existing array');
+              existingTransition.value.elements.push(transitionObj);
+              transitionAdded = true;
+              console.log(`Added platform version to ${event} array`);
+            } else {
+              console.log('   Unknown transition type:', existingTransition.value.type);
+            }
             return;
           }
           
