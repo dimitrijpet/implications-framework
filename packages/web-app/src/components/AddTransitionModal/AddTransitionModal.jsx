@@ -213,15 +213,15 @@ const fetchNavigationFiles = async () => {
   const handlePOMSelect = async (index, pomName) => {
     console.log(`🔍 Selected POM: ${pomName}`);
 
-    const selectedPOM = availablePOMs.find((p) => p.className === pomName);
+   const selectedPOM = availablePOMs.find((p) => p.className === pomName);
 
-    if (selectedPOM) {
-      const mainClass = selectedPOM.classes?.[0];
+if (selectedPOM) {
+  const mainClass = selectedPOM.classes?.[0];
 
-      const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
-      const pathTemplate =
-        selectedPOM.name ||
-        selectedPOM.file.replace(/\\/g, ".").replace(/\.js$/, "");
+  const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
+  
+  // ✅ NEW: Store FULL PATH instead of just filename
+  const pathTemplate = selectedPOM.path || selectedPOM.filePath;  // ✅ Use full path!
       const varName = pomName.charAt(0).toLowerCase() + pomName.slice(1);
 
       setFormData((prev) => ({

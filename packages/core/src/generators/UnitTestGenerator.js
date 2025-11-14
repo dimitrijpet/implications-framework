@@ -467,33 +467,35 @@ _astNodeToObject(node) {
    * Goes up from the implication file until we find a directory
    * that has 'tests' as a subdirectory.
    */
-  _findProjectRoot(implFilePath) {
-    let currentDir = path.dirname(implFilePath);
+_findProjectRoot(implFilePath) {
+  let currentDir = path.dirname(implFilePath);
+  
+  // Go up max 10 levels looking for tests/ directory
+  for (let i = 0; i < 10; i++) {
+    const testsDir = path.join(currentDir, 'tests');
     
-    // Go up max 10 levels looking for tests/ directory
-    for (let i = 0; i < 10; i++) {
-      const testsDir = path.join(currentDir, 'tests');
-      
-      if (fs.existsSync(testsDir) && fs.statSync(testsDir).isDirectory()) {
-        // Found it! This is the project root
+    if (fs.existsSync(testsDir) && fs.statSync(testsDir).isDirectory()) {
+      // ✅ ADDITIONAL CHECK: Make sure we're not IN tests/ ourselves!
+      if (!currentDir.endsWith('/tests') && !currentDir.includes('/tests/')) {
         return currentDir;
       }
-      
-      // Go up one level
-      const parentDir = path.dirname(currentDir);
-      
-      // Reached filesystem root?
-      if (parentDir === currentDir) {
-        break;
-      }
-      
-      currentDir = parentDir;
     }
     
-    // Fallback: use implication's directory
-    console.warn('   ⚠️  Could not find project root, using implication directory');
-    return path.dirname(implFilePath);
+    // Go up one level
+    const parentDir = path.dirname(currentDir);
+    
+    // Reached filesystem root?
+    if (parentDir === currentDir) {
+      break;
+    }
+    
+    currentDir = parentDir;
   }
+  
+  // Fallback
+  console.warn('   ⚠️  Could not find project root, using implication directory');
+  return path.dirname(implFilePath);
+}
 
   
   
@@ -2258,6 +2260,42 @@ _calculateScreenObjectPath(implFilePath, screenFile) {
   const path = require('path');
   const fs = require('fs');
   
+  console.log(`\n📍 _calculateScreenObjectPath called:`);
+  console.log(`   implFilePath: ${implFilePath}`);
+  console.log(`   screenFile: ${screenFile}`);
+  
+  // ✅ NEW: If screenFile is already an absolute or project-relative path, use it directly
+ // ✅ NEW: If screenFile is already an absolute or project-relative path, use it directly
+if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.startsWith('mobile/')) {
+  console.log(`   ✅ Detected full/project-relative path`);
+  
+  const implDir = path.dirname(implFilePath);
+  console.log(`   📁 Test directory: ${implDir}`);
+  
+  // ✅ FIX: Just use the path as-is, don't strip anything!
+  const absoluteScreenPath = screenFile.startsWith('/') 
+    ? screenFile 
+    : path.join(this.projectPath, screenFile);  // ✅ Use FULL path as stored!
+  
+  console.log(`   📁 Absolute screen path: ${absoluteScreenPath}`);
+  
+  // Calculate relative path from test location to screen file
+  let relativePath = path.relative(implDir, absoluteScreenPath);
+  
+  // Normalize for require()
+  relativePath = relativePath.split(path.sep).join('/');
+  
+  if (!relativePath.startsWith('.')) {
+    relativePath = './' + relativePath;
+  }
+  
+  console.log(`   ✅ Calculated relative path: ${relativePath}`);
+  return relativePath;
+}
+  
+  // ✅ ORIGINAL LOGIC: For simple filenames like "StatusRequests.screen"
+  console.log(`   🔍 Treating as filename, searching for screenObjects directory...`);
+  
   // Get directory of Implication file (where test will be generated)
   const implDir = path.dirname(implFilePath);
   
@@ -2309,7 +2347,6 @@ _calculateScreenObjectPath(implFilePath, screenFile) {
   
   return relativePath;
 }
-
 /**
  * Find screenObjects directory by walking up from impl file
  * 
@@ -2354,20 +2391,29 @@ _findScreenObjectsDir(startPath) {
  * AND add entity to each step for template access
  */
 _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
+  console.log('\n📍 _processActionDetailsImports called:');
+  console.log('   implFilePath:', implFilePath);
+  
   if (!actionDetails) {
     return actionDetails;
   }
   
-  // Clone to avoid mutation
   const processed = JSON.parse(JSON.stringify(actionDetails));
   
   // Process imports if they exist
   if (processed.imports) {
+    console.log(`   📦 Processing ${processed.imports.length} import(s)...`);
+    
     processed.imports = processed.imports.map(imp => {
+      console.log(`\n   🔍 Import: ${imp.className}`);
+      console.log(`      path: ${imp.path}`);
+      
       const relativePath = this._calculateScreenObjectPath(
         implFilePath,
         imp.path
       );
+      
+      console.log(`      ✅ relativePath: ${relativePath}`);
       
       return {
         ...imp,
