@@ -625,16 +625,17 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
   };
 
    // ✅ Store metadata so _processActionDetailsImports can access entity
-  this.currentMetadata = metadata;
-  
-  // Process actionDetails if present
-  if (metadata.actionDetails) {
-    metadata.actionDetails = this._processActionDetailsImports(
-      metadata.actionDetails,
-      this.config?.screenObjectsPath,
-      this.implFilePath
-    );
-  }
+ this.currentMetadata = metadata;
+
+// Process actionDetails if present
+if (metadata.actionDetails) {
+  metadata.actionDetails = this._processActionDetailsImports(
+    metadata.actionDetails,
+    this.config?.screenObjectsPath,
+    this.implFilePath,
+    platform  // ✅ Pass platform!
+  );
+}
   
   // Filter setup for this platform
   metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
@@ -1169,17 +1170,18 @@ _findImplicationFile(status, currentFilePath) {
   /**
    * Build template context from metadata
    */
-_buildContext(metadata, platform, ImplClass) {  // ✅ Add ImplClass parameter!
+_buildContext(metadata, platform, ImplClass) {
   const implClassName = metadata.className;
   const targetStatus = metadata.status;
   
-  // ✅ NEW: Determine test mode
+  // ✅ Determine test mode
   const { mode, transition } = this._determineTestMode(
-    ImplClass,  // ✅ Use parameter, not metadata.ImplClass!
+    ImplClass,
     platform,
     targetStatus
   );
   
+  // ✅ FIX: Define these BEFORE using them in context
   const isInducer = mode === 'inducer';
   const isVerify = mode === 'verify';
     const actionName = this._generateActionName(metadata); 
@@ -1273,6 +1275,8 @@ if (metadata.mirrorsOn?.UI) {
     // Build context
     const context = {
   // Header
+   isInducer,  // ✅ Now defined!
+    isVerify,   // ✅ Now defined!
   timestamp: new Date().toISOString(),
   implClassName,
   platform,
@@ -2390,9 +2394,10 @@ _findScreenObjectsDir(startPath) {
  * Process actionDetails imports with calculated paths
  * AND add entity to each step for template access
  */
-_processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
+_processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath, platform) {  // ✅ Add platform param
   console.log('\n📍 _processActionDetailsImports called:');
   console.log('   implFilePath:', implFilePath);
+  console.log('   platform:', platform);  // ✅ Log platform
   
   if (!actionDetails) {
     return actionDetails;
@@ -2406,17 +2411,33 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
     
     processed.imports = processed.imports.map(imp => {
       console.log(`\n   🔍 Import: ${imp.className}`);
-      console.log(`      path: ${imp.path}`);
+      console.log(`      original path: ${imp.path}`);
+      
+      // ✅ NEW: Adjust path based on target platform
+      let adjustedPath = imp.path;
+      
+      // If path contains platform-specific directory, replace it
+      if (platform === 'web' && imp.path.includes('mobile/')) {
+        // Replace mobile path with web path
+        adjustedPath = imp.path.replace(/mobile\/android\/(dancer|manager)/, 'web/current');
+        console.log(`      ✅ Adjusted for web: ${adjustedPath}`);
+      } else if ((platform === 'dancer' || platform === 'clubApp') && imp.path.includes('web/')) {
+        // Replace web path with mobile path
+        const mobileApp = platform === 'dancer' ? 'dancer' : 'manager';
+        adjustedPath = imp.path.replace(/web\/current/, `mobile/android/${mobileApp}`);
+        console.log(`      ✅ Adjusted for mobile: ${adjustedPath}`);
+      }
       
       const relativePath = this._calculateScreenObjectPath(
         implFilePath,
-        imp.path
+        adjustedPath  // ✅ Use adjusted path
       );
       
       console.log(`      ✅ relativePath: ${relativePath}`);
       
       return {
         ...imp,
+        path: adjustedPath,  // ✅ Store adjusted path
         relativePath
       };
     });
