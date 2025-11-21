@@ -1,5 +1,4 @@
 // packages/api-server/src/routes/init.js
-
 import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
@@ -240,6 +239,10 @@ static load(ImplicationClass, testDataPath) {
     console.log(\`   ✨ Fresh state loaded\`);
   }
   
+  // ✅ FIX: Call static method correctly + add console log
+  TestContext._transformDates(data);
+  console.log('   ✅ Date transformation complete');
+  
   const meta = ImplicationClass.xstateConfig?.meta || ImplicationClass.meta;
   
   if (meta?.entity) {
@@ -259,6 +262,46 @@ static load(ImplicationClass, testDataPath) {
   }
   
   return new TestContext(ImplicationClass, data, testDataPath);
+}
+
+// ✅ Helper method to transform ISO date strings to moment objects
+static _transformDates(obj) {
+  const moment = require('moment');
+  
+  // Recursively walk the object and transform ISO date strings to moment
+  function transform(value, key = '', parentKey = '') {
+    if (!value) return value;
+    
+    // Check if it's a date string (ISO 8601 format)
+    if (typeof value === 'string' && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/.test(value)) {
+      const momentObj = moment(value);
+      console.log(\`   🔄 Transformed \${parentKey ? parentKey + '.' : ''}\${key}: moment object\`);
+      return momentObj;
+    }
+    
+    // Recursively process arrays
+    if (Array.isArray(value)) {
+      return value.map((item, index) => transform(item, index, key));
+    }
+    
+    // Recursively process objects
+    if (typeof value === 'object' && value !== null) {
+      const result = {};
+      for (const [k, v] of Object.entries(value)) {
+        result[k] = transform(v, k, parentKey ? \`\${parentKey}.\${key}\` : key);
+      }
+      return result;
+    }
+    
+    return value;
+  }
+  
+  // Transform in-place
+  for (const [key, value] of Object.entries(obj)) {
+    obj[key] = transform(value, key);
+  }
+  
+  return obj;
 }
   
   save(testDataPath) {

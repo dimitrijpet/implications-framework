@@ -337,8 +337,7 @@ if (!shouldSkipRegistration) {
       result.save(testDataPath);
       console.log('   💾 State saved to:', testDataPath);
 {{/if}}
-      
-{{#if hasUIValidation}}
+  {{#if hasUIValidation}}
       // ═══════════════════════════════════════════════════════════
       // ✅ VALIDATION HAPPENS HERE IN THE TEST!
       // ═══════════════════════════════════════════════════════════
@@ -349,11 +348,14 @@ if (!shouldSkipRegistration) {
       console.log('   🔍 Validating {{screenKey}}...');
       
 {{#if pomClassName}}
+      // ✅ NEW: Re-require the screen in the test block
       const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
-      const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(result.data.lang || 'en');
 {{else}}
 {{#if ../actionDetails.imports.[0]}}
-      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+      // ✅ NEW: Re-require the screen in the test block
+      const {{../actionDetails.imports.[0].className}} = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(result.data.lang || 'en');
 {{/if}}
 {{/if}}
       
