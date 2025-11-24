@@ -474,6 +474,142 @@ function toCamelCase(str) {
 }
 
 /**
+ * GET /api/implications/get-transition
+ * Get full transition data from an implication file
+ * 
+ * Query params:
+ * - filePath: Path to implication file
+ * - event: Event name to get
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   event: "UNBLOCK_CLUB",
+ *   transition: {
+ *     target: "dancer_logged_in",
+ *     platforms: ["dancer"],
+ *     actionDetails: {
+ *       description: "...",
+ *       navigationFile: "NavigationActionsDancer",
+ *       navigationMethod: "navigateToBlockedClubs()",
+ *       imports: [...],
+ *       steps: [...]
+ *     }
+ *   }
+ * }
+ */
+router.get('/get-transition', async (req, res) => {
+  try {
+    const { filePath, event } = req.query;
+    
+    if (!filePath || !event) {
+      return res.status(400).json({ 
+        error: 'filePath and event are required' 
+      });
+    }
+    
+    console.log(`📡 Getting transition "${event}" from: ${path.basename(filePath)}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let transitionData = null;
+    
+    traverse(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const onProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'on'
+              );
+              
+              if (onProp && t.isObjectExpression(onProp.value)) {
+                // Find the specific event
+                const eventProp = onProp.value.properties.find(
+                  p => t.isObjectProperty(p) && 
+                       (p.key.name === event || p.key.value === event)
+                );
+                
+                if (eventProp) {
+                  // Extract the full transition value
+                  transitionData = extractTransitionValue(eventProp.value);
+                  console.log(`   ✅ Found transition data for ${event}`);
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!transitionData) {
+      return res.status(404).json({ 
+        error: `Transition "${event}" not found in file` 
+      });
+    }
+    
+    console.log(`✅ Transition data:`, JSON.stringify(transitionData, null, 2));
+    
+    res.json({
+      success: true,
+      event,
+      transition: transitionData
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting transition:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
+function extractTransitionValue(node) {
+  if (t.isStringLiteral(node)) {
+    // Simple: EVENT: "target"
+    return { target: node.value };
+  }
+  
+  if (t.isObjectExpression(node)) {
+    // Complex: EVENT: { target: "...", platforms: [...], actionDetails: {...} }
+    const result = {};
+    
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        result[key] = extractValueFromNode(prop.value);
+      }
+    });
+    
+    return result;
+  }
+  
+  if (t.isArrayExpression(node)) {
+    // Array of transitions: EVENT: [{...}, {...}]
+    // Return first one for now (or could return all)
+    if (node.elements.length > 0) {
+      return extractTransitionValue(node.elements[0]);
+    }
+    return null;
+  }
+  
+  return null;
+}
+
+/**
  * POST /api/implications/use-base-directly
  * Remove mergeWithBase override and use base directly
  */
@@ -1330,6 +1466,8 @@ const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, class
     });
   }
 });
+
+
 
 /**
  * ✅ SMART: Build UI AST while preserving untouched platforms and screens
@@ -2190,51 +2328,44 @@ function extractCompleteXStateConfig(content) {
 function extractValueFromNode(node) {
   if (!node) return null;
   
-  switch (node.type) {
-    case 'StringLiteral':
-    case 'NumericLiteral':
-    case 'BooleanLiteral':
-      return node.value;
-      
-    case 'NullLiteral':
-      return null;
-      
-    case 'Identifier':
-      if (node.name === 'undefined') return undefined;
-      if (node.name === 'null') return null;
-      return node.name;
-      
-    case 'ArrayExpression':
-      return node.elements
-        .map(el => extractValueFromNode(el))
-        .filter(v => v !== null && v !== undefined);
-      
-    case 'ObjectExpression':
-      const obj = {};
-      node.properties.forEach(prop => {
-        if (prop.key) {
-          const key = prop.key.name || prop.key.value;
-          const value = extractValueFromNode(prop.value);
-          if (value !== undefined) {
-            obj[key] = value;
-          }
-        }
-      });
-      return obj;
-      
-    case 'ArrowFunctionExpression':
-    case 'FunctionExpression':
-      return '<function>';
-      
-    case 'CallExpression':
-      if (node.callee?.name === 'assign') {
-        return '<assign>';
-      }
-      return '<call>';
-      
-    default:
-      return null;
+  if (t.isStringLiteral(node)) return node.value;
+  if (t.isNumericLiteral(node)) return node.value;
+  if (t.isBooleanLiteral(node)) return node.value;
+  if (t.isNullLiteral(node)) return null;
+  
+  if (t.isArrayExpression(node)) {
+    return node.elements.map(el => extractValueFromNode(el));
   }
+  
+  if (t.isObjectExpression(node)) {
+    const obj = {};
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        obj[key] = extractValueFromNode(prop.value);
+      }
+    });
+    return obj;
+  }
+  
+  if (t.isIdentifier(node)) {
+    // Could be a variable reference
+    return `{{${node.name}}}`;
+  }
+  
+  if (t.isTemplateLiteral(node)) {
+    // Template literal - extract the quasi values
+    return node.quasis.map(q => q.value.raw).join('');
+  }
+  
+  if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+    // For functions, return a placeholder
+    return '{{function}}';
+  }
+  
+  // For complex expressions, return null
+  console.warn(`   ⚠️ Unsupported node type: ${node.type}`);
+  return null;
 }
 
 // ✅ FIXED VERSION - Add Transition Endpoint
@@ -2960,7 +3091,7 @@ router.post('/add-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -3084,7 +3215,7 @@ router.post('/delete-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -3185,7 +3316,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });

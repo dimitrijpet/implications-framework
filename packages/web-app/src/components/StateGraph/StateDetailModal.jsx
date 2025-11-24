@@ -292,14 +292,53 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setShowTransitionModal(true);
   };
 
-  const handleEditTransition = (transition, index) => {
-    // ✅ Open full modal in edit mode
-    console.log('✏️ Editing transition:', transition);
+const handleEditTransition = async (transition, index) => {
+  console.log('✏️ Editing transition:', transition);
+  
+  try {
+    console.log('📡 Fetching full transition data...');
+    
+    const response = await fetch(
+      `http://localhost:3000/api/implications/get-transition?` + 
+      `filePath=${encodeURIComponent(state.files.implication)}&` +
+      `event=${encodeURIComponent(transition.event)}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ Full transition data:', data.transition);
+      
+      // ✅ FIX: Build COMPLETE data object BEFORE setting state
+      const fullTransitionData = {
+        event: transition.event,
+        target: data.transition.target || transition.target,
+        platforms: data.transition.platforms,        // ← From API
+        actionDetails: data.transition.actionDetails // ← From API
+      };
+      
+      console.log('📦 Setting editingTransition:', fullTransitionData);
+      
+      // ✅ Set ALL state in correct order
+      setTransitionMode('edit');
+      setEditingTransition(fullTransitionData);  // Full data!
+      setEditingTransitionIndex(index);
+      setShowTransitionModal(true);  // Open modal LAST
+      
+    } else {
+      console.warn('⚠️ Could not fetch full data, using basic transition');
+      setTransitionMode('edit');
+      setEditingTransition(transition);
+      setEditingTransitionIndex(index);
+      setShowTransitionModal(true);
+    }
+  } catch (error) {
+    console.error('❌ Error fetching transition:', error);
     setTransitionMode('edit');
     setEditingTransition(transition);
     setEditingTransitionIndex(index);
     setShowTransitionModal(true);
-  };
+  }
+};
 
   const handleRemoveTransition = async (index) => {
     const transition = currentState.transitions[index];

@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
+import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform } from '../../cache/pomCache';
 
 const API_URL = "http://localhost:3000";
 
@@ -40,84 +41,197 @@ export default function AddTransitionModal({
   const [navigationFiles, setNavigationFiles] = useState([]);
   const [selectedNavFile, setSelectedNavFile] = useState("");
   const [loadingNavigation, setLoadingNavigation] = useState(false);
+  const [editModeInitialized, setEditModeInitialized] = useState(false)
 
-  // ✅ NEW: Initialize form from initialData in edit mode
-  useEffect(() => {
-    if (mode === 'edit' && initialData && isOpen) {
-      console.log('📝 Edit mode - initializing form with:', initialData);
-      
-      setFormData({
-        event: initialData.event || "",
-        description: initialData.actionDetails?.description || "",
-        platform: initialData.platform || initialData.actionDetails?.platform || "web",
-        hasActionDetails: !!initialData.actionDetails,
-        navigationMethod: initialData.actionDetails?.navigationMethod || "",
-        navigationFile: initialData.actionDetails?.navigationFile || "",
-        imports: initialData.actionDetails?.imports || [],
-        steps: initialData.actionDetails?.steps || [],
-      });
-      
-      // Pre-select navigation file if exists
-      if (initialData.actionDetails?.navigationFile) {
-        setSelectedNavFile(initialData.actionDetails.navigationFile);
-      }
+ // ═══════════════════════════════════════════════════════════════════════════
+// EDIT MODE INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (mode === 'edit' && initialData && isOpen) {
+    console.log('📝 Edit mode - initializing form with:', initialData);
+    
+    // Handle platforms as array OR string
+    let platform = "web";
+    if (initialData.platforms && Array.isArray(initialData.platforms)) {
+      platform = initialData.platforms[0] || "web";
+    } else if (initialData.platform) {
+      platform = initialData.platform;
+    } else if (initialData.actionDetails?.platform) {
+      platform = initialData.actionDetails.platform;
     }
-  }, [mode, initialData, isOpen]);
+    
+    console.log('   📍 Detected platform:', platform);
+    console.log('   📍 Navigation file:', initialData.actionDetails?.navigationFile);
+    console.log('   📍 Navigation method:', initialData.actionDetails?.navigationMethod);
+    console.log('   📍 Imports:', initialData.actionDetails?.imports?.length || 0);
+    console.log('   📍 Steps:', initialData.actionDetails?.steps?.length || 0);
+    
+    setFormData({
+      event: initialData.event || "",
+      description: initialData.actionDetails?.description || "",
+      platform: platform,
+      hasActionDetails: !!initialData.actionDetails,
+      navigationMethod: initialData.actionDetails?.navigationMethod || "",
+      navigationFile: initialData.actionDetails?.navigationFile || "",
+      imports: (initialData.actionDetails?.imports || []).map(imp => ({
+        ...imp,
+        selectedPOM: imp.className,
+        functions: [],
+      })),
+      steps: (initialData.actionDetails?.steps || []).map(step => {
+        let argsArray = [];
+        if (Array.isArray(step.argsArray)) {
+          argsArray = step.argsArray;
+        } else if (Array.isArray(step.args)) {
+          argsArray = step.args;
+        } else if (typeof step.args === 'string' && step.args) {
+          argsArray = step.args.split(',').map(s => s.trim());
+        }
+        
+        return {
+          ...step,
+          args: argsArray,
+          availableMethods: [],
+          signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
+        };
+      }),
+    });
+    
+    if (initialData.actionDetails?.navigationFile) {
+      setSelectedNavFile(initialData.actionDetails.navigationFile);
+    }
+    
+    // ✅ Mark initialization complete
+    setEditModeInitialized(true);
+  }
+}, [mode, initialData, isOpen]);
 
-  // Fetch available POMs when modal opens
-  useEffect(() => {
-    if (isOpen && projectPath) {
-      fetchAvailablePOMs();
+// ═══════════════════════════════════════════════════════════════════════════
+// AFTER NAVIGATION FILES LOAD - Select the correct one
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (mode === 'edit' && navigationFiles.length > 0 && initialData?.actionDetails?.navigationFile) {
+    const navFile = initialData.actionDetails.navigationFile;
+    const exists = navigationFiles.some(nf => nf.className === navFile);
+    
+    if (exists) {
+      console.log('✅ Navigation file found in loaded files:', navFile);
+      setSelectedNavFile(navFile);
+      setFormData(prev => ({
+        ...prev,
+        navigationFile: navFile,
+        navigationMethod: initialData.actionDetails?.navigationMethod || prev.navigationMethod
+      }));
+    } else {
+      console.warn('⚠️ Navigation file not found:', navFile);
+      console.log('   Available:', navigationFiles.map(nf => nf.className));
     }
-  }, [isOpen, projectPath]);
+  }
+}, [mode, navigationFiles, initialData]);
 
-  // Fetch navigation files when platform is selected
-  useEffect(() => {
-    if (isOpen && projectPath && formData.platform) {
-      fetchNavigationFiles();
-    }
-  }, [isOpen, projectPath, formData.platform]);
+// ═══════════════════════════════════════════════════════════════════════════
+// AFTER POMs LOAD - Populate functions for imports
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (mode === 'edit' && availablePOMs.length > 0 && formData.imports.length > 0) {
+    console.log('📦 POMs loaded, populating functions for imports...');
+    
+    setFormData(prev => ({
+      ...prev,
+      imports: prev.imports.map(imp => {
+        const matchingPOM = availablePOMs.find(p => p.className === imp.className);
+        if (matchingPOM) {
+          const mainClass = matchingPOM.classes?.[0];
+          const functions = mainClass?.functions || [];
+          console.log(`   ✅ ${imp.className}: ${functions.length} functions`);
+          return { ...imp, selectedPOM: imp.className, functions: functions };
+        }
+        return imp;
+      }),
+      steps: prev.steps.map(step => {
+        if (step.instance) {
+          const matchingImport = prev.imports.find(imp => imp.varName === step.instance);
+          if (matchingImport) {
+            const matchingPOM = availablePOMs.find(p => p.className === matchingImport.className);
+            const mainClass = matchingPOM?.classes?.[0];
+            const functions = mainClass?.functions || [];
+            return { ...step, availableMethods: functions };
+          }
+        }
+        return step;
+      })
+    }));
+  }
+}, [mode, availablePOMs, formData.imports.length]);
 
-  useEffect(() => {
-    if (isOpen && projectPath && formData.platform) {
-      console.log(`♻️ Platform changed to: ${formData.platform}, re-fetching POMs...`);
-      fetchAvailablePOMs();
+// ═══════════════════════════════════════════════════════════════════════════
+// FETCH NAVIGATION - With edit mode guard
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (isOpen && projectPath && formData.platform) {
+    if (mode === 'edit' && !editModeInitialized) {
+      console.log('⏳ Skipping navigation fetch - edit mode initializing...');
+      return;
     }
-  }, [formData.platform]);
+    fetchNavigationFiles();
+  }
+}, [isOpen, projectPath, formData.platform, editModeInitialized]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FETCH POMs - With edit mode guard
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (isOpen && projectPath && formData.platform) {
+    if (mode === 'edit' && !editModeInitialized) {
+      console.log('⏳ Skipping POM fetch - edit mode initializing...');
+      return;
+    }
+    console.log(`♻️ Platform changed to: ${formData.platform}, re-fetching POMs...`);
+    fetchAvailablePOMs();
+  }
+}, [formData.platform, editModeInitialized]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESET FLAG WHEN MODAL CLOSES
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (!isOpen) {
+    setEditModeInitialized(false);
+  }
+}, [isOpen]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESET FORM IN CREATE MODE
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (isOpen && mode === 'create') {
+    setFormData({
+      event: "",
+      description: "",
+      platform: "web",
+      hasActionDetails: false,
+      navigationMethod: "",
+      navigationFile: "",
+      imports: [],
+      steps: [],
+    });
+    setErrors({});
+    setSelectedNavFile("");
+    setNavigationFiles([]);
+  }
+}, [isOpen, mode]);
 
   // Fetch POMs from API
-  const fetchAvailablePOMs = async () => {
-    setLoadingPOMs(true);
-    try {
-      const response = await fetch(
-        `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-
-        const transformedPOMs = data.poms.map((pom) => {
-          const mainClass = pom.classes?.[0];
-          return {
-            name: mainClass?.name || pom.name,
-            className: mainClass?.name || pom.name,
-            path: pom.path,
-            filePath: pom.path,
-            classes: pom.classes,
-          };
-        });
-
-        // Filter by selected platform
-        const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
-        
-        setAvailablePOMs(filteredPOMs);
-      }
-    } catch (error) {
-      console.error("Failed to fetch POMs:", error);
-      setAvailablePOMs([]);
-    } finally {
-      setLoadingPOMs(false);
-    }
-  };
+const fetchAvailablePOMs = async () => {
+  setLoadingPOMs(true);
+  try {
+    const allPOMs = await getCachedPOMs(projectPath);
+    const filteredPOMs = filterPOMsByPlatform(allPOMs, formData.platform);
+    setAvailablePOMs(filteredPOMs);
+  } finally {
+    setLoadingPOMs(false);
+  }
+};
 
 /**
  * ✅ ENHANCED: Fetch navigation files using dedicated endpoint
@@ -128,48 +242,8 @@ export default function AddTransitionModal({
 const fetchNavigationFiles = async () => {
   setLoadingNavigation(true);
   try {
-    const platform = formData.platform || "web";
-    console.log("🧭 Fetching navigation files for platform:", platform);
-
-    // ✅ Use new dedicated navigation endpoint
-    const response = await fetch(
-      `${API_URL}/api/poms/navigation?projectPath=${encodeURIComponent(projectPath)}&platform=${platform}`
-    );
-
-    if (response.ok) {
-      const data = await response.json();
-      
-      console.log(`✅ Found ${data.count} navigation files for ${platform}`);
-      
-      // Data is already in correct format from backend
-      const transformedNavFiles = data.navigationFiles.map(navFile => ({
-        className: navFile.className,
-        displayName: navFile.displayName,
-        path: navFile.path,
-        methods: navFile.methods.map(method => ({
-          name: method.name,
-          signature: method.signature,
-          async: method.async,
-          parameters: method.parameters || []
-        }))
-      }));
-
-      // Log methods count for debugging
-      transformedNavFiles.forEach(nav => {
-        console.log(`   📍 ${nav.displayName}: ${nav.methods.length} methods`);
-        nav.methods.forEach(m => {
-          console.log(`      - ${m.signature}`);
-        });
-      });
-
-      setNavigationFiles(transformedNavFiles);
-    } else {
-      console.error("Failed to fetch navigation files:", response.status);
-      setNavigationFiles([]);
-    }
-  } catch (error) {
-    console.error("Error fetching navigation files:", error);
-    setNavigationFiles([]);
+    const navFiles = await getCachedNavigation(projectPath, formData.platform);
+    setNavigationFiles(navFiles);
   } finally {
     setLoadingNavigation(false);
   }
