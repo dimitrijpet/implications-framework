@@ -1,5 +1,5 @@
 // packages/core/src/discovery/POMDiscovery.js
-// ✨ FIXED: Proper recursive search with glob!
+// ✨ ENHANCED v2.0: Navigation Support + All Methods Extraction
 import fs from 'fs/promises';
 import path from 'path';
 import parser from '@babel/parser';
@@ -13,13 +13,19 @@ const glob = promisify(globCallback);
 const traverseAST = traverse.default || traverse;
 
 /**
- * POMDiscovery - Scans project for Page Object Models
+ * POMDiscovery - Scans project for Page Object Models AND Navigation Files
  * Extracts getters, properties, methods WITH PARAMETERS
+ * 
+ * ✨ v2.0 Changes:
+ * - Extracts ALL methods (not just ones with params)
+ * - Adds navigation file discovery
+ * - Platform-aware filtering
  */
 class POMDiscovery {
   constructor(projectPath) {
     this.projectPath = projectPath;
     this.pomCache = new Map();
+    this.navigationCache = new Map(); // ✅ NEW: Cache for navigation files
   }
 
   /**
@@ -38,6 +44,16 @@ class POMDiscovery {
         if (structure) {
           poms.push(structure);
           this.pomCache.set(structure.name, structure);
+          
+          // ✅ NEW: Also cache by class name for lookup
+          if (structure.classes?.[0]?.name) {
+            this.pomCache.set(structure.classes[0].name, structure);
+          }
+          
+          // ✅ NEW: Check if this is a navigation file
+          if (this._isNavigationFile(filePath, structure)) {
+            this._cacheNavigationFile(filePath, structure);
+          }
         }
       } catch (error) {
         console.error(`   ⚠️  Failed to parse ${filePath}: ${error.message}`);
@@ -45,51 +61,206 @@ class POMDiscovery {
     }
     
     console.log(`   ✅ Extracted ${poms.length} POM structures`);
+    console.log(`   🧭 Found ${this.navigationCache.size} navigation files`);
     return poms;
   }
 
   /**
-   * ✅ FIXED: Find all POM files using glob patterns
+   * ✅ NEW: Check if file is a navigation file
    */
-  async _findPOMFiles() {
-    // ✅ Use glob patterns to search ANYWHERE in project
-    const patterns = [
-      '**/screenObjects/**/*.js',
-      '**/pages/**/*.js',
-      '**/pom/**/*.js',
-      '**/pageObjects/**/*.js'
-    ];
+  _isNavigationFile(filePath, structure) {
+    const fileName = path.basename(filePath).toLowerCase();
+    const className = structure.classes?.[0]?.name?.toLowerCase() || '';
+    
+    return fileName.includes('navigation') || className.includes('navigation');
+  }
 
-    const pomFiles = [];
-
-    for (const pattern of patterns) {
-      try {
-        console.log(`   🔍 Searching: ${pattern}`);
-        
-        const files = await glob(pattern, {
-          cwd: this.projectPath,
-          absolute: true,
-          ignore: [
-            '**/node_modules/**',
-            '**/dist/**',
-            '**/build/**',
-            '**/.next/**'
-          ]
-        });
-        
-        console.log(`      Found ${files.length} files`);
-        pomFiles.push(...files);
-      } catch (error) {
-        console.error(`   ⚠️  Pattern ${pattern} failed: ${error.message}`);
+  /**
+   * ✅ NEW: Cache navigation file with platform info
+   */
+  _cacheNavigationFile(filePath, structure) {
+    const platform = this._detectPlatform(filePath);
+    const className = structure.classes?.[0]?.name || structure.name;
+    
+    // Get ALL methods (not just ones with params)
+    const methods = [];
+    for (const cls of structure.classes || []) {
+      // Add from functions array (methods with params)
+      if (cls.functions) {
+        methods.push(...cls.functions);
+      }
+      
+      // ✅ ALSO add methods without params that aren't in functions
+      if (cls.methods) {
+        for (const method of cls.methods) {
+          const alreadyAdded = methods.some(m => m.name === method.name);
+          if (!alreadyAdded) {
+            methods.push({
+              name: method.name,
+              async: method.async,
+              parameters: [],
+              paramNames: [],
+              signature: `${method.name}()`
+            });
+          }
+        }
       }
     }
-
-    // ✅ Deduplicate (in case files match multiple patterns)
-    const uniqueFiles = [...new Set(pomFiles)];
-    console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
     
-    return uniqueFiles;
+    const navFile = {
+      className,
+      displayName: `${className} (${platform})`,
+      path: filePath,
+      relativePath: path.relative(this.projectPath, filePath),
+      platform,
+      methods
+    };
+    
+    // Cache by platform for quick filtering
+    const cacheKey = `${platform}:${className}`;
+    this.navigationCache.set(cacheKey, navFile);
+    
+    console.log(`   🧭 Navigation: ${className} (${platform}) - ${methods.length} methods`);
   }
+
+/**
+ * ✅ IMPROVED: Detect platform from file path
+ * Handles complex paths like:
+ * - /tests/mobile/android/dancer/screenObjects/... → dancer
+ * - /tests/mobile/android/manager/actions/... → manager
+ * - /tests/web/current/actions/... → web
+ * - /tests/mobile/android/legacy/dancer_V2/... → dancer (legacy)
+ */
+_detectPlatform(filePath) {
+  const normalizedPath = filePath.replace(/\\/g, '/').toLowerCase();
+  
+  // ✅ Check for specific platform folders (order matters - most specific first!)
+  
+  // Web platform
+  if (normalizedPath.includes('/web/')) {
+    return 'web';
+  }
+  
+  // Dancer platform (mobile)
+  if (
+    normalizedPath.includes('/dancer/') ||
+    normalizedPath.includes('/android/dancer/') ||
+    normalizedPath.includes('/ios/dancer/') ||
+    normalizedPath.includes('/dancer_v') ||  // Legacy: dancer_V2, dancer_V2.2
+    normalizedPath.match(/\/dancer[_-]?v?\d/i)  // Match dancer_V2, dancerV2, dancer-v2
+  ) {
+    return 'dancer';
+  }
+  
+  // Manager platform (mobile)
+  if (
+    normalizedPath.includes('/manager/') ||
+    normalizedPath.includes('/android/manager/') ||
+    normalizedPath.includes('/ios/manager/') ||
+    normalizedPath.includes('/manager_v') ||  // Legacy: manager_V2, manager_V2.2
+    normalizedPath.match(/\/manager[_-]?v?\d/i)  // Match manager_V2, managerV2, manager-v2
+  ) {
+    return 'manager';
+  }
+  
+  // iOS platform (generic)
+  if (normalizedPath.includes('/ios/')) {
+    return 'ios';
+  }
+  
+  // Mobile platform (generic - if can't determine dancer/manager)
+  if (normalizedPath.includes('/mobile/') || normalizedPath.includes('/android/')) {
+    return 'mobile';
+  }
+  
+  return 'unknown';
+}
+  /**
+   * ✅ NEW: Get navigation files for a specific platform
+   */
+  getNavigationFiles(platform = null) {
+    const results = [];
+    
+    for (const [key, navFile] of this.navigationCache.entries()) {
+      if (!platform || navFile.platform === platform) {
+        results.push(navFile);
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * ✅ NEW: Get navigation methods for a specific class and platform
+   */
+  getNavigationMethods(className, platform = null) {
+    // Try exact match first
+    const cacheKey = platform ? `${platform}:${className}` : null;
+    
+    if (cacheKey && this.navigationCache.has(cacheKey)) {
+      return this.navigationCache.get(cacheKey).methods;
+    }
+    
+    // Fall back to searching by class name only
+    for (const [key, navFile] of this.navigationCache.entries()) {
+      if (navFile.className === className) {
+        if (!platform || navFile.platform === platform) {
+          return navFile.methods;
+        }
+      }
+    }
+    
+    return [];
+  }
+
+/**
+ * ✅ IMPROVED: Find all POM files using glob patterns
+ * Now includes actions folders at any depth
+ */
+async _findPOMFiles() {
+  const patterns = [
+    '**/screenObjects/**/*.js',
+    '**/pages/**/*.js',
+    '**/pom/**/*.js',
+    '**/pageObjects/**/*.js',
+    // ✅ IMPROVED: Find navigation files in actions folders at ANY depth
+    '**/actions/*[Nn]avigation*.js',
+    '**/actions/**/*[Nn]avigation*.js',
+    // ✅ Also find navigation files inside screenObjects/actions
+    '**/screenObjects/actions/*[Nn]avigation*.js',
+  ];
+
+  const pomFiles = [];
+
+  for (const pattern of patterns) {
+    try {
+      console.log(`   🔍 Searching: ${pattern}`);
+      
+      const files = await glob(pattern, {
+        cwd: this.projectPath,
+        absolute: true,
+        ignore: [
+          '**/node_modules/**',
+          '**/dist/**',
+          '**/build/**',
+          '**/.next/**',
+          '**/legacy/**',  // ✅ Optionally ignore legacy folders
+        ]
+      });
+      
+      console.log(`      Found ${files.length} files`);
+      pomFiles.push(...files);
+    } catch (error) {
+      console.error(`   ⚠️  Pattern ${pattern} failed: ${error.message}`);
+    }
+  }
+
+  // Deduplicate
+  const uniqueFiles = [...new Set(pomFiles)];
+  console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
+  
+  return uniqueFiles;
+}
 
   /**
    * Extract POM structure from file
@@ -141,7 +312,7 @@ class POMDiscovery {
 
   /**
    * Extract class information (getters, properties, methods WITH PARAMETERS!)
-   * ✨ ENHANCED!
+   * ✨ ENHANCED: Now extracts ALL methods, not just ones with params
    */
   _extractClassInfo(classNode) {
     const classInfo = {
@@ -149,7 +320,7 @@ class POMDiscovery {
       getters: [],
       properties: [],
       methods: [],
-      functions: [],  // ✨ NEW: Functions with parameters
+      functions: [],  // ✨ ALL functions with full signatures
       constructor: null
     };
 
@@ -206,7 +377,7 @@ class POMDiscovery {
           async: member.async || false
         });
       } else if (member.kind === 'method' && member.key.name !== 'constructor') {
-        // ✨ NEW: Extract parameters!
+        // ✨ Extract parameters
         const params = this._extractParameters(member.params);
         
         // Add to methods array (legacy format)
@@ -215,16 +386,14 @@ class POMDiscovery {
           async: member.async || false
         });
         
-        // ✨ NEW: If has parameters, also add to functions array
-        if (params.length > 0) {
-          classInfo.functions.push({
-            name: member.key.name,
-            async: member.async || false,
-            parameters: params,
-            paramNames: params.map(p => p.name),
-            signature: this._buildSignature(member.key.name, params)
-          });
-        }
+        // ✅ FIXED: Add ALL methods to functions array (not just ones with params)
+        classInfo.functions.push({
+          name: member.key.name,
+          async: member.async || false,
+          parameters: params,
+          paramNames: params.map(p => p.name),
+          signature: this._buildSignature(member.key.name, params)
+        });
       }
     }
 
@@ -232,7 +401,7 @@ class POMDiscovery {
   }
 
   /**
-   * ✨ NEW: Extract parameters from method
+   * ✨ Extract parameters from method
    */
   _extractParameters(params) {
     return params.map(param => {
@@ -264,7 +433,7 @@ class POMDiscovery {
   }
 
   /**
-   * ✨ NEW: Extract default value from AST node
+   * ✨ Extract default value from AST node
    */
   _extractDefaultValue(node) {
     if (!node) return undefined;
@@ -288,7 +457,7 @@ class POMDiscovery {
   }
 
   /**
-   * ✨ NEW: Build function signature string
+   * ✨ Build function signature string
    */
   _buildSignature(name, params) {
     if (params.length === 0) {
@@ -352,7 +521,7 @@ class POMDiscovery {
   }
 
   /**
-   * ✨ NEW: Get functions for a POM
+   * ✅ FIXED: Get ALL functions for a POM (including ones without params)
    */
   getFunctions(pomName) {
     const pom = this.pomCache.get(pomName);

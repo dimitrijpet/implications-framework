@@ -1,8 +1,10 @@
 // packages/web-app/src/components/AddTransitionModal/AddTransitionModal.jsx
-// ✨ ENHANCED VERSION with POM Discovery, Method Dropdowns, Smart Args Parsing, Navigation Discovery
+// ✨ ENHANCED VERSION v2.0
+// Features: Edit Mode, Platform-Filtered Navigation, POM Discovery, Smart Args
 
 import { useState, useEffect } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
+import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform } from '../../cache/pomCache';
 
 const API_URL = "http://localhost:3000";
 
@@ -13,17 +15,19 @@ export default function AddTransitionModal({
   sourceState,
   targetState,
   projectPath,
+  mode = 'create',           // ✅ NEW: 'create' | 'edit'
+  initialData = null,        // ✅ NEW: For edit mode
 }) {
-const [formData, setFormData] = useState({
-  event: "",
-  description: "",
-  platform: "web",  // ✅ NEW - single platform, default web
-  hasActionDetails: false,
-  navigationMethod: "",
-  navigationFile: "",
-  imports: [],
-  steps: [],
-});
+  const [formData, setFormData] = useState({
+    event: "",
+    description: "",
+    platform: "web",
+    hasActionDetails: false,
+    navigationMethod: "",
+    navigationFile: "",
+    imports: [],
+    steps: [],
+  });
 
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -37,112 +41,336 @@ const [formData, setFormData] = useState({
   const [navigationFiles, setNavigationFiles] = useState([]);
   const [selectedNavFile, setSelectedNavFile] = useState("");
   const [loadingNavigation, setLoadingNavigation] = useState(false);
+  const [editModeInitialized, setEditModeInitialized] = useState(false)
 
-  // Fetch available POMs when modal opens
-  useEffect(() => {
-    if (isOpen && projectPath) {
-      fetchAvailablePOMs();
-    }
-  }, [isOpen, projectPath]);
-
-  // Fetch navigation files when platform is selected
+ // ═══════════════════════════════════════════════════════════════════════════
+// EDIT MODE INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
-  if (isOpen && projectPath && formData.platform) {  // ✅ NEW
+  if (mode === 'edit' && initialData && isOpen) {
+    console.log('📝 Edit mode - initializing form with:', initialData);
+    
+    // Handle platforms as array OR string
+    let platform = "web";
+    if (initialData.platforms && Array.isArray(initialData.platforms)) {
+      platform = initialData.platforms[0] || "web";
+    } else if (initialData.platform) {
+      platform = initialData.platform;
+    } else if (initialData.actionDetails?.platform) {
+      platform = initialData.actionDetails.platform;
+    }
+    
+    console.log('   📍 Detected platform:', platform);
+    console.log('   📍 Navigation file:', initialData.actionDetails?.navigationFile);
+    console.log('   📍 Navigation method:', initialData.actionDetails?.navigationMethod);
+    console.log('   📍 Imports:', initialData.actionDetails?.imports?.length || 0);
+    console.log('   📍 Steps:', initialData.actionDetails?.steps?.length || 0);
+    
+    setFormData({
+      event: initialData.event || "",
+      description: initialData.actionDetails?.description || "",
+      platform: platform,
+      hasActionDetails: !!initialData.actionDetails,
+      navigationMethod: initialData.actionDetails?.navigationMethod || "",
+      navigationFile: initialData.actionDetails?.navigationFile || "",
+      imports: (initialData.actionDetails?.imports || []).map(imp => ({
+        ...imp,
+        selectedPOM: imp.className,
+        functions: [],
+      })),
+      steps: (initialData.actionDetails?.steps || []).map(step => {
+        let argsArray = [];
+        if (Array.isArray(step.argsArray)) {
+          argsArray = step.argsArray;
+        } else if (Array.isArray(step.args)) {
+          argsArray = step.args;
+        } else if (typeof step.args === 'string' && step.args) {
+          argsArray = step.args.split(',').map(s => s.trim());
+        }
+        
+        return {
+          ...step,
+          args: argsArray,
+          availableMethods: [],
+          signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
+        };
+      }),
+    });
+    
+    if (initialData.actionDetails?.navigationFile) {
+      setSelectedNavFile(initialData.actionDetails.navigationFile);
+    }
+    
+    // ✅ Mark initialization complete
+    setEditModeInitialized(true);
+  }
+}, [mode, initialData, isOpen]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AFTER NAVIGATION FILES LOAD - Select the correct one
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (mode === 'edit' && navigationFiles.length > 0 && initialData?.actionDetails?.navigationFile) {
+    const navFile = initialData.actionDetails.navigationFile;
+    const exists = navigationFiles.some(nf => nf.className === navFile);
+    
+    if (exists) {
+      console.log('✅ Navigation file found in loaded files:', navFile);
+      setSelectedNavFile(navFile);
+      setFormData(prev => ({
+        ...prev,
+        navigationFile: navFile,
+        navigationMethod: initialData.actionDetails?.navigationMethod || prev.navigationMethod
+      }));
+    } else {
+      console.warn('⚠️ Navigation file not found:', navFile);
+      console.log('   Available:', navigationFiles.map(nf => nf.className));
+    }
+  }
+}, [mode, navigationFiles, initialData]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AFTER POMs LOAD - Populate functions for imports
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (mode === 'edit' && availablePOMs.length > 0 && formData.imports.length > 0) {
+    console.log('📦 POMs loaded, populating functions for imports...');
+    
+    setFormData(prev => ({
+      ...prev,
+      imports: prev.imports.map(imp => {
+        const matchingPOM = availablePOMs.find(p => p.className === imp.className);
+        if (matchingPOM) {
+          const mainClass = matchingPOM.classes?.[0];
+          const functions = mainClass?.functions || [];
+          console.log(`   ✅ ${imp.className}: ${functions.length} functions`);
+          return { ...imp, selectedPOM: imp.className, functions: functions };
+        }
+        return imp;
+      }),
+      steps: prev.steps.map(step => {
+        if (step.instance) {
+          const matchingImport = prev.imports.find(imp => imp.varName === step.instance);
+          if (matchingImport) {
+            const matchingPOM = availablePOMs.find(p => p.className === matchingImport.className);
+            const mainClass = matchingPOM?.classes?.[0];
+            const functions = mainClass?.functions || [];
+            return { ...step, availableMethods: functions };
+          }
+        }
+        return step;
+      })
+    }));
+  }
+}, [mode, availablePOMs, formData.imports.length]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FETCH NAVIGATION - With edit mode guard
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (isOpen && projectPath && formData.platform) {
+    if (mode === 'edit' && !editModeInitialized) {
+      console.log('⏳ Skipping navigation fetch - edit mode initializing...');
+      return;
+    }
     fetchNavigationFiles();
   }
-}, [isOpen, projectPath, formData.platform]);  // ✅ NEW
+}, [isOpen, projectPath, formData.platform, editModeInitialized]);
 
-  useEffect(() => {
+// ═══════════════════════════════════════════════════════════════════════════
+// FETCH POMs - With edit mode guard
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
   if (isOpen && projectPath && formData.platform) {
+    if (mode === 'edit' && !editModeInitialized) {
+      console.log('⏳ Skipping POM fetch - edit mode initializing...');
+      return;
+    }
     console.log(`♻️ Platform changed to: ${formData.platform}, re-fetching POMs...`);
     fetchAvailablePOMs();
   }
-}, [formData.platform]);
+}, [formData.platform, editModeInitialized]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESET FLAG WHEN MODAL CLOSES
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (!isOpen) {
+    setEditModeInitialized(false);
+  }
+}, [isOpen]);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESET FORM IN CREATE MODE
+// ═══════════════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (isOpen && mode === 'create') {
+    setFormData({
+      event: "",
+      description: "",
+      platform: "web",
+      hasActionDetails: false,
+      navigationMethod: "",
+      navigationFile: "",
+      imports: [],
+      steps: [],
+    });
+    setErrors({});
+    setSelectedNavFile("");
+    setNavigationFiles([]);
+  }
+}, [isOpen, mode]);
 
   // Fetch POMs from API
 const fetchAvailablePOMs = async () => {
   setLoadingPOMs(true);
   try {
-    const response = await fetch(
-      `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
-    );
-    if (response.ok) {
-      const data = await response.json();
-
- const transformedPOMs = data.poms.map((pom) => {
-  const mainClass = pom.classes?.[0];
-  return {
-    name: mainClass?.name || pom.name,
-    className: mainClass?.name || pom.name,  // ✅ ADD THIS LINE
-    path: pom.path,
-    filePath: pom.path,  // ✅ Keep full path for filtering
-    classes: pom.classes,
-  };
-});
-
-      // ✅ NEW: Filter by selected platform
-      const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
-      
-      setAvailablePOMs(filteredPOMs);
-    }
-  } catch (error) {
-    console.error("Failed to fetch POMs:", error);
-    setAvailablePOMs([]);
+    const allPOMs = await getCachedPOMs(projectPath);
+    const filteredPOMs = filterPOMsByPlatform(allPOMs, formData.platform);
+    setAvailablePOMs(filteredPOMs);
   } finally {
     setLoadingPOMs(false);
   }
 };
 
-  // Fetch navigation files
+/**
+ * ✅ ENHANCED: Fetch navigation files using dedicated endpoint
+ * - Uses /api/poms/navigation endpoint
+ * - Platform filtering done on backend
+ * - Gets ALL methods (not just ones with params)
+ */
 const fetchNavigationFiles = async () => {
   setLoadingNavigation(true);
   try {
-    const platform = formData.platform || "web";  // ✅ NEW
+    const navFiles = await getCachedNavigation(projectPath, formData.platform);
+    setNavigationFiles(navFiles);
+  } finally {
+    setLoadingNavigation(false);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// ALTERNATIVE: If you don't want to add new endpoint, use this version
+// that filters from existing /api/poms endpoint (less efficient but works)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * FALLBACK: Fetch navigation files from /api/poms (filters on frontend)
+ * Use this if you can't add the new endpoint yet
+ */
+const fetchNavigationFiles_Fallback = async () => {
+  setLoadingNavigation(true);
+  try {
+    const platform = formData.platform || "web";
     console.log("🧭 Fetching navigation files for platform:", platform);
 
-      const response = await fetch(
-        `${API_URL}/api/navigation?projectPath=${encodeURIComponent(projectPath)}&platform=${platform}`
-      );
+    const response = await fetch(
+      `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
+    );
 
-      if (response.ok) {
-        const data = await response.json();
-        setNavigationFiles(data.navigationFiles || []);
-        console.log("✅ Navigation files:", data.navigationFiles);
-      } else {
-        console.error("Failed to fetch navigation files:", response.status);
-      }
-    } catch (error) {
-      console.error("Error fetching navigation files:", error);
-    } finally {
-      setLoadingNavigation(false);
+    if (response.ok) {
+      const data = await response.json();
+      
+      // ✅ Filter for navigation files
+      const navFiles = data.poms.filter(pom => {
+        const pomPath = (pom.path || '').toLowerCase();
+        const fileName = pomPath.split('/').pop() || '';
+        const className = pom.classes?.[0]?.name?.toLowerCase() || '';
+        
+        // Must contain "navigation" in filename or class name
+        return fileName.includes('navigation') || className.includes('navigation');
+      });
+
+      // ✅ Filter by platform
+      const platformNavFiles = navFiles.filter(pom => {
+        const pomPath = (pom.path || '').toLowerCase().replace(/\\/g, '/');
+        
+        if (platform === 'web') {
+          return pomPath.includes('/web/');
+        } else if (platform === 'dancer') {
+          return pomPath.includes('/dancer/') || pomPath.includes('/android/dancer/');
+        } else if (platform === 'manager') {
+          return pomPath.includes('/manager/') || pomPath.includes('/android/manager/');
+        }
+        
+        return false;
+      });
+
+      // ✅ Transform and get ALL methods
+      const transformedNavFiles = platformNavFiles.map(pom => {
+        const mainClass = pom.classes?.[0];
+        const className = mainClass?.name || pom.name;
+        
+        // ✅ FIXED: Get ALL methods (functions array now includes all)
+        const methods = mainClass?.functions || [];
+        
+        // ✅ Also add methods that might not be in functions array
+        if (mainClass?.methods) {
+          for (const method of mainClass.methods) {
+            const alreadyAdded = methods.some(m => m.name === method.name);
+            if (!alreadyAdded) {
+              methods.push({
+                name: method.name,
+                signature: `${method.name}()`,
+                async: method.async || false,
+                parameters: []
+              });
+            }
+          }
+        }
+        
+        return {
+          className: className,
+          displayName: `${className} (${platform})`,
+          path: pom.path,
+          methods: methods
+        };
+      });
+
+      console.log(`✅ Found ${transformedNavFiles.length} navigation files for ${platform}`);
+      
+      // Log for debugging
+      transformedNavFiles.forEach(nav => {
+        console.log(`   📍 ${nav.displayName}: ${nav.methods.length} methods`);
+      });
+
+      setNavigationFiles(transformedNavFiles);
+    } else {
+      console.error("Failed to fetch navigation files:", response.status);
+      setNavigationFiles([]);
     }
-  };
+  } catch (error) {
+    console.error("Error fetching navigation files:", error);
+    setNavigationFiles([]);
+  } finally {
+    setLoadingNavigation(false);
+  }
+};
 
   const filterPOMsByPlatform = (poms, platform) => {
-  if (!platform || !poms) return poms;
-  
-  console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
-  
-  const filtered = poms.filter(pom => {
-    const path = pom.path || pom.filePath || '';
+    if (!platform || !poms) return poms;
     
-    // Check if POM path contains platform directory
-    if (platform === 'web') {
-      return path.includes('/web/') || path.includes('\\web\\');
-    } else if (platform === 'dancer') {
-      return path.includes('/dancer/') || path.includes('\\dancer\\') || 
-             path.includes('/android/dancer/') || path.includes('\\android\\dancer\\');
-    } else if (platform === 'manager') {
-      return path.includes('/manager/') || path.includes('\\manager\\') ||
-             path.includes('/android/manager/') || path.includes('\\android\\manager\\');
-    }
+    console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
     
-    return false;
-  });
-  
-  console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
-  return filtered;
-};
+    const filtered = poms.filter(pom => {
+      const path = pom.path || pom.filePath || '';
+      
+      if (platform === 'web') {
+        return path.includes('/web/') || path.includes('\\web\\');
+      } else if (platform === 'dancer') {
+        return path.includes('/dancer/') || path.includes('\\dancer\\') || 
+               path.includes('/android/dancer/') || path.includes('\\android\\dancer\\');
+      } else if (platform === 'manager') {
+        return path.includes('/manager/') || path.includes('\\manager\\') ||
+               path.includes('/android/manager/') || path.includes('\\android\\manager\\');
+      }
+      
+      return false;
+    });
+    
+    console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
+    return filtered;
+  };
 
   // Fetch POM details
   const fetchPOMDetails = async (pomName) => {
@@ -171,13 +399,13 @@ const fetchNavigationFiles = async () => {
     return null;
   };
 
-  // Reset form when modal opens/closes
+  // Reset form when modal opens/closes (only in create mode)
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && mode === 'create') {
       setFormData({
         event: "",
         description: "",
-        platforms: [],
+        platform: "web",
         hasActionDetails: false,
         navigationMethod: "",
         navigationFile: "",
@@ -188,7 +416,7 @@ const fetchNavigationFiles = async () => {
       setSelectedNavFile("");
       setNavigationFiles([]);
     }
-  }, [isOpen]);
+  }, [isOpen, mode]);
 
   // Add new import
   const handleAddImport = () => {
@@ -213,15 +441,12 @@ const fetchNavigationFiles = async () => {
   const handlePOMSelect = async (index, pomName) => {
     console.log(`🔍 Selected POM: ${pomName}`);
 
-   const selectedPOM = availablePOMs.find((p) => p.className === pomName);
+    const selectedPOM = availablePOMs.find((p) => p.className === pomName);
 
-if (selectedPOM) {
-  const mainClass = selectedPOM.classes?.[0];
-
-  const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
-  
-  // ✅ NEW: Store FULL PATH instead of just filename
-  const pathTemplate = selectedPOM.path || selectedPOM.filePath;  // ✅ Use full path!
+    if (selectedPOM) {
+      const mainClass = selectedPOM.classes?.[0];
+      const constructorTemplate = `new ${pomName}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`;
+      const pathTemplate = selectedPOM.path || selectedPOM.filePath;
       const varName = pomName.charAt(0).toLowerCase() + pomName.slice(1);
 
       setFormData((prev) => ({
@@ -437,40 +662,32 @@ if (selectedPOM) {
     setLoading(true);
 
     try {
-   const submitData = {
-  event: formData.event.trim(),
-  platform: formData.platform,  // ✅ CHANGED: single platform
-  actionDetails: formData.hasActionDetails
-    ? {
-        description: formData.description.trim(),
-        platform: formData.platform,  // ✅ NEW: include platform in actionDetails
-        navigationMethod: formData.navigationMethod || null,
-        navigationFile: formData.navigationFile || null,
-        imports: formData.imports.map((imp) => ({
-          className: imp.className,
-          varName: imp.varName,
-          path: imp.path,
-          constructor: imp.constructor,
-        })),
-        steps: formData.steps.map((step) => ({
-          description: step.description,
-          instance: step.instance,
-          method: step.method,
-          args: step.args,
-        })),
-      }
-    : null,
-};
+      const submitData = {
+        event: formData.event.trim(),
+        platform: formData.platform,
+        actionDetails: formData.hasActionDetails
+          ? {
+              description: formData.description.trim(),
+              platform: formData.platform,
+              navigationMethod: formData.navigationMethod || null,
+              navigationFile: formData.navigationFile || null,
+              imports: formData.imports.map((imp) => ({
+                className: imp.className,
+                varName: imp.varName,
+                path: imp.path,
+                constructor: imp.constructor,
+              })),
+              steps: formData.steps.map((step) => ({
+                description: step.description,
+                instance: step.instance,
+                method: step.method,
+                args: step.args,
+              })),
+            }
+          : null,
+      };
 
-console.log("🚀 Submitting transition with platform:", submitData.platform);
-
-      console.log("═══════════════════════════════════════");
-      console.log("🚀 MODAL DEBUG");
-      console.log("═══════════════════════════════════════");
-      console.log("📦 submitData:", JSON.stringify(submitData, null, 2));
-      console.log("🎯 platforms:", submitData.platforms);
-      console.log("🧭 navigation:", submitData.actionDetails?.navigationMethod);
-      console.log("═══════════════════════════════════════");
+      console.log("🚀 Submitting transition:", mode, submitData);
 
       await onSubmit(submitData);
       onClose();
@@ -482,6 +699,11 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
   };
 
   if (!isOpen) return null;
+
+  // ✅ Conditional titles based on mode
+  const title = mode === 'edit' ? '✏️ Edit Transition' : '🔗 Add Transition';
+  const submitLabel = mode === 'edit' ? '💾 Update Transition' : '✅ Add Transition';
+  const submitIcon = mode === 'edit' ? '💾' : '✅';
 
   return (
     <div
@@ -509,20 +731,20 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
             <div>
               <h2
                 className="text-2xl font-bold"
-                style={{ color: defaultTheme.colors.accents.blue }}
+                style={{ color: mode === 'edit' ? defaultTheme.colors.accents.blue : defaultTheme.colors.accents.green }}
               >
-                🔗 Add Transition {(loadingPOMs || loadingNavigation) && "(Loading...)"}
+                {title} {(loadingPOMs || loadingNavigation) && "(Loading...)"}
               </h2>
               <p
                 className="text-sm mt-1"
                 style={{ color: defaultTheme.colors.text.secondary }}
               >
                 <span style={{ color: defaultTheme.colors.accents.green }}>
-                  {sourceState?.id || "source"}
+                  {sourceState?.id || sourceState?.name || "source"}
                 </span>
                 {" → "}
                 <span style={{ color: defaultTheme.colors.accents.blue }}>
-                  {targetState?.id || "target"}
+                  {mode === 'edit' ? (initialData?.target || "target") : (targetState?.id || "target")}
                 </span>
               </p>
             </div>
@@ -582,63 +804,63 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
             )}
           </div>
 
-      {/* Platform Selection - SINGLE CHOICE */}
-<div>
-  <label
-    className="block text-sm font-semibold mb-2"
-    style={{ color: defaultTheme.colors.text.primary }}
-  >
-    Platform *{" "}
-    <span
-      className="text-xs font-normal"
-      style={{ color: defaultTheme.colors.text.tertiary }}
-    >
-      (select one - POMs will be filtered)
-    </span>
-  </label>
-  <div className="flex gap-3">
-    {["web", "dancer", "manager"].map((platform) => (
-      <label
-        key={platform}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"
-        style={{
-          backgroundColor:
-            formData.platform === platform
-              ? `${defaultTheme.colors.accents.blue}20`
-              : defaultTheme.colors.background.tertiary,
-          border: `2px solid ${
-            formData.platform === platform
-              ? defaultTheme.colors.accents.blue
-              : defaultTheme.colors.border
-          }`,
-        }}
-      >
-        <input
-          type="radio"
-          name="platform"
-          value={platform}
-          checked={formData.platform === platform}
-          onChange={(e) =>
-            setFormData((prev) => ({
-              ...prev,
-              platform: e.target.value,
-            }))
-          }
-          className="w-4 h-4 cursor-pointer"
-        />
-        <span style={{ color: defaultTheme.colors.text.primary }}>
-          {platform === "web" ? "🌐" : "📱"} {platform}
-        </span>
-      </label>
-    ))}
-  </div>
-  <p
-    className="text-xs mt-1"
-    style={{ color: defaultTheme.colors.text.tertiary }}
-  >
-    💡 This transition will only work on the selected platform
-  </p>
-</div>
+          {/* Platform Selection */}
+          <div>
+            <label
+              className="block text-sm font-semibold mb-2"
+              style={{ color: defaultTheme.colors.text.primary }}
+            >
+              Platform *{" "}
+              <span
+                className="text-xs font-normal"
+                style={{ color: defaultTheme.colors.text.tertiary }}
+              >
+                (select one - POMs will be filtered)
+              </span>
+            </label>
+            <div className="flex gap-3">
+              {["web", "dancer", "manager"].map((platform) => (
+                <label
+                  key={platform}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"
+                  style={{
+                    backgroundColor:
+                      formData.platform === platform
+                        ? `${defaultTheme.colors.accents.blue}20`
+                        : defaultTheme.colors.background.tertiary,
+                    border: `2px solid ${
+                      formData.platform === platform
+                        ? defaultTheme.colors.accents.blue
+                        : defaultTheme.colors.border
+                    }`,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="platform"
+                    value={platform}
+                    checked={formData.platform === platform}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        platform: e.target.value,
+                      }))
+                    }
+                    className="w-4 h-4 cursor-pointer"
+                  />
+                  <span style={{ color: defaultTheme.colors.text.primary }}>
+                    {platform === "web" ? "🌐" : "📱"} {platform}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p
+              className="text-xs mt-1"
+              style={{ color: defaultTheme.colors.text.tertiary }}
+            >
+              💡 This transition will only work on the selected platform
+            </p>
+          </div>
 
           {/* Action Details Toggle */}
           <div className="flex items-center gap-3">
@@ -719,16 +941,16 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                   className="text-xs mb-3"
                   style={{ color: defaultTheme.colors.text.tertiary }}
                 >
-                  Select a navigation helper file and method to navigate to the screen where this action happens.
+                  Select a navigation helper for {formData.platform} platform
                 </p>
 
                 {loadingNavigation ? (
                   <p className="text-sm text-center py-4" style={{ color: defaultTheme.colors.text.secondary }}>
                     ⏳ Loading navigation files...
                   </p>
-                ) : navigationFiles.length === 0 && formData.platforms.length > 0 ? (
+                ) : navigationFiles.length === 0 ? (
                   <p className="text-sm text-center py-4" style={{ color: defaultTheme.colors.accents.yellow }}>
-                    ⚠️ No navigation files found. Add navigation helpers with "nav" or "navigation" in the filename.
+                    ⚠️ No navigation files found for {formData.platform}. Ensure files contain "navigation" in the filename.
                   </p>
                 ) : (
                   <>
@@ -743,19 +965,17 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                           navigationFile: e.target.value 
                         }));
                       }}
-                      disabled={navigationFiles.length === 0}
                       className="w-full px-3 py-2 rounded text-sm mb-2"
                       style={{
                         backgroundColor: defaultTheme.colors.background.secondary,
                         color: defaultTheme.colors.text.primary,
                         border: `1px solid ${defaultTheme.colors.border}`,
-                        opacity: navigationFiles.length === 0 ? 0.5 : 1,
                       }}
                     >
                       <option value="">-- Select navigation file --</option>
                       {navigationFiles.map((navFile, i) => (
                         <option key={i} value={navFile.className}>
-                          {navFile.className} ({navFile.methods.length} methods)
+                          {navFile.displayName} ({navFile.methods.length} methods)
                         </option>
                       ))}
                     </select>
@@ -789,15 +1009,6 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                     )}
                   </>
                 )}
-
-              {!formData.platform && (  // ✅ NEW
-  <p
-    className="text-xs mt-2"
-    style={{ color: defaultTheme.colors.text.tertiary }}
-  >
-    ℹ️ Select a platform first to see navigation options
-  </p>
-)}
               </div>
 
               {/* Screen Objects / Imports */}
@@ -870,7 +1081,7 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                         <option value="">-- Select a POM --</option>
                         {availablePOMs.map((pom, idx) => (
                           <option key={idx} value={pom.className}>
-                            {pom.className} ({pom.name})
+                            {pom.className}
                           </option>
                         ))}
                       </select>
@@ -1212,16 +1423,6 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                         >
                           =
                         </code>
-                        . Example:{" "}
-                        <code
-                          className="px-1 rounded"
-                          style={{
-                            backgroundColor:
-                              defaultTheme.colors.background.secondary,
-                          }}
-                        >
-                          ctx.data.count || 0
-                        </code>
                       </div>
 
                       {/* Live Warning */}
@@ -1237,27 +1438,7 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
                         >
                           <span>⚠️</span>
                           <span>
-                            Detected{" "}
-                            <code
-                              className="px-1 rounded"
-                              style={{
-                                backgroundColor:
-                                  defaultTheme.colors.accents.yellow + "30",
-                              }}
-                            >
-                              =
-                            </code>{" "}
-                            operator. Args will be auto-converted to use{" "}
-                            <code
-                              className="px-1 rounded"
-                              style={{
-                                backgroundColor:
-                                  defaultTheme.colors.accents.yellow + "30",
-                              }}
-                            >
-                              ||
-                            </code>{" "}
-                            instead.
+                            Args will be auto-converted to use ||
                           </span>
                         </div>
                       )}
@@ -1318,12 +1499,14 @@ console.log("🚀 Submitting transition with platform:", submitData.platform);
               style={{
                 backgroundColor: loading
                   ? defaultTheme.colors.background.tertiary
-                  : defaultTheme.colors.accents.green,
+                  : mode === 'edit' 
+                    ? defaultTheme.colors.accents.blue
+                    : defaultTheme.colors.accents.green,
                 color: "white",
                 opacity: loading ? 0.6 : 1,
               }}
             >
-              {loading ? "⏳ Adding..." : "✅ Add Transition"}
+              {loading ? `${submitIcon} Saving...` : submitLabel}
             </button>
           </div>
         </form>

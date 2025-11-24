@@ -29,6 +29,12 @@ Handlebars.registerHelper('camelCase', function(str) {
   return str.charAt(0).toLowerCase() + str.slice(1);
 });
 
+Handlebars.registerHelper('capitalize', function(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+});
+
+
 function normalizePlatform(platform) {
   if (!platform) return 'web';
   
@@ -474,6 +480,142 @@ function toCamelCase(str) {
 }
 
 /**
+ * GET /api/implications/get-transition
+ * Get full transition data from an implication file
+ * 
+ * Query params:
+ * - filePath: Path to implication file
+ * - event: Event name to get
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   event: "UNBLOCK_CLUB",
+ *   transition: {
+ *     target: "dancer_logged_in",
+ *     platforms: ["dancer"],
+ *     actionDetails: {
+ *       description: "...",
+ *       navigationFile: "NavigationActionsDancer",
+ *       navigationMethod: "navigateToBlockedClubs()",
+ *       imports: [...],
+ *       steps: [...]
+ *     }
+ *   }
+ * }
+ */
+router.get('/get-transition', async (req, res) => {
+  try {
+    const { filePath, event } = req.query;
+    
+    if (!filePath || !event) {
+      return res.status(400).json({ 
+        error: 'filePath and event are required' 
+      });
+    }
+    
+    console.log(`📡 Getting transition "${event}" from: ${path.basename(filePath)}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let transitionData = null;
+    
+    traverse(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const onProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'on'
+              );
+              
+              if (onProp && t.isObjectExpression(onProp.value)) {
+                // Find the specific event
+                const eventProp = onProp.value.properties.find(
+                  p => t.isObjectProperty(p) && 
+                       (p.key.name === event || p.key.value === event)
+                );
+                
+                if (eventProp) {
+                  // Extract the full transition value
+                  transitionData = extractTransitionValue(eventProp.value);
+                  console.log(`   ✅ Found transition data for ${event}`);
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!transitionData) {
+      return res.status(404).json({ 
+        error: `Transition "${event}" not found in file` 
+      });
+    }
+    
+    console.log(`✅ Transition data:`, JSON.stringify(transitionData, null, 2));
+    
+    res.json({
+      success: true,
+      event,
+      transition: transitionData
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting transition:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
+function extractTransitionValue(node) {
+  if (t.isStringLiteral(node)) {
+    // Simple: EVENT: "target"
+    return { target: node.value };
+  }
+  
+  if (t.isObjectExpression(node)) {
+    // Complex: EVENT: { target: "...", platforms: [...], actionDetails: {...} }
+    const result = {};
+    
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        result[key] = extractValueFromNode(prop.value);
+      }
+    });
+    
+    return result;
+  }
+  
+  if (t.isArrayExpression(node)) {
+    // Array of transitions: EVENT: [{...}, {...}]
+    // Return first one for now (or could return all)
+    if (node.elements.length > 0) {
+      return extractTransitionValue(node.elements[0]);
+    }
+    return null;
+  }
+  
+  return null;
+}
+
+/**
  * POST /api/implications/use-base-directly
  * Remove mergeWithBase override and use base directly
  */
@@ -715,10 +857,6 @@ ${originalContent}
   }
 });
 
-/**
- * POST /api/implications/update-metadata
- * Update state metadata and transitions in implication file
- */
 router.post('/update-metadata', async (req, res) => {
   try {
     const { filePath, metadata, transitions } = req.body;
@@ -731,6 +869,12 @@ router.post('/update-metadata', async (req, res) => {
     
     console.log(`📝 Updating metadata in: ${path.basename(filePath)}`);
     console.log(`📊 Fields to update:`, Object.keys(metadata));
+    
+    // ✅ NEW: Warn if transitions were sent (they will be ignored)
+    if (transitions && transitions.length > 0) {
+      console.log(`⚠️  WARNING: transitions parameter received but will be IGNORED`);
+      console.log(`   Use dedicated endpoints: /add-transition, /update-transition, /delete-transition`);
+    }
     
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
@@ -747,7 +891,7 @@ router.post('/update-metadata', async (req, res) => {
     let modified = false;
     
     traverse(ast, {
-  ClassDeclaration(classPath) {
+      ClassDeclaration(classPath) {
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -758,100 +902,91 @@ router.post('/update-metadata', async (req, res) => {
                 p => t.isObjectProperty(p) && p.key.name === 'meta'
               );
               
-             if (metaProp && t.isObjectExpression(metaProp.value)) {
-  // ✅ WHITELIST: Only update these simple fields
-  const EDITABLE_FIELDS = [
-    'status',
-    'statusCode', 
-    'statusNumber',
-    'triggerButton',
-    'afterButton',
-    'previousButton',
-    'triggerAction',
-    'notificationKey',
-    'platform'
-  ];
-  
-  Object.entries(metadata).forEach(([key, value]) => {
-    // ❌ Skip if not in whitelist
-    if (!EDITABLE_FIELDS.includes(key)) {
-      console.log(`  ⏭️  Skipping ${key} (not editable)`);
-      return;
-    }
-    
-    // ❌ Skip undefined
-    if (value === undefined) return;
-    
-    const existingProp = metaProp.value.properties.find(
-      p => t.isObjectProperty(p) && p.key.name === key
-    );
-    
-    // Create the AST node for SIMPLE values only
-    let valueNode;
-    if (value === null) {
-      valueNode = t.nullLiteral();
-    } else if (typeof value === 'string') {
-      valueNode = t.stringLiteral(value);
-    } else if (typeof value === 'number') {
-      valueNode = t.numericLiteral(value);
-    } else {
-      console.log(`  ⚠️  Skipping ${key} - complex type`);
-      return;
-    }
-    
-    if (existingProp) {
-      // ✅ Update existing
-      existingProp.value = valueNode;
-      console.log(`  ✏️  Updated ${key}: ${value}`);
-      modified = true;
-    } else {
-      // ✅ Add new (simple fields only)
-      const newProp = t.objectProperty(
-        t.identifier(key),
-        valueNode
-      );
-      metaProp.value.properties.push(newProp);
-      console.log(`  ➕ Added ${key}: ${value}`);
-      modified = true;
-    }
-  });
-}
-              
-              // Handle transitions
-              if (transitions) {
-                const onProp = member.value.properties.find(
-                  p => t.isObjectProperty(p) && p.key.name === 'on'
-                );
+              if (metaProp && t.isObjectExpression(metaProp.value)) {
+                // ✅ WHITELIST: Only update these simple fields
+                const EDITABLE_FIELDS = [
+                  'status',
+                  'statusCode', 
+                  'statusNumber',
+                  'triggerButton',
+                  'afterButton',
+                  'previousButton',
+                  'triggerAction',
+                  'notificationKey',
+                  'platform'
+                ];
                 
-                if (onProp) {
-                  onProp.value = t.objectExpression(
-                    transitions.map(trans => 
-                      t.objectProperty(
-                        t.identifier(trans.event),
-                        t.stringLiteral(trans.target)
-                      )
-                    )
+                Object.entries(metadata).forEach(([key, value]) => {
+                  // ❌ Skip if not in whitelist
+                  if (!EDITABLE_FIELDS.includes(key)) {
+                    console.log(`  ⏭️  Skipping ${key} (not editable)`);
+                    return;
+                  }
+                  
+                  // ❌ Skip undefined
+                  if (value === undefined) return;
+                  
+                  const existingProp = metaProp.value.properties.find(
+                    p => t.isObjectProperty(p) && p.key.name === key
                   );
-                  console.log(`  🔄 Updated ${transitions.length} transitions`);
-                  modified = true;
-                } else if (transitions.length > 0) {
-                  // ✅ ADD 'on' property if it doesn't exist
-                  const newOnProp = t.objectProperty(
-                    t.identifier('on'),
-                    t.objectExpression(
-                      transitions.map(trans =>
-                        t.objectProperty(
-                          t.identifier(trans.event),
-                          t.stringLiteral(trans.target)
-                        )
-                      )
-                    )
-                  );
-                  member.value.properties.push(newOnProp);
-                  console.log(`  ➕ Added 'on' with ${transitions.length} transitions`);
-                  modified = true;
-                }
+                  
+                  // Create the AST node for SIMPLE values only
+                  let valueNode;
+                  if (value === null) {
+                    valueNode = t.nullLiteral();
+                  } else if (typeof value === 'string') {
+                    valueNode = t.stringLiteral(value);
+                  } else if (typeof value === 'number') {
+                    valueNode = t.numericLiteral(value);
+                  } else {
+                    console.log(`  ⚠️  Skipping ${key} - complex type`);
+                    return;
+                  }
+                  
+                  if (existingProp) {
+                    // ✅ Update existing
+                    existingProp.value = valueNode;
+                    console.log(`  ✏️  Updated ${key}: ${value}`);
+                    modified = true;
+                  } else {
+                    // ✅ Add new (simple fields only)
+                    const newProp = t.objectProperty(
+                      t.identifier(key),
+                      valueNode
+                    );
+                    metaProp.value.properties.push(newProp);
+                    console.log(`  ➕ Added ${key}: ${value}`);
+                    modified = true;
+                  }
+                });
               }
+              
+              // ═══════════════════════════════════════════════════════════
+              // ❌ REMOVED: Transition handling that was destroying data
+              // ═══════════════════════════════════════════════════════════
+              // 
+              // The following code was REMOVED because it converted:
+              //   UNBLOCK_CLUB: { target: "...", platforms: [...], actionDetails: {...} }
+              // Into:
+              //   UNBLOCK_CLUB: "..."  (losing platforms, actionDetails, etc.)
+              //
+              // OLD BROKEN CODE (DO NOT USE):
+              // if (transitions) {
+              //   const onProp = member.value.properties.find(
+              //     p => t.isObjectProperty(p) && p.key.name === 'on'
+              //   );
+              //   if (onProp) {
+              //     onProp.value = t.objectExpression(
+              //       transitions.map(trans => 
+              //         t.objectProperty(
+              //           t.identifier(trans.event),
+              //           t.stringLiteral(trans.target)  // ← DESTROYED STRUCTURE!
+              //         )
+              //       )
+              //     );
+              //   }
+              // }
+              // ═══════════════════════════════════════════════════════════
             }
           }
         });
@@ -859,14 +994,19 @@ router.post('/update-metadata', async (req, res) => {
     });
     
     if (!modified) {
-      return res.status(400).json({ 
-        error: 'Could not update metadata - no xstateConfig found'
+      // ✅ IMPROVED: Return success even if nothing changed
+      console.log('ℹ️  No metadata fields were modified');
+      return res.json({ 
+        success: true,
+        message: 'No metadata fields needed updating',
+        filePath,
+        modified: { metadata: [], transitions: 0 }
       });
     }
     
     // Generate code with better formatting
     const output = babelGenerate.default(ast, {
-      retainLines: false,  // ✅ Better formatting
+      retainLines: false,
       compact: false,
       comments: true,
       concise: false
@@ -887,9 +1027,16 @@ router.post('/update-metadata', async (req, res) => {
       filePath,
       backup: backupPath,
       modified: { 
-        metadata: Object.keys(metadata), 
-        transitions: transitions?.length || 0 
-      }
+        metadata: Object.keys(metadata).filter(k => 
+          ['status', 'statusCode', 'statusNumber', 'triggerButton', 
+           'afterButton', 'previousButton', 'triggerAction', 
+           'notificationKey', 'platform'].includes(k)
+        ),
+        transitions: 0  // ✅ Always 0 now - we don't touch transitions here
+      },
+      warning: transitions?.length > 0 
+        ? 'Transitions parameter was ignored. Use /add-transition, /update-transition, or /delete-transition endpoints.'
+        : undefined
     });
     
   } catch (error) {
@@ -1325,6 +1472,8 @@ const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, class
     });
   }
 });
+
+
 
 /**
  * ✅ SMART: Build UI AST while preserving untouched platforms and screens
@@ -2185,51 +2334,44 @@ function extractCompleteXStateConfig(content) {
 function extractValueFromNode(node) {
   if (!node) return null;
   
-  switch (node.type) {
-    case 'StringLiteral':
-    case 'NumericLiteral':
-    case 'BooleanLiteral':
-      return node.value;
-      
-    case 'NullLiteral':
-      return null;
-      
-    case 'Identifier':
-      if (node.name === 'undefined') return undefined;
-      if (node.name === 'null') return null;
-      return node.name;
-      
-    case 'ArrayExpression':
-      return node.elements
-        .map(el => extractValueFromNode(el))
-        .filter(v => v !== null && v !== undefined);
-      
-    case 'ObjectExpression':
-      const obj = {};
-      node.properties.forEach(prop => {
-        if (prop.key) {
-          const key = prop.key.name || prop.key.value;
-          const value = extractValueFromNode(prop.value);
-          if (value !== undefined) {
-            obj[key] = value;
-          }
-        }
-      });
-      return obj;
-      
-    case 'ArrowFunctionExpression':
-    case 'FunctionExpression':
-      return '<function>';
-      
-    case 'CallExpression':
-      if (node.callee?.name === 'assign') {
-        return '<assign>';
-      }
-      return '<call>';
-      
-    default:
-      return null;
+  if (t.isStringLiteral(node)) return node.value;
+  if (t.isNumericLiteral(node)) return node.value;
+  if (t.isBooleanLiteral(node)) return node.value;
+  if (t.isNullLiteral(node)) return null;
+  
+  if (t.isArrayExpression(node)) {
+    return node.elements.map(el => extractValueFromNode(el));
   }
+  
+  if (t.isObjectExpression(node)) {
+    const obj = {};
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        obj[key] = extractValueFromNode(prop.value);
+      }
+    });
+    return obj;
+  }
+  
+  if (t.isIdentifier(node)) {
+    // Could be a variable reference
+    return `{{${node.name}}}`;
+  }
+  
+  if (t.isTemplateLiteral(node)) {
+    // Template literal - extract the quasi values
+    return node.quasis.map(q => q.value.raw).join('');
+  }
+  
+  if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+    // For functions, return a placeholder
+    return '{{function}}';
+  }
+  
+  // For complex expressions, return null
+  console.warn(`   ⚠️ Unsupported node type: ${node.type}`);
+  return null;
 }
 
 // ✅ FIXED VERSION - Add Transition Endpoint
@@ -2955,7 +3097,7 @@ router.post('/add-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -3079,7 +3221,7 @@ router.post('/delete-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -3180,7 +3322,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -3586,28 +3728,33 @@ router.delete('/graph/layout', async (req, res) => {
   }
 });
 
-/**
- * POST /api/implications/update-transition
- * Update an existing transition (change event name or target)
- */
 router.post('/update-transition', async (req, res) => {
   try {
     const { 
       sourceFile, 
-      oldEvent,      // Current event name
-      newEvent,      // New event name (can be same as oldEvent)
-      newTarget,     // New target state
-      actionDetails  // Optional: update actionDetails
+      oldEvent,
+      newEvent,
+      newTarget,
+      platform,         // ✅ NEW: single platform support
+      actionDetails     // ✅ ENHANCED: full actionDetails object
     } = req.body;
     
-    console.log('✏️ Updating transition:', { sourceFile, oldEvent, newEvent, newTarget });
+    console.log('═══════════════════════════════════════');
+    console.log('✏️ UPDATE-TRANSITION DEBUG');
+    console.log('═══════════════════════════════════════');
+    console.log('📦 Raw req.body:', JSON.stringify(req.body, null, 2));
+    console.log('🎯 Platform:', platform);
+    console.log('📊 ActionDetails present:', !!actionDetails);
+    console.log('═══════════════════════════════════════');
     
+    // Validate required fields
     if (!sourceFile || !oldEvent || !newEvent || !newTarget) {
       return res.status(400).json({ 
         error: 'sourceFile, oldEvent, newEvent, and newTarget are required' 
       });
     }
     
+    // Read and parse file
     const content = await fs.readFile(sourceFile, 'utf-8');
     const ast = parse(content, {
       sourceType: 'module',
@@ -3622,6 +3769,7 @@ router.post('/update-transition', async (req, res) => {
           const configValue = path.node.value;
           
           if (configValue?.type === 'ObjectExpression') {
+            // Find 'on' property (simple or complex structure)
             let onProperty = null;
             
             // Try root level 'on'
@@ -3641,9 +3789,7 @@ router.post('/update-transition', async (req, res) => {
             }
             
             if (!onProperty || !onProperty.value?.properties) {
-              return res.status(400).json({ 
-                error: 'Could not find transitions in xstateConfig' 
-              });
+              throw new Error('Could not find transitions in xstateConfig');
             }
             
             // Find the old transition
@@ -3652,49 +3798,67 @@ router.post('/update-transition', async (req, res) => {
             );
             
             if (transitionIndex === -1) {
-              return res.status(404).json({ 
-                error: `Transition "${oldEvent}" not found` 
-              });
+              throw new Error(`Transition "${oldEvent}" not found`);
             }
             
             const oldTransition = onProperty.value.properties[transitionIndex];
             
-            // Update the transition
-            const transitionProperties = [
-              {
-                type: 'ObjectProperty',
-                key: { type: 'Identifier', name: 'target' },
-                value: { type: 'StringLiteral', value: newTarget }
-              }
-            ];
+            // ✅ BUILD NEW TRANSITION PROPERTIES
+            const transitionProperties = [];
             
-            // Add actionDetails if provided
+            // 1. Target (always required)
+            transitionProperties.push(
+              t.objectProperty(
+                t.identifier('target'),
+                t.stringLiteral(newTarget)
+              )
+            );
+            
+            // 2. Platform (if provided)
+            if (platform) {
+              console.log('✅ Adding platform to transition:', platform);
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('platforms'),
+                  t.arrayExpression([t.stringLiteral(platform)])
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing platforms if not updating
+              const existingPlatforms = oldTransition.value.properties.find(
+                p => p.key?.name === 'platforms'
+              );
+              if (existingPlatforms) {
+                transitionProperties.push(existingPlatforms);
+              }
+            }
+            
+            // 3. ActionDetails (if provided, use buildActionDetailsAST helper)
             if (actionDetails) {
-              const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
-              transitionProperties.push({
-                type: 'ObjectProperty',
-                key: { type: 'Identifier', name: 'actionDetails' },
-                value: actionDetailsAST
-              });
+              console.log('✅ Adding actionDetails to transition');
+              const actionDetailsAST = buildActionDetailsAST(actionDetails);
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('actionDetails'),
+                  actionDetailsAST
+                )
+              );
             } else if (oldTransition.value?.type === 'ObjectExpression') {
               // Preserve existing actionDetails if not updating
               const existingActionDetails = oldTransition.value.properties.find(
                 p => p.key?.name === 'actionDetails'
               );
               if (existingActionDetails) {
+                console.log('⭐ Preserving existing actionDetails');
                 transitionProperties.push(existingActionDetails);
               }
             }
             
-            // Replace the transition
-            onProperty.value.properties[transitionIndex] = {
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: newEvent },
-              value: {
-                type: 'ObjectExpression',
-                properties: transitionProperties
-              }
-            };
+            // ✅ REPLACE THE TRANSITION
+            onProperty.value.properties[transitionIndex] = t.objectProperty(
+              t.identifier(newEvent),
+              t.objectExpression(transitionProperties)
+            );
             
             transitionUpdated = true;
             console.log(`✅ Updated: ${oldEvent} → ${newEvent} (target: ${newTarget})`);
@@ -3724,13 +3888,15 @@ router.post('/update-transition', async (req, res) => {
     await fs.writeFile(sourceFile, newCode, 'utf-8');
     
     console.log('✅ Transition updated successfully');
+    console.log('📦 Backup created:', backupPath);
     
     res.json({
       success: true,
       transition: {
         oldEvent,
         newEvent,
-        target: newTarget
+        target: newTarget,
+        platform: platform || null
       },
       backup: backupPath
     });
