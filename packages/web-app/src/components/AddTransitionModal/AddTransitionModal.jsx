@@ -17,6 +17,7 @@ export default function AddTransitionModal({
   projectPath,
   mode = 'create',           // ✅ NEW: 'create' | 'edit'
   initialData = null,        // ✅ NEW: For edit mode
+  availablePlatforms = ["web"],  // ✅ NEW - from config
 }) {
   const [formData, setFormData] = useState({
     event: "",
@@ -223,11 +224,35 @@ useEffect(() => {
 
   // Fetch POMs from API
 const fetchAvailablePOMs = async () => {
+  console.log('🔍 fetchAvailablePOMs called, platform:', formData.platform);  // ADD
   setLoadingPOMs(true);
   try {
-    const allPOMs = await getCachedPOMs(projectPath);
-    const filteredPOMs = filterPOMsByPlatform(allPOMs, formData.platform);
-    setAvailablePOMs(filteredPOMs);
+    const response = await fetch(
+      `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    if (response.ok) {
+      const data = await response.json();
+      console.log('📦 Raw POMs from API:', data.poms?.length);  // ADD
+
+      const transformedPOMs = data.poms.map((pom) => {
+        const mainClass = pom.classes?.[0];
+        return {
+          name: mainClass?.name || pom.name,
+          className: mainClass?.name || pom.name,
+          path: pom.path,
+          filePath: pom.path,
+          classes: pom.classes,
+        };
+      });
+
+      const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
+      console.log('✅ Filtered POMs:', filteredPOMs.length);  // ADD
+      
+      setAvailablePOMs(filteredPOMs);
+    }
+  } catch (error) {
+    console.error("Failed to fetch POMs:", error);
+    setAvailablePOMs([]);
   } finally {
     setLoadingPOMs(false);
   }
@@ -347,30 +372,44 @@ const fetchNavigationFiles_Fallback = async () => {
   }
 };
 
-  const filterPOMsByPlatform = (poms, platform) => {
-    if (!platform || !poms) return poms;
-    
-    console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
-    
+const filterPOMsByPlatform = (poms, platform) => {
+  console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
+  
+  if (!platform || platform === 'web') {
+    // For web: include POMs that are NOT in mobile-specific folders
     const filtered = poms.filter(pom => {
-      const path = pom.path || pom.filePath || '';
+      const path = (pom.filePath || pom.path || '').toLowerCase();
       
-      if (platform === 'web') {
-        return path.includes('/web/') || path.includes('\\web\\');
-      } else if (platform === 'dancer') {
-        return path.includes('/dancer/') || path.includes('\\dancer\\') || 
-               path.includes('/android/dancer/') || path.includes('\\android\\dancer\\');
-      } else if (platform === 'manager') {
-        return path.includes('/manager/') || path.includes('\\manager\\') ||
-               path.includes('/android/manager/') || path.includes('\\android\\manager\\');
-      }
+      // Exclude mobile-specific paths
+      const isMobile = path.includes('/dancer/') || 
+                       path.includes('/manager/') ||
+                       path.includes('/android/') ||
+                       path.includes('/ios/') ||
+                       path.includes('/mobile/');
       
-      return false;
+      return !isMobile;  // Include everything that's NOT mobile
     });
     
-    console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
+    console.log(`   ✅ Found ${filtered.length} POMs for web (non-mobile)`);
     return filtered;
-  };
+  }
+  
+  // For specific mobile platforms
+  const filtered = poms.filter(pom => {
+    const path = (pom.filePath || pom.path || '').toLowerCase();
+    
+    if (platform === 'dancer') {
+      return path.includes('/dancer/');
+    } else if (platform === 'manager') {
+      return path.includes('/manager/');
+    }
+    
+    return false;
+  });
+  
+  console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
+  return filtered;
+};
 
   // Fetch POM details
   const fetchPOMDetails = async (pomName) => {
@@ -819,7 +858,7 @@ const fetchNavigationFiles_Fallback = async () => {
               </span>
             </label>
             <div className="flex gap-3">
-              {["web", "dancer", "manager"].map((platform) => (
+              {(availablePlatforms || ["web"]).map((platform) => (
                 <label
                   key={platform}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition"

@@ -214,21 +214,13 @@ _detectPlatform(filePath) {
   }
 
 /**
- * ✅ IMPROVED: Find all POM files using glob patterns
- * Now includes actions folders at any depth
+ * ✅ GENERIC: Find all POM files using config patterns OR defaults
  */
 async _findPOMFiles() {
-  const patterns = [
-    '**/screenObjects/**/*.js',
-    '**/pages/**/*.js',
-    '**/pom/**/*.js',
-    '**/pageObjects/**/*.js',
-    // ✅ IMPROVED: Find navigation files in actions folders at ANY depth
-    '**/actions/*[Nn]avigation*.js',
-    '**/actions/**/*[Nn]avigation*.js',
-    // ✅ Also find navigation files inside screenObjects/actions
-    '**/screenObjects/actions/*[Nn]avigation*.js',
-  ];
+  // Try to load config from project
+  const patterns = await this._loadPOMPatterns();
+  
+  console.log(`   🔍 Using ${patterns.length} pattern(s) for POM discovery`);
 
   const pomFiles = [];
 
@@ -244,12 +236,13 @@ async _findPOMFiles() {
           '**/dist/**',
           '**/build/**',
           '**/.next/**',
-          '**/legacy/**',  // ✅ Optionally ignore legacy folders
         ]
       });
       
-      console.log(`      Found ${files.length} files`);
-      pomFiles.push(...files);
+      if (files.length > 0) {
+        console.log(`      ✅ Found ${files.length} files`);
+        pomFiles.push(...files);
+      }
     } catch (error) {
       console.error(`   ⚠️  Pattern ${pattern} failed: ${error.message}`);
     }
@@ -260,6 +253,41 @@ async _findPOMFiles() {
   console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
   
   return uniqueFiles;
+}
+
+/**
+ * ✅ NEW: Load POM patterns from ai-testing.config.js or use defaults
+ */
+async _loadPOMPatterns() {
+  const configPath = path.join(this.projectPath, 'ai-testing.config.js');
+  
+  try {
+    // Check if config exists
+    await fs.access(configPath);
+    
+    // Dynamic import for ESM compatibility
+    const configModule = await import(`file://${configPath}`);
+    const config = configModule.default || configModule;
+    
+    if (config.discovery?.poms && config.discovery.poms.length > 0) {
+      console.log(`   ✅ Loaded ${config.discovery.poms.length} POM pattern(s) from ai-testing.config.js`);
+      return config.discovery.poms;
+    }
+  } catch (error) {
+    // Config doesn't exist or can't be loaded
+    console.log(`   ℹ️  No ai-testing.config.js found, using default patterns`);
+  }
+  
+  // Default patterns (generic, should work for most projects)
+  return [
+    '**/screenObjects/**/*.js',
+    '**/pages/**/*.js',
+    '**/screens/**/*.js',
+    '**/pom/**/*.js',
+    '**/pageObjects/**/*.js',
+    '**/*.page.js',
+    '**/*.screen.js',
+  ];
 }
 
   /**
