@@ -29,6 +29,12 @@ Handlebars.registerHelper('camelCase', function(str) {
   return str.charAt(0).toLowerCase() + str.slice(1);
 });
 
+Handlebars.registerHelper('capitalize', function(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+});
+
+
 function normalizePlatform(platform) {
   if (!platform) return 'web';
   
