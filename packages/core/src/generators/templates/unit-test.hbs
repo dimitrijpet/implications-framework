@@ -163,6 +163,10 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   
 {{#if hasNavigation}}
+  // Initialize navigation helper
+  const {{navigation.className}} = require('{{{navigation.path}}}');
+  const {{navigation.instance}} = new {{navigation.className}}(ctx.data);
+  
   console.log('\n🧭 Navigating to action screen...');
   await {{navigation.instance}}.{{navigation.method}}({{#each navigation.args}}{{this}}{{#unless @last}}, {{/unless}}{{/each}});
   console.log('✅ Navigation complete');

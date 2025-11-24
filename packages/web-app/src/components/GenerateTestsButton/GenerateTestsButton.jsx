@@ -22,81 +22,81 @@ export default function GenerateTestsButton({ state, projectPath, discoveryResul
       
       // ✅ Helper: Look up actionDetails from source implication metadata
       const findActionDetails = (fromState, event) => {
-        console.log(`🔍 Looking for actionDetails: ${fromState} --${event}-->`);
-        
-        // Find the source implication by status
-        const sourceImpl = discoveryResult?.files?.implications?.find(
-          impl => impl.metadata?.status === fromState || 
-                  impl.metadata?.meta?.status === fromState
-        );
-        
-        if (!sourceImpl) {
-          console.log(`   ❌ Source implication not found for state: ${fromState}`);
-          return null;
-        }
-        
-        console.log(`   ✅ Found source: ${sourceImpl.className}`);
-        
-        // Get the transition from source's xstateConfig.on
-        const xstateConfig = sourceImpl.metadata?.xstateConfig;
-        if (!xstateConfig?.on) {
-          console.log(`   ❌ No xstateConfig.on in ${sourceImpl.className}`);
-          return null;
-        }
-        
-        const transition = xstateConfig.on[event];
-        if (!transition) {
-          console.log(`   ❌ Event ${event} not found in xstateConfig.on`);
-          return null;
-        }
-        
-        const actionDetails = transition.actionDetails || null;
-        
-        if (actionDetails) {
-          console.log(`   ✅ Found actionDetails with ${actionDetails.steps?.length || 0} steps`);
-        } else {
-          console.log(`   ⚠️  No actionDetails for ${event}`);
-        }
-        
-        return actionDetails;
-      };
+  console.log(`🔍 Looking for actionDetails: ${fromState} --${event}-->`);
+  
+  if (!fromState || !event) {
+    console.log(`   ❌ Missing fromState or event`);
+    return null;
+  }
+  
+  // Find the source implication by status
+  const sourceImpl = discoveryResult?.files?.implications?.find(
+    impl => impl.metadata?.status === fromState
+  );
+  
+  if (!sourceImpl) {
+    console.log(`   ❌ Source implication not found for state: ${fromState}`);
+    return null;
+  }
+  
+  console.log(`   ✅ Found source: ${sourceImpl.className}`);
+  
+  // ✅ FIX: Get actionDetails from xstateConfig.on[event]
+  const transition = sourceImpl.metadata?.xstateConfig?.on?.[event];
+  
+  if (!transition) {
+    console.log(`   ❌ Event ${event} not found in xstateConfig.on`);
+    return null;
+  }
+  
+  const actionDetails = transition.actionDetails || null;
+  
+  if (actionDetails) {
+    console.log(`   ✅ Found actionDetails with ${actionDetails.steps?.length || 0} steps`);
+  } else {
+    console.log(`   ⚠️  No actionDetails for ${event}`);
+  }
+  
+  return actionDetails;
+};
       
-      // ✅ Find transitions that ARRIVE AT this state
-      const incomingTransitions = discoveryResult?.transitions?.filter(t => 
-        t.to === state.name || t.target === state.name
-      ) || [];
-      
-      console.log(`📥 Found ${incomingTransitions.length} incoming transition(s)`);
-      console.log('📋 Raw transitions:', incomingTransitions);
-      
-      if (incomingTransitions.length > 0) {
-        console.log('📋 First transition:', JSON.stringify(incomingTransitions[0], null, 2));
-      }
-      
-      if (incomingTransitions.length === 0) {
-        console.log('⚠️ No incoming transitions found, generating default test');
-      }
-      
-      // ✅ Expand transitions with multiple platforms and enrich with actionDetails
-      const transitionsToGenerate = [];
-      
-      for (const t of incomingTransitions) {
-        const platforms = t.platforms || [t.platform || state.meta?.platform || 'web'];
-        
-        // Create one transition per platform
-        for (const platform of platforms) {
-          // ✅ Look up actionDetails from source implication
-          const actionDetails = findActionDetails(t.from || t.fromState, t.event);
-          
-          transitionsToGenerate.push({
-            event: t.event,
-            fromState: t.from || t.fromState,
-            target: state.name,
-            platform: platform,
-            actionDetails: actionDetails  // ✅ Now enriched!
-          });
-        }
-      }
+   const incomingTransitions = discoveryResult?.transitions?.filter(t => 
+  t.to === state.name || t.target === state.name
+) || [];
+
+console.log(`📥 Found ${incomingTransitions.length} incoming transition(s)`);
+incomingTransitions.forEach(t => {
+  console.log(`   - ${t.from} --${t.event}--> ${t.to}`);
+});
+
+// ✅ Expand transitions with multiple platforms and enrich with actionDetails
+const transitionsToGenerate = [];
+
+for (const t of incomingTransitions) {
+  console.log(`\n🔄 Processing: ${t.from} --${t.event}--> ${t.to}`);
+  
+  const platforms = t.platforms || [t.platform || state.meta?.platform || 'web'];
+  console.log(`   Platforms: ${platforms.join(', ')}`);
+  
+  // Create one transition per platform
+  for (const platform of platforms) {
+    // ✅ Look up actionDetails from source implication
+    const actionDetails = findActionDetails(t.from, t.event);
+    
+    const transitionObj = {
+      event: t.event,
+      fromState: t.from,
+      target: state.name,
+      platform: platform,
+      actionDetails: actionDetails
+    };
+    
+    console.log(`   ✅ Added transition:`, transitionObj.event, transitionObj.platform);
+    transitionsToGenerate.push(transitionObj);
+  }
+}
+
+console.log(`\n📊 Total transitions to generate: ${transitionsToGenerate.length}`);
       
       // ✅ Fallback: If no incoming transitions, generate for main platform
       if (transitionsToGenerate.length === 0) {

@@ -2473,12 +2473,6 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath, pla
 }
 /**
  * Extract navigation from actionDetails
- * 
- * @param {object} actionDetails - Action details with optional navigationMethod
- * @returns {object|null} { method, instance, args } or null
- */
-/**
- * Extract navigation from actionDetails
  */
 _extractNavigation(actionDetails) {
   if (!actionDetails?.navigationMethod || !actionDetails?.navigationFile) {
@@ -2503,13 +2497,63 @@ _extractNavigation(actionDetails) {
   // Build instance name from file: NavigationActions → navigationActions
   const instanceName = navFile.charAt(0).toLowerCase() + navFile.slice(1);
 
+  // ✅ NEW: Build path to navigation file
+  const navPath = this._findNavigationFilePath(navFile);
+
   return {
     method: methodName,
-    signature: navMethod,  // ✅ Keep full signature
+    signature: navMethod,
     instance: instanceName,
     className: navFile,
+    path: navPath,  // ✅ ADD THIS
     args: params.length > 0 ? params.map(p => `ctx.data.${p}`) : []
   };
+}
+
+_findNavigationFilePath(navigationFileName) {
+  console.log(`\n🔍 Finding navigation path for: ${navigationFileName}`);
+  
+  const normalizedName = navigationFileName.replace(/\.js$/, '');
+  
+  // Search in project
+  if (this.projectPath && this.implFilePath) {
+    const fs = require('fs');
+    const path = require('path');
+    
+    try {
+      // ✅ FIX: Use glob.sync instead of globSync
+      const glob = require('glob');
+      const pattern = `**/${normalizedName}.js`;
+      
+      console.log(`   🔍 Searching: ${pattern}`);
+      
+      const files = glob.sync(pattern, { 
+        cwd: this.projectPath,
+        ignore: ['**/node_modules/**']
+      });
+      
+      console.log(`   📁 Found ${files.length} file(s):`, files);
+      
+      if (files.length > 0) {
+        const navAbsPath = path.join(this.projectPath, files[0]);
+        const implDir = path.dirname(this.implFilePath);
+        let relativePath = path.relative(implDir, navAbsPath).replace(/\.js$/, '');
+        
+        if (!relativePath.startsWith('.')) {
+          relativePath = './' + relativePath;
+        }
+        
+        console.log(`   ✅ Calculated relative path: ${relativePath}`);
+        return relativePath;
+      }
+    } catch (error) {
+      console.warn(`   ❌ Error searching: ${error.message}`);
+    }
+  }
+  
+  // Fallback with TODO comment
+  console.warn(`   ❌ Could not find path for ${normalizedName}`);
+  return `/* TODO: Add path to ${normalizedName} */`;
 }
 
 /**

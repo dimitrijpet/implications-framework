@@ -31,7 +31,7 @@ function transformPlatformsData(platforms) {
   return transformed;
 }
 
-export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath }) {
+export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath, discoveryResult, }) {
   // Edit mode state
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedState, setEditedState] = useState(null);
@@ -861,20 +861,20 @@ const handleSave = async () => {
               </div>
             )}
 
-            {/* Test Generation Section */}
-            <div>
-              <h2
-                className="text-2xl font-bold mb-4"
-                style={{ color: theme.colors.accents.blue }}
-              >
-                🧪 Test Generation
-              </h2>
-              <GenerateTestsButton 
-                state={state} 
-                projectPath={projectPath}
-              />
-            </div>
-
+         {/* Test Generation Section */}
+<div>
+  <h2
+    className="text-2xl font-bold mb-4"
+    style={{ color: theme.colors.accents.blue }}
+  >
+    🧪 Test Generation
+  </h2>
+  <GenerateTestsButton 
+    state={state} 
+    projectPath={projectPath}
+    discoveryResult={discoveryResult}  // ← ADD THIS
+  />
+</div>
             {/* Suggestions Panel */}
             {isEditMode && analysis && !suggestionsLoading && (
               <div>
