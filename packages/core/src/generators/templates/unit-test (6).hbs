@@ -108,80 +108,6 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log(`   Test Mode: INDUCER (action only)`);
 {{/if}}
 
-{{#if actionDetails.requires}}
-  // ────────────────────────────────────────────────────────
-  // ⚠️  TRANSITION REQUIREMENTS CHECK
-  // ────────────────────────────────────────────────────────
-  console.log('\n🔒 Checking transition requirements...');
-  const transitionMissing = [];
-  
-{{#each actionDetails.requires}}
-{{#if (isNegatedField @key)}}
-{{#if (isContainsObject this)}}
-  // Check: {{removeNegation @key}} must NOT contain {{getContainsValue this}}
-  {
-    const fieldPath = '{{removeNegation @key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
-      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
-      : '{{getContainsValue this}}';
-    if (Array.isArray(actualValue) && actualValue.includes(valueToCheck)) {
-      transitionMissing.push(`${fieldPath} must NOT contain "${valueToCheck}" (actual: [${actualValue.join(', ')}])`);
-    }
-  }
-{{else}}
-  // Check: {{removeNegation @key}} must NOT be {{jsonInline this}}
-  {
-    const fieldPath = '{{removeNegation @key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    if (actualValue === {{json this}}) {
-      transitionMissing.push(`${fieldPath} must NOT be {{jsonInline this}} (actual: ${actualValue})`);
-    }
-  }
-{{/if}}
-{{else}}
-{{#if (isContainsObject this)}}
-  // Check: {{@key}} must contain {{getContainsValue this}}
-  {
-    const fieldPath = '{{@key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
-      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
-      : '{{getContainsValue this}}';
-    if (!Array.isArray(actualValue) || !actualValue.includes(valueToCheck)) {
-      transitionMissing.push(`${fieldPath} must contain "${valueToCheck}" (actual: ${JSON.stringify(actualValue)})`);
-    }
-  }
-{{else if (isBoolean this)}}
-  // Check: {{@key}} must be {{this}}
-  {
-    const fieldPath = '{{@key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    if (actualValue !== {{this}}) {
-      transitionMissing.push(`${fieldPath} must be {{this}} (actual: ${actualValue})`);
-    }
-  }
-{{else}}
-  // Check: {{@key}} must be "{{this}}"
-  {
-    const fieldPath = '{{@key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    if (actualValue !== '{{this}}') {
-      transitionMissing.push(`${fieldPath} must be "{{this}}" (actual: ${actualValue})`);
-    }
-  }
-{{/if}}
-{{/if}}
-{{/each}}
-  
-  if (transitionMissing.length > 0) {
-    console.error('\n❌ Transition requirements not met:');
-    transitionMissing.forEach(msg => console.error(`   - ${msg}`));
-    throw new Error(`Cannot execute {{transitionEvent}}: ${transitionMissing.join('; ')}`);
-  }
-  console.log('   ✅ All transition requirements satisfied');
-{{/if}}
-
 {{#if isVerify}}
   // ────────────────────────────────────────────────────────
   // ⚠️  VERIFY MODE - State Must Already Exist
@@ -483,12 +409,12 @@ if (!shouldSkipRegistration) {
 {{#if pomClassName}}
       // ✅ NEW: Re-require the screen in the test block
       const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
-      const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, result.data.lang || 'en', result.data.device || 'desktop');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(result.data.lang || 'en');
 {{else}}
 {{#if ../actionDetails.imports.[0]}}
       // ✅ NEW: Re-require the screen in the test block
       const {{../actionDetails.imports.[0].className}} = require('{{{../actionDetails.imports.[0].relativePath}}}');
-      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(result.data.lang || 'en');
 {{/if}}
 {{/if}}
       
@@ -533,7 +459,7 @@ if (!shouldSkipRegistration) {
     before(async () => {
       console.log('🚀 Running setup: {{setupConfig.function}}');
       // Note: WebdriverIO setup is typically handled by wdio.conf.js
-      // This is a hook for any additional setup needed
+      // This is a hook for any additional setup
     });
     {{/if}}
     

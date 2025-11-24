@@ -51,13 +51,13 @@ class TemplateEngine {
    * @returns {string} Rendered output
    */
 render(templateName, context) {
-  console.log(`\n📝 TemplateEngine.render()`);
+  console.log(`\nðŸ“ TemplateEngine.render()`);
   console.log(`   Template: ${templateName}`);
   console.log(`   Context keys: ${Object.keys(context).length}`);
   
-  // ✅ CLEAR CACHE BEFORE RENDERING (temporary debug)
+  // âœ… CLEAR CACHE BEFORE RENDERING (temporary debug)
   this.templateCache.clear();
-  console.log('   🗑️  Cache cleared');
+  console.log('   ðŸ—‘ï¸  Cache cleared');
   
   // Get compiled template
   const template = this._getTemplate(templateName);
@@ -65,7 +65,7 @@ render(templateName, context) {
     // Render
     const output = template(context);
     
-    console.log(`   ✅ Rendered: ${output.length} characters`);
+    console.log(`   âœ… Rendered: ${output.length} characters`);
     
     return output;
   }
@@ -107,9 +107,9 @@ render(templateName, context) {
   _registerHelpers() {
     const hbs = this.handlebars;
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // STRING TRANSFORMATION HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     hbs.registerHelper('pascalCase', pascalCaseHelper);
     hbs.registerHelper('camelCase', camelCaseHelper);
@@ -202,9 +202,9 @@ render(templateName, context) {
       return `= ${value}`;
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // COMPARISON HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * Equals comparison
@@ -212,9 +212,6 @@ render(templateName, context) {
     hbs.registerHelper('ifEquals', function(arg1, arg2, options) {
       return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
     });
-
-    hbs.registerHelper('eq', (a, b) => a === b);
-
     
     /**
      * Not equals comparison
@@ -231,9 +228,9 @@ render(templateName, context) {
       return array.includes(value) ? options.fn(this) : options.inverse(this);
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // DATE HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * Format date
@@ -256,9 +253,9 @@ render(templateName, context) {
       return new Date().toISOString();
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // LOGIC HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * OR operation
@@ -283,9 +280,9 @@ render(templateName, context) {
       return !value;
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // ARRAY HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * Get array length
@@ -311,9 +308,9 @@ render(templateName, context) {
       return Array.isArray(array) ? array.length > 0 : Object.keys(array).length > 0;
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // MATH HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * Add numbers
@@ -350,15 +347,15 @@ render(templateName, context) {
       return (value || 0) - 1;
     });
     
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // DEBUG HELPERS
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     
     /**
      * Debug log
      */
     hbs.registerHelper('debug', function(value) {
-      console.log('\n🐛 DEBUG:', value);
+      console.log('\nðŸ› DEBUG:', value);
       return '';
     });
     
@@ -369,38 +366,86 @@ render(templateName, context) {
       return JSON.stringify(obj, null, 2);
     });
 
-    // ═══════════════════════════════════════════════════════════
+    /**
+     * JSON stringify inline (no newlines, for comments)
+     */
+    hbs.registerHelper('jsonInline', (obj) => {
+      return JSON.stringify(obj).replace(/\n/g, ' ');
+    });
+
+    /**
+     * Check if field is negated (starts with !)
+     */
+    hbs.registerHelper('isNegatedField', (field) => {
+      return typeof field === 'string' && field.startsWith('!');
+    });
+
+    /**
+     * Remove negation prefix from field
+     */
+    hbs.registerHelper('removeNegation', (field) => {
+      if (typeof field === 'string' && field.startsWith('!')) {
+        return field.slice(1);
+      }
+      return field;
+    });
+
+    /**
+     * Check if value is a "contains" object pattern like { contains: "..." }
+     */
+    hbs.registerHelper('isContainsObject', (value) => {
+      return typeof value === 'object' && value !== null && value.contains !== undefined;
+    });
+
+    /**
+     * Get the contains value from object
+     */
+    hbs.registerHelper('getContainsValue', (value) => {
+      if (typeof value === 'object' && value !== null && value.contains) {
+        return value.contains;
+      }
+      return '';
+    });
+
+    /**
+     * Check if value is boolean
+     */
+    hbs.registerHelper('isBoolean', (value) => {
+      return typeof value === 'boolean';
+    });
+
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ENTITY-SCOPED HELPERS (for nested paths like dancer.email)
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * Check if value is a ctx.data reference
  */
 hbs.registerHelper('isContextField', (value) => {
   const result = typeof value === 'string' && value.includes('ctx.data.');
-  console.log(`🔍 isContextField("${value}") = ${result}`);
+  console.log(`ðŸ” isContextField("${value}") = ${result}`);
   return result;
 });
 
 /**
  * Remove ctx.data. prefix and extract field name
- * Usage: ctx.data.email → email
- *        ctx.data.dancer.email → dancer.email
+ * Usage: ctx.data.email â†’ email
+ *        ctx.data.dancer.email â†’ dancer.email
  */
 hbs.registerHelper('removeCtxDataPrefix', (value) => {
   if (typeof value === 'string') {
     const result = value.replace('ctx.data.', '');
-    console.log(`🔧 removeCtxDataPrefix("${value}") = "${result}"`);
+    console.log(`ðŸ”§ removeCtxDataPrefix("${value}") = "${result}"`);
     return result;
   }
-  console.log(`⚠️ removeCtxDataPrefix non-string: ${typeof value}`);
+  console.log(`âš ï¸ removeCtxDataPrefix non-string: ${typeof value}`);
   return value;
 });
 
 /**
  * Convert field path to entity-scoped path
- * Usage: email → dancer.email (if entity is 'dancer')
- *        status → dancer.status
+ * Usage: email â†’ dancer.email (if entity is 'dancer')
+ *        status â†’ dancer.status
  */
 hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
   if (!entity) return fieldPath;
@@ -412,8 +457,8 @@ hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
   
   return `${entity}.${fieldPath}`;
 });
-    // ✅ MOVED: Final count AFTER all helpers registered
-    console.log('✅ Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers (including 3 entity-scoped)');
+    // âœ… MOVED: Final count AFTER all helpers registered
+    console.log('âœ… Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers (including 3 entity-scoped)');
   }
   
   /**
@@ -421,7 +466,7 @@ hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
    */
   clearCache() {
     this.templateCache.clear();
-    console.log('🗑️  Template cache cleared');
+    console.log('ðŸ—‘ï¸  Template cache cleared');
   }
   
   /**
@@ -436,7 +481,7 @@ hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
    */
   loadPartials(partialsDir) {
     if (!fs.existsSync(partialsDir)) {
-      console.warn(`⚠️  Partials directory not found: ${partialsDir}`);
+      console.warn(`âš ï¸  Partials directory not found: ${partialsDir}`);
       return;
     }
     
@@ -447,7 +492,7 @@ hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
         const name = path.basename(file, '.hbs');
         const source = fs.readFileSync(path.join(partialsDir, file), 'utf8');
         this.registerPartial(name, source);
-        console.log(`  ✅ Registered partial: ${name}`);
+        console.log(`  âœ… Registered partial: ${name}`);
       }
     });
   }

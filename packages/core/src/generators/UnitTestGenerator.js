@@ -16,6 +16,62 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 Handlebars.registerHelper('pascalCase', pascalCaseHelper);
+
+/**
+ * Handlebars helper: Check if field is negated (starts with !)
+ */
+Handlebars.registerHelper('isNegatedField', function(field) {
+  return typeof field === 'string' && field.startsWith('!');
+});
+
+/**
+ * Handlebars helper: Remove negation prefix from field
+ */
+Handlebars.registerHelper('removeNegation', function(field) {
+  if (typeof field === 'string' && field.startsWith('!')) {
+    return field.slice(1);
+  }
+  return field;
+});
+
+/**
+ * Handlebars helper: JSON stringify a value (single line)
+ */
+Handlebars.registerHelper('json', function(value) {
+  return JSON.stringify(value);
+});
+
+/**
+ * Handlebars helper: JSON stringify inline (guaranteed single line, no newlines)
+ */
+Handlebars.registerHelper('jsonInline', function(value) {
+  return JSON.stringify(value).replace(/\n/g, ' ');
+});
+
+/**
+ * Handlebars helper: Check if value is a "contains" object pattern
+ */
+Handlebars.registerHelper('isContainsObject', function(value) {
+  return typeof value === 'object' && value !== null && value.contains !== undefined;
+});
+
+/**
+ * Handlebars helper: Get the contains value from object
+ */
+Handlebars.registerHelper('getContainsValue', function(value) {
+  if (typeof value === 'object' && value !== null && value.contains) {
+    return value.contains;
+  }
+  return '';
+});
+
+/**
+ * Handlebars helper: Check if value is boolean
+ */
+Handlebars.registerHelper('isBoolean', function(value) {
+  return typeof value === 'boolean';
+});
+
 /**
  * Handlebars helper: Format requirement values
  */
@@ -97,25 +153,25 @@ class UnitTestGenerator {
     state = null,
     preview = false,
     projectPath,
-    transition = null  // ✅ ADD THIS!
+    transition = null  // âœ… ADD THIS!
   } = options;
   
-  console.log('\n🎯 UnitTestGenerator.generate()');
+  console.log('\nðŸŽ¯ UnitTestGenerator.generate()');
   console.log(`   Implication: ${implFilePath}`);
   console.log(`   Platform: ${platform}`);
   if (state) console.log(`   State: ${state}`);
-  if (transition) console.log(`   🔄 Transition: ${transition.event} (${transition.platform})`);  // ✅ ADD THIS!
+  if (transition) console.log(`   ðŸ”„ Transition: ${transition.event} (${transition.platform})`);  // âœ… ADD THIS!
   
-  // ✅ Store projectPath and transition
+  // âœ… Store projectPath and transition
   this.projectPath = projectPath || this._findProjectRoot(implFilePath);
-  this.currentTransition = transition;  // ✅ ADD THIS!
+  this.currentTransition = transition;  // âœ… ADD THIS!
   
-  console.log(`   📁 Project root: ${this.projectPath}`);
+  console.log(`   ðŸ“ Project root: ${this.projectPath}`);
   
-  // ✅ Auto-detect output directory
+  // âœ… Auto-detect output directory
   if (!this.options.outputDir) {
     this.options.outputDir = path.dirname(path.resolve(implFilePath));
-    console.log(`   🗂️ Auto-detected output: ${this.options.outputDir}`);
+    console.log(`   ðŸ—‚ï¸ Auto-detected output: ${this.options.outputDir}`);
   }
     
   // 1. Load Implication class
@@ -126,11 +182,11 @@ class UnitTestGenerator {
   
   if (isMultiState && !state) {
     // Generate for ALL states
-    console.log(`   ✨ Multi-state machine detected`);
+    console.log(`   âœ¨ Multi-state machine detected`);
     return this._generateMultiState(ImplClass, implFilePath, platform, preview);
   } else if (isMultiState && state) {
     // Generate for specific state
-    console.log(`   ✨ Generating for state: ${state}`);
+    console.log(`   âœ¨ Generating for state: ${state}`);
     return this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
   } else {
     // Single-state machine (original behavior)
@@ -155,7 +211,7 @@ class UnitTestGenerator {
   _generateMultiState(ImplClass, implFilePath, platform, preview) {
     const states = Object.keys(ImplClass.xstateConfig.states);
     
-    console.log(`   ðŸ“‹ Found ${states.length} states: ${states.join(', ')}`);
+    console.log(`   Ã°Å¸â€œâ€¹ Found ${states.length} states: ${states.join(', ')}`);
     console.log('');
     
     const results = [];
@@ -165,11 +221,11 @@ class UnitTestGenerator {
       
       // Skip states without setup (no test needed)
       if (!stateConfig.meta?.setup || stateConfig.meta.setup.length === 0) {
-        console.log(`   â­ï¸  Skipping ${stateName} (no setup defined)`);
+        console.log(`   Ã¢ÂÂ­Ã¯Â¸Â  Skipping ${stateName} (no setup defined)`);
         continue;
       }
       
-      console.log(`   ðŸŽ¯ Generating for state: ${stateName}`);
+      console.log(`   Ã°Å¸Å½Â¯ Generating for state: ${stateName}`);
       
       const result = this._generateSingleState(
         ImplClass, 
@@ -183,7 +239,7 @@ class UnitTestGenerator {
       console.log('');
     }
     
-    console.log(`   âœ… Generated ${results.length} test(s)\n`);
+    console.log(`   Ã¢Å“â€¦ Generated ${results.length} test(s)\n`);
     
     return results;
   }
@@ -199,7 +255,7 @@ _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
   const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
     
     // 3. Build template context
-    const context = this._buildContext(metadata, platform, ImplClass);  // ✅ Pass ImplClass!
+    const context = this._buildContext(metadata, platform, ImplClass);  // âœ… Pass ImplClass!
     
     // 4. Validate context
     this._validateContext(context);
@@ -210,22 +266,22 @@ _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
     
   // 6. Generate file name
 const event = this.currentTransition?.event;
-console.log(`🐛 DEBUG _generateFileName inputs:`);
+console.log(`ðŸ› DEBUG _generateFileName inputs:`);
 console.log(`   event: ${event}`);
 console.log(`   platform: ${platform}`);
 console.log(`   metadata.status: ${metadata.status}`);
 
 const fileName = this._generateFileName(metadata, platform, { event });
-console.log(`   ✅ Generated fileName: ${fileName}`);
+console.log(`   âœ… Generated fileName: ${fileName}`);
     
     // 7. Optionally write file
     let filePath = null;
     if (!preview && this.options.outputDir) {
       filePath = path.join(this.options.outputDir, fileName);
       fs.writeFileSync(filePath, code);
-      console.log(`      âœ… Written: ${filePath}`);
+      console.log(`      Ã¢Å“â€¦ Written: ${filePath}`);
     } else {
-      console.log(`      âœ… Preview generated (${code.length} chars)`);
+      console.log(`      Ã¢Å“â€¦ Preview generated (${code.length} chars)`);
     }
     
     return {
@@ -241,13 +297,13 @@ console.log(`   ✅ Generated fileName: ${fileName}`);
  * Determine if this is an INDUCER or VERIFY test
  * 
  * Logic:
- * - If this platform is in transition.platforms → INDUCER
- * - If this platform is NOT in transition.platforms but has mirrorsOn.UI → VERIFY
+ * - If this platform is in transition.platforms â†’ INDUCER
+ * - If this platform is NOT in transition.platforms but has mirrorsOn.UI â†’ VERIFY
  * 
  * @returns {object} { mode: 'inducer'|'verify', transition: {...} }
  */
 _determineTestMode(ImplClass, platform, stateName) {
-  console.log(`\n🔍 Determining test mode for ${stateName} on ${platform}`);
+  console.log(`\nðŸ” Determining test mode for ${stateName} on ${platform}`);
   
   // Find transition TO this state
   const xstateConfig = ImplClass.xstateConfig;
@@ -274,7 +330,7 @@ _determineTestMode(ImplClass, platform, stateName) {
   
   // No transition found = initial state (always inducer)
   if (!transition) {
-    console.log(`   ✅ Mode: INDUCER (initial state)`);
+    console.log(`   âœ… Mode: INDUCER (initial state)`);
     return { mode: 'inducer', transition: null };
   }
   
@@ -282,10 +338,10 @@ _determineTestMode(ImplClass, platform, stateName) {
   const canInduce = transition.platforms.includes(platform);
   
   if (canInduce) {
-    console.log(`   ✅ Mode: INDUCER (${platform} in platforms: ${transition.platforms})`);
+    console.log(`   âœ… Mode: INDUCER (${platform} in platforms: ${transition.platforms})`);
     return { mode: 'inducer', transition };
   } else {
-    console.log(`   ✅ Mode: VERIFY (${platform} NOT in platforms: ${transition.platforms})`);
+    console.log(`   âœ… Mode: VERIFY (${platform} NOT in platforms: ${transition.platforms})`);
     return { mode: 'verify', transition };
   }
 }
@@ -311,21 +367,21 @@ _determineTestMode(ImplClass, platform, stateName) {
   
   try {
     process.chdir(projectRoot);
-    console.log(`   📁 Changed to project root: ${projectRoot}`);
+    console.log(`   ðŸ“ Changed to project root: ${projectRoot}`);
     
     // Clear cache
     delete require.cache[require.resolve(absolutePath)];
     
-    // ✅ TRY to require, but have fallback
+    // âœ… TRY to require, but have fallback
     let ImplClass;
     
    try {
   ImplClass = require(absolutePath);
 } catch (requireError) {
-  console.warn(`   ⚠️  Could not require file:`);
+  console.warn(`   âš ï¸  Could not require file:`);
   console.warn(`   Error: ${requireError.message}`);
-  console.warn(`   Stack: ${requireError.stack}`); // ✅ ADD THIS
-  console.warn(`   📖 Falling back to AST parsing...`);
+  console.warn(`   Stack: ${requireError.stack}`); // âœ… ADD THIS
+  console.warn(`   ðŸ“– Falling back to AST parsing...`);
       
       // Parse the file directly with AST
       const content = fs.readFileSync(absolutePath, 'utf-8');
@@ -357,7 +413,7 @@ _parseImplicationFromAST(content) {
   let mirrorsOn = null;
   let triggeredBy = null;
   
-  // ✅ Store 'this' reference
+  // âœ… Store 'this' reference
   const self = this;
   
   traverse(ast, {
@@ -369,11 +425,11 @@ _parseImplicationFromAST(content) {
           const propName = member.key?.name;
           
           if (propName === 'xstateConfig') {
-            xstateConfig = self._astNodeToObject(member.value);  // ✅ Use self
+            xstateConfig = self._astNodeToObject(member.value);  // âœ… Use self
           } else if (propName === 'mirrorsOn') {
-            mirrorsOn = self._astNodeToObject(member.value);     // ✅ Use self
+            mirrorsOn = self._astNodeToObject(member.value);     // âœ… Use self
           } else if (propName === 'triggeredBy') {
-            triggeredBy = self._astNodeToObject(member.value);   // ✅ Use self
+            triggeredBy = self._astNodeToObject(member.value);   // âœ… Use self
           }
         }
       });
@@ -411,13 +467,13 @@ _astNodeToObject(node) {
       const obj = {};
       const debugKeys = node.properties.map(p => p.key?.name).filter(Boolean);
   if (debugKeys.includes('CANCEL_REQUEST') || debugKeys.includes('CHECK_IN')) {
-    console.log('   🔍 PARSING TRANSITIONS OBJECT!');
-    console.log('   📊 Properties:', debugKeys);
-    console.log('   📊 Property count:', node.properties.length);
+    console.log('   ðŸ” PARSING TRANSITIONS OBJECT!');
+    console.log('   ðŸ“Š Properties:', debugKeys);
+    console.log('   ðŸ“Š Property count:', node.properties.length);
     
     node.properties.forEach((prop, i) => {
       const key = prop.key?.name || prop.key?.value;
-      console.log(`   📍 Property ${i}: ${key}`);
+      console.log(`   ðŸ“ Property ${i}: ${key}`);
       console.log(`      Value type: ${prop.value?.type}`);
       
       if (prop.value?.type === 'ObjectExpression') {
@@ -475,7 +531,7 @@ _findProjectRoot(implFilePath) {
     const testsDir = path.join(currentDir, 'tests');
     
     if (fs.existsSync(testsDir) && fs.statSync(testsDir).isDirectory()) {
-      // ✅ ADDITIONAL CHECK: Make sure we're not IN tests/ ourselves!
+      // âœ… ADDITIONAL CHECK: Make sure we're not IN tests/ ourselves!
       if (!currentDir.endsWith('/tests') && !currentDir.includes('/tests/')) {
         return currentDir;
       }
@@ -493,7 +549,7 @@ _findProjectRoot(implFilePath) {
   }
   
   // Fallback
-  console.warn('   ⚠️  Could not find project root, using implication directory');
+  console.warn('   âš ï¸  Could not find project root, using implication directory');
   return path.dirname(implFilePath);
 }
 
@@ -537,12 +593,12 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     targetStateName = status;
   }
 
-  // ✅ NEW: Check if we have a specific transition to use
+  // âœ… NEW: Check if we have a specific transition to use
   let actionDetails = null;
   let allTransitions = [];
   
   if (this.currentTransition) {
-    console.log(`\n✅ USING PROVIDED TRANSITION: ${this.currentTransition.event}`);
+    console.log(`\nâœ… USING PROVIDED TRANSITION: ${this.currentTransition.event}`);
     console.log(`   From frontend, not searching!`);
     
     // Use the transition that was passed in
@@ -550,9 +606,9 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     allTransitions = [this.currentTransition];
     
   } else {
-    console.log(`\n🔍 NO TRANSITION PROVIDED - searching...`);
+    console.log(`\nðŸ” NO TRANSITION PROVIDED - searching...`);
     
-    // ✅ OLD WAY: Get ALL transitions that lead to this state
+    // âœ… OLD WAY: Get ALL transitions that lead to this state
     allTransitions = this._extractActionDetailsFromTransition(
       xstateConfig,
       targetStateName,
@@ -561,7 +617,7 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
       implFilePath
     );
 
-    console.log(`\n🐛 DEBUG actionDetails extraction:`);
+    console.log(`\nðŸ› DEBUG actionDetails extraction:`);
     console.log(`   targetState: ${targetStateName}`);
     console.log(`   previousStatus: ${previousStatus}`);
     console.log(`   implFilePath: ${implFilePath}`);
@@ -577,7 +633,7 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
         ? preferredTransition.actionDetails 
         : allTransitions[0].actionDetails;
         
-      console.log(`   ✅ Using transition from: ${preferredTransition ? preferredTransition.fromState : allTransitions[0].fromState}`);
+      console.log(`   âœ… Using transition from: ${preferredTransition ? preferredTransition.fromState : allTransitions[0].fromState}`);
     }
 
     console.log(`   actionDetails found: ${!!actionDetails}`);
@@ -608,7 +664,7 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     // Entry actions (for delta)
     entry: entry,
     
-    // ✅ NEW: Store ALL transitions
+    // âœ… NEW: Store ALL transitions
     allTransitions: allTransitions,
     
     // Action details (backward compatibility - first transition)
@@ -624,24 +680,23 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
     stateName: stateName
   };
 
-   // ✅ Store metadata so _processActionDetailsImports can access entity
- this.currentMetadata = metadata;
-
-// Process actionDetails if present
-if (metadata.actionDetails) {
-  metadata.actionDetails = this._processActionDetailsImports(
-    metadata.actionDetails,
-    this.config?.screenObjectsPath,
-    this.implFilePath,
-    platform  // ✅ Pass platform!
-  );
-}
+   // âœ… Store metadata so _processActionDetailsImports can access entity
+  this.currentMetadata = metadata;
+  
+  // Process actionDetails if present
+  if (metadata.actionDetails) {
+    metadata.actionDetails = this._processActionDetailsImports(
+      metadata.actionDetails,
+      this.config?.screenObjectsPath,
+      this.implFilePath
+    );
+  }
   
   // Filter setup for this platform
   metadata.platformSetup = metadata.setup.find(s => s.platform === platform);
 
     if (platform && metadata.meta) {
-    console.log(`   🔧 Overriding platform: ${metadata.meta.platform} → ${platform}`);
+    console.log(`   ðŸ”§ Overriding platform: ${metadata.meta.platform} â†’ ${platform}`);
     metadata.meta.platform = platform;
   }
   
@@ -657,7 +712,7 @@ if (metadata.actionDetails) {
  * @returns {Array} Array of transitions TO this state
  */
 _getIncomingTransitions(targetState, projectPath) {
-  console.log(`\n🗺️  Finding transitions TO "${targetState}"...`);
+  console.log(`\nðŸ—ºï¸  Finding transitions TO "${targetState}"...`);
   
   try {
     // Load discovery cache
@@ -665,14 +720,14 @@ _getIncomingTransitions(targetState, projectPath) {
     const discoveryCache = path.join(cacheDir, 'discovery-result.json');
     
     if (!fs.existsSync(discoveryCache)) {
-      console.log(`   ⚠️  No discovery cache found`);
+      console.log(`   âš ï¸  No discovery cache found`);
       return [];
     }
     
     const discovery = JSON.parse(fs.readFileSync(discoveryCache, 'utf-8'));
     
     if (!discovery.transitions) {
-      console.log(`   ⚠️  No transitions in cache`);
+      console.log(`   âš ï¸  No transitions in cache`);
       return [];
     }
     
@@ -684,7 +739,7 @@ _getIncomingTransitions(targetState, projectPath) {
              t.to.endsWith(`_${targetState}`);
     });
     
-    console.log(`   ✅ Found ${incoming.length} incoming transition(s):`);
+    console.log(`   âœ… Found ${incoming.length} incoming transition(s):`);
     incoming.forEach(t => {
       console.log(`      ${t.from} --${t.event}--> ${t.to}`);
     });
@@ -692,7 +747,7 @@ _getIncomingTransitions(targetState, projectPath) {
     return incoming;
     
   } catch (error) {
-    console.log(`   ❌ Error loading discovery cache: ${error.message}`);
+    console.log(`   âŒ Error loading discovery cache: ${error.message}`);
     return [];
   }
 }
@@ -756,7 +811,7 @@ _getIncomingTransitions(targetState, projectPath) {
  * @returns {Array} Array of transition objects with actionDetails
  */
 _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, previousStatus = null, implFilePath = null) {
-  console.log(`\n🔍 === _extractActionDetailsFromTransition ===`);
+  console.log(`\nðŸ” === _extractActionDetailsFromTransition ===`);
   console.log(`   targetStateName: ${targetStateName}`);
   console.log(`   platform: ${platform}`);
   console.log(`   previousStatus: ${previousStatus}`);
@@ -766,32 +821,32 @@ _extractActionDetailsFromTransition(xstateConfig, targetStateName, platform, pre
   
   const allTransitions = [];
   
-  // ✅ STEP 1: Get ALL incoming transitions from discovery cache
+  // âœ… STEP 1: Get ALL incoming transitions from discovery cache
   const incomingTransitions = this._getIncomingTransitions(targetStateName, this.projectPath);
   
-  console.log(`   📥 Got ${incomingTransitions.length} incoming transitions`);
+  console.log(`   ðŸ“¥ Got ${incomingTransitions.length} incoming transitions`);
   incomingTransitions.forEach(t => {
     console.log(`      - ${t.from} --${t.event}--> ${t.to}`);
   });
   
   if (incomingTransitions.length === 0) {
-    console.log(`   ⚠️  No incoming transitions found in discovery cache`);
-    console.log(`   ⚠️  Falling back to previousStatus search...`);
+    console.log(`   âš ï¸  No incoming transitions found in discovery cache`);
+    console.log(`   âš ï¸  Falling back to previousStatus search...`);
   }
   
-  // ✅ STEP 2: For each incoming transition, load the source file and extract actionDetails
-  // ✅ RIGHT - transition.from is already the status!
+  // âœ… STEP 2: For each incoming transition, load the source file and extract actionDetails
+  // âœ… RIGHT - transition.from is already the status!
 for (const transition of incomingTransitions) {
-  console.log(`\n📂 Processing transition: ${transition.from} --${transition.event}--> ${transition.to}`);
+  console.log(`\nðŸ“‚ Processing transition: ${transition.from} --${transition.event}--> ${transition.to}`);
   
-  // ✅ transition.from contains the status name (e.g., "booking_pending")
+  // âœ… transition.from contains the status name (e.g., "booking_pending")
   // But discovery is returning className, not status! Let's check the cache structure...
   
   // Find the source file using the "from" state
   const sourceFile = this._findImplicationFile(transition.from, implFilePath);
     
     if (!sourceFile || !fs.existsSync(sourceFile)) {
-      console.log(`   ❌ Source file not found for: ${transition.from}`);
+      console.log(`   âŒ Source file not found for: ${transition.from}`);
       continue;
     }
     
@@ -812,15 +867,15 @@ for (const transition of incomingTransitions) {
         actionDetails: actionDetails
       });
       
-      console.log(`   ✅ Extracted actionDetails for ${transition.event}`);
+      console.log(`   âœ… Extracted actionDetails for ${transition.event}`);
     } else {
-      console.log(`   ⚠️  No actionDetails found for ${transition.event}`);
+      console.log(`   âš ï¸  No actionDetails found for ${transition.event}`);
     }
   }
   
-  // ✅ STEP 3: Fallback - if discovery cache had no results, use old method
+  // âœ… STEP 3: Fallback - if discovery cache had no results, use old method
   if (allTransitions.length === 0 && previousStatus && implFilePath) {
-    console.log(`\n📂 Fallback: Checking previous state file...`);
+    console.log(`\nðŸ“‚ Fallback: Checking previous state file...`);
     console.log(`   Previous Status: ${previousStatus}`);
     
     const previousFile = this._findImplicationFile(previousStatus, implFilePath);
@@ -846,7 +901,7 @@ for (const transition of incomingTransitions) {
     }
   }
   
-  // ✅ STEP 4: Remove duplicates (same event + fromState)
+  // âœ… STEP 4: Remove duplicates (same event + fromState)
   const uniqueTransitions = [];
   const seen = new Set();
   
@@ -858,7 +913,7 @@ for (const transition of incomingTransitions) {
     }
   }
   
-  console.log(`\n✅ === FOUND ${uniqueTransitions.length} UNIQUE TRANSITION(S) ===\n`);
+  console.log(`\nâœ… === FOUND ${uniqueTransitions.length} UNIQUE TRANSITION(S) ===\n`);
   
   return uniqueTransitions;
 }
@@ -927,21 +982,21 @@ _extractActionDetailsViaAST(filePath, eventName, targetStateName) {
  * Get all transitions that lead to a target state from discovery cache
  */
 _getIncomingTransitions(targetState, projectPath) {
-  console.log(`\n🗺️  Finding transitions TO "${targetState}"...`);
+  console.log(`\nðŸ—ºï¸  Finding transitions TO "${targetState}"...`);
   
   try {
     const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
     const discoveryCache = path.join(cacheDir, 'discovery-result.json');
     
     if (!fs.existsSync(discoveryCache)) {
-      console.log(`   ⚠️  No discovery cache found`);
+      console.log(`   âš ï¸  No discovery cache found`);
       return [];
     }
     
     const discovery = JSON.parse(fs.readFileSync(discoveryCache, 'utf-8'));
     
     if (!discovery.transitions) {
-      console.log(`   ⚠️  No transitions in cache`);
+      console.log(`   âš ï¸  No transitions in cache`);
       return [];
     }
     
@@ -952,7 +1007,7 @@ _getIncomingTransitions(targetState, projectPath) {
       return cleanTarget === cleanSearch;
     });
     
-    console.log(`   ✅ Found ${incoming.length} incoming transition(s):`);
+    console.log(`   âœ… Found ${incoming.length} incoming transition(s):`);
     incoming.forEach(t => {
       console.log(`      ${t.from} --${t.event}--> ${t.to}`);
     });
@@ -960,7 +1015,7 @@ _getIncomingTransitions(targetState, projectPath) {
     return incoming;
     
   } catch (error) {
-    console.log(`   ❌ Error loading discovery cache: ${error.message}`);
+    console.log(`   âŒ Error loading discovery cache: ${error.message}`);
     return [];
   }
 }
@@ -1016,7 +1071,7 @@ _parseTransition(eventName, transitionConfig, fromState, targetStateName) {
   
   const cleanTarget = target?.replace(/^#/, '');
   
-  // ✅ Flexible matching
+  // âœ… Flexible matching
   const isMatch = cleanTarget === targetStateName || 
                   cleanTarget === `booking_${targetStateName}` ||
                   cleanTarget.endsWith(`_${targetStateName}`);
@@ -1041,18 +1096,18 @@ _extractXStateFromAST(ast) {
   traverse(ast, {
     ClassProperty(path) {
       if (path.node.static && path.node.key?.name === 'xstateConfig') {
-        console.log('   🔍 Found xstateConfig property in AST');
-        console.log('   📊 Value type:', path.node.value.type);
+        console.log('   ðŸ” Found xstateConfig property in AST');
+        console.log('   ðŸ“Š Value type:', path.node.value.type);
         
         xstateConfig = self._astNodeToObject(path.node.value);
         
-        console.log('   📊 Parsed xstateConfig keys:', Object.keys(xstateConfig || {}));
+        console.log('   ðŸ“Š Parsed xstateConfig keys:', Object.keys(xstateConfig || {}));
         
         if (xstateConfig?.on) {
-          console.log('   📊 on keys:', Object.keys(xstateConfig.on));
-          console.log('   📊 on object:', JSON.stringify(xstateConfig.on, null, 2));
+          console.log('   ðŸ“Š on keys:', Object.keys(xstateConfig.on));
+          console.log('   ðŸ“Š on object:', JSON.stringify(xstateConfig.on, null, 2));
         } else {
-          console.log('   ❌ No "on" property found after parsing!');
+          console.log('   âŒ No "on" property found after parsing!');
         }
       }
     }
@@ -1079,7 +1134,7 @@ _extractXStateFromAST(ast) {
  * Find Implication file for a given status using state registry
  */
 _findImplicationFile(status, currentFilePath) {
-  console.log(`\n🔍 _findImplicationFile:`);
+  console.log(`\nðŸ” _findImplicationFile:`);
   console.log(`   status: "${status}"`);
   console.log(`   currentFilePath: ${currentFilePath}`);
   console.log(`   this.projectPath: ${this.projectPath}`);
@@ -1087,16 +1142,16 @@ _findImplicationFile(status, currentFilePath) {
   const path = require('path');
   const fs = require('fs');
   
-  // ✅ Use project path instead of process.cwd()
+  // âœ… Use project path instead of process.cwd()
   const registryPath = path.join(
     this.projectPath,
     'tests/implications/.state-registry.json'
   );
   
-  console.log(`   📁 Registry path: ${registryPath}`);
-  console.log(`   📁 Exists? ${fs.existsSync(registryPath)}`);
+  console.log(`   ðŸ“ Registry path: ${registryPath}`);
+  console.log(`   ðŸ“ Exists? ${fs.existsSync(registryPath)}`);
   
-  console.log(`   📁 Registry path: ${registryPath}`);
+  console.log(`   ðŸ“ Registry path: ${registryPath}`);
   
   if (fs.existsSync(registryPath)) {
     try {
@@ -1107,7 +1162,7 @@ _findImplicationFile(status, currentFilePath) {
         const implDir = path.dirname(currentFilePath);
         const implFile = path.join(implDir, `${registry[status]}.js`);
         if (fs.existsSync(implFile)) {
-          console.log(`   ✅ Found via registry: ${status} → ${registry[status]}`);
+          console.log(`   âœ… Found via registry: ${status} â†’ ${registry[status]}`);
           return implFile;
         }
       }
@@ -1118,18 +1173,18 @@ _findImplicationFile(status, currentFilePath) {
         const implDir = path.dirname(currentFilePath);
         const implFile = path.join(implDir, `${registry[normalized]}.js`);
         if (fs.existsSync(implFile)) {
-          console.log(`   ✅ Found via registry (normalized): ${status} → ${registry[normalized]}`);
+          console.log(`   âœ… Found via registry (normalized): ${status} â†’ ${registry[normalized]}`);
           return implFile;
         }
       }
     } catch (error) {
-      console.log(`   ⚠️  Could not read registry: ${error.message}`);
+      console.log(`   âš ï¸  Could not read registry: ${error.message}`);
     }
   } else {
-    console.log(`   ⚠️  Registry not found at: ${registryPath}`);
+    console.log(`   âš ï¸  Registry not found at: ${registryPath}`);
   }
   
-  // ✅ STEP 2: Fallback to convention (snake_case → PascalCase)
+  // âœ… STEP 2: Fallback to convention (snake_case â†’ PascalCase)
   const className = status
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -1139,11 +1194,11 @@ _findImplicationFile(status, currentFilePath) {
   const conventionPath = path.join(implDir, `${className}Implications.js`);
   
   if (fs.existsSync(conventionPath)) {
-    console.log(`   ✅ Found via convention: ${status} → ${className}Implications`);
+    console.log(`   âœ… Found via convention: ${status} â†’ ${className}Implications`);
     return conventionPath;
   }
   
-  // ✅ STEP 3: Last resort - scan directory
+  // âœ… STEP 3: Last resort - scan directory
   try {
     const files = fs.readdirSync(implDir)
       .filter(f => f.endsWith('Implications.js'));
@@ -1155,33 +1210,32 @@ _findImplicationFile(status, currentFilePath) {
       // Look for id: 'status' in xstateConfig
       if (content.includes(`id: '${status}'`) || 
           content.includes(`status: '${status}'`)) {
-        console.log(`   ✅ Found via scan: ${status} → ${file}`);
+        console.log(`   âœ… Found via scan: ${status} â†’ ${file}`);
         return filePath;
       }
     }
   } catch (error) {
-    console.log(`   ⚠️  Could not scan directory: ${error.message}`);
+    console.log(`   âš ï¸  Could not scan directory: ${error.message}`);
   }
   
-  console.log(`   ❌ Not found: ${status}`);
+  console.log(`   âŒ Not found: ${status}`);
   return null;
 }
   
   /**
    * Build template context from metadata
    */
-_buildContext(metadata, platform, ImplClass) {
+_buildContext(metadata, platform, ImplClass) {  // âœ… Add ImplClass parameter!
   const implClassName = metadata.className;
   const targetStatus = metadata.status;
   
-  // ✅ Determine test mode
+  // âœ… NEW: Determine test mode
   const { mode, transition } = this._determineTestMode(
-    ImplClass,
+    ImplClass,  // âœ… Use parameter, not metadata.ImplClass!
     platform,
     targetStatus
   );
   
-  // ✅ FIX: Define these BEFORE using them in context
   const isInducer = mode === 'inducer';
   const isVerify = mode === 'verify';
     const actionName = this._generateActionName(metadata); 
@@ -1204,8 +1258,8 @@ _buildContext(metadata, platform, ImplClass) {
     // Entity logic (for things like bookings, users, etc.)
     const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
   
-  // 🐛 ADD THIS DEBUG:
-  console.log(`\n🐛 DEBUG hasEntityLogic:`);
+  // ðŸ› ADD THIS DEBUG:
+  console.log(`\nðŸ› DEBUG hasEntityLogic:`);
   console.log(`   entry: ${JSON.stringify(metadata.entry)}`);
   console.log(`   entry.toString(): ${metadata.entry?.toString()}`);
   console.log(`   hasEntityLogic: ${hasEntityLogic}`);
@@ -1214,7 +1268,7 @@ _buildContext(metadata, platform, ImplClass) {
 
     
    // Line 649-651 (BEFORE calling _extractDeltaFields)
-console.log('\n🐛 DEBUG Delta Extraction:');
+console.log('\nðŸ› DEBUG Delta Extraction:');
 console.log(`   metadata.entry:`, metadata.entry);
 console.log(`   typeof:`, typeof metadata.entry);
 const deltaFields = this._extractDeltaFields(metadata.entry, targetStatus);
@@ -1225,7 +1279,7 @@ console.log(`   deltaFields:`, deltaFields);
      // Action details
     const hasActionDetails = !!metadata.actionDetails;
     
-    // ✅ ADD NAVIGATION EXTRACTION
+    // âœ… ADD NAVIGATION EXTRACTION
     const navigation = hasActionDetails 
       ? this._extractNavigation(metadata.actionDetails)
       : null;
@@ -1233,10 +1287,10 @@ console.log(`   deltaFields:`, deltaFields);
     // Test cases
     const testCases = this._generateTestCases(metadata, entityName);
     
-    // âœ¨ NEW: Calculate smart import paths
+    // Ã¢Å“Â¨ NEW: Calculate smart import paths
     const paths = this._calculateImportPaths();
     
-    // âœ¨ FIX #5: Extract action from triggeredBy
+    // Ã¢Å“Â¨ FIX #5: Extract action from triggeredBy
     const triggeredByAction = this._extractTriggeredByAction(metadata);
     const transitionInfo = this._extractTransitionInfo(metadata, targetStatus);
 const uiScreens = this._getUIScreensForPlatform(metadata.mirrorsOn, platform);
@@ -1249,7 +1303,7 @@ const smartTODOComment = this._generateSmartTODO(
   { implClassName, actionName, testFileName, platform }
 );
     
-    // âœ¨ FIX #6: Extract UI validation screens
+    // Ã¢Å“Â¨ FIX #6: Extract UI validation screens
     const uiValidation = {
   hasValidation: false,
   screens: []
@@ -1268,15 +1322,13 @@ if (metadata.mirrorsOn?.UI) {
     uiValidation.hasValidation = validationScreens.length > 0;
     uiValidation.screens = validationScreens;
     
-    console.log(`   ✅ Function-aware validation: ${validationScreens.length} screens`);
+    console.log(`   âœ… Function-aware validation: ${validationScreens.length} screens`);
   }
 }
     
     // Build context
     const context = {
   // Header
-   isInducer,  // ✅ Now defined!
-    isVerify,   // ✅ Now defined!
   timestamp: new Date().toISOString(),
   implClassName,
   platform,
@@ -1285,7 +1337,7 @@ if (metadata.mirrorsOn?.UI) {
   previousStatus: metadata.previousStatus,
   meta: metadata.meta || {},
   
-  // ✅ NEW: Transition context
+  // âœ… NEW: Transition context
   transitionEvent: this.currentTransition?.event || null,
   transitionFrom: this.currentTransition?.fromState || metadata.previousStatus || null,
   transitionTo: targetStatus,
@@ -1305,18 +1357,21 @@ if (metadata.mirrorsOn?.UI) {
   testPlannerPath: paths.testPlanner,
   testSetupPath: paths.testSetup,
   
+  // ✅ NEW: Setup configuration from ai-testing.config.js
+  setupConfig: this._loadSetupConfig(platform),
+  
   // Function
   actionName,
   actionDescription,  // Keep this for backward compatibility
   testFileName,
   testDescription: `${targetStatus} State Transition`,
   
-  // ✅ NEW: Better descriptions
+  // âœ… NEW: Better descriptions
   transitionDescription: this.currentTransition?.event 
-    ? `${this.currentTransition.event} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+    ? `${this.currentTransition.event} (${this.currentTransition.fromState || 'unknown'} â†’ ${targetStatus})`
     : `Transition to ${targetStatus} state`,
   deltaLabel: this.currentTransition?.event
-    ? `${this._toTitleCase(this.currentTransition.event.replace(/_/g, ' '))} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+    ? `${this._toTitleCase(this.currentTransition.event.replace(/_/g, ' '))} (${this.currentTransition.fromState || 'unknown'} â†’ ${targetStatus})`
     : `${targetStatus} State`,
       
       // Prerequisites
@@ -1332,15 +1387,15 @@ if (metadata.mirrorsOn?.UI) {
       entityName,
       
       // Action
-     // ✅ NEW: Support multiple transitions
+     // âœ… NEW: Support multiple transitions
   allTransitions: metadata.allTransitions || [],
   hasMultipleTransitions: (metadata.allTransitions || []).length > 1,
   
   // Keep backward compatibility (first transition)
   hasActionDetails: !!metadata.actionDetails,
   actionDetails: metadata.actionDetails,
-      hasNavigation: !!navigation, // ✅ ADD THIS
-      navigation: navigation,       // ✅ ADD THIS
+      hasNavigation: !!navigation, // âœ… ADD THIS
+      navigation: navigation,       // âœ… ADD THIS
       triggerButton: metadata.triggerButton,
       navigationExample: this._generateNavigationExample(platform, metadata),
       actionExample: this._generateActionExample(metadata, platform),
@@ -1349,7 +1404,7 @@ if (metadata.mirrorsOn?.UI) {
 transitionInfo,
 suggestedScreens, 
       
-      // âœ¨ FIX #5: Extracted action from triggeredBy
+      // Ã¢Å“Â¨ FIX #5: Extracted action from triggeredBy
       hasTriggeredByAction: triggeredByAction.hasAction,
       triggeredByActionCall: triggeredByAction.actionCall,
       triggeredByInstanceName: triggeredByAction.instanceName,
@@ -1362,7 +1417,7 @@ suggestedScreens,
       hasHelperFunctions: false,
       helperFunctions: [],
       
-      // âœ¨ FIX #6: UI Validation screens
+      // Ã¢Å“Â¨ FIX #6: UI Validation screens
       hasUIValidation: uiValidation.hasValidation,
       validationScreens: uiValidation.screens,
       useExpectImplication: true,
@@ -1374,22 +1429,22 @@ suggestedScreens,
       // Change log
       changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : 'State'}`,
     };
-    // ✅ ADD THIS DEBUG
-console.log('\n🐛 DEBUG Context:');
+    // âœ… ADD THIS DEBUG
+console.log('\nðŸ› DEBUG Context:');
 console.log(`   meta:`, context.meta);
 console.log(`   meta.entity:`, context.meta?.entity);
 console.log(`   hasDeltaLogic:`, context.hasDeltaLogic);
 console.log(`   deltaFields:`, context.deltaFields);
-// ✅ ADD THIS DEBUG RIGHT BEFORE return context;
-console.log('\n🐛 DEBUG Navigation Context:');
+// âœ… ADD THIS DEBUG RIGHT BEFORE return context;
+console.log('\nðŸ› DEBUG Navigation Context:');
 console.log('   hasNavigation:', context.hasNavigation);
 console.log('   navigation:', JSON.stringify(context.navigation, null, 2));
 console.log('   hasActionDetails:', context.hasActionDetails);
 console.log('   actionDetails.navigationMethod:', context.actionDetails?.navigationMethod);
 console.log('   actionDetails.navigationFile:', context.actionDetails?.navigationFile);
 console.log('');
-// ✅ ADD THIS DEBUG RIGHT BEFORE return context;
-console.log('\n🐛 DEBUG CONTEXT BEFORE TEMPLATE:');
+// âœ… ADD THIS DEBUG RIGHT BEFORE return context;
+console.log('\nðŸ› DEBUG CONTEXT BEFORE TEMPLATE:');
 console.log('   platformKey:', context.platformKey);
 console.log('   platform:', context.platform);
 console.log('');
@@ -1406,10 +1461,10 @@ console.log('');
    * 
    * Examples:
    *   apps/cms/tests/implications/pages/CMSPageImplications.js
-   *   â†’ ../../utils/TestContext (if utils at apps/cms/tests/utils)
+   *   Ã¢â€ â€™ ../../utils/TestContext (if utils at apps/cms/tests/utils)
    * 
    *   tests/implications/bookings/AcceptedBookingImplications.js
-   *   â†’ ../utils/TestContext (if utils at tests/utils)
+   *   Ã¢â€ â€™ ../utils/TestContext (if utils at tests/utils)
    * 
    * @returns {object} { testContext, testPlanner }
    */
@@ -1419,7 +1474,7 @@ console.log('');
     
     if (!implFilePath) {
       // Fallback to safe default
-      console.log('   âš ï¸  No implFilePath set, using default paths');
+      console.log('   Ã¢Å¡Â Ã¯Â¸Â  No implFilePath set, using default paths');
       return {
   testContext: `${relativePath}/TestContext`,
   testPlanner: `${relativePath}/TestPlanner`,
@@ -1439,7 +1494,7 @@ console.log('');
         // Extract base tests directory
         const testsIndex = implDir.indexOf('/tests/');
         const testsBase = implDir.substring(0, testsIndex + 6); // Keep '/tests'
-        // âœ… FIX #1: Changed from 'utils' to 'ai-testing/utils'
+        // Ã¢Å“â€¦ FIX #1: Changed from 'utils' to 'ai-testing/utils'
         utilsPath = path.join(testsBase, 'ai-testing/utils');
       } else {
   // Fallback - resolve relative to project root
@@ -1458,7 +1513,7 @@ console.log('');
     if (!relativePath.startsWith('.')) {
       relativePath = './' + relativePath;
     }
-console.log(`   📂 Smart paths: ${relativePath}/TestContext`);
+console.log(`   ðŸ“‚ Smart paths: ${relativePath}/TestContext`);
 
 // Calculate helpers path (parallel to ai-testing/utils)
 const helpersPath = utilsPath.replace('/ai-testing/utils', '/helpers');
@@ -1552,7 +1607,7 @@ _formatRequirementValue(key, value) {
     }
     
     if (!assignmentObj) {
-      console.log('   âš ï¸  Could not extract assignment object from entry');
+      console.log('   Ã¢Å¡Â Ã¯Â¸Â  Could not extract assignment object from entry');
       
       // Fallback: just add status
       fields.push({
@@ -1568,15 +1623,15 @@ _formatRequirementValue(key, value) {
       let value;
       
      if (typeof fieldValue === 'string') {
-  // ✅ Check if it's a template placeholder like {{email}} or {{timestamp}}
+  // âœ… Check if it's a template placeholder like {{email}} or {{timestamp}}
   if (fieldValue.startsWith('{{') && fieldValue.endsWith('}}')) {
     const varName = fieldValue.slice(2, -2); // Remove {{ and }}
     
-    // Special case: {{timestamp}} → now
+    // Special case: {{timestamp}} â†’ now
     if (varName === 'timestamp') {
       value = 'now';
     } else {
-      // Convert {{email}} → ctx.data.email
+      // Convert {{email}} â†’ ctx.data.email
       value = `ctx.data.${varName}`;
     }
   } else {
@@ -1640,13 +1695,13 @@ _formatRequirementValue(key, value) {
 
   _getUIScreensForPlatform(mirrorsOn, platform) {
   if (!mirrorsOn) {
-    console.log('   ⚠️  No mirrorsOn found');
+    console.log('   âš ï¸  No mirrorsOn found');
     return {};
   }
   
   // Check if there's a UI property
   if (!mirrorsOn.UI) {
-    console.log('   ⚠️  No mirrorsOn.UI found');
+    console.log('   âš ï¸  No mirrorsOn.UI found');
     return {};
   }
   
@@ -1657,11 +1712,11 @@ _formatRequirementValue(key, value) {
   const platformScreens = mirrorsOn.UI[platformKey];
   
   if (!platformScreens) {
-    console.log(`   ⚠️  No screens found for platform: ${platformKey}`);
+    console.log(`   âš ï¸  No screens found for platform: ${platformKey}`);
     return {};
   }
   
-  console.log(`   ✅ Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformScreens).length} screens`);
+  console.log(`   âœ… Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformScreens).length} screens`);
   return platformScreens;
 }
   
@@ -1669,7 +1724,7 @@ _formatRequirementValue(key, value) {
    * Should we generate entity logic (e.g., bookings[0])?
    */
 _shouldGenerateEntityLogic(metadata) {
-  // ✅ GENERIC - checks for any array operations
+  // âœ… GENERIC - checks for any array operations
   if (!metadata || !metadata.entry) return false;
   
   const entryStr = metadata.entry?.toString() || '';
@@ -1868,7 +1923,7 @@ _shouldGenerateEntityLogic(metadata) {
  * Fallback: If no source state, just use target (camelCase)
  */
 _generateActionName(metadata) {
-  console.log('\n🏷️  === _generateActionName called ===');
+  console.log('\nðŸ·ï¸  === _generateActionName called ===');
   console.log('   metadata.status:', metadata.status);
   console.log('   typeof metadata.status:', typeof metadata.status);
   console.log('   this.currentTransition:', this.currentTransition);
@@ -1877,22 +1932,22 @@ _generateActionName(metadata) {
   // Check if we have transition context
   if (this.currentTransition?.fromState) {
     const targetCamel = this._toCamelCase(metadata.status);
-    console.log('   🎯 targetCamel:', targetCamel);
+    console.log('   ðŸŽ¯ targetCamel:', targetCamel);
     
     const sourceCamel = this._toCamelCase(this.currentTransition.fromState);
-    console.log('   🎯 sourceCamel:', sourceCamel);
+    console.log('   ðŸŽ¯ sourceCamel:', sourceCamel);
     
     // Capitalize first letter of source for "Via" style
     const sourceCapitalized = sourceCamel.charAt(0).toUpperCase() + sourceCamel.slice(1);
-    console.log('   🎯 sourceCapitalized:', sourceCapitalized);
+    console.log('   ðŸŽ¯ sourceCapitalized:', sourceCapitalized);
     
     const fullName = `${targetCamel}Via${sourceCapitalized}`;
-    console.log('   ✅ fullName:', fullName);
+    console.log('   âœ… fullName:', fullName);
     
     return fullName;
   }
   
-  console.log('   ⚠️  No transition context, falling back...');
+  console.log('   âš ï¸  No transition context, falling back...');
   
   // Fallback: Check metadata
   if (metadata.actionName) {
@@ -1905,7 +1960,7 @@ _generateActionName(metadata) {
   
   // Last resort: Just convert to camelCase
   const fallback = this._toCamelCase(metadata.status);
-  console.log('   ⚠️  Using fallback:', fallback);
+  console.log('   âš ï¸  Using fallback:', fallback);
   return fallback;
 }
   
@@ -1938,7 +1993,7 @@ _generateFileName(metadata, platform, options = {}) {
   const action = this._toPascalCase(actionName);
   const platformSuffix = this._getPlatformSuffix(platform);
   
-  // ✅ If event provided, include it in filename
+  // âœ… If event provided, include it in filename
 if (event) {
   const eventName = this._toPascalCase(event);
   return `${action}-${eventName}-${platformSuffix}-UNIT.spec.js`;
@@ -1978,28 +2033,28 @@ if (event) {
     return true;
   }
   
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
   // GENERIC HELPERS (NO DOMAIN KNOWLEDGE!)
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
   
   /**
    * Convert string to camelCase
    * Examples:
-   *   approved â†’ approved
-   *   checked_in â†’ checkedIn
-   *   in-review â†’ inReview
-   *   Published â†’ published
+   *   approved Ã¢â€ â€™ approved
+   *   checked_in Ã¢â€ â€™ checkedIn
+   *   in-review Ã¢â€ â€™ inReview
+   *   Published Ã¢â€ â€™ published
    */
  /**
  * Convert string to camelCase
  * Handles: snake_case, spaces, hyphens, PascalCase
  * 
  * Examples:
- *   approved → approved
- *   checked_in → checkedIn
- *   Booking Standby → bookingStandby
- *   in-review → inReview
- *   Published → published
+ *   approved â†’ approved
+ *   checked_in â†’ checkedIn
+ *   Booking Standby â†’ bookingStandby
+ *   in-review â†’ inReview
+ *   Published â†’ published
  */
 _toCamelCase(str) {
   if (!str) return '';
@@ -2019,9 +2074,9 @@ _toCamelCase(str) {
   /**
    * Convert string to PascalCase
    * Examples:
-   *   approved â†’ Approved
-   *   checked_in â†’ CheckedIn
-   *   draft â†’ Draft
+   *   approved Ã¢â€ â€™ Approved
+   *   checked_in Ã¢â€ â€™ CheckedIn
+   *   draft Ã¢â€ â€™ Draft
    */
   _toPascalCase(str) {
     if (!str) return '';
@@ -2039,15 +2094,15 @@ _toCamelCase(str) {
    * Infer action name from status (generic, no domain knowledge)
    * 
    * Conventions:
-   * - Remove 'ed' suffix if present: approved â†’ approve
-   * - Convert to camelCase: checked_in â†’ checkIn
-   * - Leave as-is if can't infer: draft â†’ draft
+   * - Remove 'ed' suffix if present: approved Ã¢â€ â€™ approve
+   * - Convert to camelCase: checked_in Ã¢â€ â€™ checkIn
+   * - Leave as-is if can't infer: draft Ã¢â€ â€™ draft
    * 
    * Examples:
-   *   approved â†’ approve
-   *   checked_in â†’ checkIn
-   *   draft â†’ draft
-   *   published â†’ publish
+   *   approved Ã¢â€ â€™ approve
+   *   checked_in Ã¢â€ â€™ checkIn
+   *   draft Ã¢â€ â€™ draft
+   *   published Ã¢â€ â€™ publish
    */
   _inferActionName(status) {
     if (!status) return 'action';
@@ -2057,10 +2112,10 @@ _toCamelCase(str) {
     
     // Remove common suffixes
     if (name.endsWith('ed') && name.length > 3) {
-      // approved â†’ approve, published â†’ publish
+      // approved Ã¢â€ â€™ approve, published Ã¢â€ â€™ publish
       name = name.slice(0, -2);
     } else if (name.endsWith('ing') && name.length > 4) {
-      // filling â†’ fill
+      // filling Ã¢â€ â€™ fill
       name = name.slice(0, -3);
     }
     
@@ -2076,7 +2131,7 @@ _toCamelCase(str) {
   }
   
   /**
-   * âœ¨ FIX #5: Extract action code from triggeredBy
+   * Ã¢Å“Â¨ FIX #5: Extract action code from triggeredBy
    * 
    * Parses mirrorsOn.triggeredBy[0].action to extract the actual action call.
    * 
@@ -2201,13 +2256,13 @@ _extractSuggestedScreens(uiScreens) {
   }
   
   for (const [screenKey, def] of Object.entries(uiScreens)) {
-    // ✅ Skip non-screen properties (description, etc.)
+    // âœ… Skip non-screen properties (description, etc.)
     if (screenKey === 'description' || typeof def === 'string') {
-      console.log(`   ⏭️  Skipping non-screen property: ${screenKey}`);
+      console.log(`   â­ï¸  Skipping non-screen property: ${screenKey}`);
       continue;
     }
     
-    // ✅ Handle both array and object formats
+    // âœ… Handle both array and object formats
     let screenDef;
     
     if (Array.isArray(def)) {
@@ -2217,17 +2272,17 @@ _extractSuggestedScreens(uiScreens) {
       // Object format: { screen: 'name', visible: [...] }
       screenDef = def;
     } else {
-      console.warn(`   ⚠️  Skipping invalid screen definition for ${screenKey}`);
+      console.warn(`   âš ï¸  Skipping invalid screen definition for ${screenKey}`);
       continue;
     }
     
-    // ✅ Safety check for screen property
+    // âœ… Safety check for screen property
     if (!screenDef) {
-      console.warn(`   ⚠️  Screen definition is undefined for ${screenKey}`);
+      console.warn(`   âš ï¸  Screen definition is undefined for ${screenKey}`);
       continue;
     }
     
-    // ✅ Extract screen name (handle different structures)
+    // âœ… Extract screen name (handle different structures)
     let screenName;
     
     if (screenDef.screen) {
@@ -2243,11 +2298,11 @@ _extractSuggestedScreens(uiScreens) {
       screenName = screenKey;
     }
     
-    // ✅ Build suggested screen object with 'file' property (used by _generateSmartTODO)
+    // âœ… Build suggested screen object with 'file' property (used by _generateSmartTODO)
     suggestedScreens.push({
       key: screenKey,
       screen: screenName,
-      file: screenName,  // ✅ ADD THIS - used in _generateSmartTODO
+      file: screenName,  // âœ… ADD THIS - used in _generateSmartTODO
       instance: screenDef.instance || screenKey.toLowerCase(),
       visible: screenDef.visible || [],
       hidden: screenDef.hidden || [],
@@ -2255,7 +2310,7 @@ _extractSuggestedScreens(uiScreens) {
       description: screenDef.description || null
     });
     
-    console.log(`   ✅ Extracted screen: ${screenKey} → ${screenName}`);
+    console.log(`   âœ… Extracted screen: ${screenKey} â†’ ${screenName}`);
   }
   
   return suggestedScreens;
@@ -2264,24 +2319,24 @@ _calculateScreenObjectPath(implFilePath, screenFile) {
   const path = require('path');
   const fs = require('fs');
   
-  console.log(`\n📍 _calculateScreenObjectPath called:`);
+  console.log(`\nðŸ“ _calculateScreenObjectPath called:`);
   console.log(`   implFilePath: ${implFilePath}`);
   console.log(`   screenFile: ${screenFile}`);
   
-  // ✅ NEW: If screenFile is already an absolute or project-relative path, use it directly
- // ✅ NEW: If screenFile is already an absolute or project-relative path, use it directly
+  // âœ… NEW: If screenFile is already an absolute or project-relative path, use it directly
+ // âœ… NEW: If screenFile is already an absolute or project-relative path, use it directly
 if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.startsWith('mobile/')) {
-  console.log(`   ✅ Detected full/project-relative path`);
+  console.log(`   âœ… Detected full/project-relative path`);
   
   const implDir = path.dirname(implFilePath);
-  console.log(`   📁 Test directory: ${implDir}`);
+  console.log(`   ðŸ“ Test directory: ${implDir}`);
   
-  // ✅ FIX: Just use the path as-is, don't strip anything!
+  // âœ… FIX: Just use the path as-is, don't strip anything!
   const absoluteScreenPath = screenFile.startsWith('/') 
     ? screenFile 
-    : path.join(this.projectPath, screenFile);  // ✅ Use FULL path as stored!
+    : path.join(this.projectPath, screenFile);  // âœ… Use FULL path as stored!
   
-  console.log(`   📁 Absolute screen path: ${absoluteScreenPath}`);
+  console.log(`   ðŸ“ Absolute screen path: ${absoluteScreenPath}`);
   
   // Calculate relative path from test location to screen file
   let relativePath = path.relative(implDir, absoluteScreenPath);
@@ -2293,21 +2348,21 @@ if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.
     relativePath = './' + relativePath;
   }
   
-  console.log(`   ✅ Calculated relative path: ${relativePath}`);
+  console.log(`   âœ… Calculated relative path: ${relativePath}`);
   return relativePath;
 }
   
-  // ✅ ORIGINAL LOGIC: For simple filenames like "StatusRequests.screen"
-  console.log(`   🔍 Treating as filename, searching for screenObjects directory...`);
+  // âœ… ORIGINAL LOGIC: For simple filenames like "StatusRequests.screen"
+  console.log(`   ðŸ” Treating as filename, searching for screenObjects directory...`);
   
   // Get directory of Implication file (where test will be generated)
   const implDir = path.dirname(implFilePath);
   
-  // ✅ STEP 1: Find screenObjects directory by walking up
+  // âœ… STEP 1: Find screenObjects directory by walking up
   let screenObjectsDir = this._findScreenObjectsDir(implFilePath);
   
   if (!screenObjectsDir) {
-    // ✅ FALLBACK: Try common patterns
+    // âœ… FALLBACK: Try common patterns
     const projectRoot = this._findProjectRoot(implFilePath);
     
     // Try different possible locations:
@@ -2321,7 +2376,7 @@ if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.
     for (const possiblePath of possiblePaths) {
       if (fs.existsSync(possiblePath)) {
         screenObjectsDir = possiblePath;
-        console.log(`   📂 Found screenObjects at: ${possiblePath}`);
+        console.log(`   ðŸ“‚ Found screenObjects at: ${possiblePath}`);
         break;
       }
     }
@@ -2329,14 +2384,14 @@ if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.
   
   if (!screenObjectsDir) {
     // Last resort fallback - assume relative to tests/
-    console.warn(`   ⚠️  Could not find screenObjects directory, using fallback`);
+    console.warn(`   âš ï¸  Could not find screenObjects directory, using fallback`);
     return `../screenObjects/${screenFile}.js`;
   }
   
-  // ✅ STEP 2: Build full path to screen object file
+  // âœ… STEP 2: Build full path to screen object file
   const screenObjectFile = path.join(screenObjectsDir, `${screenFile}.js`);
   
-  // ✅ STEP 3: Calculate relative path from test location to screen object
+  // âœ… STEP 3: Calculate relative path from test location to screen object
   let relativePath = path.relative(implDir, screenObjectFile);
   
   // Normalize for require() - use forward slashes
@@ -2347,7 +2402,7 @@ if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.
     relativePath = './' + relativePath;
   }
   
-  console.log(`   📍 Screen path: ${screenFile} → ${relativePath}`);
+  console.log(`   ðŸ“ Screen path: ${screenFile} â†’ ${relativePath}`);
   
   return relativePath;
 }
@@ -2376,7 +2431,7 @@ _findScreenObjectsDir(startPath) {
       const screenObjectsPath = path.join(currentDir, name);
       
       if (fs.existsSync(screenObjectsPath) && fs.statSync(screenObjectsPath).isDirectory()) {
-        console.log(`   ✅ Found screenObjects: ${screenObjectsPath}`);
+        console.log(`   âœ… Found screenObjects: ${screenObjectsPath}`);
         return screenObjectsPath;
       }
     }
@@ -2394,10 +2449,9 @@ _findScreenObjectsDir(startPath) {
  * Process actionDetails imports with calculated paths
  * AND add entity to each step for template access
  */
-_processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath, platform) {  // ✅ Add platform param
-  console.log('\n📍 _processActionDetailsImports called:');
+_processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
+  console.log('\nðŸ“ _processActionDetailsImports called:');
   console.log('   implFilePath:', implFilePath);
-  console.log('   platform:', platform);  // ✅ Log platform
   
   if (!actionDetails) {
     return actionDetails;
@@ -2407,43 +2461,27 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath, pla
   
   // Process imports if they exist
   if (processed.imports) {
-    console.log(`   📦 Processing ${processed.imports.length} import(s)...`);
+    console.log(`   ðŸ“¦ Processing ${processed.imports.length} import(s)...`);
     
     processed.imports = processed.imports.map(imp => {
-      console.log(`\n   🔍 Import: ${imp.className}`);
-      console.log(`      original path: ${imp.path}`);
-      
-      // ✅ NEW: Adjust path based on target platform
-      let adjustedPath = imp.path;
-      
-      // If path contains platform-specific directory, replace it
-      if (platform === 'web' && imp.path.includes('mobile/')) {
-        // Replace mobile path with web path
-        adjustedPath = imp.path.replace(/mobile\/android\/(dancer|manager)/, 'web/current');
-        console.log(`      ✅ Adjusted for web: ${adjustedPath}`);
-      } else if ((platform === 'dancer' || platform === 'clubApp') && imp.path.includes('web/')) {
-        // Replace web path with mobile path
-        const mobileApp = platform === 'dancer' ? 'dancer' : 'manager';
-        adjustedPath = imp.path.replace(/web\/current/, `mobile/android/${mobileApp}`);
-        console.log(`      ✅ Adjusted for mobile: ${adjustedPath}`);
-      }
+      console.log(`\n   ðŸ” Import: ${imp.className}`);
+      console.log(`      path: ${imp.path}`);
       
       const relativePath = this._calculateScreenObjectPath(
         implFilePath,
-        adjustedPath  // ✅ Use adjusted path
+        imp.path
       );
       
-      console.log(`      ✅ relativePath: ${relativePath}`);
+      console.log(`      âœ… relativePath: ${relativePath}`);
       
       return {
         ...imp,
-        path: adjustedPath,  // ✅ Store adjusted path
         relativePath
       };
     });
   }
   
-  // ✅ Get entity from metadata that's ALREADY in context
+  // âœ… Get entity from metadata that's ALREADY in context
   // (Don't call _extractMetadata again - that causes recursion!)
   const entity = this.currentMetadata?.meta?.entity || null;
   
@@ -2462,15 +2500,21 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath, pla
         ...step,
         args: argsString,
         argsArray: argsArray,
-        entity: entity  // ✅ Use entity from stored metadata
+        entity: entity  // âœ… Use entity from stored metadata
       };
     });
     
-    console.log(`   ✅ Processed ${processed.steps.length} step(s) with entity: ${entity}`);
+    console.log(`   âœ… Processed ${processed.steps.length} step(s) with entity: ${entity}`);
   }
   
   return processed;
 }
+/**
+ * Extract navigation from actionDetails
+ * 
+ * @param {object} actionDetails - Action details with optional navigationMethod
+ * @returns {object|null} { method, instance, args } or null
+ */
 /**
  * Extract navigation from actionDetails
  */
@@ -2486,7 +2530,7 @@ _extractNavigation(actionDetails) {
   const match = navMethod.match(/^([^(]+)\(([^)]*)\)/);
   
   if (!match) {
-    console.warn('⚠️ Could not parse navigation method:', navMethod);
+    console.warn('âš ï¸ Could not parse navigation method:', navMethod);
     return null;
   }
 
@@ -2494,66 +2538,16 @@ _extractNavigation(actionDetails) {
   const paramsStr = match[2];
   const params = paramsStr ? paramsStr.split(',').map(p => p.trim()) : [];
 
-  // Build instance name from file: NavigationActions → navigationActions
+  // Build instance name from file: NavigationActions â†’ navigationActions
   const instanceName = navFile.charAt(0).toLowerCase() + navFile.slice(1);
-
-  // ✅ NEW: Build path to navigation file
-  const navPath = this._findNavigationFilePath(navFile);
 
   return {
     method: methodName,
-    signature: navMethod,
+    signature: navMethod,  // âœ… Keep full signature
     instance: instanceName,
     className: navFile,
-    path: navPath,  // ✅ ADD THIS
     args: params.length > 0 ? params.map(p => `ctx.data.${p}`) : []
   };
-}
-
-_findNavigationFilePath(navigationFileName) {
-  console.log(`\n🔍 Finding navigation path for: ${navigationFileName}`);
-  
-  const normalizedName = navigationFileName.replace(/\.js$/, '');
-  
-  // Search in project
-  if (this.projectPath && this.implFilePath) {
-    const fs = require('fs');
-    const path = require('path');
-    
-    try {
-      // ✅ FIX: Use glob.sync instead of globSync
-      const glob = require('glob');
-      const pattern = `**/${normalizedName}.js`;
-      
-      console.log(`   🔍 Searching: ${pattern}`);
-      
-      const files = glob.sync(pattern, { 
-        cwd: this.projectPath,
-        ignore: ['**/node_modules/**']
-      });
-      
-      console.log(`   📁 Found ${files.length} file(s):`, files);
-      
-      if (files.length > 0) {
-        const navAbsPath = path.join(this.projectPath, files[0]);
-        const implDir = path.dirname(this.implFilePath);
-        let relativePath = path.relative(implDir, navAbsPath).replace(/\.js$/, '');
-        
-        if (!relativePath.startsWith('.')) {
-          relativePath = './' + relativePath;
-        }
-        
-        console.log(`   ✅ Calculated relative path: ${relativePath}`);
-        return relativePath;
-      }
-    } catch (error) {
-      console.warn(`   ❌ Error searching: ${error.message}`);
-    }
-  }
-  
-  // Fallback with TODO comment
-  console.warn(`   ❌ Could not find path for ${normalizedName}`);
-  return `/* TODO: Add path to ${normalizedName} */`;
 }
 
 /**
@@ -2584,11 +2578,11 @@ _findScreenObjectsDir(startPath) {
 _generateSmartTODO(transitionInfo, screens, metadata) {
   const lines = [];
   
-  lines.push('// ═══════════════════════════════════════════════════════════');
-  lines.push('// 🎬 ACTION LOGIC - TODO: Implement State Transition');
-  lines.push('// ═══════════════════════════════════════════════════════════');
+  lines.push('// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+  lines.push('// ðŸŽ¬ ACTION LOGIC - TODO: Implement State Transition');
+  lines.push('// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
   lines.push('//');
-  lines.push(`// This test induces the transition from '${transitionInfo.fromState}' → '${transitionInfo.toState}'`);
+  lines.push(`// This test induces the transition from '${transitionInfo.fromState}' â†’ '${transitionInfo.toState}'`);
   lines.push('//');
   
   if (transitionInfo.event) {
@@ -2600,16 +2594,16 @@ _generateSmartTODO(transitionInfo, screens, metadata) {
   
   // Screen suggestions
   if (screens.length > 0) {
-    lines.push('// ──────────────────────────────────────────────────────────');
-    lines.push('// 💡 Suggested Implementation:');
-    lines.push('// ──────────────────────────────────────────────────────────');
+    lines.push('// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€');
+    lines.push('// ðŸ’¡ Suggested Implementation:');
+    lines.push('// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€');
     lines.push('//');
     lines.push(`// Based on mirrorsOn, you'll need these screen objects:`);
     lines.push('//');
 screens.forEach((screen, index) => {
-  // ✅ Safety check for screen.file
+  // âœ… Safety check for screen.file
   if (!screen.file) {
-    console.warn(`   ⚠️  Screen ${index} has no file property, skipping`);
+    console.warn(`   âš ï¸  Screen ${index} has no file property, skipping`);
     return;
   }
   
@@ -2629,9 +2623,9 @@ screens.forEach((screen, index) => {
   }
   
   // triggeredBy hint
-  lines.push('// ──────────────────────────────────────────────────────────');
-  lines.push(`// 📝 Once implemented, update ${metadata.implClassName}.js:`);
-  lines.push('// ──────────────────────────────────────────────────────────');
+  lines.push('// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€');
+  lines.push(`// ðŸ“ Once implemented, update ${metadata.implClassName}.js:`);
+  lines.push('// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€');
   lines.push('//');
   lines.push('//   static triggeredBy = [{');
   lines.push(`//     description: "${transitionInfo.event || 'Perform action'}",`);
@@ -2642,7 +2636,7 @@ screens.forEach((screen, index) => {
   lines.push('//     }');
   lines.push('//   }];');
   lines.push('//');
-  lines.push('// ═══════════════════════════════════════════════════════════');
+  lines.push('// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
   
   return lines.join('\n');
 }
@@ -2650,7 +2644,7 @@ screens.forEach((screen, index) => {
 
   
   /**
-   * âœ¨ FIX #6: Extract UI validation screens from mirrorsOn
+   * Ã¢Å“Â¨ FIX #6: Extract UI validation screens from mirrorsOn
    * 
    * Extracts which screens need validation for the given platform.
    * 
@@ -2675,37 +2669,37 @@ screens.forEach((screen, index) => {
     
     const mirrorsOn = metadata.mirrorsOn;
     
-    console.log(`   🔍 Extracting UI validation for platform: ${platform}`);
+    console.log(`   ðŸ” Extracting UI validation for platform: ${platform}`);
     
     if (!mirrorsOn || !mirrorsOn.UI) {
-      console.log(`   ⚠️  No mirrorsOn.UI found`);
+      console.log(`   âš ï¸  No mirrorsOn.UI found`);
       return result;
     }
     
-    // Get platform key (convert web → web, dancer → dancer, etc.)
+    // Get platform key (convert web â†’ web, dancer â†’ dancer, etc.)
     const platformKey = this._getPlatformKeyForMirrorsOn(platform);
-    console.log(`   📝 Platform key: ${platform} → ${platformKey}`);
+    console.log(`   ðŸ“ Platform key: ${platform} â†’ ${platformKey}`);
     
     const platformUI = mirrorsOn.UI[platformKey];
     
     if (!platformUI) {
-      console.log(`   ⚠️  No mirrorsOn.UI.${platformKey} found`);
+      console.log(`   âš ï¸  No mirrorsOn.UI.${platformKey} found`);
       console.log(`   Available keys: ${Object.keys(mirrorsOn.UI).join(', ')}`);
       return result;
     }
     
-    console.log(`   ✅ Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformUI).length} screens`);
+    console.log(`   âœ… Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformUI).length} screens`);
     
     // Extract each screen
     for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
       if (!Array.isArray(screenDefs) || screenDefs.length === 0) {
-        console.log(`   ⏭️  Skipping ${screenKey} (not an array or empty)`);
+        console.log(`   â­ï¸  Skipping ${screenKey} (not an array or empty)`);
         continue;
       }
       
       const screenDef = screenDefs[0];  // Take first definition
       
-      // ✅ FIX: Check multiple possible locations for visible/hidden arrays
+      // âœ… FIX: Check multiple possible locations for visible/hidden arrays
       // 1. Direct properties: screenDef.visible, screenDef.hidden
       // 2. Inside checks: screenDef.checks.visible, screenDef.checks.hidden
       // 3. Inside override: screenDef.override.visible, screenDef.override.hidden
@@ -2726,7 +2720,7 @@ screens.forEach((screen, index) => {
       const visibleCount = visibleArray.length || 0;
       const hiddenCount = hiddenArray.length || 0;
       
-      console.log(`   📊 ${screenKey}: visible=${visibleCount}, hidden=${hiddenCount}`);
+      console.log(`   ðŸ“Š ${screenKey}: visible=${visibleCount}, hidden=${hiddenCount}`);
       
       if (visibleCount > 0 || hiddenCount > 0) {
         result.screens.push({
@@ -2739,9 +2733,9 @@ screens.forEach((screen, index) => {
     
     if (result.screens.length > 0) {
       result.hasValidation = true;
-      console.log(`   ✅ UI Validation enabled: ${result.screens.length} screens`);
+      console.log(`   âœ… UI Validation enabled: ${result.screens.length} screens`);
     } else {
-      console.log(`   ⚠️  No screens with visible/hidden elements found`);
+      console.log(`   âš ï¸  No screens with visible/hidden elements found`);
     }
     
     return result;
@@ -2751,17 +2745,17 @@ screens.forEach((screen, index) => {
    * Get platform key for mirrorsOn.UI lookup
    * 
    * Maps platform to mirrorsOn.UI key:
-   *   web → web
-   *   cms → cms  
-   *   dancer → dancer
-   *   manager → clubApp (or manager?)
+   *   web â†’ web
+   *   cms â†’ cms  
+   *   dancer â†’ dancer
+   *   manager â†’ clubApp (or manager?)
    */
   _getPlatformKeyForMirrorsOn(platform) {
     const mapping = {
       'web': 'web',
       'cms': 'cms',
       'dancer': 'dancer',
-      'manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
+      'manager': 'clubApp'  // Ã¢Å“â€¦ Use actual key from mirrorsOn
     };
     
     return mapping[platform] || platform;
@@ -2770,8 +2764,8 @@ screens.forEach((screen, index) => {
   /**
  * Convert string to Title Case
  * Examples:
- *   ACCEPT_BOOKING → Accept Booking
- *   cancel_request → Cancel Request
+ *   ACCEPT_BOOKING â†’ Accept Booking
+ *   cancel_request â†’ Cancel Request
  */
 _toTitleCase(str) {
   if (!str) return '';
@@ -2781,6 +2775,81 @@ _toTitleCase(str) {
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+/**
+ * Load setup configuration from ai-testing.config.js
+ * 
+ * Reads the project's config file and returns setup helpers for the given platform.
+ * 
+ * @param {string} platform - Platform (web, dancer, manager, etc.)
+ * @returns {object|null} Setup configuration or null
+ * 
+ * Example config:
+ *   setup: {
+ *     web: {
+ *       file: "tests/utils/setup.js",
+ *       function: "initiateContext"
+ *     }
+ *   }
+ * 
+ * Returns:
+ *   {
+ *     function: "initiateContext",
+ *     file: "tests/utils/setup.js",
+ *     relativePath: "../../utils/setup"
+ *   }
+ */
+_loadSetupConfig(platform) {
+  try {
+    const configPath = path.join(this.projectPath, 'ai-testing.config.js');
+    
+    if (!fs.existsSync(configPath)) {
+      console.log('   ℹ️  No ai-testing.config.js found');
+      return null;
+    }
+    
+    // Clear require cache to get fresh config
+    delete require.cache[require.resolve(configPath)];
+    const config = require(configPath);
+    
+    if (!config.setup || !config.setup[platform]) {
+      console.log(`   ℹ️  No setup config for platform: ${platform}`);
+      return null;
+    }
+    
+    const setupConfig = config.setup[platform];
+    
+    // Calculate relative path from test file to setup file
+    const testDir = path.dirname(this.implFilePath);
+    const setupFilePath = path.join(this.projectPath, setupConfig.file);
+    let relativePath = path.relative(testDir, setupFilePath);
+    
+    // Normalize for require() - use forward slashes and remove .js extension
+    relativePath = relativePath.split(path.sep).join('/');
+    relativePath = relativePath.replace(/\.js$/, '');
+    
+    // Ensure it starts with ./ or ../
+    if (!relativePath.startsWith('.')) {
+      relativePath = './' + relativePath;
+    }
+    
+    console.log(`   ✅ Found setup config for ${platform}:`);
+    console.log(`      Function: ${setupConfig.function}`);
+    console.log(`      File: ${setupConfig.file}`);
+    console.log(`      Relative: ${relativePath}`);
+    
+    return {
+      function: setupConfig.function,
+      file: setupConfig.file,
+      relativePath: relativePath,
+      signature: setupConfig.signature || '(browser) => page'
+    };
+    
+  } catch (error) {
+    console.log(`   ⚠️  Error loading setup config: ${error.message}`);
+    return null;
+  }
 }
 }
 

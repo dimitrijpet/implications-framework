@@ -117,60 +117,45 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   
 {{#each actionDetails.requires}}
 {{#if (isNegatedField @key)}}
-{{#if (isContainsObject this)}}
-  // Check: {{removeNegation @key}} must NOT contain {{getContainsValue this}}
+  // Check: {{removeNegation @key}} must NOT match {{json this}}
   {
     const fieldPath = '{{removeNegation @key}}';
     const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
-      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
-      : '{{getContainsValue this}}';
+{{#if this.contains}}
+    const valueToCheck = '{{this.contains}}'.startsWith('ctx.data.') 
+      ? '{{this.contains}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
+      : '{{this.contains}}';
     if (Array.isArray(actualValue) && actualValue.includes(valueToCheck)) {
       transitionMissing.push(`${fieldPath} must NOT contain "${valueToCheck}" (actual: [${actualValue.join(', ')}])`);
     }
-  }
 {{else}}
-  // Check: {{removeNegation @key}} must NOT be {{jsonInline this}}
-  {
-    const fieldPath = '{{removeNegation @key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
     if (actualValue === {{json this}}) {
-      transitionMissing.push(`${fieldPath} must NOT be {{jsonInline this}} (actual: ${actualValue})`);
+      transitionMissing.push(`${fieldPath} must NOT be {{json this}} (actual: ${actualValue})`);
     }
-  }
 {{/if}}
+  }
 {{else}}
-{{#if (isContainsObject this)}}
-  // Check: {{@key}} must contain {{getContainsValue this}}
+  // Check: {{@key}} must be {{json this}}
   {
     const fieldPath = '{{@key}}';
     const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
-    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
-      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
-      : '{{getContainsValue this}}';
+{{#if this.contains}}
+    const valueToCheck = '{{this.contains}}'.startsWith('ctx.data.') 
+      ? '{{this.contains}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
+      : '{{this.contains}}';
     if (!Array.isArray(actualValue) || !actualValue.includes(valueToCheck)) {
       transitionMissing.push(`${fieldPath} must contain "${valueToCheck}" (actual: ${JSON.stringify(actualValue)})`);
     }
-  }
 {{else if (isBoolean this)}}
-  // Check: {{@key}} must be {{this}}
-  {
-    const fieldPath = '{{@key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
     if (actualValue !== {{this}}) {
       transitionMissing.push(`${fieldPath} must be {{this}} (actual: ${actualValue})`);
     }
-  }
 {{else}}
-  // Check: {{@key}} must be "{{this}}"
-  {
-    const fieldPath = '{{@key}}';
-    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
     if (actualValue !== '{{this}}') {
       transitionMissing.push(`${fieldPath} must be "{{this}}" (actual: ${actualValue})`);
     }
-  }
 {{/if}}
+  }
 {{/if}}
 {{/each}}
   
