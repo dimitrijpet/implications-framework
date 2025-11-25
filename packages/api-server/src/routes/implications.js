@@ -1598,28 +1598,31 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
         if (!comparisonResult.hasChanges) {
           // ✅ NO CHANGES - Use original AST (preserves mergeWithBase!)
           console.log(`  ✨ Preserving original AST for ${screenName}`);
-          screenArrayNode = originalScreenProp.value;
         } else {
           // ❌ HAS CHANGES - Generate new AST with preserved functions
           console.log(`  🔧 Regenerating AST for ${screenName} (modified)`);
-          screenArrayNode = t.arrayExpression(
-            screens.map(screen => {
-              // ✨ Attach original functions to screen data
-              if (comparisonResult.originalFunctions.prerequisites) {
-                screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
-              }
-              if (comparisonResult.originalFunctions.expect) {
-                screen._originalExpect = comparisonResult.originalFunctions.expect;
-              }
-              return buildScreenAst(screen, screenName, platformName, className, originalContent);
-            })
-          );
+          const builtScreens = screens.map(screen => {
+            // ✨ Attach original functions to screen data
+            if (comparisonResult.originalFunctions.prerequisites) {
+              screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+            }
+            if (comparisonResult.originalFunctions.expect) {
+              screen._originalExpect = comparisonResult.originalFunctions.expect;
+            }
+            return buildScreenAst(screen, screenName, platformName, className, originalContent);
+          });
+          
+          // ✅ FIX: Only wrap in array if multiple screens
+          screenArrayNode = builtScreens.length === 1 
+            ? builtScreens[0] 
+            : t.arrayExpression(builtScreens);
         }
-      } else {
+    } else {
         // New screen - build from scratch
-        screenArrayNode = t.arrayExpression(
-          screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent))
-        );
+        const builtScreens = screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent));
+        screenArrayNode = builtScreens.length === 1 
+          ? builtScreens[0] 
+          : t.arrayExpression(builtScreens);
       }
       
       // Remove from map so we know it's processed
@@ -1639,12 +1642,13 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
   }
   
   // ✅ Add any NEW screens that weren't in original
-  for (const [screenName, screens] of Object.entries(newScreensMap)) {
+    for (const [screenName, screens] of Object.entries(newScreensMap)) {
     console.log(`  ➕ Adding new screen: ${screenName}`);
+    const builtScreens = screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent));
     screenProps.push(
       t.objectProperty(
         t.identifier(screenName),
-        t.arrayExpression(screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent)))
+        builtScreens.length === 1 ? builtScreens[0] : t.arrayExpression(builtScreens)
       )
     );
   }
