@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
-import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform } from '../../cache/pomCache';
+import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform, clearCache } from '../../cache/pomCache';
 
 const API_URL = "http://localhost:3000";
 
@@ -206,6 +206,9 @@ useEffect(() => {
 // ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
   if (isOpen && mode === 'create') {
+    // ✅ Clear cache when opening in create mode
+    // clearCache();
+    
     setFormData({
       event: "",
       description: "",
@@ -224,7 +227,7 @@ useEffect(() => {
 
   // Fetch POMs from API
 const fetchAvailablePOMs = async () => {
-  console.log('🔍 fetchAvailablePOMs called, platform:', formData.platform);  // ADD
+  console.log('🔍 fetchAvailablePOMs called, platform:', formData.platform);
   setLoadingPOMs(true);
   try {
     const response = await fetch(
@@ -232,21 +235,36 @@ const fetchAvailablePOMs = async () => {
     );
     if (response.ok) {
       const data = await response.json();
-      console.log('📦 Raw POMs from API:', data.poms?.length);  // ADD
+      console.log('📦 Raw POMs from API:', data.poms?.length);
 
-      const transformedPOMs = data.poms.map((pom) => {
-        const mainClass = pom.classes?.[0];
-        return {
-          name: mainClass?.name || pom.name,
-          className: mainClass?.name || pom.name,
-          path: pom.path,
-          filePath: pom.path,
-          classes: pom.classes,
-        };
-      });
+      // ✅ FIXED: Extract ALL classes from each POM file
+      const transformedPOMs = [];
+      
+      for (const pom of data.poms) {
+        if (pom.classes && pom.classes.length > 0) {
+          // ✅ Loop through ALL classes in the file
+          for (const classData of pom.classes) {
+            transformedPOMs.push({
+              name: classData.name,
+              className: classData.name,
+              path: pom.path,
+              filePath: pom.path,
+              classes: [classData],  // ✅ Include just this class
+              functions: classData.functions || []
+            });
+          }
+        }
+      }
+
+      console.log('📦 Total classes extracted:', transformedPOMs.length);
 
       const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
-      console.log('✅ Filtered POMs:', filteredPOMs.length);  // ADD
+console.log('✅ Filtered POMs:', filteredPOMs.length);
+console.log('🎯 First 5 POMs:', filteredPOMs.slice(0, 5).map(p => ({
+  name: p.className,
+  path: p.path
+})));
+      console.log('✅ Filtered POMs:', filteredPOMs.length);
       
       setAvailablePOMs(filteredPOMs);
     }

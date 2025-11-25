@@ -42,13 +42,16 @@ class POMDiscovery {
       try {
         const structure = await this._extractPOMStructure(filePath);
         if (structure) {
-          poms.push(structure);
-          this.pomCache.set(structure.name, structure);
-          
-          // ✅ NEW: Also cache by class name for lookup
-          if (structure.classes?.[0]?.name) {
-            this.pomCache.set(structure.classes[0].name, structure);
-          }
+  poms.push(structure);
+  this.pomCache.set(structure.name, structure);
+  
+  // ✅ FIX: Cache ALL classes, not just first one
+  for (const cls of structure.classes) {
+    if (cls.name) {
+      this.pomCache.set(cls.name, structure);
+    }
+  }
+
           
           // ✅ NEW: Check if this is a navigation file
           if (this._isNavigationFile(filePath, structure)) {
@@ -60,8 +63,17 @@ class POMDiscovery {
       }
     }
     
-    console.log(`   ✅ Extracted ${poms.length} POM structures`);
-    console.log(`   🧭 Found ${this.navigationCache.size} navigation files`);
+console.log(`   ✅ Extracted ${poms.length} POM structures`);
+
+// ✅ ADD THIS DEBUG:
+console.log('\n🐛 DEBUG: POMs being returned:');
+for (const pom of poms) {
+  console.log(`   📄 ${pom.name}:`);
+  console.log(`      Classes: ${pom.classes.map(c => c.name).join(', ')}`);
+  console.log(`      Exports: ${pom.exports}`);
+}
+
+console.log(`   🧭 Found ${this.navigationCache.size} navigation files`);
     return poms;
   }
 
