@@ -711,14 +711,22 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
   };
 
   const handlePOMChange = (selectedPOM, selectedInstance) => {
-    setPomName(selectedPOM || '');
-    setInstanceName(selectedInstance || null);
-    
-    onUpdate({
-      screen: selectedPOM || '',
-      instance: selectedInstance || null
-    });
-  };
+  setPomName(selectedPOM || '');
+  setInstanceName(selectedInstance || null);
+  
+  // ✅ Build _pomSource from the screen field
+  const pomSource = selectedPOM ? {
+    path: `screenObjects/${selectedPOM}.js`,
+    name: selectedPOM,
+    className: selectedPOM.split('.').pop()
+  } : null;
+  
+  onUpdate({
+    screen: selectedPOM || '',
+    instance: selectedInstance || null,
+    _pomSource: pomSource
+  });
+};
 
   return (
     <div 

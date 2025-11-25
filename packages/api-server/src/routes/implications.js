@@ -2115,12 +2115,12 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
   const overrideProps = [];
   
   // ✅ ADD: name
-  if (screen.name) {
-    overrideProps.push(t.objectProperty(
-      t.identifier('name'),
-      t.stringLiteral(screen.name)
-    ));
-  }
+ if (screen.name || screen.screenName) {
+  overrideProps.push(t.objectProperty(
+    t.identifier('name'),
+    t.stringLiteral(screen.name || screen.screenName)
+  ));
+}
   
   // description (always include if present)
   if (screen.description) {
@@ -2237,43 +2237,10 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
       t.objectExpression(functionProps)
     ));
     
-    console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
+      console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
   }
 
-    if (screen._pomSource) {
-    const pomSourceProps = [];
-    
-    if (screen._pomSource.path) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('path'),
-        t.stringLiteral(screen._pomSource.path)
-      ));
-    }
-    
-    if (screen._pomSource.name) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('name'),
-        t.stringLiteral(screen._pomSource.name)
-      ));
-    }
-    
-    if (screen._pomSource.className) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('className'),
-        t.stringLiteral(screen._pomSource.className)
-      ));
-    }
-    
-    if (pomSourceProps.length > 0) {
-      overrideProps.push(t.objectProperty(
-        t.identifier('_pomSource'),
-        t.objectExpression(pomSourceProps)
-      ));
-      console.log(`    📦 Including _pomSource for ${screenName}`);
-    }
-  }
-
-   // ✅ ADD: _pomSource (preserve POM metadata)
+  // ✅ ADD: _pomSource (preserve POM metadata)
   if (screen._pomSource) {
     const pomSourceProps = [];
     
