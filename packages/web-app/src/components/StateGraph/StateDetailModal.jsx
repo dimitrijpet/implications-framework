@@ -39,6 +39,21 @@ function transformPlatformsData(platforms) {
   return transformed;
 }
 
+function transformMirrorsOnToUiCoverage(mirrorsOnUI) {
+  if (!mirrorsOnUI) return {};
+  
+  const platforms = {};
+  
+  Object.entries(mirrorsOnUI).forEach(([platformName, screens]) => {
+    platforms[platformName] = {
+      displayName: platformName.charAt(0).toUpperCase() + platformName.slice(1),
+      screens: screens  // { searchBar: {...}, RoundTrip: {...} }
+    };
+  });
+  
+  return platforms;
+}
+
 export default function StateDetailModal({ 
   state, 
   onClose, 
@@ -1009,20 +1024,22 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
               >
                 📱 UI Screens
               </h2>
-              
-              <UIScreenEditor
-                state={{
-                  ...currentState,
-                  filePath: state.files.implication,
-                  uiCoverage: currentState.uiCoverage || {
-                    platforms: currentState.meta?.uiCoverage?.platforms || {}
-                  }
-                }}
-                projectPath={projectPath}
-                theme={theme}
-                onSave={handleUIUpdate}
-                onCancel={() => console.log('UI edit cancelled')}
-              />
+
+               {/* DEBUG - remove after */}
+{console.log('🔍 FULL currentState:', JSON.stringify(currentState, null, 2))}    
+             <UIScreenEditor
+  state={{
+    ...currentState,
+    filePath: state.files.implication,
+    uiCoverage: currentState.meta?.uiCoverage || currentState.uiCoverage || {
+      platforms: transformMirrorsOnToUiCoverage(currentState.mirrorsOn?.UI)
+    }
+  }}
+  projectPath={projectPath}
+  theme={theme}
+  onSave={handleUIUpdate}
+  onCancel={() => console.log('UI edit cancelled')}
+/>
             </div>
 
             {/* TRANSITIONS */}

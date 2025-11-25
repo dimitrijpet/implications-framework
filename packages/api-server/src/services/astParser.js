@@ -548,7 +548,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                             console.log(`      ⚠️ Unknown element type: ${element.type}`);
                           }
                         }
-                      } else if (screenProp.value?.type === 'CallExpression') {
+                       } else if (screenProp.value?.type === 'CallExpression') {
                         console.log('      📞 Direct CallExpression (not in array)');
                         const merged = await parseScreenValidation(
                           screenProp.value,
@@ -573,6 +573,13 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                         
                         if (baseData) {
                           screenDefinitions.push(baseData);
+                        }
+                      } else if (screenProp.value?.type === 'ObjectExpression') {
+                        // ✅ NEW: Handle direct object (single screen, not in array)
+                        console.log('      📝 Direct ObjectExpression (single screen)');
+                        const def = extractScreenDefinition(screenProp.value);
+                        if (def) {
+                          screenDefinitions.push(def);
                         }
                       } else {
                         console.log(`      ⚠️ Unhandled screen value type: ${screenProp.value?.type}`);
