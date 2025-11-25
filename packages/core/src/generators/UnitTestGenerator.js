@@ -2691,13 +2691,25 @@ screens.forEach((screen, index) => {
     console.log(`   âœ… Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformUI).length} screens`);
     
     // Extract each screen
-    for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
-      if (!Array.isArray(screenDefs) || screenDefs.length === 0) {
-        console.log(`   â­ï¸  Skipping ${screenKey} (not an array or empty)`);
+for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
+      // ✅ FIX: Handle BOTH array and object formats
+      let screenDef;
+      
+      if (Array.isArray(screenDefs)) {
+        // Old format: ResultsWrapper: [{ visible: [...] }]
+        if (screenDefs.length === 0) {
+          console.log(`   ⭕️  Skipping ${screenKey} (empty array)`);
+          continue;
+        }
+        screenDef = screenDefs[0];
+      } else if (typeof screenDefs === 'object' && screenDefs !== null) {
+        // New format: ResultsWrapper: { visible: [...] }
+        screenDef = screenDefs;
+        console.log(`   ✅ ${screenKey}: using object format (not array)`);
+      } else {
+        console.log(`   ⭕️  Skipping ${screenKey} (invalid type: ${typeof screenDefs})`);
         continue;
       }
-      
-      const screenDef = screenDefs[0];  // Take first definition
       
       // âœ… FIX: Check multiple possible locations for visible/hidden arrays
       // 1. Direct properties: screenDef.visible, screenDef.hidden

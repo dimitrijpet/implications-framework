@@ -119,19 +119,25 @@ export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
 
   const validationScreens = [];
 
-  for (const [screenKey, screenArray] of Object.entries(platformScreens)) {
-    // âœ… DEFENSIVE: Check if array
-    if (!Array.isArray(screenArray)) {
-      console.warn(`âš ï¸  Screen ${screenKey} is not an array, skipping`);
-      continue;
-    }
+   for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
+    // ✅ FIX: Handle BOTH array and object formats
+    let screen;
     
-    if (screenArray.length === 0) {
-      console.warn(`âš ï¸  Screen ${screenKey} array is empty, skipping`);
+    if (Array.isArray(screenDef)) {
+      // Old format: ResultsWrapper: [{ visible: [...] }]
+      if (screenDef.length === 0) {
+        console.warn(`⚠️  Screen ${screenKey} array is empty, skipping`);
+        continue;
+      }
+      screen = screenDef[0];
+    } else if (typeof screenDef === 'object' && screenDef !== null) {
+      // New format: ResultsWrapper: { visible: [...] }
+      screen = screenDef;
+      console.log(`   ✅ ${screenKey}: using object format (not array)`);
+    } else {
+      console.warn(`⚠️  Screen ${screenKey} is invalid type: ${typeof screenDef}, skipping`);
       continue;
     }
-
-    const screen = screenArray[0]; // Take first screen definition
     
     // âœ… DEFENSIVE: Check if screen exists
     if (!screen || typeof screen !== 'object') {
