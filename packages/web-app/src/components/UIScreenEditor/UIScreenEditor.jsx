@@ -653,9 +653,15 @@ function PlatformSection({
             projectPath={projectPath}
             theme={theme}
             onUpdate={(updates) => {
-              const screenName = screen.screenName || screen.name || screen.originalName;
-              onScreenUpdate(screenName, { ...screen, ...updates });
-            }}
+  const screenName = screen.screenName || screen.name || screen.originalName;
+  const updatedScreen = { ...screen, ...updates };
+  console.log('📤 Sending to onScreenUpdate:', {
+    screenName,
+    updatedScreen,
+    isArray: Array.isArray(updatedScreen)
+  });
+  onScreenUpdate(screenName, updatedScreen);
+}}
             onDelete={() => {
               const screenName = screen.screenName || screen.name || screen.originalName;
               onDeleteScreen(screenName);

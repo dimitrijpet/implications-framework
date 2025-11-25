@@ -1611,14 +1611,14 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
               if (comparisonResult.originalFunctions.expect) {
                 screen._originalExpect = comparisonResult.originalFunctions.expect;
               }
-              return buildScreenAst(screen, screenName, platformName, className);
+              return buildScreenAst(screen, screenName, platformName, className, originalContent);
             })
           );
         }
       } else {
         // New screen - build from scratch
         screenArrayNode = t.arrayExpression(
-          screens.map(screen => buildScreenAst(screen, screenName, platformName, className))
+          screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent))
         );
       }
       
@@ -1644,7 +1644,7 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
     screenProps.push(
       t.objectProperty(
         t.identifier(screenName),
-        t.arrayExpression(screens.map(screen => buildScreenAst(screen, screenName, platformName, className)))
+        t.arrayExpression(screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent)))
       )
     );
   }
@@ -2081,7 +2081,7 @@ function buildUIAst(uiData, className) {
     const screenProps = screenEntries.map(([screenName, screenArray]) => {
       // Each screen is wrapped in an array
       const wrappedScreens = t.arrayExpression(
-        screenArray.map(screen => buildScreenAst(screen, screenName, platformName, className))
+        screenArray.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent))
       );
       
       return t.objectProperty(
@@ -2107,14 +2107,42 @@ function buildUIAst(uiData, className) {
 /**
  * Helper: Build AST for screen object
  */
-function buildScreenAst(screen, screenName, platformName, className) {
+function buildScreenAst(screen, screenName, platformName, className, originalContent) {
+  // ✅ CHECK: Does this file use inheritance?
+  const usesInheritance = originalContent.includes('BaseBookingImplications') && 
+                          originalContent.includes('ImplicationHelper');
+  
   const overrideProps = [];
+  
+  // ✅ ADD: name
+  if (screen.name) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('name'),
+      t.stringLiteral(screen.name)
+    ));
+  }
   
   // description (always include if present)
   if (screen.description) {
     overrideProps.push(t.objectProperty(
       t.identifier('description'), 
       t.stringLiteral(screen.description)
+    ));
+  }
+  
+  // ✅ ADD: screen (POM reference)
+  if (screen.screen) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('screen'),
+      t.stringLiteral(screen.screen)
+    ));
+  }
+  
+  // ✅ ADD: instance
+  if (screen.instance) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('instance'),
+      t.stringLiteral(screen.instance)
     ));
   }
   
@@ -2170,14 +2198,13 @@ function buildScreenAst(screen, screenName, platformName, className) {
     }
   }
   
-   // ✅ ADD THIS: Functions
+  // Functions
   if (screen.functions && Object.keys(screen.functions).length > 0) {
     const functionProps = [];
     
     for (const [funcName, funcData] of Object.entries(screen.functions)) {
       const funcObjectProps = [];
       
-      // signature
       if (funcData.signature) {
         funcObjectProps.push(t.objectProperty(
           t.identifier('signature'),
@@ -2185,7 +2212,6 @@ function buildScreenAst(screen, screenName, platformName, className) {
         ));
       }
       
-      // parameters object
       if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
         const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
           t.objectProperty(
@@ -2213,50 +2239,125 @@ function buildScreenAst(screen, screenName, platformName, className) {
     
     console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
   }
-  // ✨ NEW: prerequisites (preserved from original AST)
+
+    if (screen._pomSource) {
+    const pomSourceProps = [];
+    
+    if (screen._pomSource.path) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('path'),
+        t.stringLiteral(screen._pomSource.path)
+      ));
+    }
+    
+    if (screen._pomSource.name) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('name'),
+        t.stringLiteral(screen._pomSource.name)
+      ));
+    }
+    
+    if (screen._pomSource.className) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('className'),
+        t.stringLiteral(screen._pomSource.className)
+      ));
+    }
+    
+    if (pomSourceProps.length > 0) {
+      overrideProps.push(t.objectProperty(
+        t.identifier('_pomSource'),
+        t.objectExpression(pomSourceProps)
+      ));
+      console.log(`    📦 Including _pomSource for ${screenName}`);
+    }
+  }
+
+   // ✅ ADD: _pomSource (preserve POM metadata)
+  if (screen._pomSource) {
+    const pomSourceProps = [];
+    
+    if (screen._pomSource.path) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('path'),
+        t.stringLiteral(screen._pomSource.path)
+      ));
+    }
+    
+    if (screen._pomSource.name) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('name'),
+        t.stringLiteral(screen._pomSource.name)
+      ));
+    }
+    
+    if (screen._pomSource.className) {
+      pomSourceProps.push(t.objectProperty(
+        t.identifier('className'),
+        t.stringLiteral(screen._pomSource.className)
+      ));
+    }
+    
+    if (pomSourceProps.length > 0) {
+      overrideProps.push(t.objectProperty(
+        t.identifier('_pomSource'),
+        t.objectExpression(pomSourceProps)
+      ));
+      console.log(`    📦 Including _pomSource for ${screenName}`);
+    }
+  }
+  
+  // Prerequisites (preserved from original AST)
   if (screen._originalPrerequisites) {
     console.log('    📦 Including preserved prerequisites');
     overrideProps.push(t.objectProperty(
       t.identifier('prerequisites'),
-      screen._originalPrerequisites // AST node from original file
+      screen._originalPrerequisites
     ));
   }
   
-  // ✨ NEW: expect (preserved from original AST)
+  // Expect (preserved from original AST)
   if (screen._originalExpect) {
     console.log('    📦 Including preserved expect function');
     overrideProps.push(t.objectProperty(
       t.identifier('expect'),
-      screen._originalExpect // AST node from original file
+      screen._originalExpect
     ));
   }
   
-  // ✅ Build: ImplicationHelper.mergeWithBase(base, overrides, options)
-  return t.callExpression(
-    t.memberExpression(
-      t.identifier('ImplicationHelper'),
-      t.identifier('mergeWithBase')
-    ),
-    [
-      // First arg: BaseBookingImplications.platform.screenName
+  // ✅ FIX: Return mergeWithBase ONLY if file uses inheritance
+  if (usesInheritance) {
+    console.log(`    🔗 Using mergeWithBase for ${screenName} (inheritance detected)`);
+    return t.callExpression(
       t.memberExpression(
-        t.memberExpression(
-          t.identifier('BaseBookingImplications'),
-          t.identifier(platformName)
-        ),
-        t.identifier(screenName)
+        t.identifier('ImplicationHelper'),
+        t.identifier('mergeWithBase')
       ),
-      // Second arg: override object
-      t.objectExpression(overrideProps),
-      // Third arg: { parentClass: AcceptedBookingImplications }
-      t.objectExpression([
-        t.objectProperty(
-          t.identifier('parentClass'),
-          t.identifier(className)
-        )
-      ])
-    ]
-  );
+      [
+        // First arg: BaseBookingImplications.platform.screenName
+        t.memberExpression(
+          t.memberExpression(
+            t.identifier('BaseBookingImplications'),
+            t.identifier(platformName)
+          ),
+          t.identifier(screenName)
+        ),
+        // Second arg: override object
+        t.objectExpression(overrideProps),
+        // Third arg: { parentClass: ClassName }
+        t.objectExpression([
+          t.objectProperty(
+            t.identifier('parentClass'),
+            t.identifier(className)
+          )
+        ])
+      ]
+    );
+  } else {
+    // ✅ Simple case: Just return the object directly
+    console.log(`    📦 Using simple object for ${screenName} (no inheritance)`);
+    return t.objectExpression(overrideProps);
+  }
 }
 
 /**

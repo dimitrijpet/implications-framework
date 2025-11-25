@@ -139,20 +139,28 @@ export default function AddScreenModal({
 
     // Create screen from template
     const newScreen = createScreenFromTemplate(
-      selectedTemplate,
-      screenName,
-      description.trim() || `${selected.className || screenName} from ${selected.path}`
-    );
+  selectedTemplate,
+  screenName,
+  description.trim() || `${selected.className || screenName} from ${selected.path}`
+);
 
-    // Set POM reference to original name
-    newScreen.screen = selected.name;  
-    newScreen._pomSource = {
-      path: selected.path,
-      name: selected.name,
-      className: selected.className,
-      methods: selected.methods || [],
-      fields: selected.fields || []
-    };
+// ✅ FIX: Remove .js extension and set instance name
+const screenFile = selected.name.replace(/\.js$/, '');  // "searchBar.wrapper"
+const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);  // "roundTrip"
+
+newScreen.screen = screenFile;      // ✅ Without .js
+newScreen.instance = instanceName;  // ✅ Add instance
+newScreen._pomSource = {
+  path: selected.path,
+  name: selected.name,
+  className: selected.className,
+  methods: selected.methods || [],
+  fields: selected.fields || []
+};
+
+console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
+console.log('📦 newScreen data:', JSON.stringify(newScreen, null, 2));  // ✅ ADD THIS
+onAdd(selectedPlatform, screenName, newScreen);
 
     console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
     onAdd(selectedPlatform, screenName, newScreen);

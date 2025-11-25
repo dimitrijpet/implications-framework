@@ -11,7 +11,7 @@
 
 /**
  * Convert to PascalCase
- * Usage: "btn_calendar_day" → "BtnCalendarDay"
+ * Usage: "btn_calendar_day" â†’ "BtnCalendarDay"
  */
 export function toPascalCase(str) {
   if (!str || typeof str !== 'string') return '';
@@ -24,7 +24,7 @@ export function toPascalCase(str) {
 
 /**
  * Convert to camelCase
- * Usage: "btn_calendar_day" → "btnCalendarDay"
+ * Usage: "btn_calendar_day" â†’ "btnCalendarDay"
  */
 export function toCamelCase(str) {
   if (!str || typeof str !== 'string') return '';
@@ -35,7 +35,7 @@ export function toCamelCase(str) {
 
 /**
  * Convert to snake_case
- * Usage: "BtnCalendarDay" → "btn_calendar_day"
+ * Usage: "BtnCalendarDay" â†’ "btn_calendar_day"
  */
 export function toSnakeCase(str) {
   if (!str || typeof str !== 'string') return '';
@@ -48,7 +48,7 @@ export function toSnakeCase(str) {
 
 /**
  * Check if string contains substring
- * Usage: contains("manager.logged_in", ".") → true
+ * Usage: contains("manager.logged_in", ".") â†’ true
  */
 export function containsHelper(str, substring) {
   if (!str || !substring) return false;
@@ -57,7 +57,7 @@ export function containsHelper(str, substring) {
 
 /**
  * Replace string
- * Usage: replace("manager.logged_in", ".", " = { ") → "manager = { logged_in"
+ * Usage: replace("manager.logged_in", ".", " = { ") â†’ "manager = { logged_in"
  */
 export function replaceHelper(str, search, replace) {
   if (!str) return '';
@@ -99,43 +99,43 @@ export function snakeCaseHelper(str) {
  * @returns {Array} Array of validation screen objects
  */
 export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
-  // ✅ DEFENSIVE: Check all inputs
+  // âœ… DEFENSIVE: Check all inputs
   if (!mirrorsOnUI || typeof mirrorsOnUI !== 'object') {
-    console.warn('⚠️  prepareValidationScreens: mirrorsOnUI is null or invalid');
+    console.warn('âš ï¸  prepareValidationScreens: mirrorsOnUI is null or invalid');
     return [];
   }
 
   if (!platform) {
-    console.warn('⚠️  prepareValidationScreens: platform is null');
+    console.warn('âš ï¸  prepareValidationScreens: platform is null');
     return [];
   }
 
   const platformScreens = mirrorsOnUI[platform];
   
   if (!platformScreens || typeof platformScreens !== 'object') {
-    console.warn(`⚠️  prepareValidationScreens: No screens for platform ${platform}`);
+    console.warn(`âš ï¸  prepareValidationScreens: No screens for platform ${platform}`);
     return [];
   }
 
   const validationScreens = [];
 
   for (const [screenKey, screenArray] of Object.entries(platformScreens)) {
-    // ✅ DEFENSIVE: Check if array
+    // âœ… DEFENSIVE: Check if array
     if (!Array.isArray(screenArray)) {
-      console.warn(`⚠️  Screen ${screenKey} is not an array, skipping`);
+      console.warn(`âš ï¸  Screen ${screenKey} is not an array, skipping`);
       continue;
     }
     
     if (screenArray.length === 0) {
-      console.warn(`⚠️  Screen ${screenKey} array is empty, skipping`);
+      console.warn(`âš ï¸  Screen ${screenKey} array is empty, skipping`);
       continue;
     }
 
     const screen = screenArray[0]; // Take first screen definition
     
-    // ✅ DEFENSIVE: Check if screen exists
+    // âœ… DEFENSIVE: Check if screen exists
     if (!screen || typeof screen !== 'object') {
-      console.warn(`⚠️  Screen ${screenKey} definition is null or invalid, skipping`);
+      console.warn(`âš ï¸  Screen ${screenKey} definition is null or invalid, skipping`);
       continue;
     }
     
@@ -193,9 +193,9 @@ export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
     const functionsWithParams = [];
     
     for (const [funcName, funcData] of Object.entries(functions)) {
-      // ✅ DEFENSIVE: Check if funcData exists
+      // âœ… DEFENSIVE: Check if funcData exists
       if (!funcData || typeof funcData !== 'object') {
-        console.warn(`⚠️  Function ${funcName} data is invalid, skipping`);
+        console.warn(`âš ï¸  Function ${funcName} data is invalid, skipping`);
         continue;
       }
       
@@ -237,10 +237,15 @@ export function prepareValidationScreens(mirrorsOnUI, platform, testData) {
     // Build screen validation object
 validationScreens.push({
   screenKey,
-  platformKey: platform,  // ✅ ADD THIS LINE!
+  platformKey: platform,
   pomClassName: screen.screen && typeof screen.screen === 'string' 
     ? toPascalCase(screen.screen.replace(/\./g, '')) 
     : null,
+  
+  // ✅ ADD: Extract POM path and instance
+  pomPath: screen._pomSource?.path || 
+         (screen.screen ? `screenObjects/${screen.screen}.js` : null),
+  pomInstance: screen.instance || null,
       
       // Functions
       hasFunctions: functionsWithParams.length > 0,

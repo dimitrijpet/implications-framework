@@ -632,40 +632,39 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
   // UI EDITOR HANDLERS
   // ========================================
 
-  const handleUIUpdate = async (uiData, editedScreensSet) => {
-    console.log('💾 handleUIUpdate received:', uiData);
-    console.log('✏️ Edited screens:', editedScreensSet ? Array.from(editedScreensSet) : 'none');
-    
-    try {
-      const filteredUI = {};
-      
-      for (const [platformName, platformData] of Object.entries(uiData)) {
-        filteredUI[platformName] = {
-          name: platformData.name,
-          screens: {}
-        };
-        
-        for (const [screenName, screenData] of Object.entries(platformData.screens || {})) {
-          const screenKey = `${platformName}.${screenName}`;
-          
-          // Skip numeric keys (corrupted data)
-          if (/^\d+$/.test(screenName)) {
-            console.warn(`⚠️ Skipping corrupted numeric screen key: ${screenName}`);
-            continue;
-          }
-          
-          // Skip screens not edited by user (if tracking is available)
-          if (editedScreensSet && !editedScreensSet.has(screenKey)) {
-            console.log(`⏭️ Skipping ${screenKey} - not edited by user`);
-            continue;
-          }
-          
-          filteredUI[platformName].screens[screenName] = screenData;
-          console.log(`✅ Including screen ${screenKey}`);
+ const handleUIUpdate = async (uiData, editedScreensSet) => {
+  console.log('💾 handleUIUpdate received:', uiData);
+  console.log('✏️ Edited screens:', editedScreensSet ? Array.from(editedScreensSet) : 'none');
+  
+  try {
+    const filteredUI = {};
+
+    // ✅ FIX 1: Use uiData (the parameter) not editedUI (undefined variable)
+    // ✅ FIX 2: Convert Set to Array or use .has() for Set
+    const editedScreensArray = Array.from(editedScreensSet || []);
+
+    Object.entries(uiData).forEach(([platform, platformData]) => {  // ← uiData not editedUI
+      const platformScreens = {};
+      let hasIncludedScreens = false;
+
+      Object.entries(platformData.screens || {}).forEach(([screenName, screenData]) => {
+        const fullScreenKey = `${platform}.${screenName}`;
+        if (editedScreensArray.includes(fullScreenKey)) {  // ← use array's .includes()
+          console.log(`✅ Including screen ${fullScreenKey}`);
+          platformScreens[screenName] = screenData;  // This part is correct
+          hasIncludedScreens = true;
         }
+      });
+
+      if (hasIncludedScreens) {
+        filteredUI[platform] = {
+          ...platformData,
+          screens: platformScreens
+        };
       }
-      
-      console.log('✅ Filtered UI:', filteredUI);
+    });
+
+    console.log('✅ Filtered UI:', filteredUI);
       
       const response = await fetch('http://localhost:3000/api/implications/update-ui', {
         method: 'POST',
