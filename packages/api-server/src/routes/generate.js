@@ -9,6 +9,89 @@ import ImplicationGenerator from '../../../core/src/generators/ImplicationGenera
 const router = express.Router();
 
 /**
+ * Update Implication file's setup.testFile and triggeredBy to point to generated test
+ * 
+ * This ensures TestPlanner can find the correct test file when resolving prerequisites.
+ * 
+ * @param {string} implFilePath - Path to the Implication file
+ * @param {string} testFileName - Generated test filename (e.g., AgencySelectedViaLanding-SELECTAGENCY-Web-UNIT.spec.js)
+ * @param {object} transition - Transition object with event, platform, etc.
+ * @param {string} implDir - Directory containing the implication files
+ */
+async function updateImplicationSetup(implFilePath, testFileName, transition, implDir) {
+  try {
+    const absolutePath = path.resolve(implFilePath);
+    let content = await fs.readFile(absolutePath, 'utf-8');
+    
+    // Build the full test file path (relative from project root)
+    const testFileRelative = `${implDir}/${testFileName}`.replace(/^\//, '');
+    
+    // Parse filename to get actionName
+    // AgencySelectedViaLanding-SELECTAGENCY-Web-UNIT.spec.js → agencySelectedViaLanding
+    const baseFileName = testFileName
+      .replace(/-UNIT\.spec\.js$/, '')  // Remove suffix
+      .split('-')[0];  // Get first part (before event name)
+    
+    const actionName = baseFileName.charAt(0).toLowerCase() + baseFileName.slice(1);
+    
+    console.log(`\n   📝 Updating ${path.basename(implFilePath)}:`);
+    console.log(`      testFile: ${testFileRelative}`);
+    console.log(`      actionName: ${actionName}`);
+    
+    let updated = false;
+    
+    // Strategy 1: Replace existing setup block using regex
+    // Match: setup: [{ testFile: '...', actionName: '...', platform: '...' }]
+    const setupBlockRegex = /(setup:\s*\[\s*\{[^}]*testFile:\s*['"])[^'"]+(['"][^}]*actionName:\s*['"])[^'"]+(['"])/;
+    
+    if (setupBlockRegex.test(content)) {
+      content = content.replace(setupBlockRegex, `$1${testFileRelative}$2${actionName}$3`);
+      updated = true;
+    } else {
+      // Strategy 2: Replace testFile and actionName separately
+      const testFileRegex = /(setup:\s*\[\s*\{[\s\S]*?testFile:\s*['"])[^'"]+(['"])/;
+      if (testFileRegex.test(content)) {
+        content = content.replace(testFileRegex, `$1${testFileRelative}$2`);
+        updated = true;
+      }
+      
+      const actionNameRegex = /(setup:\s*\[\s*\{[\s\S]*?actionName:\s*['"])[^'"]+(['"])/;
+      if (actionNameRegex.test(content)) {
+        content = content.replace(actionNameRegex, `$1${actionName}$2`);
+        updated = true;
+      }
+    }
+    
+    // Update triggeredBy require path and function name
+    // Match: require('./SomeFile.spec.js') and the destructured function name
+    const triggeredByRequireRegex = /(require\(\s*['"]\.\/)[^'"]+Implications-[^'"]+\.spec\.js(['"])/g;
+    if (triggeredByRequireRegex.test(content)) {
+      content = content.replace(triggeredByRequireRegex, `$1${testFileName}$2`);
+      updated = true;
+    }
+    
+    // Also update the destructured function name in triggeredBy
+    // Match: const { old_action_name } = require(...)
+    const triggeredByFunctionRegex = /(const\s*\{\s*)[a-zA-Z_]+(\s*\}\s*=\s*require\(['"]\.\/[^'"]*['"])/g;
+    content = content.replace(triggeredByFunctionRegex, `$1${actionName}$2`);
+    
+    // Update the return call: return old_action_name(testDataPath, options)
+    const returnCallRegex = /(return\s+)[a-zA-Z_]+(\(testDataPath,\s*options\))/g;
+    content = content.replace(returnCallRegex, `$1${actionName}$2`);
+    
+    if (updated) {
+      await fs.writeFile(absolutePath, content, 'utf-8');
+      console.log(`      ✅ Updated successfully`);
+    } else {
+      console.log(`      ⚠️ No setup block found to update`);
+    }
+    
+  } catch (error) {
+    console.warn(`      ⚠️ Could not update implication: ${error.message}`);
+  }
+}
+
+/**
  * POST /api/generate/unit-test
  * 
  * Generate a UNIT test from an Implication file
@@ -34,7 +117,7 @@ router.post('/unit-test', async (req, res) => {
     console.log(`   implFilePath: ${implFilePathFinal}`);
     console.log(`   platform: ${platform}`);
     console.log(`   state: ${stateToUse}`);
-    console.log(`   transitions: ${transitions.length}`);  // ✅ Log it!
+    console.log(`   transitions: ${transitions.length}`);
     
     if (!implFilePathFinal) {
       console.error('❌ Missing file path in request body!');
@@ -52,6 +135,9 @@ router.post('/unit-test', async (req, res) => {
     
     const generator = new UnitTestGenerator({});
     
+    // Get the implication directory for relative paths
+    const implDir = path.dirname(implFilePathFinal).replace(/^.*?tests\//, 'tests/');
+    
     // ✅ Generate multiple tests - one per transition!
     const results = [];
     
@@ -59,18 +145,39 @@ router.post('/unit-test', async (req, res) => {
       console.log('\n🔄 Generating transition tests...');
       
       for (const transition of transitions) {
-  console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
-  
-  const result = generator.generate(implFilePathFinal, {
-    platform: transition.platform,
-    state: stateToUse,
-    transition: transition,
-    event: transition.event,  // ✅ ADD THIS!
-    preview: false
-  });
-  
-  results.push(result);
-}
+        console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
+        
+        const result = generator.generate(implFilePathFinal, {
+          platform: transition.platform,
+          state: stateToUse,
+          transition: transition,
+          event: transition.event,
+          preview: false
+        });
+        
+        results.push(result);
+        
+        // ✅ NEW: Update the SOURCE Implication file's setup.testFile
+        // The source is the state we're transitioning FROM (where the transition is defined)
+        if (result.filePath && transition.sourceImplPath) {
+          await updateImplicationSetup(
+            transition.sourceImplPath,
+            result.fileName,
+            transition,
+            implDir
+          );
+        }
+        
+        // ✅ Also update the TARGET Implication (the one being generated for)
+        if (result.filePath) {
+          await updateImplicationSetup(
+            implFilePathFinal,
+            result.fileName,
+            transition,
+            implDir
+          );
+        }
+      }
     } else {
       // Fallback: Generate single test (old behavior)
       console.log('\n📝 Generating single test (no transitions)');
