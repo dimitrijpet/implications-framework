@@ -529,116 +529,105 @@ useEffect(() => {
   // Handle node click in graph
 const handleNodeClick = (nodeData) => {
   setSelectedNodeId(nodeData.id);
-  console.log('ðŸ–±ï¸ Node clicked:', nodeData);
+  console.log('🖱️ Node clicked:', nodeData);
   
   if (!discoveryResult) {
-    console.warn('âš ï¸ No discovery result available');
+    console.warn('⚠️ No discovery result available');
     return;
   }
   
-  // âœ… Try multiple ways to find the implication (most reliable first)
+  // Find the implication
   let implication = null;
   
-  // Method 1: Use className from node metadata (most reliable!)
   if (nodeData.metadata?.className) {
-    console.log('ðŸ” Looking up by className:', nodeData.metadata.className);
+    console.log('🔍 Looking up by className:', nodeData.metadata.className);
     implication = discoveryResult.files.implications.find(
       imp => imp.metadata.className === nodeData.metadata.className
     );
   }
   
-  // Method 2: Fall back to extractStateName comparison (backward compatibility)
   if (!implication) {
-    console.log('ðŸ” Fallback: Looking up by extracted name:', nodeData.id);
+    console.log('🔍 Fallback: Looking up by extracted name:', nodeData.id);
     implication = discoveryResult.files.implications.find(
       imp => extractStateName(imp.metadata.className) === nodeData.id
     );
   }
   
-  // Method 3: Last resort - try matching xstateConfig.id
   if (!implication) {
-    console.log('ðŸ” Last resort: Looking up by xstateConfig.id:', nodeData.id);
-    implication = discoveryResult.files.implications.find(
-      imp => imp.metadata.id === nodeData.id
-    );
-  }
-  
-  if (!implication) {
-    console.error('âŒ Implication not found for:', nodeData.id);
-    console.error('   Tried className:', nodeData.metadata?.className);
-    console.error('   Available implications:', 
-      discoveryResult.files.implications.map(i => i.metadata.className)
-    );
+    console.error('❌ Implication not found for:', nodeData.id);
     alert(`Could not find implication for "${nodeData.id}"`);
     return;
   }
   
-  console.log('âœ… Found implication:', implication.metadata.className);
-  
+  console.log('✅ Found implication:', implication.metadata.className);
   const metadata = implication.metadata;
   
-  // Check for xstateConfig
   if (!metadata.hasXStateConfig) {
-    console.warn('âš ï¸ This implication has no xstateConfig:', nodeData.id);
+    console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
     alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
     return;
   }
   
-  console.log('ðŸ” Modal data for', nodeData.id, ':', {
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    triggerButton: metadata.triggerButton
-  });
-  
-  // Extract transitions for this state
+  // ✅ FIX: Match transitions by status (not className!)
   const stateTransitions = (discoveryResult.transitions || [])
     .filter(t => {
-      // âœ… Match by className for reliability
-      const fromClassName = t.from;
-      return fromClassName === metadata.className || 
-             extractStateName(fromClassName) === nodeData.id;
+      // Transitions use status field, not className
+      const matchByStatus = t.from === metadata.status;
+      const matchByNodeId = t.from === nodeData.id;
+      const matchByClassName = t.from === metadata.className;
+      
+      console.log(`  Checking transition ${t.event}:`, {
+        from: t.from,
+        matchByStatus,
+        matchByNodeId,
+        matchByClassName
+      });
+      
+      return matchByStatus || matchByNodeId || matchByClassName;
     })
     .map(t => ({
       event: t.event,
-      target: t.to
+      target: t.to,
+      platforms: t.platforms
     }));
+  
+  console.log(`✅ Found ${stateTransitions.length} transitions for ${metadata.status}`);
   
   // Build state object for modal
   const state = {
-  id: nodeData.id,
-  name: nodeData.id,
-  displayName: metadata.status || nodeData.label,
-  className: metadata.className,
-  meta: {
-    status: metadata.status,
-    triggerAction: metadata.triggerAction,
-    triggerButton: metadata.triggerButton,
-    afterButton: metadata.afterButton,
-    previousButton: metadata.previousButton,
-    platform: metadata.platform,
-    platforms: metadata.platforms,
-    notificationKey: metadata.notificationKey,
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    requiredFields: metadata.requiredFields,
-    requires: metadata.requires,
-    setup: metadata.setup,
-    xstateContext: metadata.xstateContext || {},
-    uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
-    xstateConfig: metadata.xstateConfig || null  // âœ… ADD THIS LINE!
-  },
-  transitions: stateTransitions,
-  files: {
-    implication: `${projectPath}/${implication.path}`,
-    test: (Array.isArray(metadata.setup) 
-      ? metadata.setup[0]?.testFile 
-      : metadata.setup?.testFile) || ''
-  },
-};
+    id: nodeData.id,
+    name: nodeData.id,
+    displayName: metadata.status || nodeData.label,
+    className: metadata.className,
+    meta: {
+      status: metadata.status,
+      triggerAction: metadata.triggerAction,
+      triggerButton: metadata.triggerButton,
+      afterButton: metadata.afterButton,
+      previousButton: metadata.previousButton,
+      platform: metadata.platform,
+      platforms: metadata.platforms,
+      notificationKey: metadata.notificationKey,
+      statusCode: metadata.statusCode,
+      statusNumber: metadata.statusNumber,
+      requiredFields: metadata.requiredFields,
+      requires: metadata.requires,
+      setup: metadata.setup,
+      xstateContext: metadata.xstateContext || {},
+      uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
+      xstateConfig: metadata.xstateConfig || null
+    },
+    transitions: stateTransitions,
+    files: {
+      implication: `${projectPath}/${implication.path}`,
+      test: (Array.isArray(metadata.setup) 
+        ? metadata.setup[0]?.testFile 
+        : metadata.setup?.testFile) || ''
+    },
+  };
   
-  console.log('âœ… Selected state with full metadata:', state);
-  console.log('ðŸ” meta.uiCoverage:', state.meta.uiCoverage);
-  console.log('ðŸ” platforms:', state.meta.uiCoverage?.platforms);
+  console.log('✅ Selected state with full metadata:', state);
+  console.log('🔍 transitions:', state.transitions);
   
   setSelectedState(state);
 };

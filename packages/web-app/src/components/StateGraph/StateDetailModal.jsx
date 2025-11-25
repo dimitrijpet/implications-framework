@@ -126,6 +126,10 @@ export default function StateDetailModal({
   
   const currentState = isEditMode ? editedState : state;
   if (!currentState) return null;
+
+  console.log('🔍 currentState.transitions:', currentState.transitions);
+console.log('🔍 currentState.xstateConfig?.on:', currentState.xstateConfig?.on);
+console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metadata?.xstateConfig?.on);
   
   const statusColor = getStatusColor(currentState.name, theme);
   const statusIcon = getStatusIcon(currentState.name, theme);
