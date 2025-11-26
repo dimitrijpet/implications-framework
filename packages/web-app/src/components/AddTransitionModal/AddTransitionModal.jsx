@@ -133,37 +133,59 @@ useEffect(() => {
 // ═══════════════════════════════════════════════════════════════════════════
 // AFTER POMs LOAD - Populate functions for imports
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// AFTER POMs LOAD - Populate functions for imports AND match signatures
+// ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
   if (mode === 'edit' && availablePOMs.length > 0 && formData.imports.length > 0) {
     console.log('📦 POMs loaded, populating functions for imports...');
     
+    // First, update imports with functions
+    const updatedImports = formData.imports.map(imp => {
+      const matchingPOM = availablePOMs.find(p => p.className === imp.className);
+      if (matchingPOM) {
+        const mainClass = matchingPOM.classes?.[0];
+        const functions = mainClass?.functions || [];
+        console.log(`   ✅ ${imp.className}: ${functions.length} functions`);
+        return { ...imp, selectedPOM: imp.className, functions: functions };
+      }
+      return imp;
+    });
+    
+    // Then, update steps with availableMethods AND find matching signature
+    const updatedSteps = formData.steps.map(step => {
+      if (step.instance) {
+        const matchingImport = updatedImports.find(imp => imp.varName === step.instance);
+        if (matchingImport) {
+          const functions = matchingImport.functions || [];
+          
+          // ✅ Try to find matching method signature
+          let matchedSignature = step.signature || '';
+          if (step.method && functions.length > 0) {
+            const matchingFunc = functions.find(f => f.name === step.method);
+            if (matchingFunc) {
+              matchedSignature = matchingFunc.signature;
+              console.log(`   🎯 Matched method ${step.method} → ${matchedSignature}`);
+            }
+          }
+          
+          return { 
+            ...step, 
+            availableMethods: functions,
+            signature: matchedSignature
+          };
+        }
+      }
+      return step;
+    });
+    
     setFormData(prev => ({
       ...prev,
-      imports: prev.imports.map(imp => {
-        const matchingPOM = availablePOMs.find(p => p.className === imp.className);
-        if (matchingPOM) {
-          const mainClass = matchingPOM.classes?.[0];
-          const functions = mainClass?.functions || [];
-          console.log(`   ✅ ${imp.className}: ${functions.length} functions`);
-          return { ...imp, selectedPOM: imp.className, functions: functions };
-        }
-        return imp;
-      }),
-      steps: prev.steps.map(step => {
-        if (step.instance) {
-          const matchingImport = prev.imports.find(imp => imp.varName === step.instance);
-          if (matchingImport) {
-            const matchingPOM = availablePOMs.find(p => p.className === matchingImport.className);
-            const mainClass = matchingPOM?.classes?.[0];
-            const functions = mainClass?.functions || [];
-            return { ...step, availableMethods: functions };
-          }
-        }
-        return step;
-      })
+      imports: updatedImports,
+      steps: updatedSteps
     }));
   }
-}, [mode, availablePOMs, formData.imports.length]);
+}, [mode, availablePOMs]); 
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FETCH NAVIGATION - With edit mode guard
@@ -709,51 +731,53 @@ const filterPOMsByPlatform = (poms, platform) => {
   };
 
   // Handle submit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+const handleSubmit = async (e) => {
+  e.preventDefault();
 
-    if (!validateForm()) {
-      return;
-    }
+  if (!validateForm()) {
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
-      const submitData = {
-        event: formData.event.trim(),
-        platform: formData.platform,
-        actionDetails: formData.hasActionDetails
-          ? {
-              description: formData.description.trim(),
-              platform: formData.platform,
-              navigationMethod: formData.navigationMethod || null,
-              navigationFile: formData.navigationFile || null,
-              imports: formData.imports.map((imp) => ({
-                className: imp.className,
-                varName: imp.varName,
-                path: imp.path,
-                constructor: imp.constructor,
-              })),
-              steps: formData.steps.map((step) => ({
-                description: step.description,
-                instance: step.instance,
-                method: step.method,
-                args: step.args,
-              })),
-            }
-          : null,
-      };
+  try {
+    const submitData = {
+      event: formData.event.trim(),
+      platform: formData.platform,
+      actionDetails: formData.hasActionDetails
+        ? {
+            description: formData.description.trim(),
+            platform: formData.platform,
+            navigationMethod: formData.navigationMethod || null,
+            navigationFile: formData.navigationFile || null,
+            imports: formData.imports.map((imp) => ({
+              className: imp.className,
+              varName: imp.varName,
+              path: imp.path,
+              constructor: imp.constructor,
+            })),
+            steps: formData.steps.map((step) => ({
+              description: step.description,
+              instance: step.instance,
+              method: step.method,
+              args: step.args.join(', '),      // ✅ String format
+              argsArray: step.args,             // ✅ Array format
+              storeAs: step.storeAs || undefined,  // ✅ ADD THIS!
+            })),
+          }
+        : null,
+    };
 
-      console.log("🚀 Submitting transition:", mode, submitData);
+    console.log("🚀 Submitting transition:", mode, submitData);
 
-      await onSubmit(submitData);
-      onClose();
-    } catch (error) {
-      setErrors({ submit: error.message });
-    } finally {
-      setLoading(false);
-    }
-  };
+    await onSubmit(submitData);
+    onClose();
+  } catch (error) {
+    setErrors({ submit: error.message });
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (!isOpen) return null;
 
@@ -1500,6 +1524,45 @@ const filterPOMsByPlatform = (poms, platform) => {
                         </div>
                       )}
                     </div>
+
+                  {/* ✅ NEW: StoreAs Input */}
+<div className="mt-3">
+  <label
+    className="text-xs"
+    style={{ color: defaultTheme.colors.text.secondary }}
+  >
+    💾 Store Result As (optional)
+  </label>
+  <input
+    type="text"
+    value={step.storeAs || ''}
+    onChange={(e) => {
+      const newSteps = [...formData.steps];
+      newSteps[index] = { ...step, storeAs: e.target.value };
+      setFormData({ ...formData, steps: newSteps });
+    }}
+    placeholder="e.g., flightData, bookingResult"
+    className="w-full px-3 py-1 rounded text-sm font-mono"
+    style={{
+      backgroundColor: defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.accents.yellow,
+      border: `1px solid ${defaultTheme.colors.border}`,
+    }}
+  />
+  
+  {step.storeAs && (
+    <div
+      className="text-xs mt-1 p-2 rounded"
+      style={{ 
+        backgroundColor: `${defaultTheme.colors.accents.yellow}10`,
+        color: defaultTheme.colors.accents.yellow,
+        border: `1px solid ${defaultTheme.colors.accents.yellow}30`
+      }}
+    >
+      ✨ Access in validations: <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>{`{{${step.storeAs}}}`}</code> or <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>{`{{${step.storeAs}.propertyName}}`}</code>
+    </div>
+  )}
+</div>
                   </div>
                 ))}
 

@@ -1325,7 +1325,8 @@ if (metadata.mirrorsOn?.UI) {
     console.log(`   âœ… Function-aware validation: ${validationScreens.length} screens`);
   }
 }
-    
+    const hasStoreAs = metadata.actionDetails?.steps?.some(step => step.storeAs) || false;
+
     // Build context
     const context = {
   // Header
@@ -1334,6 +1335,7 @@ if (metadata.mirrorsOn?.UI) {
   platform,
   platformKey: this._getPlatformKeyForMirrorsOn(platform),
   targetStatus,
+  hasStoreAs,
   previousStatus: metadata.previousStatus,
   meta: metadata.meta || {},
   

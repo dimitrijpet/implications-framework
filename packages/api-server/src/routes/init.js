@@ -2089,15 +2089,70 @@ function getExpectImplicationTemplate() {
 const { expect } = require('@playwright/test');
 
 class ExpectImplication {
+  // ═══════════════════════════════════════════════════════════
+  // STORED VALUES - For cross-step data passing (storeAs)
+  // ═══════════════════════════════════════════════════════════
+  static _capturedValues = {};
   
+  /**
+   * Store a value with a key (used by storeAs in actionDetails)
+   */
+  static storeValue(key, value) {
+    this._capturedValues[key] = value;
+    const preview = typeof value === 'object' 
+      ? JSON.stringify(value).slice(0, 80) + (JSON.stringify(value).length > 80 ? '...' : '')
+      : value;
+    console.log(\`      💾 Stored: \${key} = \${preview}\`);
+  }
+  
+  /**
+   * Get a stored value by key
+   */
+  static getValue(key) {
+    return this._capturedValues[key];
+  }
+  
+  /**
+   * Clear all captured values (call between tests)
+   */
+  static clearCapturedValues() {
+    this._capturedValues = {};
+    console.log('🗑️  Cleared captured values');
+  }
+  
+  /**
+   * Get all captured values (for debugging)
+   */
+  static getCapturedValues() {
+    return { ...this._capturedValues };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Get nested value - checks captured values first, then obj
+  // ═══════════════════════════════════════════════════════════
   static getNestedValue(obj, path) {
     if (!path.includes('.')) {
-      return obj[path];
+      if (this._capturedValues[path] !== undefined) {
+        return this._capturedValues[path];
+      }
+      return obj?.[path];
     }
     
     const parts = path.split('.');
-    let current = obj;
+    const firstPart = parts[0];
     
+    // Check if first part is a captured value
+    if (this._capturedValues[firstPart] !== undefined) {
+      let current = this._capturedValues[firstPart];
+      for (let i = 1; i < parts.length; i++) {
+        if (current === null || current === undefined) return undefined;
+        current = current[parts[i]];
+      }
+      return current;
+    }
+    
+    // Fall back to obj
+    let current = obj;
     for (const part of parts) {
       if (!current || !current.hasOwnProperty(part)) {
         return undefined;
@@ -2106,6 +2161,53 @@ class ExpectImplication {
     }
     
     return current;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Resolve {{variable}} template syntax
+  // ═══════════════════════════════════════════════════════════
+  static resolveTemplate(value, testData = {}) {
+    // Handle non-strings
+    if (typeof value !== 'string') {
+      if (Array.isArray(value)) {
+        return value.map(v => this.resolveTemplate(v, testData));
+      }
+      if (typeof value === 'object' && value !== null) {
+        const resolved = {};
+        for (const [k, v] of Object.entries(value)) {
+          resolved[k] = this.resolveTemplate(v, testData);
+        }
+        return resolved;
+      }
+      return value;
+    }
+    
+    // Check for simple case: entire string is a template
+    const fullMatch = value.match(/^\\{\\{([^}]+)\\}\\}$/);
+    if (fullMatch) {
+      const path = fullMatch[1].trim();
+      const result = this.getNestedValue(testData, path);
+      if (result !== undefined) {
+        console.log(\`      🔄 Resolved {{\${path}}} → \${JSON.stringify(result)}\`);
+        return result;
+      }
+      console.warn(\`      ⚠️  Variable {{\${path}}} not found\`);
+      return value;
+    }
+    
+    // Replace all {{...}} in string
+    return value.replace(/\\{\\{([^}]+)\\}\\}/g, (match, path) => {
+      const trimmedPath = path.trim();
+      const result = this.getNestedValue(testData, trimmedPath);
+      
+      if (result === undefined || result === null) {
+        console.warn(\`      ⚠️  Variable {{\${trimmedPath}}} not found\`);
+        return match;
+      }
+      
+      console.log(\`      🔄 Resolved {{\${trimmedPath}}} → \${result}\`);
+      return String(result);
+    });
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -2134,10 +2236,8 @@ class ExpectImplication {
   static async _getLocatorForField(screenObject, fieldName, page, isPlaywright) {
     const { field, index } = this._parseFieldSelector(fieldName);
     
-    // Try to get from screen object first
     let baseLocator = screenObject[field];
     
-    // Fallback to data-testid
     if (!baseLocator && isPlaywright) {
       baseLocator = page.locator(\`[data-testid="\${field}"]\`);
     }
@@ -2146,7 +2246,6 @@ class ExpectImplication {
       throw new Error(\`Field "\${field}" not found on screen object\`);
     }
     
-    // Apply index selection
     if (index === null) {
       return { locator: baseLocator, mode: 'single', field, index };
     } else if (index === 'last') {
@@ -2193,7 +2292,6 @@ class ExpectImplication {
       if (count === 0) {
         throw new Error(\`\${field}[any] - no elements found\`);
       }
-      // Check that at least first one is visible
       await expect(locator.first()).toBeVisible({ timeout: 10000 });
       console.log(\`      ✓ \${field}[any] - at least one of \${count} elements is visible\`);
     }
@@ -2276,49 +2374,64 @@ class ExpectImplication {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // Advanced assertions
+  // Advanced assertions with template resolution
   // ═══════════════════════════════════════════════════════════
-  static async _checkAssertion(screenObject, assertion) {
-    const { fn, expect: expectType, value } = assertion;
+  static async _checkAssertion(screenObject, assertion, testData = {}) {
+    const { fn, expect: expectType, value, params = {}, tolerance } = assertion;
     
     if (typeof screenObject[fn] !== 'function') {
       throw new Error(\`"\${fn}" is not a function on screen object\`);
     }
     
-    const result = await screenObject[fn]();
+    const resolvedParams = this.resolveTemplate(params, testData);
+    const paramValues = Object.values(resolvedParams);
+    
+    const result = paramValues.length > 0 
+      ? await screenObject[fn](...paramValues)
+      : await screenObject[fn]();
+    
+    const resolvedValue = this.resolveTemplate(value, testData);
     
     switch (expectType) {
       case 'toBe':
-        expect(result).toBe(value);
-        console.log(\`      ✓ \${fn}() toBe \${value} (got: \${result})\`);
+      case 'equals':
+      case 'strictEquals':
+        expect(result).toBe(resolvedValue);
+        console.log(\`      ✓ \${fn}() toBe \${resolvedValue} (got: \${result})\`);
         break;
       case 'toEqual':
-        expect(result).toEqual(value);
-        console.log(\`      ✓ \${fn}() toEqual \${JSON.stringify(value)} (got: \${JSON.stringify(result)})\`);
+        expect(result).toEqual(resolvedValue);
+        console.log(\`      ✓ \${fn}() toEqual \${JSON.stringify(resolvedValue)} (got: \${JSON.stringify(result)})\`);
         break;
       case 'toBeGreaterThan':
-        expect(result).toBeGreaterThan(value);
-        console.log(\`      ✓ \${fn}() > \${value} (got: \${result})\`);
+      case 'greaterThan':
+        expect(result).toBeGreaterThan(resolvedValue);
+        console.log(\`      ✓ \${fn}() > \${resolvedValue} (got: \${result})\`);
         break;
       case 'toBeGreaterThanOrEqual':
-        expect(result).toBeGreaterThanOrEqual(value);
-        console.log(\`      ✓ \${fn}() >= \${value} (got: \${result})\`);
+      case 'greaterThanOrEqual':
+        expect(result).toBeGreaterThanOrEqual(resolvedValue);
+        console.log(\`      ✓ \${fn}() >= \${resolvedValue} (got: \${result})\`);
         break;
       case 'toBeLessThan':
-        expect(result).toBeLessThan(value);
-        console.log(\`      ✓ \${fn}() < \${value} (got: \${result})\`);
+      case 'lessThan':
+        expect(result).toBeLessThan(resolvedValue);
+        console.log(\`      ✓ \${fn}() < \${resolvedValue} (got: \${result})\`);
         break;
       case 'toBeLessThanOrEqual':
-        expect(result).toBeLessThanOrEqual(value);
-        console.log(\`      ✓ \${fn}() <= \${value} (got: \${result})\`);
+      case 'lessThanOrEqual':
+        expect(result).toBeLessThanOrEqual(resolvedValue);
+        console.log(\`      ✓ \${fn}() <= \${resolvedValue} (got: \${result})\`);
         break;
       case 'toContain':
-        expect(result).toContain(value);
-        console.log(\`      ✓ \${fn}() contains "\${value}" (got: \${result})\`);
+      case 'contains':
+        expect(result).toContain(resolvedValue);
+        console.log(\`      ✓ \${fn}() contains "\${resolvedValue}" (got: \${result})\`);
         break;
       case 'toMatch':
-        expect(result).toMatch(value);
-        console.log(\`      ✓ \${fn}() matches \${value} (got: \${result})\`);
+      case 'matches':
+        expect(result).toMatch(resolvedValue);
+        console.log(\`      ✓ \${fn}() matches \${resolvedValue} (got: \${result})\`);
         break;
       case 'toBeDefined':
         expect(result).toBeDefined();
@@ -2341,14 +2454,88 @@ class ExpectImplication {
         console.log(\`      ✓ \${fn}() is falsy (got: \${result})\`);
         break;
       case 'toHaveLength':
-        expect(result).toHaveLength(value);
-        console.log(\`      ✓ \${fn}() has length \${value} (got: \${result?.length})\`);
+      case 'hasLength':
+        expect(result).toHaveLength(resolvedValue);
+        console.log(\`      ✓ \${fn}() has length \${resolvedValue} (got: \${result?.length})\`);
+        break;
+      case 'notEquals':
+        expect(result).not.toBe(resolvedValue);
+        console.log(\`      ✓ \${fn}() !== \${resolvedValue} (got: \${result})\`);
+        break;
+      case 'notContains':
+        expect(result).not.toContain(resolvedValue);
+        console.log(\`      ✓ \${fn}() not contains "\${resolvedValue}" (got: \${result})\`);
+        break;
+      case 'startsWith':
+        expect(String(result).startsWith(resolvedValue)).toBe(true);
+        console.log(\`      ✓ \${fn}() starts with "\${resolvedValue}" (got: \${result})\`);
+        break;
+      case 'endsWith':
+        expect(String(result).endsWith(resolvedValue)).toBe(true);
+        console.log(\`      ✓ \${fn}() ends with "\${resolvedValue}" (got: \${result})\`);
+        break;
+      case 'closeTo':
+        const tol = tolerance || 0.01;
+        expect(Math.abs(Number(result) - Number(resolvedValue))).toBeLessThanOrEqual(tol);
+        console.log(\`      ✓ \${fn}() ≈ \${resolvedValue} (got: \${result}, tolerance: \${tol})\`);
         break;
       default:
         throw new Error(\`Unknown assertion type: \${expectType}\`);
     }
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // Execute functions with storeAs support
+  // ═══════════════════════════════════════════════════════════
+  static async _executeFunctions(functions, screenObject, testData = {}) {
+    if (!functions || Object.keys(functions).length === 0) {
+      return;
+    }
+    
+    console.log(\`   ⚡ Executing \${Object.keys(functions).length} function(s)...\`);
+    
+    for (const [funcName, funcConfig] of Object.entries(functions)) {
+      try {
+        const { parameters = {}, params = {}, storeAs, signature } = funcConfig;
+        
+        const funcParams = Object.keys(parameters).length > 0 ? parameters : params;
+        
+        const fn = screenObject[funcName];
+        if (typeof fn !== 'function') {
+          console.warn(\`      ⚠️  Function \${funcName} not found on screen, skipping...\`);
+          continue;
+        }
+        
+        const resolvedParams = this.resolveTemplate(funcParams, testData);
+        const paramValues = Object.values(resolvedParams);
+        
+        const displayName = signature || funcName;
+        const paramsDisplay = paramValues.length > 0 
+          ? \`(\${paramValues.map(v => JSON.stringify(v)).join(', ')})\`
+          : '()';
+        
+        console.log(\`      ▶ \${displayName}\${paramsDisplay}\`);
+        
+        const result = paramValues.length > 0
+          ? await fn.call(screenObject, ...paramValues)
+          : await fn.call(screenObject);
+        
+        if (storeAs) {
+          this.storeValue(storeAs, result);
+        } else {
+          console.log(\`      ✅ \${funcName} completed\`);
+        }
+        
+      } catch (error) {
+        console.error(\`      ❌ \${funcName} failed: \${error.message}\`);
+        throw error;
+      }
+    }
+  }
   
+  // ═══════════════════════════════════════════════════════════
+  // Main validation method
+  // ═══════════════════════════════════════════════════════════
   static async validateImplications(screenDef, testData, screenObject) {
     if (!screenDef || screenDef.length === 0) {
       console.log('   ⚠️  No screen definition to validate');
@@ -2357,14 +2544,12 @@ class ExpectImplication {
     
     const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
     
-    console.log(\`   🔍 Validating screen: \${def.name || 'unnamed'}\`);
+    console.log(\`\\n   🔍 Validating screen: \${def.name || 'unnamed'}\`);
+    console.log('   ' + '─'.repeat(47));
     
     const isPlaywright = screenObject.page !== undefined;
-    const isWebdriverIO = !isPlaywright;
-    
     const page = screenObject.page || screenObject;
     
-    // Legacy getElement for backwards compatibility
     const getElement = async (elementName) => {
       if (screenObject[elementName]) {
         return screenObject[elementName];
@@ -2384,9 +2569,7 @@ class ExpectImplication {
       console.log(\`      ✓ \${elementName} has text: "\${expectedText}"\`);
     };
     
-    // ═══════════════════════════════════════════════════════════
     // Prerequisites
-    // ═══════════════════════════════════════════════════════════
     if (def.prerequisites && def.prerequisites.length > 0) {
       console.log(\`   🔧 Running \${def.prerequisites.length} prerequisites...\`);
       for (const prereq of def.prerequisites) {
@@ -2395,10 +2578,13 @@ class ExpectImplication {
       }
       console.log('   ✅ Prerequisites completed');
     }
+
+    // Execute functions (with storeAs) FIRST
+    if (def.functions && Object.keys(def.functions).length > 0) {
+      await this._executeFunctions(def.functions, screenObject, testData);
+    }
     
-    // ═══════════════════════════════════════════════════════════
-    // Visible checks (with array index support)
-    // ═══════════════════════════════════════════════════════════
+    // Visible checks
     if (def.visible && def.visible.length > 0) {
       console.log(\`   ✅ Checking \${def.visible.length} visible elements...\`);
       for (const elementName of def.visible) {
@@ -2411,9 +2597,7 @@ class ExpectImplication {
       }
     }
     
-    // ═══════════════════════════════════════════════════════════
-    // Hidden checks (with array index support)
-    // ═══════════════════════════════════════════════════════════
+    // Hidden checks
     if (def.hidden && def.hidden.length > 0) {
       console.log(\`   ✅ Checking \${def.hidden.length} hidden elements...\`);
       for (const elementName of def.hidden) {
@@ -2426,9 +2610,7 @@ class ExpectImplication {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════
     // Truthy function checks
-    // ═══════════════════════════════════════════════════════════
     if (def.truthy && def.truthy.length > 0) {
       console.log(\`   ✅ Checking \${def.truthy.length} truthy functions...\`);
       for (const functionName of def.truthy) {
@@ -2441,9 +2623,7 @@ class ExpectImplication {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════
     // Falsy function checks
-    // ═══════════════════════════════════════════════════════════
     if (def.falsy && def.falsy.length > 0) {
       console.log(\`   ✅ Checking \${def.falsy.length} falsy functions...\`);
       for (const functionName of def.falsy) {
@@ -2456,14 +2636,12 @@ class ExpectImplication {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════
     // Advanced assertions
-    // ═══════════════════════════════════════════════════════════
     if (def.assertions && def.assertions.length > 0) {
       console.log(\`   ✅ Running \${def.assertions.length} assertions...\`);
       for (const assertion of def.assertions) {
         try {
-          await this._checkAssertion(screenObject, assertion);
+          await this._checkAssertion(screenObject, assertion, testData);
         } catch (error) {
           console.error(\`      ✗ Assertion \${assertion.fn}() \${assertion.expect} failed: \${error.message}\`);
           throw new Error(\`Assertion failed: \${assertion.fn}() \${assertion.expect} \${assertion.value ?? ''}\`);
@@ -2471,70 +2649,32 @@ class ExpectImplication {
       }
     }
     
-    // ═══════════════════════════════════════════════════════════
-    // Legacy: checks object (backward compatibility)
-    // ═══════════════════════════════════════════════════════════
+    // Legacy: checks object
     if (def.checks) {
       console.log('   🔍 Running additional checks...');
       
       if (def.checks.visible && def.checks.visible.length > 0) {
-        console.log(\`   ✅ Checking \${def.checks.visible.length} additional visible elements...\`);
         for (const elementName of def.checks.visible) {
-          try {
-            await this._checkVisibleWithIndex(screenObject, elementName, page, isPlaywright);
-          } catch (error) {
-            console.error(\`      ✗ \${elementName} NOT visible: \${error.message}\`);
-            throw new Error(\`Checks.visible failed for \${elementName}\`);
-          }
+          await this._checkVisibleWithIndex(screenObject, elementName, page, isPlaywright);
         }
       }
       
       if (def.checks.hidden && def.checks.hidden.length > 0) {
-        console.log(\`   ✅ Checking \${def.checks.hidden.length} additional hidden elements...\`);
         for (const elementName of def.checks.hidden) {
-          try {
-            await this._checkHiddenWithIndex(screenObject, elementName, page, isPlaywright);
-          } catch (error) {
-            console.error(\`      ✗ \${elementName} NOT hidden: \${error.message}\`);
-            throw new Error(\`Checks.hidden failed for \${elementName}\`);
-          }
+          await this._checkHiddenWithIndex(screenObject, elementName, page, isPlaywright);
         }
       }
       
       if (def.checks.text && Object.keys(def.checks.text).length > 0) {
-        console.log(\`   ✅ Checking \${Object.keys(def.checks.text).length} text checks...\`);
         for (const [elementName, expectedText] of Object.entries(def.checks.text)) {
-          try {
-            const element = await getElement(elementName);
-            
-            let finalText = expectedText;
-            if (typeof expectedText === 'string' && expectedText.includes('{{')) {
-              const variableMatch = expectedText.match(/\\{\\{([\\w.]+)\\}\\}/);
-              if (variableMatch && testData) {
-                const path = variableMatch[1];
-                const value = this.getNestedValue(testData, path);
-                
-                if (value !== undefined) {
-                  finalText = expectedText.replace(/\\{\\{([\\w.]+)\\}\\}/, value);
-                  console.log(\`      📝 Substituted {{\${path}}} -> \${value}\`);
-                } else {
-                  console.warn(\`      ⚠️  Variable {{\${path}}} not found in testData\`);
-                }
-              }
-            }
-            
-            await checkText(element, elementName, finalText);
-          } catch (error) {
-            console.error(\`      ✗ \${elementName} text check failed: \${error.message}\`);
-            throw new Error(\`Text check failed for \${elementName}\`);
-          }
+          const element = await getElement(elementName);
+          const finalText = this.resolveTemplate(expectedText, testData);
+          await checkText(element, elementName, finalText);
         }
       }
     }
     
-    // ═══════════════════════════════════════════════════════════
     // Custom expect function
-    // ═══════════════════════════════════════════════════════════
     if (def.expect && typeof def.expect === 'function') {
       console.log('   🎯 Running custom expect function...');
       await def.expect(testData, page);
@@ -2542,6 +2682,7 @@ class ExpectImplication {
     }
     
     console.log(\`   ✅ All validations passed for \${def.name || 'screen'}\`);
+    console.log('   ' + '─'.repeat(47));
   }
 }
 

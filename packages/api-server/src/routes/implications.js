@@ -2815,7 +2815,6 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
   return transitionAdded;
 }
 
-// ✅ ADD THIS NEW HELPER FUNCTION
 function buildActionDetailsAST(actionDetails) {
   const properties = [];
   
@@ -2825,6 +2824,16 @@ function buildActionDetailsAST(actionDetails) {
       t.objectProperty(
         t.identifier('description'),
         t.stringLiteral(actionDetails.description)
+      )
+    );
+  }
+  
+  // Platform
+  if (actionDetails.platform) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('platform'),
+        t.stringLiteral(actionDetails.platform)
       )
     );
   }
@@ -2854,10 +2863,10 @@ function buildActionDetailsAST(actionDetails) {
     const importsArray = t.arrayExpression(
       actionDetails.imports.map(imp => 
         t.objectExpression([
-          t.objectProperty(t.identifier('className'), t.stringLiteral(imp.className)),
-          t.objectProperty(t.identifier('varName'), t.stringLiteral(imp.varName)),
-          t.objectProperty(t.identifier('path'), t.stringLiteral(imp.path)),
-          t.objectProperty(t.identifier('constructor'), t.stringLiteral(imp.constructor))
+          t.objectProperty(t.identifier('className'), t.stringLiteral(imp.className || '')),
+          t.objectProperty(t.identifier('varName'), t.stringLiteral(imp.varName || '')),
+          t.objectProperty(t.identifier('path'), t.stringLiteral(imp.path || '')),
+          t.objectProperty(t.identifier('constructor'), t.stringLiteral(imp.constructor || ''))
         ])
       )
     );
@@ -2870,39 +2879,46 @@ function buildActionDetailsAST(actionDetails) {
     );
   }
   
-  // Steps
+  // Steps ✅ ENHANCED with storeAs
   if (actionDetails.steps && actionDetails.steps.length > 0) {
-  const stepsArray = t.arrayExpression(
-    actionDetails.steps.map(step => {
-      // ✅ CRITICAL: Store BOTH formats!
-      // args: string for template (backward compat)
-      // argsArray: array for entity-scoped logic
-      const argsString = Array.isArray(step.args) 
-        ? step.args.join(', ')  // Convert array to string
-        : step.args;  // Already a string
-      
-      return t.objectExpression([
-        t.objectProperty(t.identifier('description'), t.stringLiteral(step.description)),
-        t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance)),
-        t.objectProperty(t.identifier('method'), t.stringLiteral(step.method)),
-        // ✅ Store as STRING for backward compatibility
-        t.objectProperty(
-          t.identifier('args'),
-          t.stringLiteral(argsString)
-        ),
-        // ✅ ALSO store as ARRAY for entity-scoped templates
-        t.objectProperty(
-          t.identifier('argsArray'),
-          t.arrayExpression(
-            (Array.isArray(step.args) ? step.args : step.args.split(',').map(s => s.trim()))
-              .map(arg => t.stringLiteral(arg))
+    const stepsArray = t.arrayExpression(
+      actionDetails.steps.map(step => {
+        const argsString = Array.isArray(step.args) 
+          ? step.args.join(', ')
+          : (step.args || '');
+        
+        const argsArrayValue = Array.isArray(step.args) 
+          ? step.args 
+          : (step.args ? step.args.split(',').map(s => s.trim()) : []);
+        
+        // Build step properties dynamically
+        const stepProperties = [
+          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description || '')),
+          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance || '')),
+          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method || '')),
+          t.objectProperty(
+            t.identifier('args'),
+            t.stringLiteral(argsString)
+          ),
+          t.objectProperty(
+            t.identifier('argsArray'),
+            t.arrayExpression(argsArrayValue.map(arg => t.stringLiteral(arg)))
           )
-        )
-      ]);
-    })
-  );
-  
-  properties.push(
+        ];
+        
+        // ✅ NEW: Add storeAs if present
+        if (step.storeAs) {
+          console.log(`   💾 Adding storeAs to step: ${step.storeAs}`);
+          stepProperties.push(
+            t.objectProperty(t.identifier('storeAs'), t.stringLiteral(step.storeAs))
+          );
+        }
+        
+        return t.objectExpression(stepProperties);
+      })
+    );
+    
+    properties.push(
       t.objectProperty(
         t.identifier('steps'),
         stepsArray

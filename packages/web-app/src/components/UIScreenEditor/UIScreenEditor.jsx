@@ -85,7 +85,7 @@ function getContextFields(screen) {
 // Main Component
 // ============================================
 
-export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel }) {
+export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel, storedVariables = [] }) {
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -478,15 +478,16 @@ const getAvailablePlatforms = () => {
           const screens = normalizeScreens(platformData.screens);
 
           return (
-            <PlatformSection
-              key={platformName}
-              platformName={platformName}
-              platformData={platformData}
-              screens={screens}
-              editMode={editMode}
-              projectPath={projectPath}
-              theme={theme}
-              onScreenUpdate={(screenName, updatedScreen) => {
+           <PlatformSection
+  key={platformName}
+  platformName={platformName}
+  platformData={platformData}
+  screens={screens}
+  editMode={editMode}
+  projectPath={projectPath}
+  theme={theme}
+  storedVariables={storedVariables}  // ✅ ADD THIS
+  onScreenUpdate={(screenName, updatedScreen) => {
                 console.log('🔧 onScreenUpdate called:', { screenName, updatedScreen });
                 
                 setEditedUI(prev => {
@@ -595,6 +596,7 @@ function PlatformSection({
   editMode, 
   projectPath, 
   theme,
+  storedVariables = [],  // ✅ ADD THIS
   onScreenUpdate,
   onAddScreen,
   onDeleteScreen,
@@ -645,29 +647,25 @@ function PlatformSection({
       {/* Screens */}
       <div className="space-y-3">
         {screenArray.map((screen, idx) => (
-          <ScreenCard
-            key={idx}
-            screen={screen}
-            screenIndex={idx}
-            editMode={editMode}
-            projectPath={projectPath}
-            theme={theme}
-            onUpdate={(updates) => {
-  const screenName = screen.screenName || screen.name || screen.originalName;
-  const updatedScreen = { ...screen, ...updates };
-  console.log('📤 Sending to onScreenUpdate:', {
-    screenName,
-    updatedScreen,
-    isArray: Array.isArray(updatedScreen)
-  });
-  onScreenUpdate(screenName, updatedScreen);
-}}
-            onDelete={() => {
-              const screenName = screen.screenName || screen.name || screen.originalName;
-              onDeleteScreen(screenName);
-            }}
-            onCopy={() => onCopyScreen(screen)}
-          />
+      <ScreenCard
+  key={idx}
+  screen={screen}
+  screenIndex={idx}
+  editMode={editMode}
+  projectPath={projectPath}
+  theme={theme}
+  storedVariables={storedVariables}  // ✅ ADD THIS
+  onUpdate={(updates) => {
+    const screenName = screen.screenName || screen.name || screen.originalName;
+    const updatedScreen = { ...screen, ...updates };
+    onScreenUpdate(screenName, updatedScreen);
+  }}
+  onDelete={() => {
+    const screenName = screen.screenName || screen.name || screen.originalName;
+    onDeleteScreen(screenName);
+  }}
+  onCopy={() => onCopyScreen(screen)}
+/>
         ))}
 
         {screenArray.length === 0 && !editMode && (
@@ -690,7 +688,7 @@ function PlatformSection({
 // ScreenCard Component (UNCHANGED - keeping your version)
 // ============================================
 
-function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdate, onDelete, onCopy }) {
+function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete, theme, storedVariables = [] }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
   const [instanceName, setInstanceName] = useState(null);
@@ -856,30 +854,42 @@ function ScreenCard({ screen, screenIndex, editMode, projectPath, theme, onUpdat
             />
           )}
 
-          {/* Truthy/Falsy Section */}
-          {((screen.truthy?.length > 0 || screen.falsy?.length > 0) || editMode) && (
-            <TruthyFalsySection
+         {/* ✅ NEW: Truthy Section */}
+          {((screen.truthy && screen.truthy.length > 0) || editMode) && (
+            <TruthySection
               truthy={screen.truthy || []}
-              falsy={screen.falsy || []}
               editMode={editMode}
               pomName={pomName}
               projectPath={projectPath}
-              onChange={({ truthy, falsy }) => onUpdate({ truthy, falsy })}
+              onChange={(newTruthy) => onUpdate({ truthy: newTruthy })}
               theme={theme}
             />
           )}
 
-          {/* Assertions Section */}
-          {(screen.assertions?.length > 0 || editMode) && (
-            <AssertionsSection
-              assertions={screen.assertions || []}
+          {/* ✅ NEW: Falsy Section */}
+          {((screen.falsy && screen.falsy.length > 0) || editMode) && (
+            <FalsySection
+              falsy={screen.falsy || []}
               editMode={editMode}
               pomName={pomName}
               projectPath={projectPath}
-              onChange={(newAssertions) => onUpdate({ assertions: newAssertions })}
+              onChange={(newFalsy) => onUpdate({ falsy: newFalsy })}
               theme={theme}
             />
           )}
+
+          {/* Assertions Section - pass storedVariables */}
+    {(screen.assertions?.length > 0 || editMode) && (
+      <AssertionsSection
+        assertions={screen.assertions || []}
+        editMode={editMode}
+        pomName={pomName}
+        projectPath={projectPath}
+        storedVariables={storedVariables}  // ✅ Pass stored variables
+        onChange={(newAssertions) => onUpdate({ assertions: newAssertions })}
+        theme={theme}
+      />
+    )}
 
           {editMode && (
             <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
@@ -1170,6 +1180,36 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
     onChange(updated);
   };
 
+  // ✅ NEW: Toggle storeAs for a function
+  const handleToggleStoreAs = (funcName) => {
+    const func = functions[funcName];
+    const updated = { ...functions };
+    
+    if (func.storeAs) {
+      // Remove storeAs
+      delete updated[funcName].storeAs;
+    } else {
+      // Add default storeAs (camelCase of function name + "Result")
+      updated[funcName] = {
+        ...func,
+        storeAs: funcName + 'Result'
+      };
+    }
+    
+    onChange(updated);
+  };
+
+  // ✅ NEW: Update storeAs value
+  const handleStoreAsChange = (funcName, newValue) => {
+    onChange({
+      ...functions,
+      [funcName]: {
+        ...functions[funcName],
+        storeAs: newValue
+      }
+    });
+  };
+
   return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
       <div className="flex items-center justify-between mb-2">
@@ -1184,18 +1224,72 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
                 <div className="font-mono text-xs mb-1 font-bold" style={{ color }}>{funcData.signature || funcName}</div>
+                
+                {/* Parameters */}
                 {funcData.parameters && Object.keys(funcData.parameters).length > 0 && (
                   <div className="mt-2 space-y-1">
                     {Object.entries(funcData.parameters).map(([paramName, paramValue]) => (
                       <div key={paramName} className="text-xs flex items-center gap-2">
                         <span style={{ color: theme.colors.text.tertiary }}>{paramName}:</span>
-                        <code className="px-1 py-0.5 rounded" style={{ background: theme.colors.background.primary, color: theme.colors.accents.green }}>{paramValue}</code>
+                        <code className="px-1 py-0.5 rounded" style={{ background: theme.colors.background.primary, color: theme.colors.accents.green }}>
+                          {renderTemplateValue(paramValue, theme)}
+                        </code>
                       </div>
                     ))}
                   </div>
                 )}
+                
+                {/* ✅ NEW: StoreAs display/edit */}
+                {funcData.storeAs && (
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <span className="text-yellow-500">💾</span>
+                    <span style={{ color: theme.colors.text.tertiary }}>stores as:</span>
+                    {editMode ? (
+                      <input
+                        type="text"
+                        value={funcData.storeAs}
+                        onChange={(e) => handleStoreAsChange(funcName, e.target.value)}
+                        className="px-2 py-0.5 rounded text-xs font-mono"
+                        style={{ 
+                          background: theme.colors.background.primary, 
+                          border: `1px solid ${theme.colors.border}`,
+                          color: theme.colors.accents.yellow 
+                        }}
+                      />
+                    ) : (
+                      <code className="px-2 py-0.5 rounded font-mono" style={{ background: `${theme.colors.accents.yellow}20`, color: theme.colors.accents.yellow }}>
+                        {funcData.storeAs}
+                      </code>
+                    )}
+                  </div>
+                )}
+                
+                {/* ✅ NEW: Add storeAs button in edit mode */}
+                {editMode && !funcData.storeAs && (
+                  <button
+                    onClick={() => handleToggleStoreAs(funcName)}
+                    className="mt-2 px-2 py-1 rounded text-xs transition hover:brightness-110"
+                    style={{ background: `${theme.colors.accents.yellow}30`, color: theme.colors.accents.yellow }}
+                  >
+                    💾 Add storeAs
+                  </button>
+                )}
               </div>
-              {editMode && <button onClick={() => handleRemoveFunction(funcName)} className="hover:text-red-500 transition" style={{ color }}>✕</button>}
+              
+              {editMode && (
+                <div className="flex gap-1">
+                  {funcData.storeAs && (
+                    <button 
+                      onClick={() => handleToggleStoreAs(funcName)} 
+                      className="hover:text-yellow-500 transition text-xs"
+                      title="Remove storeAs"
+                    >
+                      🗑️
+                    </button>
+                  )}
+                  <button onClick={() => handleRemoveFunction(funcName)} className="hover:text-red-500 transition" style={{ color }}>✕</button>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -1212,23 +1306,61 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
   );
 }
 
+
+
+// ✅ Helper to render template values with highlighting
+function renderTemplateValue(value, theme) {
+  if (typeof value !== 'string') {
+    return JSON.stringify(value);
+  }
+  
+  // Check for {{variable}} pattern
+  const hasTemplate = /\{\{([^}]+)\}\}/.test(value);
+  
+  if (hasTemplate) {
+    return (
+      <span>
+        {value.split(/(\{\{[^}]+\}\})/).map((part, i) => {
+          if (part.match(/^\{\{[^}]+\}\}$/)) {
+            return (
+              <span 
+                key={i} 
+                className="px-1 py-0.5 rounded mx-0.5"
+                style={{ background: `${theme.colors.accents.yellow}30`, color: theme.colors.accents.yellow }}
+              >
+                {part}
+              </span>
+            );
+          }
+          return part;
+        })}
+      </span>
+    );
+  }
+  
+  return value;
+}
+
+
 // ============================================
-// TruthyFalsySection - Boolean function checks
+// AssertionsSection - Advanced assertions
 // ============================================
 
-function TruthyFalsySection({ truthy = [], falsy = [], editMode, pomName, projectPath, onChange, theme }) {
-  const [isAddingTruthy, setIsAddingTruthy] = useState(false);
-  const [isAddingFalsy, setIsAddingFalsy] = useState(false);
+// ============================================
+// ✅ FIXED: TruthySection with Function Dropdown
+// ============================================
+function TruthySection({ truthy = [], editMode, pomName, projectPath, onChange, theme }) {
+  const [isAdding, setIsAdding] = useState(false);
   const [availableFunctions, setAvailableFunctions] = useState([]);
-  const [newTruthyFn, setNewTruthyFn] = useState('');
-  const [newFalsyFn, setNewFalsyFn] = useState('');
+  const [newFunc, setNewFunc] = useState('');
+  const color = theme.colors.accents.green;
 
-  // Fetch available functions when POM changes
+  // ✅ Fetch available functions from POM
   useEffect(() => {
-    if (pomName && projectPath) {
+    if (pomName && projectPath && editMode) {
       fetchPOMFunctions();
     }
-  }, [pomName, projectPath]);
+  }, [pomName, projectPath, editMode]);
 
   const fetchPOMFunctions = async () => {
     try {
@@ -1238,163 +1370,214 @@ function TruthyFalsySection({ truthy = [], falsy = [], editMode, pomName, projec
       if (response.ok) {
         const data = await response.json();
         setAvailableFunctions(data.functions || []);
+        console.log(`📦 TruthySection: Loaded ${data.functions?.length || 0} functions from ${pomName}`);
       }
     } catch (error) {
       console.error('Failed to fetch POM functions:', error);
     }
   };
 
-  const handleAddTruthy = () => {
-    if (!newTruthyFn.trim() || truthy.includes(newTruthyFn.trim())) return;
-    onChange({ truthy: [...truthy, newTruthyFn.trim()], falsy });
-    setNewTruthyFn('');
-    setIsAddingTruthy(false);
+  const handleAdd = () => {
+    if (!newFunc || truthy.includes(newFunc)) return;
+    onChange([...truthy, newFunc]);
+    setNewFunc('');
+    setIsAdding(false);
   };
 
-  const handleAddFalsy = () => {
-    if (!newFalsyFn.trim() || falsy.includes(newFalsyFn.trim())) return;
-    onChange({ truthy, falsy: [...falsy, newFalsyFn.trim()] });
-    setNewFalsyFn('');
-    setIsAddingFalsy(false);
+  const handleRemove = (func) => {
+    onChange(truthy.filter(f => f !== func));
   };
 
-  const handleRemoveTruthy = (fn) => {
-    onChange({ truthy: truthy.filter(f => f !== fn), falsy });
-  };
-
-  const handleRemoveFalsy = (fn) => {
-    onChange({ truthy, falsy: falsy.filter(f => f !== fn) });
-  };
-
-  const truthyColor = theme.colors.accents.blue;
-  const falsyColor = theme.colors.accents.purple;
+  // Filter out already-used functions
+  const availableForSelection = availableFunctions.filter(f => !truthy.includes(f));
 
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {/* TRUTHY */}
-      <div className="p-3 rounded" style={{ background: `${truthyColor}10`, border: `1px solid ${truthyColor}40` }}>
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-semibold text-sm" style={{ color: truthyColor }}>
-            ✓ Truthy ({truthy.length})
+    <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold" style={{ color }}>✓ Truthy ({truthy.length})</div>
+        {editMode && !isAdding && (
+          <button onClick={() => setIsAdding(true)} className="px-2 py-1 rounded text-xs font-semibold" style={{ background: color, color: 'white' }}>➕ Add</button>
+        )}
+      </div>
+      <div className="space-y-1">
+        {truthy.map((func, idx) => (
+          <div key={idx} className="flex items-center justify-between text-sm font-mono p-2 rounded" style={{ background: `${color}20` }}>
+            <span>{func}() → truthy</span>
+            {editMode && <button onClick={() => handleRemove(func)} className="text-red-500">✕</button>}
           </div>
-          {editMode && !isAddingTruthy && (
-            <button 
-              onClick={() => setIsAddingTruthy(true)} 
-              className="px-2 py-0.5 rounded text-xs font-semibold transition hover:brightness-110" 
-              style={{ background: truthyColor, color: 'white' }}
-            >
-              +
-            </button>
-          )}
-        </div>
-        <div className="space-y-1">
-          {truthy.map((fn, idx) => (
-            <div key={idx} className="flex items-center justify-between p-1.5 rounded text-sm" style={{ background: `${truthyColor}20` }}>
-              <span className="font-mono">{fn}()</span>
-              {editMode && (
-                <button onClick={() => handleRemoveTruthy(fn)} className="text-red-400 hover:text-red-300">✕</button>
-              )}
-            </div>
-          ))}
-          {isAddingTruthy && (
-            <div className="space-y-1">
+        ))}
+        {isAdding && (
+          <div className="flex gap-2 mt-2">
+            {/* ✅ FIXED: Use dropdown instead of text input */}
+            {availableFunctions.length > 0 ? (
               <select
-                value={newTruthyFn}
-                onChange={(e) => setNewTruthyFn(e.target.value)}
-                className="w-full px-2 py-1 rounded border text-sm"
+                value={newFunc}
+                onChange={(e) => setNewFunc(e.target.value)}
+                className="flex-1 px-2 py-1 rounded border text-sm font-mono"
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
               >
                 <option value="">Select function...</option>
-                {availableFunctions.map(fn => (
+                {availableForSelection.map(fn => (
                   <option key={fn} value={fn}>{fn}()</option>
                 ))}
               </select>
-              <div className="flex gap-1">
-                <button onClick={handleAddTruthy} className="flex-1 px-2 py-1 rounded text-xs font-semibold" style={{ background: truthyColor, color: 'white' }}>Add</button>
-                <button onClick={() => { setIsAddingTruthy(false); setNewTruthyFn(''); }} className="px-2 py-1 rounded text-xs" style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}>✕</button>
-              </div>
-            </div>
-          )}
-          {truthy.length === 0 && !isAddingTruthy && (
-            <div className="text-center py-1 text-xs" style={{ color: theme.colors.text.tertiary }}>None</div>
-          )}
-        </div>
-      </div>
-
-      {/* FALSY */}
-      <div className="p-3 rounded" style={{ background: `${falsyColor}10`, border: `1px solid ${falsyColor}40` }}>
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-semibold text-sm" style={{ color: falsyColor }}>
-            ✗ Falsy ({falsy.length})
-          </div>
-          {editMode && !isAddingFalsy && (
+            ) : (
+              <input
+                type="text"
+                value={newFunc}
+                onChange={(e) => setNewFunc(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+                placeholder="Function name..."
+                className="flex-1 px-2 py-1 rounded text-sm font-mono"
+                style={{ background: theme.colors.background.primary, border: `1px solid ${theme.colors.border}`, color: theme.colors.text.primary }}
+                autoFocus
+              />
+            )}
             <button 
-              onClick={() => setIsAddingFalsy(true)} 
-              className="px-2 py-0.5 rounded text-xs font-semibold transition hover:brightness-110" 
-              style={{ background: falsyColor, color: 'white' }}
+              onClick={handleAdd} 
+              disabled={!newFunc}
+              className="px-3 py-1 rounded text-sm font-semibold disabled:opacity-50" 
+              style={{ background: color, color: 'white' }}
             >
-              +
+              Add
             </button>
-          )}
-        </div>
-        <div className="space-y-1">
-          {falsy.map((fn, idx) => (
-            <div key={idx} className="flex items-center justify-between p-1.5 rounded text-sm" style={{ background: `${falsyColor}20` }}>
-              <span className="font-mono">{fn}()</span>
-              {editMode && (
-                <button onClick={() => handleRemoveFalsy(fn)} className="text-red-400 hover:text-red-300">✕</button>
-              )}
-            </div>
-          ))}
-          {isAddingFalsy && (
-            <div className="space-y-1">
-              <select
-                value={newFalsyFn}
-                onChange={(e) => setNewFalsyFn(e.target.value)}
-                className="w-full px-2 py-1 rounded border text-sm"
-                style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
-              >
-                <option value="">Select function...</option>
-                {availableFunctions.map(fn => (
-                  <option key={fn} value={fn}>{fn}()</option>
-                ))}
-              </select>
-              <div className="flex gap-1">
-                <button onClick={handleAddFalsy} className="flex-1 px-2 py-1 rounded text-xs font-semibold" style={{ background: falsyColor, color: 'white' }}>Add</button>
-                <button onClick={() => { setIsAddingFalsy(false); setNewFalsyFn(''); }} className="px-2 py-1 rounded text-xs" style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}>✕</button>
-              </div>
-            </div>
-          )}
-          {falsy.length === 0 && !isAddingFalsy && (
-            <div className="text-center py-1 text-xs" style={{ color: theme.colors.text.tertiary }}>None</div>
-          )}
-        </div>
+            <button onClick={() => { setIsAdding(false); setNewFunc(''); }} className="px-3 py-1 rounded text-sm" style={{ background: theme.colors.background.tertiary }}>Cancel</button>
+          </div>
+        )}
       </div>
+      {truthy.length === 0 && !isAdding && (
+        <div className="text-center py-2 text-sm" style={{ color: theme.colors.text.tertiary }}>No truthy checks</div>
+      )}
     </div>
   );
 }
 
 // ============================================
-// AssertionsSection - Advanced assertions
+// ✅ FIXED: FalsySection with Function Dropdown
 // ============================================
+function FalsySection({ falsy = [], editMode, pomName, projectPath, onChange, theme }) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [availableFunctions, setAvailableFunctions] = useState([]);
+  const [newFunc, setNewFunc] = useState('');
+  const color = theme.colors.accents.red;
 
+  // ✅ Fetch available functions from POM
+  useEffect(() => {
+    if (pomName && projectPath && editMode) {
+      fetchPOMFunctions();
+    }
+  }, [pomName, projectPath, editMode]);
+
+  const fetchPOMFunctions = async () => {
+    try {
+      const response = await fetch(
+        `/api/poms/functions?projectPath=${encodeURIComponent(projectPath)}&pomName=${encodeURIComponent(pomName)}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableFunctions(data.functions || []);
+        console.log(`📦 FalsySection: Loaded ${data.functions?.length || 0} functions from ${pomName}`);
+      }
+    } catch (error) {
+      console.error('Failed to fetch POM functions:', error);
+    }
+  };
+
+  const handleAdd = () => {
+    if (!newFunc || falsy.includes(newFunc)) return;
+    onChange([...falsy, newFunc]);
+    setNewFunc('');
+    setIsAdding(false);
+  };
+
+  const handleRemove = (func) => {
+    onChange(falsy.filter(f => f !== func));
+  };
+
+  // Filter out already-used functions
+  const availableForSelection = availableFunctions.filter(f => !falsy.includes(f));
+
+  return (
+    <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold" style={{ color }}>✗ Falsy ({falsy.length})</div>
+        {editMode && !isAdding && (
+          <button onClick={() => setIsAdding(true)} className="px-2 py-1 rounded text-xs font-semibold" style={{ background: color, color: 'white' }}>➕ Add</button>
+        )}
+      </div>
+      <div className="space-y-1">
+        {falsy.map((func, idx) => (
+          <div key={idx} className="flex items-center justify-between text-sm font-mono p-2 rounded" style={{ background: `${color}20` }}>
+            <span>{func}() → falsy</span>
+            {editMode && <button onClick={() => handleRemove(func)} className="text-red-500">✕</button>}
+          </div>
+        ))}
+        {isAdding && (
+          <div className="flex gap-2 mt-2">
+            {/* ✅ FIXED: Use dropdown instead of text input */}
+            {availableFunctions.length > 0 ? (
+              <select
+                value={newFunc}
+                onChange={(e) => setNewFunc(e.target.value)}
+                className="flex-1 px-2 py-1 rounded border text-sm font-mono"
+                style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
+              >
+                <option value="">Select function...</option>
+                {availableForSelection.map(fn => (
+                  <option key={fn} value={fn}>{fn}()</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={newFunc}
+                onChange={(e) => setNewFunc(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAdd()}
+                placeholder="Function name..."
+                className="flex-1 px-2 py-1 rounded text-sm font-mono"
+                style={{ background: theme.colors.background.primary, border: `1px solid ${theme.colors.border}`, color: theme.colors.text.primary }}
+                autoFocus
+              />
+            )}
+            <button 
+              onClick={handleAdd}
+              disabled={!newFunc}
+              className="px-3 py-1 rounded text-sm font-semibold disabled:opacity-50" 
+              style={{ background: color, color: 'white' }}
+            >
+              Add
+            </button>
+            <button onClick={() => { setIsAdding(false); setNewFunc(''); }} className="px-3 py-1 rounded text-sm" style={{ background: theme.colors.background.tertiary }}>Cancel</button>
+          </div>
+        )}
+      </div>
+      {falsy.length === 0 && !isAdding && (
+        <div className="text-center py-2 text-sm" style={{ color: theme.colors.text.tertiary }}>No falsy checks</div>
+      )}
+    </div>
+  );
+}
+// Assertion types constant
 const ASSERTION_TYPES = [
-  { value: 'toBe', label: 'equals', needsValue: true },
+  { value: 'toBe', label: '=', needsValue: true },
+  { value: 'toEqual', label: 'equals', needsValue: true },
   { value: 'toBeGreaterThan', label: '>', needsValue: true },
   { value: 'toBeGreaterThanOrEqual', label: '>=', needsValue: true },
   { value: 'toBeLessThan', label: '<', needsValue: true },
   { value: 'toBeLessThanOrEqual', label: '<=', needsValue: true },
   { value: 'toContain', label: 'contains', needsValue: true },
+  { value: 'toMatch', label: 'matches', needsValue: true },
   { value: 'toHaveLength', label: 'length', needsValue: true },
-  { value: 'toBeDefined', label: 'defined', needsValue: false },
   { value: 'toBeTruthy', label: 'truthy', needsValue: false },
   { value: 'toBeFalsy', label: 'falsy', needsValue: false },
+  { value: 'toBeDefined', label: 'defined', needsValue: false },
+  { value: 'toBeNull', label: 'null', needsValue: false },
 ];
 
-function AssertionsSection({ assertions = [], editMode, pomName, projectPath, onChange, theme }) {
+function AssertionsSection({ assertions = [], editMode, pomName, projectPath, storedVariables = [], onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [availableFunctions, setAvailableFunctions] = useState([]);
-  const [newAssertion, setNewAssertion] = useState({ fn: '', expect: 'toBe', value: '' });
+  const [newAssertion, setNewAssertion] = useState({ fn: '', expect: 'toBe', value: '', useVariable: false });
   const color = theme.colors.accents.yellow;
 
   useEffect(() => {
@@ -1420,13 +1603,24 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
   const handleAdd = () => {
     if (!newAssertion.fn) return;
     const selectedType = ASSERTION_TYPES.find(t => t.value === newAssertion.expect);
+    
+    let valueToStore = newAssertion.value;
+    
+    // If using a stored variable, wrap it in {{}}
+    if (newAssertion.useVariable && newAssertion.value) {
+      valueToStore = `{{${newAssertion.value}}}`;
+    } else if (selectedType?.needsValue && !isNaN(Number(newAssertion.value))) {
+      valueToStore = Number(newAssertion.value);
+    }
+    
     const assertionToAdd = {
       fn: newAssertion.fn,
       expect: newAssertion.expect,
-      ...(selectedType?.needsValue ? { value: isNaN(Number(newAssertion.value)) ? newAssertion.value : Number(newAssertion.value) } : {})
+      ...(selectedType?.needsValue ? { value: valueToStore } : {})
     };
+    
     onChange([...assertions, assertionToAdd]);
-    setNewAssertion({ fn: '', expect: 'toBe', value: '' });
+    setNewAssertion({ fn: '', expect: 'toBe', value: '', useVariable: false });
     setIsAdding(false);
   };
 
@@ -1437,7 +1631,10 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
   const getAssertionLabel = (assertion) => {
     const type = ASSERTION_TYPES.find(t => t.value === assertion.expect);
     if (type?.needsValue) {
-      return `${assertion.fn}() ${type.label} ${assertion.value}`;
+      const valueDisplay = typeof assertion.value === 'string' && assertion.value.includes('{{')
+        ? <code className="px-1 py-0.5 rounded text-xs" style={{ background: `${theme.colors.accents.purple}30`, color: theme.colors.accents.purple }}>{assertion.value}</code>
+        : assertion.value;
+      return <>{assertion.fn}() {type.label} {valueDisplay}</>;
     }
     return `${assertion.fn}() is ${type?.label || assertion.expect}`;
   };
@@ -1448,7 +1645,7 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
       <div className="flex items-center justify-between mb-2">
         <div className="font-semibold" style={{ color }}>
-          ⚡ Assertions ({assertions.length})
+          🔍 Assertions ({assertions.length})
         </div>
         {editMode && !isAdding && (
           <button 
@@ -1478,7 +1675,7 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
               <select
                 value={newAssertion.fn}
                 onChange={(e) => setNewAssertion({ ...newAssertion, fn: e.target.value })}
-                className="flex-1 px-2 py-1 rounded border text-sm"
+                className="flex-1 px-2 py-1 rounded border text-sm font-mono"
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
               >
                 <option value="">Function...</option>
@@ -1498,19 +1695,59 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
-              
-              {/* Value (if needed) */}
-              {selectedType?.needsValue && (
-                <input
-                  type="text"
-                  value={newAssertion.value}
-                  onChange={(e) => setNewAssertion({ ...newAssertion, value: e.target.value })}
-                  placeholder="value"
-                  className="w-20 px-2 py-1 rounded border text-sm"
-                  style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
-                />
-              )}
             </div>
+            
+            {/* Value input (if needed) */}
+            {selectedType?.needsValue && (
+              <div className="space-y-2">
+                {/* Toggle: literal value vs stored variable */}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs flex items-center gap-1 cursor-pointer" style={{ color: theme.colors.text.secondary }}>
+                    <input
+                      type="checkbox"
+                      checked={newAssertion.useVariable}
+                      onChange={(e) => setNewAssertion({ ...newAssertion, useVariable: e.target.checked, value: '' })}
+                      className="rounded"
+                    />
+                    Use stored variable
+                  </label>
+                </div>
+                
+                {newAssertion.useVariable ? (
+                  /* Stored variable dropdown */
+                  <div className="flex gap-2 items-center">
+                    <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'{{'}</span>
+                    <select
+                      value={newAssertion.value}
+                      onChange={(e) => setNewAssertion({ ...newAssertion, value: e.target.value })}
+                      className="flex-1 px-2 py-1 rounded border text-sm font-mono"
+                      style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.accents.purple }}
+                    >
+                      <option value="">Select variable...</option>
+                      {storedVariables.map(v => (
+                        <option key={v.name} value={v.path}>{v.path}</option>
+                      ))}
+                    </select>
+                    <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'}}'}</span>
+                  </div>
+                ) : (
+                  /* Literal value input */
+                  <input
+                    type="text"
+                    value={newAssertion.value}
+                    onChange={(e) => setNewAssertion({ ...newAssertion, value: e.target.value })}
+                    placeholder="Expected value..."
+                    className="w-full px-2 py-1 rounded border text-sm"
+                    style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
+                  />
+                )}
+                
+                {/* Helper text */}
+                <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                  💡 Use stored variables like <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>{`{{flightData.price}}`}</code> from transition actions
+                </div>
+              </div>
+            )}
             
             <div className="flex gap-2">
               <button 
@@ -1522,7 +1759,7 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, on
                 Add
               </button>
               <button 
-                onClick={() => { setIsAdding(false); setNewAssertion({ fn: '', expect: 'toBe', value: '' }); }}
+                onClick={() => { setIsAdding(false); setNewAssertion({ fn: '', expect: 'toBe', value: '', useVariable: false }); }}
                 className="px-3 py-1 rounded text-sm"
                 style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}
               >

@@ -20,7 +20,7 @@ const { test, expect, devices } = require('@playwright/test');
 const TestContext = require('{{testContextPath}}');
 const TestPlanner = require('{{testPlannerPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
-{{#if hasUIValidation}}
+{{#if (or hasUIValidation hasStoreAs)}}
 const ExpectImplication = require('{{expectImplicationPath}}');
 {{/if}}
 {{#if isVerify}}
@@ -272,10 +272,19 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{#if actionDetails.steps}}
 {{#each actionDetails.steps}}
   // Step {{addOne @index}}: {{description}}
+{{#if storeAs}}
+{{#if entity}}
+  const {{storeAs}} = await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
+{{else}}
+  const {{storeAs}} = await {{instance}}.{{method}}({{{args}}});
+{{/if}}
+  ExpectImplication.storeValue('{{storeAs}}', {{storeAs}});
+{{else}}
 {{#if entity}}
   await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
 {{else}}
   await {{instance}}.{{method}}({{{args}}});
+{{/if}}
 {{/if}}
 {{/each}}
 {{/if}}

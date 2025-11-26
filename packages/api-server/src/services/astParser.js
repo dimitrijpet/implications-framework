@@ -1213,7 +1213,7 @@ case 'sometimesVisible':
 }
 
 /**
- * ✨ NEW: Parse functions object
+ * ✨ Parse functions object - NOW WITH storeAs SUPPORT
  */
 function parseFunctionsObject(node) {
   const functions = {};
@@ -1247,6 +1247,20 @@ function parseFunctionsObject(node) {
               funcData.parameters[paramKey] = paramValue;
             }
           });
+        } else if (key === 'params' && funcProp.value.type === 'ObjectExpression') {
+          // ✅ Also support 'params' as alias for 'parameters'
+          funcData.parameters = {};
+          funcProp.value.properties.forEach(paramProp => {
+            if (paramProp.key) {
+              const paramKey = paramProp.key.name || paramProp.key.value;
+              const paramValue = extractValueFromNode(paramProp.value);
+              funcData.parameters[paramKey] = paramValue;
+            }
+          });
+        } else if (key === 'storeAs') {
+          // ✅ NEW: Extract storeAs
+          funcData.storeAs = value;
+          console.log(`          StoreAs: ${value}`);
         } else if (value !== undefined) {
           funcData[key] = value;
         }

@@ -739,6 +739,52 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
     console.log('📊 Analysis complete:', analysis);
   };
 
+const getStoredVariables = () => {
+  const variables = [];
+  
+  // ✅ FIXED: Look in actionDetails.steps, not just steps
+  if (currentState.transitions) {
+    currentState.transitions.forEach(transition => {
+      const steps = transition.actionDetails?.steps || transition.steps || [];
+      steps.forEach(step => {
+        if (step.storeAs) {
+          variables.push({
+            name: step.storeAs,
+            path: step.storeAs,
+            source: `transition:${transition.event}`
+          });
+        }
+      });
+    });
+  }
+  
+  // Get from functions in current state's mirrorsOn
+  const platforms = currentState.uiCoverage?.platforms || 
+                    currentState.meta?.uiCoverage?.platforms ||
+                    {};
+                    
+  Object.values(platforms).forEach(platform => {
+    const screens = platform.screens || {};
+    Object.values(screens).forEach(screenDef => {
+      const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
+      if (def.functions) {
+        Object.entries(def.functions).forEach(([funcName, funcData]) => {
+          if (funcData.storeAs) {
+            variables.push({
+              name: funcData.storeAs,
+              path: funcData.storeAs,
+              source: `function:${funcName}`
+            });
+          }
+        });
+      }
+    });
+  });
+  
+  console.log('📦 Collected stored variables:', variables);
+  return variables;
+};
+
   // ========================================
   // RENDER
   // ========================================
@@ -1037,6 +1083,7 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
   }}
   projectPath={projectPath}
   theme={theme}
+  storedVariables={getStoredVariables()}  // ✅ Pass to editor
   onSave={handleUIUpdate}
   onCancel={() => console.log('UI edit cancelled')}
 />
