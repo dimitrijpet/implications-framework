@@ -2072,6 +2072,66 @@ function buildScreenObjectAst(screen) {
       t.objectExpression(functionProps)
     ));
   }
+
+  // ✅ NEW: truthy (array of function names that must return truthy)
+  if (screen.truthy && screen.truthy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(fn => t.stringLiteral(fn)))
+    ));
+  }
+
+  // ✅ NEW: falsy (array of function names that must return falsy)
+  if (screen.falsy && screen.falsy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(fn => t.stringLiteral(fn)))
+    ));
+  }
+
+  // ✅ NEW: assertions (array of { fn, expect, value } objects)
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertionProps = [];
+      
+      // fn (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('fn'),
+        t.stringLiteral(assertion.fn)
+      ));
+      
+      // expect (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('expect'),
+        t.stringLiteral(assertion.expect)
+      ));
+      
+      // value (optional, can be string, number, boolean, null)
+      if (assertion.value !== undefined) {
+        let valueNode;
+        if (typeof assertion.value === 'number') {
+          valueNode = t.numericLiteral(assertion.value);
+        } else if (typeof assertion.value === 'boolean') {
+          valueNode = t.booleanLiteral(assertion.value);
+        } else if (assertion.value === null) {
+          valueNode = t.nullLiteral();
+        } else {
+          valueNode = t.stringLiteral(String(assertion.value));
+        }
+        assertionProps.push(t.objectProperty(
+          t.identifier('value'),
+          valueNode
+        ));
+      }
+      
+      return t.objectExpression(assertionProps);
+    });
+    
+    props.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+  }
   
   return t.objectExpression(props);
 }
@@ -2242,6 +2302,69 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
     ));
     
       console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
+  }
+
+  // ✅ NEW: truthy (array of function names that must return truthy)
+  if (screen.truthy && screen.truthy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(fn => t.stringLiteral(fn)))
+    ));
+    console.log(`    ✓ Including truthy for ${screenName}:`, screen.truthy);
+  }
+
+  // ✅ NEW: falsy (array of function names that must return falsy)
+  if (screen.falsy && screen.falsy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(fn => t.stringLiteral(fn)))
+    ));
+    console.log(`    ✗ Including falsy for ${screenName}:`, screen.falsy);
+  }
+
+  // ✅ NEW: assertions (array of { fn, expect, value } objects)
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertionProps = [];
+      
+      // fn (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('fn'),
+        t.stringLiteral(assertion.fn)
+      ));
+      
+      // expect (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('expect'),
+        t.stringLiteral(assertion.expect)
+      ));
+      
+      // value (optional, can be string, number, boolean, null)
+      if (assertion.value !== undefined) {
+        let valueNode;
+        if (typeof assertion.value === 'number') {
+          valueNode = t.numericLiteral(assertion.value);
+        } else if (typeof assertion.value === 'boolean') {
+          valueNode = t.booleanLiteral(assertion.value);
+        } else if (assertion.value === null) {
+          valueNode = t.nullLiteral();
+        } else {
+          valueNode = t.stringLiteral(String(assertion.value));
+        }
+        assertionProps.push(t.objectProperty(
+          t.identifier('value'),
+          valueNode
+        ));
+      }
+      
+      return t.objectExpression(assertionProps);
+    });
+    
+    overrideProps.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+    console.log(`    ⚡ Including assertions for ${screenName}:`, screen.assertions.length);
   }
 
   // ✅ ADD: _pomSource (preserve POM metadata)

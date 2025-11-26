@@ -2107,172 +2107,442 @@ class ExpectImplication {
     
     return current;
   }
-  
-static async validateImplications(screenDef, testData, screenObject) {
-  if (!screenDef || screenDef.length === 0) {
-    console.log('   ⚠️  No screen definition to validate');
-    return;
-  }
-  
-  const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
-  
-  console.log(\`   🔍 Validating screen: \${def.name || 'unnamed'}\`);
-  
-  const isPlaywright = screenObject.page !== undefined;
-  const isWebdriverIO = !isPlaywright;
-  
-  const page = screenObject.page || screenObject;
-  
-  const getElement = async (elementName) => {
-    if (screenObject[elementName]) {
-      return screenObject[elementName];
-    }
-    if (isPlaywright) {
-      return page.locator(\`[data-testid="\${elementName}"]\`);
-    }
-    return null;
-  };
-  
-  const checkVisible = async (element, elementName) => {
-    if (isPlaywright) {
-      await expect(element).toBeVisible({ timeout: 10000 });
-    } else {
-      await expect(element).toBeDisplayed();
-    }
-    console.log(\`      ✓ \${elementName} is visible\`);
-  };
-  
-  const checkHidden = async (element, elementName) => {
-    if (isPlaywright) {
-      const count = await element.count();
-      if (count === 0) {
-        console.log(\`      ✓ \${elementName} doesn't exist (counts as hidden)\`);
-        return;
-      }
-      await expect(element).not.toBeVisible();
-    } else {
-      const exists = await element.isExisting();
-      if (!exists) {
-        console.log(\`      ✓ \${elementName} doesn't exist (counts as hidden)\`);
-        return;
-      }
-      await expect(element).not.toBeDisplayed();
-    }
-    console.log(\`      ✓ \${elementName} is hidden\`);
-  };
-  
-  const checkText = async (element, elementName, expectedText) => {
-    if (isPlaywright) {
-      await expect(element).toHaveText(expectedText, { timeout: 10000 });
-    } else {
-      await expect(element).toHaveText(expectedText);
-    }
-    console.log(\`      ✓ \${elementName} has text: "\${expectedText}"\`);
-  };
-  
-  if (def.prerequisites && def.prerequisites.length > 0) {
-    console.log(\`   🔧 Running \${def.prerequisites.length} prerequisites...\`);
-    for (const prereq of def.prerequisites) {
-      console.log(\`      \${prereq.description}\`);
-      await prereq.setup(testData, page);
-    }
-    console.log('   ✅ Prerequisites completed');
-  }
-  
-  if (def.visible && def.visible.length > 0) {
-    console.log(\`   ✅ Checking \${def.visible.length} visible elements...\`);
-    for (const elementName of def.visible) {
-      try {
-        const element = await getElement(elementName);
-        await checkVisible(element, elementName);
-      } catch (error) {
-        console.error(\`      ✗ \${elementName} NOT visible: \${error.message}\`);
-        throw new Error(\`Visibility check failed for \${elementName}\`);
-      }
-    }
-  }
-  
-  if (def.hidden && def.hidden.length > 0) {
-    console.log(\`   ✅ Checking \${def.hidden.length} hidden elements...\`);
-    for (const elementName of def.hidden) {
-      try {
-        const element = await getElement(elementName);
-        await checkHidden(element, elementName);
-      } catch (error) {
-        console.error(\`      ✗ \${elementName} NOT hidden: \${error.message}\`);
-        throw new Error(\`Hidden check failed for \${elementName}\`);
-      }
-    }
-  }
-  
-  if (def.checks) {
-    console.log('   🔍 Running additional checks...');
+
+  // ═══════════════════════════════════════════════════════════
+  // Parse field selector for array indexing
+  // Supports: field, field[0], field[last], field[all], field[any]
+  // ═══════════════════════════════════════════════════════════
+  static _parseFieldSelector(fieldName) {
+    const match = fieldName.match(/^(.+)\\[(\\d+|last|all|any)\\]$/);
     
-    if (def.checks.visible && def.checks.visible.length > 0) {
-      console.log(\`   ✅ Checking \${def.checks.visible.length} additional visible elements...\`);
-      for (const elementName of def.checks.visible) {
+    if (!match) {
+      return { field: fieldName, index: null };
+    }
+    
+    return {
+      field: match[1],
+      index: match[2] === 'last' ? 'last' 
+           : match[2] === 'all' ? 'all'
+           : match[2] === 'any' ? 'any'
+           : parseInt(match[2], 10)
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Get locator with index support
+  // ═══════════════════════════════════════════════════════════
+  static async _getLocatorForField(screenObject, fieldName, page, isPlaywright) {
+    const { field, index } = this._parseFieldSelector(fieldName);
+    
+    // Try to get from screen object first
+    let baseLocator = screenObject[field];
+    
+    // Fallback to data-testid
+    if (!baseLocator && isPlaywright) {
+      baseLocator = page.locator(\`[data-testid="\${field}"]\`);
+    }
+    
+    if (!baseLocator) {
+      throw new Error(\`Field "\${field}" not found on screen object\`);
+    }
+    
+    // Apply index selection
+    if (index === null) {
+      return { locator: baseLocator, mode: 'single', field, index };
+    } else if (index === 'last') {
+      return { locator: baseLocator.last(), mode: 'single', field, index };
+    } else if (index === 'all') {
+      return { locator: baseLocator, mode: 'all', field, index };
+    } else if (index === 'any') {
+      return { locator: baseLocator, mode: 'any', field, index };
+    } else {
+      return { locator: baseLocator.nth(index), mode: 'single', field, index };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Check visible with array support
+  // ═══════════════════════════════════════════════════════════
+  static async _checkVisibleWithIndex(screenObject, elementName, page, isPlaywright) {
+    const { locator, mode, field, index } = await this._getLocatorForField(
+      screenObject, elementName, page, isPlaywright
+    );
+    
+    const indexLabel = index !== null ? \`[\${index}]\` : '';
+    
+    if (mode === 'single') {
+      if (isPlaywright) {
+        await expect(locator).toBeVisible({ timeout: 10000 });
+      } else {
+        await expect(locator).toBeDisplayed();
+      }
+      console.log(\`      ✓ \${field}\${indexLabel} is visible\`);
+      
+    } else if (mode === 'all') {
+      const elements = await locator.all();
+      if (elements.length === 0) {
+        throw new Error(\`\${field}[all] - no elements found\`);
+      }
+      for (let i = 0; i < elements.length; i++) {
+        await expect(elements[i]).toBeVisible({ timeout: 10000 });
+      }
+      console.log(\`      ✓ \${field}[all] - all \${elements.length} elements are visible\`);
+      
+    } else if (mode === 'any') {
+      const count = await locator.count();
+      if (count === 0) {
+        throw new Error(\`\${field}[any] - no elements found\`);
+      }
+      // Check that at least first one is visible
+      await expect(locator.first()).toBeVisible({ timeout: 10000 });
+      console.log(\`      ✓ \${field}[any] - at least one of \${count} elements is visible\`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Check hidden with array support
+  // ═══════════════════════════════════════════════════════════
+  static async _checkHiddenWithIndex(screenObject, elementName, page, isPlaywright) {
+    const { locator, mode, field, index } = await this._getLocatorForField(
+      screenObject, elementName, page, isPlaywright
+    );
+    
+    const indexLabel = index !== null ? \`[\${index}]\` : '';
+    
+    if (mode === 'single') {
+      if (isPlaywright) {
+        const count = await locator.count();
+        if (count === 0) {
+          console.log(\`      ✓ \${field}\${indexLabel} doesn't exist (counts as hidden)\`);
+          return;
+        }
+        await expect(locator).not.toBeVisible();
+      } else {
+        const exists = await locator.isExisting();
+        if (!exists) {
+          console.log(\`      ✓ \${field}\${indexLabel} doesn't exist (counts as hidden)\`);
+          return;
+        }
+        await expect(locator).not.toBeDisplayed();
+      }
+      console.log(\`      ✓ \${field}\${indexLabel} is hidden\`);
+      
+    } else if (mode === 'all') {
+      const elements = await locator.all();
+      if (elements.length === 0) {
+        console.log(\`      ✓ \${field}[all] - no elements exist (counts as hidden)\`);
+        return;
+      }
+      for (let i = 0; i < elements.length; i++) {
+        await expect(elements[i]).not.toBeVisible();
+      }
+      console.log(\`      ✓ \${field}[all] - all \${elements.length} elements are hidden\`);
+      
+    } else if (mode === 'any') {
+      const count = await locator.count();
+      if (count === 0) {
+        console.log(\`      ✓ \${field}[any] - no elements exist (counts as hidden)\`);
+        return;
+      }
+      await expect(locator.first()).not.toBeVisible();
+      console.log(\`      ✓ \${field}[any] - at least one element is hidden\`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Boolean function checks - truthy
+  // ═══════════════════════════════════════════════════════════
+  static async _checkTruthy(screenObject, functionName) {
+    if (typeof screenObject[functionName] !== 'function') {
+      throw new Error(\`"\${functionName}" is not a function on screen object\`);
+    }
+    
+    const result = await screenObject[functionName]();
+    expect(result, \`Expected \${functionName}() to be truthy, got: \${result}\`).toBeTruthy();
+    console.log(\`      ✓ \${functionName}() is truthy (returned: \${result})\`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Boolean function checks - falsy
+  // ═══════════════════════════════════════════════════════════
+  static async _checkFalsy(screenObject, functionName) {
+    if (typeof screenObject[functionName] !== 'function') {
+      throw new Error(\`"\${functionName}" is not a function on screen object\`);
+    }
+    
+    const result = await screenObject[functionName]();
+    expect(result, \`Expected \${functionName}() to be falsy, got: \${result}\`).toBeFalsy();
+    console.log(\`      ✓ \${functionName}() is falsy (returned: \${result})\`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Advanced assertions
+  // ═══════════════════════════════════════════════════════════
+  static async _checkAssertion(screenObject, assertion) {
+    const { fn, expect: expectType, value } = assertion;
+    
+    if (typeof screenObject[fn] !== 'function') {
+      throw new Error(\`"\${fn}" is not a function on screen object\`);
+    }
+    
+    const result = await screenObject[fn]();
+    
+    switch (expectType) {
+      case 'toBe':
+        expect(result).toBe(value);
+        console.log(\`      ✓ \${fn}() toBe \${value} (got: \${result})\`);
+        break;
+      case 'toEqual':
+        expect(result).toEqual(value);
+        console.log(\`      ✓ \${fn}() toEqual \${JSON.stringify(value)} (got: \${JSON.stringify(result)})\`);
+        break;
+      case 'toBeGreaterThan':
+        expect(result).toBeGreaterThan(value);
+        console.log(\`      ✓ \${fn}() > \${value} (got: \${result})\`);
+        break;
+      case 'toBeGreaterThanOrEqual':
+        expect(result).toBeGreaterThanOrEqual(value);
+        console.log(\`      ✓ \${fn}() >= \${value} (got: \${result})\`);
+        break;
+      case 'toBeLessThan':
+        expect(result).toBeLessThan(value);
+        console.log(\`      ✓ \${fn}() < \${value} (got: \${result})\`);
+        break;
+      case 'toBeLessThanOrEqual':
+        expect(result).toBeLessThanOrEqual(value);
+        console.log(\`      ✓ \${fn}() <= \${value} (got: \${result})\`);
+        break;
+      case 'toContain':
+        expect(result).toContain(value);
+        console.log(\`      ✓ \${fn}() contains "\${value}" (got: \${result})\`);
+        break;
+      case 'toMatch':
+        expect(result).toMatch(value);
+        console.log(\`      ✓ \${fn}() matches \${value} (got: \${result})\`);
+        break;
+      case 'toBeDefined':
+        expect(result).toBeDefined();
+        console.log(\`      ✓ \${fn}() is defined (got: \${result})\`);
+        break;
+      case 'toBeUndefined':
+        expect(result).toBeUndefined();
+        console.log(\`      ✓ \${fn}() is undefined\`);
+        break;
+      case 'toBeNull':
+        expect(result).toBeNull();
+        console.log(\`      ✓ \${fn}() is null\`);
+        break;
+      case 'toBeTruthy':
+        expect(result).toBeTruthy();
+        console.log(\`      ✓ \${fn}() is truthy (got: \${result})\`);
+        break;
+      case 'toBeFalsy':
+        expect(result).toBeFalsy();
+        console.log(\`      ✓ \${fn}() is falsy (got: \${result})\`);
+        break;
+      case 'toHaveLength':
+        expect(result).toHaveLength(value);
+        console.log(\`      ✓ \${fn}() has length \${value} (got: \${result?.length})\`);
+        break;
+      default:
+        throw new Error(\`Unknown assertion type: \${expectType}\`);
+    }
+  }
+  
+  static async validateImplications(screenDef, testData, screenObject) {
+    if (!screenDef || screenDef.length === 0) {
+      console.log('   ⚠️  No screen definition to validate');
+      return;
+    }
+    
+    const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
+    
+    console.log(\`   🔍 Validating screen: \${def.name || 'unnamed'}\`);
+    
+    const isPlaywright = screenObject.page !== undefined;
+    const isWebdriverIO = !isPlaywright;
+    
+    const page = screenObject.page || screenObject;
+    
+    // Legacy getElement for backwards compatibility
+    const getElement = async (elementName) => {
+      if (screenObject[elementName]) {
+        return screenObject[elementName];
+      }
+      if (isPlaywright) {
+        return page.locator(\`[data-testid="\${elementName}"]\`);
+      }
+      return null;
+    };
+    
+    const checkText = async (element, elementName, expectedText) => {
+      if (isPlaywright) {
+        await expect(element).toHaveText(expectedText, { timeout: 10000 });
+      } else {
+        await expect(element).toHaveText(expectedText);
+      }
+      console.log(\`      ✓ \${elementName} has text: "\${expectedText}"\`);
+    };
+    
+    // ═══════════════════════════════════════════════════════════
+    // Prerequisites
+    // ═══════════════════════════════════════════════════════════
+    if (def.prerequisites && def.prerequisites.length > 0) {
+      console.log(\`   🔧 Running \${def.prerequisites.length} prerequisites...\`);
+      for (const prereq of def.prerequisites) {
+        console.log(\`      \${prereq.description}\`);
+        await prereq.setup(testData, page);
+      }
+      console.log('   ✅ Prerequisites completed');
+    }
+    
+    // ═══════════════════════════════════════════════════════════
+    // Visible checks (with array index support)
+    // ═══════════════════════════════════════════════════════════
+    if (def.visible && def.visible.length > 0) {
+      console.log(\`   ✅ Checking \${def.visible.length} visible elements...\`);
+      for (const elementName of def.visible) {
         try {
-          const element = await getElement(elementName);
-          await checkVisible(element, elementName);
+          await this._checkVisibleWithIndex(screenObject, elementName, page, isPlaywright);
         } catch (error) {
           console.error(\`      ✗ \${elementName} NOT visible: \${error.message}\`);
-          throw new Error(\`Checks.visible failed for \${elementName}\`);
+          throw new Error(\`Visibility check failed for \${elementName}\`);
         }
       }
     }
     
-    if (def.checks.hidden && def.checks.hidden.length > 0) {
-      console.log(\`   ✅ Checking \${def.checks.hidden.length} additional hidden elements...\`);
-      for (const elementName of def.checks.hidden) {
+    // ═══════════════════════════════════════════════════════════
+    // Hidden checks (with array index support)
+    // ═══════════════════════════════════════════════════════════
+    if (def.hidden && def.hidden.length > 0) {
+      console.log(\`   ✅ Checking \${def.hidden.length} hidden elements...\`);
+      for (const elementName of def.hidden) {
         try {
-          const element = await getElement(elementName);
-          await checkHidden(element, elementName);
+          await this._checkHiddenWithIndex(screenObject, elementName, page, isPlaywright);
         } catch (error) {
           console.error(\`      ✗ \${elementName} NOT hidden: \${error.message}\`);
-          throw new Error(\`Checks.hidden failed for \${elementName}\`);
+          throw new Error(\`Hidden check failed for \${elementName}\`);
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Truthy function checks
+    // ═══════════════════════════════════════════════════════════
+    if (def.truthy && def.truthy.length > 0) {
+      console.log(\`   ✅ Checking \${def.truthy.length} truthy functions...\`);
+      for (const functionName of def.truthy) {
+        try {
+          await this._checkTruthy(screenObject, functionName);
+        } catch (error) {
+          console.error(\`      ✗ \${functionName}() NOT truthy: \${error.message}\`);
+          throw new Error(\`Truthy check failed for \${functionName}()\`);
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Falsy function checks
+    // ═══════════════════════════════════════════════════════════
+    if (def.falsy && def.falsy.length > 0) {
+      console.log(\`   ✅ Checking \${def.falsy.length} falsy functions...\`);
+      for (const functionName of def.falsy) {
+        try {
+          await this._checkFalsy(screenObject, functionName);
+        } catch (error) {
+          console.error(\`      ✗ \${functionName}() NOT falsy: \${error.message}\`);
+          throw new Error(\`Falsy check failed for \${functionName}()\`);
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Advanced assertions
+    // ═══════════════════════════════════════════════════════════
+    if (def.assertions && def.assertions.length > 0) {
+      console.log(\`   ✅ Running \${def.assertions.length} assertions...\`);
+      for (const assertion of def.assertions) {
+        try {
+          await this._checkAssertion(screenObject, assertion);
+        } catch (error) {
+          console.error(\`      ✗ Assertion \${assertion.fn}() \${assertion.expect} failed: \${error.message}\`);
+          throw new Error(\`Assertion failed: \${assertion.fn}() \${assertion.expect} \${assertion.value ?? ''}\`);
         }
       }
     }
     
-    if (def.checks.text && Object.keys(def.checks.text).length > 0) {
-      console.log(\`   ✅ Checking \${Object.keys(def.checks.text).length} text checks...\`);
-      for (const [elementName, expectedText] of Object.entries(def.checks.text)) {
-        try {
-          const element = await getElement(elementName);
-          
-          let finalText = expectedText;
-          if (typeof expectedText === 'string' && expectedText.includes('{{')) {
-            const variableMatch = expectedText.match(/\\{\\{([\\w.]+)\\}\\}/);
-            if (variableMatch && testData) {
-              const path = variableMatch[1];
-              const value = this.getNestedValue(testData, path);
-              
-              if (value !== undefined) {
-                finalText = expectedText.replace(/\\{\\{([\\w.]+)\\}\\}/, value);
-                console.log(\`      📝 Substituted {{\${path}}} -> \${value}\`);
-              } else {
-                console.warn(\`      ⚠️  Variable {{\${path}}} not found in testData\`);
+    // ═══════════════════════════════════════════════════════════
+    // Legacy: checks object (backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+    if (def.checks) {
+      console.log('   🔍 Running additional checks...');
+      
+      if (def.checks.visible && def.checks.visible.length > 0) {
+        console.log(\`   ✅ Checking \${def.checks.visible.length} additional visible elements...\`);
+        for (const elementName of def.checks.visible) {
+          try {
+            await this._checkVisibleWithIndex(screenObject, elementName, page, isPlaywright);
+          } catch (error) {
+            console.error(\`      ✗ \${elementName} NOT visible: \${error.message}\`);
+            throw new Error(\`Checks.visible failed for \${elementName}\`);
+          }
+        }
+      }
+      
+      if (def.checks.hidden && def.checks.hidden.length > 0) {
+        console.log(\`   ✅ Checking \${def.checks.hidden.length} additional hidden elements...\`);
+        for (const elementName of def.checks.hidden) {
+          try {
+            await this._checkHiddenWithIndex(screenObject, elementName, page, isPlaywright);
+          } catch (error) {
+            console.error(\`      ✗ \${elementName} NOT hidden: \${error.message}\`);
+            throw new Error(\`Checks.hidden failed for \${elementName}\`);
+          }
+        }
+      }
+      
+      if (def.checks.text && Object.keys(def.checks.text).length > 0) {
+        console.log(\`   ✅ Checking \${Object.keys(def.checks.text).length} text checks...\`);
+        for (const [elementName, expectedText] of Object.entries(def.checks.text)) {
+          try {
+            const element = await getElement(elementName);
+            
+            let finalText = expectedText;
+            if (typeof expectedText === 'string' && expectedText.includes('{{')) {
+              const variableMatch = expectedText.match(/\\{\\{([\\w.]+)\\}\\}/);
+              if (variableMatch && testData) {
+                const path = variableMatch[1];
+                const value = this.getNestedValue(testData, path);
+                
+                if (value !== undefined) {
+                  finalText = expectedText.replace(/\\{\\{([\\w.]+)\\}\\}/, value);
+                  console.log(\`      📝 Substituted {{\${path}}} -> \${value}\`);
+                } else {
+                  console.warn(\`      ⚠️  Variable {{\${path}}} not found in testData\`);
+                }
               }
             }
+            
+            await checkText(element, elementName, finalText);
+          } catch (error) {
+            console.error(\`      ✗ \${elementName} text check failed: \${error.message}\`);
+            throw new Error(\`Text check failed for \${elementName}\`);
           }
-          
-          await checkText(element, elementName, finalText);
-        } catch (error) {
-          console.error(\`      ✗ \${elementName} text check failed: \${error.message}\`);
-          throw new Error(\`Text check failed for \${elementName}\`);
         }
       }
     }
+    
+    // ═══════════════════════════════════════════════════════════
+    // Custom expect function
+    // ═══════════════════════════════════════════════════════════
+    if (def.expect && typeof def.expect === 'function') {
+      console.log('   🎯 Running custom expect function...');
+      await def.expect(testData, page);
+      console.log('   ✅ Custom expect passed');
+    }
+    
+    console.log(\`   ✅ All validations passed for \${def.name || 'screen'}\`);
   }
-  
-  if (def.expect && typeof def.expect === 'function') {
-    console.log('   🎯 Running custom expect function...');
-    await def.expect(testData, page);
-    console.log('   ✅ Custom expect passed');
-  }
-  
-  console.log(\`   ✅ All validations passed for \${def.name || 'screen'}\`);
-}
 }
 
 module.exports = ExpectImplication;

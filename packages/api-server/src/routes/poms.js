@@ -222,6 +222,35 @@ router.get('/navigation/:className', async (req, res) => {
   }
 });
 
+router.get('/functions', async (req, res) => {
+  try {
+    const { projectPath, pomName } = req.query;
+    
+    if (!projectPath || !pomName) {
+      return res.status(400).json({ error: 'projectPath and pomName required' });
+    }
+    
+    console.log(`📦 Getting functions for POM: ${pomName}`);
+    
+    const discovery = new POMDiscovery(projectPath);
+    await discovery.discover();
+    
+    // Use existing discovery method!
+    const functions = discovery.getFunctions(pomName);
+    
+    console.log(`   ✅ Found ${functions.length} functions`);
+    
+    res.json({ 
+      success: true, 
+      functions: functions.map(f => f.name || f)  // Handle both formats
+    });
+    
+  } catch (error) {
+    console.error('Error getting POM functions:', error);
+    res.json({ success: true, functions: [] });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ✨ Parameterized routes MUST come LAST!
 // ═══════════════════════════════════════════════════════════════════════════
@@ -285,5 +314,6 @@ router.get('/:pomName', async (req, res) => {
     });
   }
 });
+
 
 export default router;
