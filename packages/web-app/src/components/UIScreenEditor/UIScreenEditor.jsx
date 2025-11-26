@@ -689,6 +689,11 @@ function PlatformSection({
 // ============================================
 
 function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete, theme, storedVariables = [] }) {
+    console.log('🔍 ScreenCard received:', screen.screenName || screen.name, {
+    checks: screen.checks,
+    hasContains: !!screen.checks?.contains,
+    containsKeys: Object.keys(screen.checks?.contains || {})
+  });
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
   const [instanceName, setInstanceName] = useState(null);
@@ -704,9 +709,10 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
   const textChecks = screen.checks?.text || {};
   const functions = screen.functions || {};
 
-  const updateScreen = (updates) => {
-    onUpdate(updates);
-  };
+const updateScreen = (updates) => {
+  console.log('🔧 ScreenCard onUpdate:', updates);
+  onUpdate(updates);
+};
 
   const handlePOMChange = (selectedPOM, selectedInstance) => {
   setPomName(selectedPOM || '');
@@ -833,17 +839,19 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
             )
           )}
 
-{(Object.keys(textChecks).length > 0 || editMode) && (
-            <TextChecksSection
-              textChecks={textChecks}
-              editMode={editMode}
-              pomName={pomName}              // ✅ ADD
-              instanceName={instanceName}    // ✅ ADD
-              projectPath={projectPath}      // ✅ ADD
-              onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
-              theme={theme}
-            />
-          )}
+{(Object.keys(textChecks).length > 0 || Object.keys(screen.checks?.contains || {}).length > 0 || editMode) && (
+  <TextChecksSection
+    textChecks={textChecks}
+    containsChecks={screen.checks?.contains || {}}
+    editMode={editMode}
+    pomName={pomName}
+    instanceName={instanceName}
+    projectPath={projectPath}
+    onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
+    onContainsChange={(newContainsChecks) => onUpdate({ checks: { ...screen.checks, contains: newContainsChecks } })}
+    theme={theme}
+  />
+)}
 
           {(Object.keys(functions).length > 0 || editMode) && (
             <FunctionSection
@@ -1106,55 +1114,90 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   );
 }
 
-function TextChecksSection({ textChecks, editMode, pomName, instanceName, projectPath, onChange, theme }) {
+function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName, instanceName, projectPath, onChange, onContainsChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newSelector, setNewSelector] = useState('');
   const [newExpectedText, setNewExpectedText] = useState('');
+  const [matchType, setMatchType] = useState('contains'); // 'exact' or 'contains'
   const [fieldValidation, setFieldValidation] = useState(null);
   const color = theme.colors.accents.yellow;
 
+  // Combine both for display
+  const allChecks = [
+    ...Object.entries(textChecks).map(([selector, text]) => ({ selector, text, type: 'exact' })),
+    ...Object.entries(containsChecks).map(([selector, text]) => ({ selector, text, type: 'contains' }))
+  ];
+
   const handleAddTextCheck = () => {
     if (!newSelector.trim() || !newExpectedText.trim()) return;
-    if (textChecks[newSelector]) {
+    
+    // Check if already exists in either
+    if (textChecks[newSelector] || containsChecks[newSelector]) {
       alert('Text check for this selector already exists!');
       return;
     }
-    onChange({ ...textChecks, [newSelector.trim()]: newExpectedText.trim() });
+    
+    if (matchType === 'exact') {
+      onChange({ ...textChecks, [newSelector.trim()]: newExpectedText.trim() });
+    } else {
+      onContainsChange({ ...containsChecks, [newSelector.trim()]: newExpectedText.trim() });
+    }
+    
     setNewSelector('');
     setNewExpectedText('');
+    setMatchType('contains');
     setIsAdding(false);
     setFieldValidation(null);
   };
 
-  const handleRemoveTextCheck = (selector) => {
-    const updated = { ...textChecks };
-    delete updated[selector];
-    onChange(updated);
+  const handleRemoveTextCheck = (selector, type) => {
+    if (type === 'exact') {
+      const updated = { ...textChecks };
+      delete updated[selector];
+      onChange(updated);
+    } else {
+      const updated = { ...containsChecks };
+      delete updated[selector];
+      onContainsChange(updated);
+    }
   };
 
   return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
       <div className="flex items-center justify-between mb-2">
-        <div className="font-semibold" style={{ color }}>📝 Text Checks ({Object.keys(textChecks).length})</div>
+        <div className="font-semibold" style={{ color }}>📝 Text Checks ({allChecks.length})</div>
         {editMode && !isAdding && (
           <button onClick={() => setIsAdding(true)} className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110" style={{ background: color, color: 'white' }}>➕ Add</button>
         )}
       </div>
       <div className="space-y-2">
-        {Object.entries(textChecks).map(([selector, expectedText]) => (
+        {allChecks.map(({ selector, text, type }) => (
           <div key={selector} className="p-2 rounded text-sm" style={{ background: `${color}20` }}>
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
-                <div className="font-mono text-xs mb-1" style={{ color }}>{selector}</div>
-                <div className="text-xs" style={{ color: theme.colors.text.secondary }}>"{expectedText}"</div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono text-xs" style={{ color }}>{selector}</span>
+                  <span 
+                    className="px-1.5 py-0.5 rounded text-xs"
+                    style={{ 
+                      background: type === 'exact' ? theme.colors.accents.blue : theme.colors.accents.purple,
+                      color: 'white'
+                    }}
+                  >
+                    {type === 'exact' ? '= exact' : '⊃ contains'}
+                  </span>
+                </div>
+                <div className="text-xs" style={{ color: theme.colors.text.secondary }}>"{text}"</div>
               </div>
-              {editMode && <button onClick={() => handleRemoveTextCheck(selector)} className="hover:text-red-500 transition" style={{ color }}>✕</button>}
+              {editMode && (
+                <button onClick={() => handleRemoveTextCheck(selector, type)} className="hover:text-red-500 transition" style={{ color }}>✕</button>
+              )}
             </div>
           </div>
         ))}
         {isAdding && (
           <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
-            {/* ✅ FIX: Use FieldAutocomplete for selector dropdown */}
+            {/* Locator selector */}
             {pomName && projectPath ? (
               <FieldAutocomplete 
                 projectPath={projectPath}
@@ -1175,15 +1218,29 @@ function TextChecksSection({ textChecks, editMode, pomName, instanceName, projec
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
               />
             )}
-            <input 
-              type="text" 
-              value={newExpectedText} 
-              onChange={(e) => setNewExpectedText(e.target.value)} 
-              onKeyPress={(e) => e.key === 'Enter' && handleAddTextCheck()} 
-              placeholder="Expected text (e.g., 'Welcome' or '{{userName}}')" 
-              className="w-full px-2 py-1 rounded border text-sm" 
-              style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
-            />
+            
+            {/* Match type + Expected text */}
+            <div className="flex gap-2">
+              <select
+                value={matchType}
+                onChange={(e) => setMatchType(e.target.value)}
+                className="px-2 py-1 rounded border text-sm"
+                style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
+              >
+                <option value="contains">contains</option>
+                <option value="exact">exact match</option>
+              </select>
+              <input 
+                type="text" 
+                value={newExpectedText} 
+                onChange={(e) => setNewExpectedText(e.target.value)} 
+                onKeyPress={(e) => e.key === 'Enter' && handleAddTextCheck()} 
+                placeholder="Expected text (e.g., 'Welcome' or '{{userName}}')" 
+                className="flex-1 px-2 py-1 rounded border text-sm" 
+                style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
+              />
+            </div>
+            
             <div className="flex gap-2">
               <button 
                 onClick={handleAddTextCheck} 
@@ -1198,6 +1255,7 @@ function TextChecksSection({ textChecks, editMode, pomName, instanceName, projec
                   setIsAdding(false); 
                   setNewSelector(''); 
                   setNewExpectedText(''); 
+                  setMatchType('contains');
                   setFieldValidation(null);
                 }} 
                 className="px-3 py-1 rounded text-sm" 
@@ -1209,7 +1267,7 @@ function TextChecksSection({ textChecks, editMode, pomName, instanceName, projec
           </div>
         )}
       </div>
-      {Object.keys(textChecks).length === 0 && !isAdding && (
+      {allChecks.length === 0 && !isAdding && (
         <div className="text-center py-2 text-sm" style={{ color: theme.colors.text.tertiary }}>No text checks</div>
       )}
     </div>

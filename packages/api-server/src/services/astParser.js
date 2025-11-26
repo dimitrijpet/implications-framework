@@ -751,13 +751,14 @@ function extractScreenDefinition(objectNode) {
   const def = {
     visible: [],
     hidden: [],
-    truthy: [],      // ✅ NEW
-    falsy: [],       // ✅ NEW
-    assertions: [],  // ✅ NEW
+    truthy: [],
+    falsy: [],
+    assertions: [],
     checks: {
       visible: [],
       hidden: [],
-      text: {}
+      text: {},
+      contains: {}
     }
   };
   
@@ -770,38 +771,18 @@ function extractScreenDefinition(objectNode) {
           .map(el => extractValueFromNode(el))
           .filter(Boolean);
       }
-     } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
-      prop.value.properties.forEach(checkProp => {
-        const checkKey = checkProp.key?.name;
-        
-        if (checkKey === 'visible' || checkKey === 'hidden') {
-          if (checkProp.value?.type === 'ArrayExpression') {
-            def.checks[checkKey] = checkProp.value.elements
-              .map(el => extractValueFromNode(el))
-              .filter(Boolean);
-          }
-        } else if (checkKey === 'text' && checkProp.value?.type === 'ObjectExpression') {
-          checkProp.value.properties.forEach(textProp => {
-            const textKey = textProp.key?.name || textProp.key?.value;
-            const textValue = extractValueFromNode(textProp.value);
-            if (textKey && textValue) {
-              def.checks.text[textKey] = textValue;
-            }
-          });
-        }
-      });
+    } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+      // ✅ Use the shared helper instead of inline parsing
+      def.checks = parseChecksObject(prop.value);
     } else if (key === 'truthy' && prop.value?.type === 'ArrayExpression') {
-      // ✅ NEW: Extract truthy
       def.truthy = prop.value.elements
         .map(el => extractValueFromNode(el))
         .filter(Boolean);
     } else if (key === 'falsy' && prop.value?.type === 'ArrayExpression') {
-      // ✅ NEW: Extract falsy
       def.falsy = prop.value.elements
         .map(el => extractValueFromNode(el))
         .filter(Boolean);
     } else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
-      // ✅ NEW: Extract assertions
       def.assertions = prop.value.elements
         .map(el => {
           if (el.type === 'ObjectExpression') {
@@ -938,7 +919,7 @@ async function parseScreenValidation(node, projectPath, cache) {
       hidden: [],
       alwaysVisible: [],
       sometimesVisible: [],
-      checks: { visible: [], hidden: [], text: {} }
+      checks: { visible: [], hidden: [], text: {}, contains: {} }
     };
   }
   
@@ -981,7 +962,7 @@ async function parseScreenValidation(node, projectPath, cache) {
             hidden: [],
             alwaysVisible: [],
             sometimesVisible: [],
-            checks: { visible: [], hidden: [], text: {} }
+            checks: { visible: [], hidden: [], text: {}, contains: {} }
           };
         }
       } catch (error) {
@@ -992,7 +973,7 @@ async function parseScreenValidation(node, projectPath, cache) {
           hidden: [],
           alwaysVisible: [],
           sometimesVisible: [],
-          checks: { visible: [], hidden: [], text: {} }
+          checks: { visible: [], hidden: [], text: {}, contains: {} }
         };
       }
     }
@@ -1008,7 +989,7 @@ async function parseScreenValidation(node, projectPath, cache) {
       hidden: [],
       alwaysVisible: [],
       sometimesVisible: [],
-      checks: { visible: [], hidden: [], text: {} }
+      checks: { visible: [], hidden: [], text: {}, contains: {} }
     };
   }
   
@@ -1280,7 +1261,8 @@ function parseChecksObject(node) {
   const checks = {
     visible: [],
     hidden: [],
-    text: {}
+    text: {},
+    contains: {}  // ✅ ADD THIS
   };
   
   if (!node || node.type !== 'ObjectExpression') {
@@ -1311,6 +1293,21 @@ function parseChecksObject(node) {
               const textValue = extractValueFromNode(textProp.value);
               if (textValue !== undefined) {
                 checks.text[textKey] = textValue;
+              }
+            }
+          });
+        }
+        break;
+      
+      // ✅ ADD THIS CASE
+      case 'contains':
+        if (value.type === 'ObjectExpression') {
+          value.properties.forEach(containsProp => {
+            if (containsProp.key) {
+              const containsKey = containsProp.key.name || containsProp.key.value;
+              const containsValue = extractValueFromNode(containsProp.value);
+              if (containsValue !== undefined) {
+                checks.contains[containsKey] = containsValue;
               }
             }
           });
@@ -1566,7 +1563,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     visible: {},
     hidden: {},
     description: null,
-    checks: { visible: {}, hidden: {}, text: {} }
+    checks: { visible: {}, hidden: {}, text: {}, contains: {} }
   };
   
   // ============================================

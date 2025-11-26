@@ -112,12 +112,13 @@ function extractScreenDataFromAstNode(node, screenName) {
       screen.hidden = prop.value.elements
         .filter(el => el.type === 'StringLiteral')
         .map(el => el.value);
-    } else if (key === 'checks' && prop.value.type === 'ObjectExpression') {
+   } else if (key === 'checks' && prop.value.type === 'ObjectExpression') {
       screen.checks = {};
       
       prop.value.properties.forEach(checkProp => {
         const checkKey = checkProp.key?.name;
         
+        // Text checks (exact match) - ObjectExpression
         if (checkKey === 'text' && checkProp.value.type === 'ObjectExpression') {
           screen.checks.text = {};
           checkProp.value.properties.forEach(textProp => {
@@ -125,7 +126,18 @@ function extractScreenDataFromAstNode(node, screenName) {
               screen.checks.text[textProp.key.name] = textProp.value.value;
             }
           });
-        } else if (checkProp.value.type === 'ArrayExpression') {
+        }
+        // ✅ ADD: Contains checks (partial match) - ObjectExpression
+        else if (checkKey === 'contains' && checkProp.value.type === 'ObjectExpression') {
+          screen.checks.contains = {};
+          checkProp.value.properties.forEach(containsProp => {
+            if (containsProp.value.type === 'StringLiteral') {
+              screen.checks.contains[containsProp.key.name] = containsProp.value.value;
+            }
+          });
+        }
+        // Array-based checks (visible, hidden)
+        else if (checkProp.value.type === 'ArrayExpression') {
           screen.checks[checkKey] = checkProp.value.elements
             .filter(el => el.type === 'StringLiteral')
             .map(el => el.value);
@@ -1977,7 +1989,7 @@ function buildScreenObjectAst(screen) {
       ));
     }
     
-    // checks.text
+   // checks.text
     if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
       const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
         t.objectProperty(
@@ -1988,6 +2000,20 @@ function buildScreenObjectAst(screen) {
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
+      ));
+    }
+    
+    // ✅ ADD THIS: checks.contains
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(
+          t.identifier(key),
+          t.stringLiteral(value)
+        )
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
       ));
     }
     
@@ -2251,6 +2277,17 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
+      ));
+    }
+    
+    // ✅ ADD THIS: contains checks
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(value))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
       ));
     }
     
