@@ -751,6 +751,9 @@ function extractScreenDefinition(objectNode) {
   const def = {
     visible: [],
     hidden: [],
+    truthy: [],      // ✅ NEW
+    falsy: [],       // ✅ NEW
+    assertions: [],  // ✅ NEW
     checks: {
       visible: [],
       hidden: [],
@@ -767,7 +770,7 @@ function extractScreenDefinition(objectNode) {
           .map(el => extractValueFromNode(el))
           .filter(Boolean);
       }
-    } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+     } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
       prop.value.properties.forEach(checkProp => {
         const checkKey = checkProp.key?.name;
         
@@ -787,12 +790,38 @@ function extractScreenDefinition(objectNode) {
           });
         }
       });
+    } else if (key === 'truthy' && prop.value?.type === 'ArrayExpression') {
+      // ✅ NEW: Extract truthy
+      def.truthy = prop.value.elements
+        .map(el => extractValueFromNode(el))
+        .filter(Boolean);
+    } else if (key === 'falsy' && prop.value?.type === 'ArrayExpression') {
+      // ✅ NEW: Extract falsy
+      def.falsy = prop.value.elements
+        .map(el => extractValueFromNode(el))
+        .filter(Boolean);
+    } else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      // ✅ NEW: Extract assertions
+      def.assertions = prop.value.elements
+        .map(el => {
+          if (el.type === 'ObjectExpression') {
+            const assertion = {};
+            el.properties.forEach(p => {
+              if (p.key) {
+                const k = p.key.name || p.key.value;
+                assertion[k] = extractValueFromNode(p.value);
+              }
+            });
+            return assertion;
+          }
+          return null;
+        })
+        .filter(Boolean);
     }
   });
   
   return def;
 }
-
 /**
  * Process a single platform's screens (async)
  * NOW with caching support
@@ -1118,12 +1147,63 @@ case 'sometimesVisible':
         break;
         
       // ✨ NEW: Extract instance (POM instance)
+// ✨ NEW: Extract instance (POM instance)
       case 'instance':
         if (value.type === 'StringLiteral') {
           screenData.instance = value.value;
           console.log('          Instance:', screenData.instance);
         } else if (value.type === 'NullLiteral') {
           screenData.instance = null;
+        }
+        break;
+
+      // ✅ NEW: Extract truthy (array of function names)
+      case 'truthy':
+        if (value.type === 'ArrayExpression') {
+          screenData.truthy = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Truthy:', screenData.truthy);
+        }
+        break;
+
+      // ✅ NEW: Extract falsy (array of function names)
+      case 'falsy':
+        if (value.type === 'ArrayExpression') {
+          screenData.falsy = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Falsy:', screenData.falsy);
+        }
+        break;
+
+      // ✅ NEW: Extract assertions (array of { fn, expect, value })
+      case 'assertions':
+        if (value.type === 'ArrayExpression') {
+          screenData.assertions = value.elements
+            .map(el => {
+              if (el.type === 'ObjectExpression') {
+                const assertion = {};
+                el.properties.forEach(p => {
+                  if (p.key) {
+                    const k = p.key.name || p.key.value;
+                    assertion[k] = extractValueFromNode(p.value);
+                  }
+                });
+                return assertion;
+              }
+              return null;
+            })
+            .filter(Boolean);
+          console.log('          Assertions:', screenData.assertions?.length || 0);
+        }
+        break;
+        
+      // ✅ NEW: Extract name
+      case 'name':
+        if (value.type === 'StringLiteral') {
+          screenData.name = value.value;
+          console.log('          Name:', screenData.name);
         }
         break;
     }
