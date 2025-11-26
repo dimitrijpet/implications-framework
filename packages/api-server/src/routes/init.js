@@ -2212,10 +2212,10 @@ class ExpectImplication {
 
   // ═══════════════════════════════════════════════════════════
   // Parse field selector for array indexing
-  // Supports: field, field[0], field[last], field[all], field[any]
+  // Supports: field, field[0], field[first], field[last], field[all], field[any]
   // ═══════════════════════════════════════════════════════════
   static _parseFieldSelector(fieldName) {
-    const match = fieldName.match(/^(.+)\\[(\\d+|last|all|any)\\]$/);
+    const match = fieldName.match(/^(.+)\\[(\\d+|first|last|all|any)\\]$/);
     
     if (!match) {
       return { field: fieldName, index: null };
@@ -2223,7 +2223,8 @@ class ExpectImplication {
     
     return {
       field: match[1],
-      index: match[2] === 'last' ? 'last' 
+      index: match[2] === 'first' ? 'first'
+           : match[2] === 'last' ? 'last' 
            : match[2] === 'all' ? 'all'
            : match[2] === 'any' ? 'any'
            : parseInt(match[2], 10)
@@ -2238,16 +2239,15 @@ class ExpectImplication {
     
     let baseLocator = screenObject[field];
     
-    if (!baseLocator && isPlaywright) {
-      baseLocator = page.locator(\`[data-testid="\${field}"]\`);
-    }
-    
+    // Don't fallback to data-testid - the getter should exist in the POM!
     if (!baseLocator) {
-      throw new Error(\`Field "\${field}" not found on screen object\`);
+      throw new Error(\`Field "\${field}" not found on screen object. Check that the getter exists in your POM.\`);
     }
     
     if (index === null) {
       return { locator: baseLocator, mode: 'single', field, index };
+    } else if (index === 'first') {
+      return { locator: baseLocator.first(), mode: 'single', field, index };
     } else if (index === 'last') {
       return { locator: baseLocator.last(), mode: 'single', field, index };
     } else if (index === 'all') {
@@ -2665,11 +2665,34 @@ class ExpectImplication {
         }
       }
       
+      // Exact text match
       if (def.checks.text && Object.keys(def.checks.text).length > 0) {
         for (const [elementName, expectedText] of Object.entries(def.checks.text)) {
           const element = await getElement(elementName);
           const finalText = this.resolveTemplate(expectedText, testData);
           await checkText(element, elementName, finalText);
+        }
+      }
+      
+      // Contains text (partial match)
+      if (def.checks.contains && Object.keys(def.checks.contains).length > 0) {
+        console.log(\`      Checking \${Object.keys(def.checks.contains).length} text contains...\`);
+        for (const [elementName, expectedText] of Object.entries(def.checks.contains)) {
+          try {
+            const element = await getElement(elementName);
+            const finalText = this.resolveTemplate(expectedText, testData);
+            
+            if (isPlaywright) {
+              await expect(element).toContainText(finalText, { timeout: 10000 });
+            } else {
+              const actualText = await element.getText();
+              expect(actualText).toContain(finalText);
+            }
+            console.log(\`      ✓ \${elementName} contains: "\${finalText}"\`);
+          } catch (error) {
+            console.error(\`      ✗ \${elementName} does NOT contain expected text: \${error.message}\`);
+            throw new Error(\`Contains check failed for \${elementName}\`);
+          }
         }
       }
     }
