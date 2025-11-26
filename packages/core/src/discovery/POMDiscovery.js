@@ -608,6 +608,42 @@ async _loadPOMPatterns() {
 
     return instances;
   }
+  /**
+   * ✅ NEW: Get direct getters from main class (even if it has instances)
+   * This handles POMs like SearchBarWrapper that have BOTH:
+   * - Instance properties (roundTrip, oneWayTicket)
+   * - Direct getters (linkAgencyChange, agencyName, etc.)
+   */
+  getDirectGetters(pomName) {
+    const pom = this.pomCache.get(pomName);
+    if (!pom) return [];
+
+    const directGetters = [];
+    
+    // Get the main/exported class (usually first or the exported one)
+    const mainClass = pom.classes.find(c => c.name === pom.exports) || pom.classes[0];
+    
+    if (mainClass) {
+      // Add all getters from the main class
+      for (const getter of mainClass.getters || []) {
+        directGetters.push(getter.name);
+      }
+      
+      // Also add direct properties (not instances)
+      for (const prop of mainClass.properties || []) {
+        if (prop.type === 'property') {
+          directGetters.push(prop.name);
+        }
+      }
+    }
+    
+    console.log(`   📦 getDirectGetters(${pomName}): found ${directGetters.length} direct fields`);
+    return directGetters;
+  }
 }
+
+
+
+
 
 export default POMDiscovery;

@@ -293,9 +293,16 @@ router.get('/:pomName', async (req, res) => {
         instancePaths['default'] = directPaths;
       }
     } else {
-      // Has instances - get paths for each
+      // Has instances - get paths for each instance
       for (const instance of instances) {
         instancePaths[instance.name] = discovery.getAvailablePaths(pomName, instance.name); 
+      }
+      
+      // ✅ FIX: ALSO add direct getters from main class to "default"
+      const directGetters = discovery.getDirectGetters(pomName);
+      if (directGetters.length > 0) {
+        instancePaths['default'] = directGetters;
+        console.log(`   ✅ Added ${directGetters.length} direct getters to 'default' instance`);
       }
     }
 

@@ -833,10 +833,13 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
             )
           )}
 
-          {(Object.keys(textChecks).length > 0 || editMode) && (
+{(Object.keys(textChecks).length > 0 || editMode) && (
             <TextChecksSection
               textChecks={textChecks}
               editMode={editMode}
+              pomName={pomName}              // ✅ ADD
+              instanceName={instanceName}    // ✅ ADD
+              projectPath={projectPath}      // ✅ ADD
               onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
               theme={theme}
             />
@@ -1103,10 +1106,11 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   );
 }
 
-function TextChecksSection({ textChecks, editMode, onChange, theme }) {
+function TextChecksSection({ textChecks, editMode, pomName, instanceName, projectPath, onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newSelector, setNewSelector] = useState('');
   const [newExpectedText, setNewExpectedText] = useState('');
+  const [fieldValidation, setFieldValidation] = useState(null);
   const color = theme.colors.accents.yellow;
 
   const handleAddTextCheck = () => {
@@ -1119,6 +1123,7 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
     setNewSelector('');
     setNewExpectedText('');
     setIsAdding(false);
+    setFieldValidation(null);
   };
 
   const handleRemoveTextCheck = (selector) => {
@@ -1149,11 +1154,57 @@ function TextChecksSection({ textChecks, editMode, onChange, theme }) {
         ))}
         {isAdding && (
           <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
-            <input type="text" value={newSelector} onChange={(e) => setNewSelector(e.target.value)} placeholder="Selector" className="w-full px-2 py-1 rounded border text-sm" style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} />
-            <input type="text" value={newExpectedText} onChange={(e) => setNewExpectedText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddTextCheck()} placeholder="Expected text" className="w-full px-2 py-1 rounded border text-sm" style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} />
+            {/* ✅ FIX: Use FieldAutocomplete for selector dropdown */}
+            {pomName && projectPath ? (
+              <FieldAutocomplete 
+                projectPath={projectPath}
+                pomName={pomName}
+                instanceName={instanceName}
+                fieldValue={newSelector}
+                onFieldChange={setNewSelector}
+                onValidationChange={setFieldValidation}
+                placeholder="Select locator for text check..."
+              />
+            ) : (
+              <input 
+                type="text" 
+                value={newSelector} 
+                onChange={(e) => setNewSelector(e.target.value)} 
+                placeholder="Selector (select POM first)" 
+                className="w-full px-2 py-1 rounded border text-sm" 
+                style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
+              />
+            )}
+            <input 
+              type="text" 
+              value={newExpectedText} 
+              onChange={(e) => setNewExpectedText(e.target.value)} 
+              onKeyPress={(e) => e.key === 'Enter' && handleAddTextCheck()} 
+              placeholder="Expected text (e.g., 'Welcome' or '{{userName}}')" 
+              className="w-full px-2 py-1 rounded border text-sm" 
+              style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
+            />
             <div className="flex gap-2">
-              <button onClick={handleAddTextCheck} className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110" style={{ background: color, color: 'white' }}>Add</button>
-              <button onClick={() => { setIsAdding(false); setNewSelector(''); setNewExpectedText(''); }} className="px-3 py-1 rounded text-sm" style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}>Cancel</button>
+              <button 
+                onClick={handleAddTextCheck} 
+                disabled={fieldValidation === false || !newSelector.trim() || !newExpectedText.trim()}
+                className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110 disabled:opacity-50" 
+                style={{ background: fieldValidation === false ? '#94a3b8' : color, color: 'white' }}
+              >
+                {fieldValidation === false ? '⚠️ Invalid' : 'Add'}
+              </button>
+              <button 
+                onClick={() => { 
+                  setIsAdding(false); 
+                  setNewSelector(''); 
+                  setNewExpectedText(''); 
+                  setFieldValidation(null);
+                }} 
+                className="px-3 py-1 rounded text-sm" 
+                style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
