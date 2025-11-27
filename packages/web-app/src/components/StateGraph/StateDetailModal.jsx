@@ -392,11 +392,12 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
         const data = await response.json();
         console.log('✅ Full transition data:', data.transition);
         
-        const fullTransitionData = {
+const fullTransitionData = {
           event: transition.event,
           target: data.transition.target || transition.target,
           platforms: data.transition.platforms,
-          actionDetails: data.transition.actionDetails
+          actionDetails: data.transition.actionDetails,
+          requires: data.transition.requires || {}  // ✅ ADD THIS
         };
         
         console.log('📦 Setting editingTransition:', fullTransitionData);
@@ -478,7 +479,7 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
         return;
         
       } else {
-        const response = await fetch('http://localhost:3000/api/implications/update-transition', {
+       const response = await fetch('http://localhost:3000/api/implications/update-transition', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -487,7 +488,8 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
             newEvent: transitionData.event,
             newTarget: transitionData.target || editingTransition.target,
             platform: transitionData.platform,
-            actionDetails: transitionData.actionDetails
+            actionDetails: transitionData.actionDetails,
+            requires: transitionData.requires  // ✅ ADD THIS
           })
         });
 
@@ -498,7 +500,7 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
 
         console.log('✅ Transition updated in file');
 
-        setEditedState(prev => ({
+  setEditedState(prev => ({
           ...prev,
           transitions: prev.transitions.map((t, i) => 
             i === editingTransitionIndex 
@@ -506,7 +508,8 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
                   event: transitionData.event,
                   target: transitionData.target || editingTransition.target,
                   platform: transitionData.platform,
-                  actionDetails: transitionData.actionDetails
+                  actionDetails: transitionData.actionDetails,
+                  requires: transitionData.requires  // ✅ ADD THIS
                 }
               : t
           )

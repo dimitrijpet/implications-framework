@@ -208,10 +208,11 @@ export function extractXStateTransitions(parsed, className) {
                 if (transitionProp.value?.type === 'ArrayExpression') {
                   console.log(`      📦 Found array transition for ${eventName}, extracting ${transitionProp.value.elements.length} variants`);
                   
-                  transitionProp.value.elements.forEach((element, index) => {
+                 transitionProp.value.elements.forEach((element, index) => {
                     if (element.type === 'ObjectExpression') {
                       let targetState = null;
                       let platforms = null;
+                      let requires = null;
                       
                       // Extract target
                       const targetProp = element.properties.find(p => p.key?.name === 'target');
@@ -228,12 +229,27 @@ export function extractXStateTransitions(parsed, className) {
                         console.log(`         📱 Variant ${index + 1} platforms:`, platforms);
                       }
                       
+                      // Extract requires
+                      const requiresProp = element.properties.find(p => p.key?.name === 'requires');
+                      if (requiresProp && requiresProp.value?.type === 'ObjectExpression') {
+                        requires = {};
+                        requiresProp.value.properties.forEach(reqProp => {
+                          const key = reqProp.key?.name || reqProp.key?.value;
+                          const value = extractValueFromNode(reqProp.value);
+                          if (key) {
+                            requires[key] = value;
+                          }
+                        });
+                        console.log(`         🔒 Variant ${index + 1} requires:`, requires);
+                      }
+                      
                       if (targetState) {
                         transitions.push({
                           from: fromStatus,
                           to: targetState,
                           event: eventName,
-                          platforms: platforms
+                          platforms: platforms,
+                          requires: requires
                         });
                       }
                     }
@@ -243,8 +259,10 @@ export function extractXStateTransitions(parsed, className) {
                 }
                 
                 // Original handling for single transitions
+               // Original handling for single transitions
                 let targetState = null;
                 let platforms = null;
+                let requires = null;
                 
                 // Handle different formats
                 if (transitionProp.value?.type === 'StringLiteral') {
@@ -288,6 +306,23 @@ export function extractXStateTransitions(parsed, className) {
                       }
                     }
                   }
+                  
+                  // Extract requires
+                  const requiresProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'requires'
+                  );
+                  
+                  if (requiresProp && requiresProp.value?.type === 'ObjectExpression') {
+                    requires = {};
+                    requiresProp.value.properties.forEach(reqProp => {
+                      const key = reqProp.key?.name || reqProp.key?.value;
+                      const value = extractValueFromNode(reqProp.value);
+                      if (key) {
+                        requires[key] = value;
+                      }
+                    });
+                    console.log(`      🔒 Found requires for ${eventName}:`, requires);
+                  }
                 }
                 
                 if (eventName && targetState) {
@@ -295,7 +330,8 @@ export function extractXStateTransitions(parsed, className) {
                     from: fromStatus,
                     to: targetState,
                     event: eventName,
-                    platforms: platforms
+                    platforms: platforms,
+                    requires: requires
                   });
                 }
               });

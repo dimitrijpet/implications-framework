@@ -2610,7 +2610,7 @@ function extractValueFromNode(node) {
 // Replace lines 1547-1676 in implications.js with this
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event, platform, actionDetails } = req.body;  // ✅ CHANGED: platforms → platform
+    const { sourceFile, targetFile, event, platform, actionDetails, requires } = req.body;
     
     // ✅ UPDATED DEBUG LOGS
     console.log('═══════════════════════════════════════');
@@ -2665,7 +2665,7 @@ router.post('/add-transition', async (req, res) => {
     console.log('✅ Converting platform to array:', platform, '→', platformsArray);
     
     // Add transition to source file
-    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails);
+    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
@@ -2756,7 +2756,7 @@ function extractStateName(ast) {
   return stateName;
 }
 
-function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails) {
+function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires) {
   let transitionAdded = false;
   
   // ✅ BUILD transitionObj OUTSIDE traverse!
@@ -2775,6 +2775,30 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       t.objectProperty(
         t.identifier('platforms'),
         t.arrayExpression(platforms.map(p => t.stringLiteral(p)))
+      )
+    );
+  }
+  
+ // Add requires if provided (for conditional path selection)
+  if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
+    console.log('✅ Adding requires to transition:', requires);
+    
+    const requiresProperties = Object.entries(requires).map(([key, value]) => {
+      let valueNode;
+      if (typeof value === 'boolean') {
+        valueNode = t.booleanLiteral(value);
+      } else if (typeof value === 'number') {
+        valueNode = t.numericLiteral(value);
+      } else {
+        valueNode = t.stringLiteral(String(value));
+      }
+      return t.objectProperty(t.identifier(key), valueNode);
+    });
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('requires'),
+        t.objectExpression(requiresProperties)
       )
     );
   }
@@ -4081,7 +4105,41 @@ router.post('/update-transition', async (req, res) => {
               }
             }
             
-            // 3. ActionDetails (if provided, use buildActionDetailsAST helper)
+ // 3. Requires (if provided)
+            const requires = req.body.requires;
+            if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
+              console.log('✅ Adding requires to transition:', requires);
+              
+              const requiresProperties = Object.entries(requires).map(([key, value]) => {
+                let valueNode;
+                if (typeof value === 'boolean') {
+                  valueNode = t.booleanLiteral(value);
+                } else if (typeof value === 'number') {
+                  valueNode = t.numericLiteral(value);
+                } else {
+                  valueNode = t.stringLiteral(String(value));
+                }
+                return t.objectProperty(t.identifier(key), valueNode);
+              });
+              
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('requires'),
+                  t.objectExpression(requiresProperties)
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing requires if not updating
+              const existingRequires = oldTransition.value.properties.find(
+                p => p.key?.name === 'requires'
+              );
+              if (existingRequires) {
+                console.log('⭐ Preserving existing requires');
+                transitionProperties.push(existingRequires);
+              }
+            }
+            
+            // 4. ActionDetails (if provided, use buildActionDetailsAST helper)
             if (actionDetails) {
               console.log('✅ Adding actionDetails to transition');
               const actionDetailsAST = buildActionDetailsAST(actionDetails);

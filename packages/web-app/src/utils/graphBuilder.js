@@ -101,42 +101,23 @@ statefulImplications.forEach(imp => {
   // Create edges from transitions
   console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
   
+// Create edges from transitions
   if (transitions && transitions.length > 0) {
     transitions.forEach(transition => {
-      console.log(`  📊 Transition:`, {
-        event: transition.event,
-        from: transition.from,
-        to: transition.to,
-        platforms: transition.platforms,
-        hasPlatforms: !!transition.platforms
-      });
-      
       const fromState = extractStateName(transition.from).toLowerCase();
       const toState = transition.to.toLowerCase();
       
-      console.log(`    🔍 Checking: ${fromState} → ${toState}`);
-      console.log(`      fromState in map: ${stateMap.has(fromState)}`);
-      console.log(`      toState in map: ${stateMap.has(toState)}`);
-      
       // Only add edge if both nodes exist
       if (stateMap.has(fromState) && stateMap.has(toState)) {
-        // ✅ DOUBLE CHECK: Also verify nodes array has these IDs
-        const sourceExists = nodes.find(n => n.data.id === fromState);
-        const targetExists = nodes.find(n => n.data.id === toState);
+        // Determine platform color for edge
+        const sourceNode = nodes.find(n => n.data.id === fromState);
+        const platformColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
         
-        if (!sourceExists || !targetExists) {
-          console.warn(`   ⚠️ Skipping edge - node missing in array! source: ${!!sourceExists}, target: ${!!targetExists}`);
-          return;
-        }
-        
-        // ✅ Use transition's platform (not source node's platform)
-        const transitionPlatform = transition.platforms?.[0] || 'web';
-        const platformStyle = getPlatformStyle(transitionPlatform, defaultTheme);
-        
-        // ✅ Include platform in ID to allow multiple arrows for same event
-        const edgeId = transition.platforms 
-          ? `${fromState}-${toState}-${transition.event}-${transition.platforms.join(',')}`
-          : `${fromState}-${toState}-${transition.event}`;
+        // Build unique edge ID including requires if present
+        const requiresKey = transition.requires 
+          ? `-req:${Object.entries(transition.requires).map(([k,v]) => `${k}=${v}`).join(',')}`
+          : '';
+        const edgeId = `${fromState}-${toState}-${transition.event}${requiresKey}`;
         
         edges.push({
           data: {
@@ -144,13 +125,13 @@ statefulImplications.forEach(imp => {
             source: fromState,
             target: toState,
             label: transition.event,
-            platformColor: platformStyle.color,  // ✅ Use transition's platform color!
-            platform: transitionPlatform,        // ✅ Use transition's platform!
-            platforms: transition.platforms      // ✅ Store all platforms for tooltip
+            platformColor: platformColor,
+            platform: sourceNode?.data.platform || 'web',
+            platforms: transition.platforms || null,
+            requires: transition.requires || null,
+            hasRequires: !!(transition.requires && Object.keys(transition.requires).length > 0)
           },
         });
-      } else {
-        console.warn(`   ⚠️ Skipping edge - states not in map! from: ${stateMap.has(fromState)}, to: ${stateMap.has(toState)}`);
       }
     });
   }

@@ -195,39 +195,65 @@ export default function StateGraph({
             'shape': 'roundrectangle'
           }
         },
+{
+          selector: 'edge',
+          style: {
+            'width': theme.graph.edgeWidth,
+            'line-color': 'data(platformColor)',
+            'target-arrow-color': 'data(platformColor)',
+            'target-arrow-shape': 'triangle',
+            'arrow-scale': 2,
+            'curve-style': 'bezier',
+            'control-point-step-size': 60,
+            'label': (ele) => {
+              const event = ele.data('label');
+              const platforms = ele.data('platforms');
+              const requires = ele.data('requires');
+              
+              let label = event;
+              
+              // Platform badges
+              if (platforms && platforms.length > 0) {
+                const badges = platforms.map(p => 
+                  p === 'web' ? '🌐' : '📱'
+                ).join('');
+                label += ` ${badges}`;
+              }
+              
+              // Requires condition indicator
+              if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
+                const conditionStr = Object.entries(requires)
+                  .map(([k, v]) => {
+                    if (typeof v === 'boolean') return `${k}:${v}`;
+                    if (typeof v === 'string') return `${k}:"${v}"`;
+                    return `${k}:${JSON.stringify(v)}`;
+                  })
+                  .join(', ');
+                label += `\n[${conditionStr}]`;
+              }
+              
+              return label;
+            },
+            'font-size': '12px',
+            'text-background-color': theme.colors.background.secondary,
+            'text-background-opacity': 0.9,
+            'text-background-padding': '4px',
+            'color': '#fff',
+            'text-rotation': 'autorotate',
+            'text-margin-y': 0,
+            'text-wrap': 'wrap',
+            'text-max-width': '180px'
+          }
+        },
+        // Conditional edges - dashed line style
         {
-  selector: 'edge',
-  style: {
-    'width': theme.graph.edgeWidth,
-    'line-color': 'data(platformColor)',
-    'target-arrow-color': 'data(platformColor)',
-    'target-arrow-shape': 'triangle',
-    'arrow-scale': 2,
-    'curve-style': 'bezier',
-    'control-point-step-size': 60,
-    'label': (ele) => {
-      const event = ele.data('label');
-      const platforms = ele.data('platforms');
-      
-      // If platforms specified, show badges
-      if (platforms && platforms.length > 0) {
-        const badges = platforms.map(p => 
-          p === 'web' ? '🌐' : '📱'
-        ).join('');
-        return `${event} ${badges}`;
-      }
-      
-      return event;
-    },
-    'font-size': '12px',
-    'text-background-color': theme.colors.background.secondary,
-    'text-background-opacity': 0.9,
-    'text-background-padding': '4px',
-    'color': '#fff',
-    'text-rotation': 'autorotate',
-    'text-margin-y': 0
-  }
-}
+          selector: 'edge[hasRequires]',
+          style: {
+            'line-style': 'dashed',
+            'line-dash-pattern': [8, 4],
+            'line-dash-offset': 0
+          }
+        }
       ],
       
       layout: {
