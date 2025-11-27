@@ -16,62 +16,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 Handlebars.registerHelper('pascalCase', pascalCaseHelper);
-
-/**
- * Handlebars helper: Check if field is negated (starts with !)
- */
-Handlebars.registerHelper('isNegatedField', function(field) {
-  return typeof field === 'string' && field.startsWith('!');
-});
-
-/**
- * Handlebars helper: Remove negation prefix from field
- */
-Handlebars.registerHelper('removeNegation', function(field) {
-  if (typeof field === 'string' && field.startsWith('!')) {
-    return field.slice(1);
-  }
-  return field;
-});
-
-/**
- * Handlebars helper: JSON stringify a value (single line)
- */
-Handlebars.registerHelper('json', function(value) {
-  return JSON.stringify(value);
-});
-
-/**
- * Handlebars helper: JSON stringify inline (guaranteed single line, no newlines)
- */
-Handlebars.registerHelper('jsonInline', function(value) {
-  return JSON.stringify(value).replace(/\n/g, ' ');
-});
-
-/**
- * Handlebars helper: Check if value is a "contains" object pattern
- */
-Handlebars.registerHelper('isContainsObject', function(value) {
-  return typeof value === 'object' && value !== null && value.contains !== undefined;
-});
-
-/**
- * Handlebars helper: Get the contains value from object
- */
-Handlebars.registerHelper('getContainsValue', function(value) {
-  if (typeof value === 'object' && value !== null && value.contains) {
-    return value.contains;
-  }
-  return '';
-});
-
-/**
- * Handlebars helper: Check if value is boolean
- */
-Handlebars.registerHelper('isBoolean', function(value) {
-  return typeof value === 'boolean';
-});
-
 /**
  * Handlebars helper: Format requirement values
  */
@@ -598,11 +542,56 @@ _extractMetadata(ImplClass, platform, stateName = null, implFilePath = null) {
   let allTransitions = [];
   
   if (this.currentTransition) {
-    console.log(`\nâœ… USING PROVIDED TRANSITION: ${this.currentTransition.event}`);
-    console.log(`   From frontend, not searching!`);
+    console.log(`\n✅ USING PROVIDED TRANSITION: ${this.currentTransition.event}`);
+    console.log(`   From: ${this.currentTransition.fromState}`);
     
-    // Use the transition that was passed in
-    actionDetails = this.currentTransition.actionDetails;
+    // ✅ FIX: Read actionDetails from SOURCE FILE instead of trusting frontend
+    // Frontend may have stale/incomplete data (e.g., missing storeAs values)
+    const sourceFile = this._findImplicationFile(this.currentTransition.fromState, implFilePath);
+    
+    if (sourceFile) {
+      console.log(`   📂 Reading actionDetails from: ${sourceFile}`);
+      
+      // Try require first (faster)
+      let fileActionDetails = this._extractActionDetailsViaRequire(
+        sourceFile, 
+        this.currentTransition.event, 
+        targetStateName
+      );
+      
+      // Fallback to AST if require fails
+      if (!fileActionDetails) {
+        console.log(`   ⚠️ Require failed, trying AST...`);
+        fileActionDetails = this._extractActionDetailsViaAST(
+          sourceFile,
+          this.currentTransition.event,
+          targetStateName
+        );
+      }
+      
+      if (fileActionDetails) {
+        actionDetails = fileActionDetails;
+        console.log(`   ✅ Got actionDetails from file`);
+        console.log(`   📊 Steps: ${fileActionDetails.steps?.length || 0}`);
+        
+        // Debug: Log storeAs values
+        if (fileActionDetails.steps) {
+          fileActionDetails.steps.forEach((step, i) => {
+            if (step.storeAs) {
+              console.log(`   💾 Step ${i} has storeAs: "${step.storeAs}"`);
+            }
+          });
+        }
+      } else {
+        // Last resort: use frontend's version
+        console.log(`   ⚠️ Could not read from file, using frontend data`);
+        actionDetails = this.currentTransition.actionDetails;
+      }
+    } else {
+      console.log(`   ⚠️ Source file not found, using frontend data`);
+      actionDetails = this.currentTransition.actionDetails;
+    }
+    
     allTransitions = [this.currentTransition];
     
   } else {
@@ -1325,8 +1314,7 @@ if (metadata.mirrorsOn?.UI) {
     console.log(`   âœ… Function-aware validation: ${validationScreens.length} screens`);
   }
 }
-    const hasStoreAs = metadata.actionDetails?.steps?.some(step => step.storeAs) || false;
-
+    
     // Build context
     const context = {
   // Header
@@ -1335,7 +1323,6 @@ if (metadata.mirrorsOn?.UI) {
   platform,
   platformKey: this._getPlatformKeyForMirrorsOn(platform),
   targetStatus,
-  hasStoreAs,
   previousStatus: metadata.previousStatus,
   meta: metadata.meta || {},
   
@@ -1358,9 +1345,6 @@ if (metadata.mirrorsOn?.UI) {
   expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
   testPlannerPath: paths.testPlanner,
   testSetupPath: paths.testSetup,
-  
-  // ✅ NEW: Setup configuration from ai-testing.config.js
-  setupConfig: this._loadSetupConfig(platform),
   
   // Function
   actionName,
@@ -1396,7 +1380,11 @@ if (metadata.mirrorsOn?.UI) {
   // Keep backward compatibility (first transition)
   hasActionDetails: !!metadata.actionDetails,
   actionDetails: metadata.actionDetails,
-      hasNavigation: !!navigation, // âœ… ADD THIS
+  // ✅ Check if any step has storeAs
+  hasStoreAs: metadata.actionDetails?.steps?.some(step => step.storeAs) || false,
+  // ✅ storeAsFields at root level for template
+  storeAsFields: metadata.actionDetails?.storeAsFields || [],
+      hasNavigation: !!navigation, // ✅ ADD THIS
       navigation: navigation,       // âœ… ADD THIS
       triggerButton: metadata.triggerButton,
       navigationExample: this._generateNavigationExample(platform, metadata),
@@ -2483,13 +2471,15 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
     });
   }
   
-  // âœ… Get entity from metadata that's ALREADY in context
+  // ✅ Get entity from metadata that's ALREADY in context
   // (Don't call _extractMetadata again - that causes recursion!)
   const entity = this.currentMetadata?.meta?.entity || null;
   
-  // Process steps with dual args format AND entity
+  // Process steps with storeAs parsing, args format, AND entity
   if (processed.steps) {
-    processed.steps = processed.steps.map(step => {
+    const storeAsFields = [];  // Collect for delta generation
+    
+    processed.steps = processed.steps.map((step, index) => {
       const argsArray = Array.isArray(step.args) 
         ? step.args 
         : (step.args || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -2498,19 +2488,75 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
         ? step.args.join(', ')
         : step.args || '';
       
+      // ✅ Parse storeAs config
+      const storeAsConfig = this._parseStoreAsConfig(step.storeAs);
+      
+      if (storeAsConfig) {
+        console.log(`   💾 Step ${index}: storeAs="${storeAsConfig.key}" (persist=${storeAsConfig.persist})`);
+        
+        storeAsFields.push({
+          key: storeAsConfig.key,
+          persist: storeAsConfig.persist,
+          global: storeAsConfig.global,
+          skipPersist: !storeAsConfig.persist
+        });
+      }
+      
       return {
         ...step,
         args: argsString,
         argsArray: argsArray,
-        entity: entity  // âœ… Use entity from stored metadata
+        entity: entity,
+        // ✅ Flattened storeAs properties for template
+        storeAs: !!storeAsConfig,
+        storeAsKey: storeAsConfig?.key,
+        storeAsPersist: storeAsConfig?.persist,
+        storeAsGlobal: storeAsConfig?.global
       };
     });
     
-    console.log(`   âœ… Processed ${processed.steps.length} step(s) with entity: ${entity}`);
+    // ✅ Attach storeAs fields for delta generation
+    processed.storeAsFields = storeAsFields;
+    
+    console.log(`   ✅ Processed ${processed.steps.length} step(s) with entity: ${entity}`);
+    if (storeAsFields.length > 0) {
+      console.log(`   💾 Found ${storeAsFields.length} storeAs field(s): ${storeAsFields.map(f => f.key).join(', ')}`);
+    }
   }
   
   return processed;
 }
+
+/**
+ * Parse storeAs config (handles both string and object format)
+ * 
+ * @param {string|object} storeAs - Either 'varName' or { key, persist, global }
+ * @returns {object|null} Normalized config { key, persist, global }
+ */
+_parseStoreAsConfig(storeAs) {
+  if (!storeAs) return null;
+  
+  if (typeof storeAs === 'string') {
+    return {
+      key: storeAs,
+      persist: true,
+      global: false
+    };
+  }
+  
+  if (typeof storeAs === 'object' && storeAs.key) {
+    return {
+      key: storeAs.key,
+      persist: storeAs.persist !== false,  // Default true
+      global: storeAs.global === true       // Default false
+    };
+  }
+  
+  // Invalid format
+  console.warn(`   ⚠️ Invalid storeAs format:`, storeAs);
+  return null;
+}
+
 /**
  * Extract navigation from actionDetails
  * 
@@ -2693,25 +2739,13 @@ screens.forEach((screen, index) => {
     console.log(`   âœ… Found mirrorsOn.UI.${platformKey} with ${Object.keys(platformUI).length} screens`);
     
     // Extract each screen
-for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
-      // ✅ FIX: Handle BOTH array and object formats
-      let screenDef;
-      
-      if (Array.isArray(screenDefs)) {
-        // Old format: ResultsWrapper: [{ visible: [...] }]
-        if (screenDefs.length === 0) {
-          console.log(`   ⭕️  Skipping ${screenKey} (empty array)`);
-          continue;
-        }
-        screenDef = screenDefs[0];
-      } else if (typeof screenDefs === 'object' && screenDefs !== null) {
-        // New format: ResultsWrapper: { visible: [...] }
-        screenDef = screenDefs;
-        console.log(`   ✅ ${screenKey}: using object format (not array)`);
-      } else {
-        console.log(`   ⭕️  Skipping ${screenKey} (invalid type: ${typeof screenDefs})`);
+    for (const [screenKey, screenDefs] of Object.entries(platformUI)) {
+      if (!Array.isArray(screenDefs) || screenDefs.length === 0) {
+        console.log(`   â­ï¸  Skipping ${screenKey} (not an array or empty)`);
         continue;
       }
+      
+      const screenDef = screenDefs[0];  // Take first definition
       
       // âœ… FIX: Check multiple possible locations for visible/hidden arrays
       // 1. Direct properties: screenDef.visible, screenDef.hidden
@@ -2789,81 +2823,6 @@ _toTitleCase(str) {
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
-}
-
-/**
- * Load setup configuration from ai-testing.config.js
- * 
- * Reads the project's config file and returns setup helpers for the given platform.
- * 
- * @param {string} platform - Platform (web, dancer, manager, etc.)
- * @returns {object|null} Setup configuration or null
- * 
- * Example config:
- *   setup: {
- *     web: {
- *       file: "tests/utils/setup.js",
- *       function: "initiateContext"
- *     }
- *   }
- * 
- * Returns:
- *   {
- *     function: "initiateContext",
- *     file: "tests/utils/setup.js",
- *     relativePath: "../../utils/setup"
- *   }
- */
-_loadSetupConfig(platform) {
-  try {
-    const configPath = path.join(this.projectPath, 'ai-testing.config.js');
-    
-    if (!fs.existsSync(configPath)) {
-      console.log('   ℹ️  No ai-testing.config.js found');
-      return null;
-    }
-    
-    // Clear require cache to get fresh config
-    delete require.cache[require.resolve(configPath)];
-    const config = require(configPath);
-    
-    if (!config.setup || !config.setup[platform]) {
-      console.log(`   ℹ️  No setup config for platform: ${platform}`);
-      return null;
-    }
-    
-    const setupConfig = config.setup[platform];
-    
-    // Calculate relative path from test file to setup file
-    const testDir = path.dirname(this.implFilePath);
-    const setupFilePath = path.join(this.projectPath, setupConfig.file);
-    let relativePath = path.relative(testDir, setupFilePath);
-    
-    // Normalize for require() - use forward slashes and remove .js extension
-    relativePath = relativePath.split(path.sep).join('/');
-    relativePath = relativePath.replace(/\.js$/, '');
-    
-    // Ensure it starts with ./ or ../
-    if (!relativePath.startsWith('.')) {
-      relativePath = './' + relativePath;
-    }
-    
-    console.log(`   ✅ Found setup config for ${platform}:`);
-    console.log(`      Function: ${setupConfig.function}`);
-    console.log(`      File: ${setupConfig.file}`);
-    console.log(`      Relative: ${relativePath}`);
-    
-    return {
-      function: setupConfig.function,
-      file: setupConfig.file,
-      relativePath: relativePath,
-      signature: setupConfig.signature || '(browser) => page'
-    };
-    
-  } catch (error) {
-    console.log(`   ⚠️  Error loading setup config: ${error.message}`);
-    return null;
-  }
 }
 }
 
