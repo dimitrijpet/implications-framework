@@ -5,6 +5,7 @@
 import { useState, useEffect } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
 import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform, clearCache } from '../../cache/pomCache';
+import { getRequiresSuggestions, getKnownKeys } from '../../utils/requiresColors.js';
 
 const API_URL = "http://localhost:3000";
 
@@ -30,6 +31,15 @@ export default function AddTransitionModal({
   steps: [],
   requires: {},
 });
+
+const [requiresSuggestions, setRequiresSuggestions] = useState([]);
+
+// Load suggestions when modal opens
+useEffect(() => {
+  if (isOpen) {
+    setRequiresSuggestions(getRequiresSuggestions());
+  }
+}, [isOpen]);
 
 // State for requires input
 const [newRequiresKey, setNewRequiresKey] = useState('');
@@ -1039,6 +1049,45 @@ const submitData = {
                 border: `1px solid ${defaultTheme.colors.border}`
               }}
             >
+
+              {/* Quick suggestions */}
+{requiresSuggestions.length > 0 && (
+  <div className="mb-2">
+    <label
+      className="text-xs mb-1 block"
+      style={{ color: defaultTheme.colors.text.tertiary }}
+    >
+      Quick add from previously used:
+    </label>
+    <div className="flex flex-wrap gap-2">
+      {requiresSuggestions
+        .filter(s => !formData.requires[s.key]) // Don't show already added
+        .slice(0, 6) // Limit to 6
+        .map((suggestion, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => {
+              setFormData(prev => ({
+                ...prev,
+                requires: {
+                  ...prev.requires,
+                  [suggestion.key]: suggestion.value
+                }
+              }));
+            }}
+            className="px-2 py-1 rounded text-xs font-mono transition hover:brightness-110"
+            style={{
+              backgroundColor: suggestion.color,
+              color: '#fff'
+            }}
+          >
+            {suggestion.label}
+          </button>
+        ))}
+    </div>
+  </div>
+)}
               <div className="flex gap-2">
                 <input
                   type="text"

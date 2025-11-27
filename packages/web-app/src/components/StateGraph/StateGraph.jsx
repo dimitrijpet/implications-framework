@@ -195,7 +195,10 @@ export default function StateGraph({
             'shape': 'roundrectangle'
           }
         },
-{
+// ============================================
+        // EDGE STYLE - Default (no requires)
+        // ============================================
+        {
           selector: 'edge',
           style: {
             'width': theme.graph.edgeWidth,
@@ -205,14 +208,15 @@ export default function StateGraph({
             'arrow-scale': 2,
             'curve-style': 'bezier',
             'control-point-step-size': 60,
+            'line-style': 'solid',
+            
             'label': (ele) => {
               const event = ele.data('label');
               const platforms = ele.data('platforms');
-              const requires = ele.data('requires');
+              const requiresLabel = ele.data('requiresLabel');
               
               let label = event;
               
-              // Platform badges
               if (platforms && platforms.length > 0) {
                 const badges = platforms.map(p => 
                   p === 'web' ? '🌐' : '📱'
@@ -220,38 +224,31 @@ export default function StateGraph({
                 label += ` ${badges}`;
               }
               
-              // Requires condition indicator
-              if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
-                const conditionStr = Object.entries(requires)
-                  .map(([k, v]) => {
-                    if (typeof v === 'boolean') return `${k}:${v}`;
-                    if (typeof v === 'string') return `${k}:"${v}"`;
-                    return `${k}:${JSON.stringify(v)}`;
-                  })
-                  .join(', ');
-                label += `\n[${conditionStr}]`;
+              if (requiresLabel) {
+                label += `\n${requiresLabel}`;
               }
               
               return label;
             },
-            'font-size': '12px',
+            'font-size': '11px',
             'text-background-color': theme.colors.background.secondary,
             'text-background-opacity': 0.9,
             'text-background-padding': '4px',
             'color': '#fff',
             'text-rotation': 'autorotate',
-            'text-margin-y': 0,
+            'text-margin-y': -10,
             'text-wrap': 'wrap',
-            'text-max-width': '180px'
+            'text-max-width': '200px',
           }
         },
-        // Conditional edges - dashed line style
+        
+        // Conditional edges - dashed line + colored text
         {
-          selector: 'edge[hasRequires]',
+          selector: 'edge[?hasRequires]',
           style: {
             'line-style': 'dashed',
             'line-dash-pattern': [8, 4],
-            'line-dash-offset': 0
+            'color': (ele) => ele.data('requiresColor') || '#A855F7',
           }
         }
       ],
@@ -361,6 +358,7 @@ const applyLayout = () => {
     });
     
     cyRef.current = cy;
+    window.cytoscapeGraph = cy; 
     
     return () => {
       if (cyRef.current) {

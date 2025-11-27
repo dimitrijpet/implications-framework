@@ -1,4 +1,5 @@
 import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '../config/visualizerTheme';
+import { getRequiresObjectColor, formatRequiresLabel } from './requiresColors.js';
 
 /**
  * Build Cytoscape graph from discovery results
@@ -119,6 +120,14 @@ statefulImplications.forEach(imp => {
           : '';
         const edgeId = `${fromState}-${toState}-${transition.event}${requiresKey}`;
         
+  // Get requires color if present
+        const requiresColor = transition.requires 
+          ? getRequiresObjectColor(transition.requires)
+          : null;
+        const requiresLabel = transition.requires
+          ? formatRequiresLabel(transition.requires)
+          : '';
+        
         edges.push({
           data: {
             id: edgeId,
@@ -129,7 +138,9 @@ statefulImplications.forEach(imp => {
             platform: sourceNode?.data.platform || 'web',
             platforms: transition.platforms || null,
             requires: transition.requires || null,
-            hasRequires: !!(transition.requires && Object.keys(transition.requires).length > 0)
+            hasRequires: !!(transition.requires && Object.keys(transition.requires).length > 0),
+            requiresLabel: requiresLabel,      // ✅ NEW
+            requiresColor: requiresColor       // ✅ NEW
           },
         });
       }

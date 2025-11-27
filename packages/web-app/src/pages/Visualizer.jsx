@@ -10,6 +10,7 @@ import IssuePanel from '../components/IssuePanel/IssuePanel';
 import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
+import { initializeFromDiscovery } from '../utils/requiresColors.js';
 const API_URL = 'http://localhost:3000';
 
 
@@ -46,6 +47,12 @@ export default function Visualizer() {
 const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
 const transitionModeRef = useRef(transitionMode);
 
+useEffect(() => {
+  if (discoveryResult) {
+    initializeFromDiscovery(discoveryResult);
+  }
+}, [discoveryResult]);
+
 // âœ… Keep ref in sync with state
 useEffect(() => {
   transitionModeRef.current = transitionMode;
@@ -61,6 +68,7 @@ const [createdFiles, setCreatedFiles] = useState([]);
   const [showScreenGroups, setShowScreenGroups] = useState(false);
   const [savedLayout, setSavedLayout] = useState(null);
 const [isSavingLayout, setIsSavingLayout] = useState(false);
+
 
 
   // Clear cache and reset state
