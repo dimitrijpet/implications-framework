@@ -118,6 +118,16 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
     screenIndex: -1
   });
 
+  const computedStoredVariables = useMemo(() => {
+  if (storedVariables.length > 0) return storedVariables;
+  
+  // Try to extract from state's incoming transitions
+  const vars = [];
+  // This would need access to the full state machine to work properly
+  // For now, return empty or hardcode for testing
+  return vars;
+}, [storedVariables, state]);
+
   // ✅ Fetch POM screens when entering edit mode
   useEffect(() => {
     if (editMode && projectPath) {
@@ -847,6 +857,7 @@ const updateScreen = (updates) => {
     pomName={pomName}
     instanceName={instanceName}
     projectPath={projectPath}
+    storedVariables={storedVariables}  // ✅ ADD THIS
     onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
     onContainsChange={(newContainsChecks) => onUpdate({ checks: { ...screen.checks, contains: newContainsChecks } })}
     theme={theme}
@@ -1114,11 +1125,12 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   );
 }
 
-function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName, instanceName, projectPath, onChange, onContainsChange, theme }) {
+function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName, instanceName, projectPath, storedVariables = [], onChange, onContainsChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newSelector, setNewSelector] = useState('');
   const [newExpectedText, setNewExpectedText] = useState('');
   const [matchType, setMatchType] = useState('contains'); // 'exact' or 'contains'
+  const [useVariable, setUseVariable] = useState(false);  // ✅ NEW
   const [fieldValidation, setFieldValidation] = useState(null);
   const color = theme.colors.accents.yellow;
 
@@ -1137,15 +1149,19 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
       return;
     }
     
+    // ✅ Wrap in {{}} if using variable
+    const finalValue = useVariable ? `{{${newExpectedText}}}` : newExpectedText.trim();
+    
     if (matchType === 'exact') {
-      onChange({ ...textChecks, [newSelector.trim()]: newExpectedText.trim() });
+      onChange({ ...textChecks, [newSelector.trim()]: finalValue });
     } else {
-      onContainsChange({ ...containsChecks, [newSelector.trim()]: newExpectedText.trim() });
+      onContainsChange({ ...containsChecks, [newSelector.trim()]: finalValue });
     }
     
     setNewSelector('');
     setNewExpectedText('');
     setMatchType('contains');
+    setUseVariable(false);
     setIsAdding(false);
     setFieldValidation(null);
   };
@@ -1160,6 +1176,34 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
       delete updated[selector];
       onContainsChange(updated);
     }
+  };
+
+  // ✅ Helper to render value with template highlighting
+  const renderValue = (text) => {
+    if (typeof text !== 'string') return text;
+    
+    const hasTemplate = /\{\{([^}]+)\}\}/.test(text);
+    if (hasTemplate) {
+      return (
+        <span>
+          {text.split(/(\{\{[^}]+\}\})/).map((part, i) => {
+            if (part.match(/^\{\{[^}]+\}\}$/)) {
+              return (
+                <span 
+                  key={i} 
+                  className="px-1 py-0.5 rounded mx-0.5 text-xs font-mono"
+                  style={{ background: `${theme.colors.accents.purple}30`, color: theme.colors.accents.purple }}
+                >
+                  {part}
+                </span>
+              );
+            }
+            return part;
+          })}
+        </span>
+      );
+    }
+    return `"${text}"`;
   };
 
   return (
@@ -1187,7 +1231,9 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
                     {type === 'exact' ? '= exact' : '⊃ contains'}
                   </span>
                 </div>
-                <div className="text-xs" style={{ color: theme.colors.text.secondary }}>"{text}"</div>
+                <div className="text-xs" style={{ color: theme.colors.text.secondary }}>
+                  {renderValue(text)}
+                </div>
               </div>
               {editMode && (
                 <button onClick={() => handleRemoveTextCheck(selector, type)} className="hover:text-red-500 transition" style={{ color }}>✕</button>
@@ -1195,6 +1241,7 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
             </div>
           </div>
         ))}
+        
         {isAdding && (
           <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
             {/* Locator selector */}
@@ -1219,7 +1266,7 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
               />
             )}
             
-            {/* Match type + Expected text */}
+            {/* Match type dropdown */}
             <div className="flex gap-2">
               <select
                 value={matchType}
@@ -1230,16 +1277,57 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
                 <option value="contains">contains</option>
                 <option value="exact">exact match</option>
               </select>
+              
+              {/* ✅ NEW: Toggle between text input and variable dropdown */}
+              <label className="flex items-center gap-1 text-xs cursor-pointer" style={{ color: theme.colors.text.secondary }}>
+                <input
+                  type="checkbox"
+                  checked={useVariable}
+                  onChange={(e) => {
+                    setUseVariable(e.target.checked);
+                    setNewExpectedText('');
+                  }}
+                  className="rounded"
+                />
+                Use stored variable
+              </label>
+            </div>
+            
+            {/* ✅ NEW: Either dropdown or text input based on toggle */}
+            {useVariable ? (
+              <div className="flex gap-2 items-center">
+                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'{{'}</span>
+                <select
+                  value={newExpectedText}
+                  onChange={(e) => setNewExpectedText(e.target.value)}
+                  className="flex-1 px-2 py-1 rounded border text-sm font-mono"
+                  style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.accents.purple }}
+                >
+                  <option value="">Select variable...</option>
+                  {storedVariables.map(v => (
+                    <option key={v.path} value={v.path}>{v.path}</option>
+                  ))}
+                </select>
+                <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'}}'}</span>
+              </div>
+            ) : (
               <input 
                 type="text" 
                 value={newExpectedText} 
                 onChange={(e) => setNewExpectedText(e.target.value)} 
                 onKeyPress={(e) => e.key === 'Enter' && handleAddTextCheck()} 
-                placeholder="Expected text (e.g., 'Welcome' or '{{userName}}')" 
-                className="flex-1 px-2 py-1 rounded border text-sm" 
+                placeholder="Expected text (e.g., 'Welcome' or type {{variable}})" 
+                className="w-full px-2 py-1 rounded border text-sm" 
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }} 
               />
-            </div>
+            )}
+            
+            {/* Helper text */}
+            {storedVariables.length > 0 && (
+              <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                💡 {storedVariables.length} stored variable(s) available from transitions
+              </div>
+            )}
             
             <div className="flex gap-2">
               <button 
@@ -1256,6 +1344,7 @@ function TextChecksSection({ textChecks, containsChecks = {}, editMode, pomName,
                   setNewSelector(''); 
                   setNewExpectedText(''); 
                   setMatchType('contains');
+                  setUseVariable(false);
                   setFieldValidation(null);
                 }} 
                 className="px-3 py-1 rounded text-sm" 

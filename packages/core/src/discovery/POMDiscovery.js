@@ -6,6 +6,7 @@ import parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import { promisify } from 'util';
 import globCallback from 'glob';
+import { parseFileWithMethodsAndReturns } from '../../../api-server/src/services/astParser.js';
 
 const glob = promisify(globCallback);
 
@@ -350,9 +351,9 @@ async _loadPOMPatterns() {
     return structure.classes.length > 0 ? structure : null;
   }
 
-  /**
-   * Extract class information (getters, properties, methods WITH PARAMETERS!)
-   * ✨ ENHANCED: Now extracts ALL methods, not just ones with params
+/**
+   * Extract class information (getters, properties, methods WITH PARAMETERS AND RETURNS!)
+   * ✨ ENHANCED: Now extracts return keys for storeAs autocomplete
    */
   _extractClassInfo(classNode) {
     const classInfo = {
@@ -360,7 +361,7 @@ async _loadPOMPatterns() {
       getters: [],
       properties: [],
       methods: [],
-      functions: [],  // ✨ ALL functions with full signatures
+      functions: [],  // ✨ ALL functions with full signatures AND return info
       constructor: null
     };
 
@@ -420,25 +421,31 @@ async _loadPOMPatterns() {
         // ✨ Extract parameters
         const params = this._extractParameters(member.params);
         
+        // ✨ NEW: Extract return keys from function body
+        const returns = this._extractReturnKeys(member.body);
+        
         // Add to methods array (legacy format)
         classInfo.methods.push({
           name: member.key.name,
           async: member.async || false
         });
         
-        // ✅ FIXED: Add ALL methods to functions array (not just ones with params)
+        // ✅ Add ALL methods to functions array with return info
         classInfo.functions.push({
           name: member.key.name,
           async: member.async || false,
           parameters: params,
           paramNames: params.map(p => p.name),
-          signature: this._buildSignature(member.key.name, params)
+          signature: this._buildSignature(member.key.name, params),
+          returns: returns  // ✨ NEW: { type: 'object', keys: ['index', 'price', ...] }
         });
       }
     }
 
     return classInfo;
   }
+
+  
 
   /**
    * ✨ Extract parameters from method
@@ -494,6 +501,80 @@ async _loadPOMPatterns() {
       default:
         return undefined;
     }
+  }
+
+  /**
+   * ✨ NEW: Extract return object keys from a function body
+   * Handles: return { key1, key2, key3: value }
+   */
+  _extractReturnKeys(functionBody) {
+    const returnInfo = {
+      type: 'unknown',
+      keys: []
+    };
+    
+    if (!functionBody || functionBody.type !== 'BlockStatement') {
+      return returnInfo;
+    }
+    
+    // Find return statements recursively
+    const findReturns = (node, results = []) => {
+      if (!node) return results;
+      
+      if (node.type === 'ReturnStatement' && node.argument) {
+        results.push(node);
+      }
+      
+      // Traverse children
+      if (Array.isArray(node.body)) {
+        node.body.forEach(child => findReturns(child, results));
+      } else if (node.body) {
+        findReturns(node.body, results);
+      }
+      
+      if (node.consequent) findReturns(node.consequent, results);
+      if (node.alternate) findReturns(node.alternate, results);
+      if (node.block) findReturns(node.block, results);
+      
+      return results;
+    };
+    
+    const returnStatements = findReturns(functionBody);
+    
+    // Process return statements - look for object returns
+    for (const returnStmt of returnStatements) {
+      const argument = returnStmt.argument;
+      
+      if (!argument) continue;
+      
+      if (argument.type === 'ObjectExpression') {
+        returnInfo.type = 'object';
+        
+        argument.properties.forEach(prop => {
+          // Handle shorthand: { index } and regular: { index: value }
+          if (prop.type === 'ObjectProperty' || prop.type === 'Property') {
+            const keyName = prop.key?.name || prop.key?.value;
+            if (keyName && !returnInfo.keys.includes(keyName)) {
+              returnInfo.keys.push(keyName);
+            }
+          } else if (prop.type === 'SpreadElement') {
+            returnInfo.keys.push('...<spread>');
+          }
+        });
+        
+        // If we found an object return with keys, use it
+        if (returnInfo.keys.length > 0) {
+          break;
+        }
+      } else if (argument.type === 'ArrayExpression') {
+        returnInfo.type = 'array';
+      } else if (argument.type === 'Identifier') {
+        returnInfo.type = 'variable';
+        returnInfo.variableName = argument.name;
+      }
+    }
+    
+    return returnInfo;
   }
 
   /**

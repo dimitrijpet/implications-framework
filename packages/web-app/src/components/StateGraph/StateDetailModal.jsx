@@ -61,6 +61,7 @@ export default function StateDetailModal({
   projectPath,
   discoveryResult
 }) {
+
   // Edit mode state
   const [editedScreens, setEditedScreens] = useState(new Set());
   const [isEditMode, setIsEditMode] = useState(false);
@@ -89,8 +90,124 @@ export default function StateDetailModal({
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
+  // Add new state near the top with other useState calls
+const [storedVariables, setStoredVariables] = useState([]);
 
-  // Initialize edited state from props
+
+
+const fetchStoredVariables = async () => {
+  const variables = [];
+  
+  console.log('🔍 Fetching ALL stored variables from project...');
+  
+  try {
+    // ✅ USE the discoveryResult prop instead of re-fetching!
+    if (!discoveryResult?.files?.implications) {
+      console.log('⚠️ No discovery result available');
+      return;
+    }
+    
+    const states = discoveryResult.files.implications;
+    console.log(`   📊 Found ${states.length} states in project`);
+    
+    // 2. For each state, fetch each transition's full data to find storeAs
+    for (const imp of states) {
+      const stateFilePath = `${projectPath}/${imp.path}`;
+      const transitions = imp.metadata?.xstateConfig?.on || {};
+      
+      for (const [event, transData] of Object.entries(transitions)) {
+        try {
+          const transResponse = await fetch(
+            `http://localhost:3000/api/implications/get-transition?` +
+            `filePath=${encodeURIComponent(stateFilePath)}&` +
+            `event=${encodeURIComponent(event)}`
+          );
+          
+          if (transResponse.ok) {
+            const data = await transResponse.json();
+            const steps = data.transition?.actionDetails?.steps || [];
+            
+            steps.forEach(step => {
+              if (step.storeAs && !variables.find(v => v.path === step.storeAs)) {
+                console.log(`   💾 Found: ${step.storeAs} (${imp.metadata.status} → ${event})`);
+                variables.push({
+                  name: step.storeAs,
+                  path: step.storeAs,
+                  source: `${imp.metadata.status}:${event}`,
+                  fromState: imp.metadata.status
+                });
+              }
+            });
+          }
+        } catch (err) {
+          // Silently skip
+        }
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Error fetching variables:', error);
+  }
+  
+  // 3. Also get from functions with storeAs in current state's mirrorsOn
+  const platforms = state.uiCoverage?.platforms || state.meta?.uiCoverage?.platforms || {};
+  Object.values(platforms).forEach(platform => {
+    const screens = platform.screens || {};
+    Object.values(screens).forEach(screenDef => {
+      const defArray = Array.isArray(screenDef) ? screenDef : [screenDef];
+      defArray.forEach(def => {
+        if (def.functions) {
+          Object.entries(def.functions).forEach(([funcName, funcData]) => {
+            if (funcData.storeAs && !variables.find(v => v.path === funcData.storeAs)) {
+              variables.push({
+                name: funcData.storeAs,
+                path: funcData.storeAs,
+                source: `function:${funcName}`,
+                fromState: state.name
+              });
+            }
+          });
+        }
+      });
+    });
+  });
+  
+  // 4. Extract referenced variables from checks (like {{flightData.price}})
+  Object.values(platforms).forEach(platform => {
+    const screens = platform.screens || {};
+    Object.values(screens).forEach(screenDef => {
+      const defArray = Array.isArray(screenDef) ? screenDef : [screenDef];
+      defArray.forEach(def => {
+        const textChecks = def.checks?.text || {};
+        const containsChecks = def.checks?.contains || {};
+        
+        [...Object.values(textChecks), ...Object.values(containsChecks)].forEach(value => {
+          const matches = String(value).match(/\{\{([^}]+)\}\}/g);
+          if (matches) {
+            matches.forEach(match => {
+              const varPath = match.replace(/\{\{|\}\}/g, '');
+              if (!variables.find(v => v.path === varPath)) {
+                variables.push({
+                  name: varPath.split('.')[0],
+                  path: varPath,
+                  source: `referenced`,
+                  fromState: state.name
+                });
+              }
+            });
+          }
+        });
+      });
+    });
+  });
+  
+  console.log(`📦 Total stored variables found: ${variables.length}`);
+  variables.forEach(v => console.log(`   - ${v.path} (from ${v.fromState})`));
+  
+  setStoredVariables(variables);
+};
+
+   // Initialize edited state from props
   useEffect(() => {
     if (state) {
       setEditedState(JSON.parse(JSON.stringify(state)));
@@ -136,6 +253,24 @@ export default function StateDetailModal({
       loadComposition();
     }
   }, [state?.files?.implication]);
+
+  // ✅ Load ALL stored variables from project when modal opens
+useEffect(() => {
+  console.log('🟡 storedVariables useEffect RUNNING:', {
+    hasImplication: !!state?.files?.implication,
+    hasProjectPath: !!projectPath,
+    implication: state?.files?.implication,
+    projectPath
+  });
+  
+  if (state?.files?.implication && projectPath) {
+    console.log('🟢 Conditions met, calling fetchStoredVariables NOW');
+    fetchStoredVariables();
+  } else {
+    console.log('🔴 Conditions NOT met');
+  }
+}, [state?.files?.implication, projectPath]);
+
 
   if (!state) return null;
   
@@ -742,51 +877,6 @@ const fullTransitionData = {
     console.log('📊 Analysis complete:', analysis);
   };
 
-const getStoredVariables = () => {
-  const variables = [];
-  
-  // ✅ FIXED: Look in actionDetails.steps, not just steps
-  if (currentState.transitions) {
-    currentState.transitions.forEach(transition => {
-      const steps = transition.actionDetails?.steps || transition.steps || [];
-      steps.forEach(step => {
-        if (step.storeAs) {
-          variables.push({
-            name: step.storeAs,
-            path: step.storeAs,
-            source: `transition:${transition.event}`
-          });
-        }
-      });
-    });
-  }
-  
-  // Get from functions in current state's mirrorsOn
-  const platforms = currentState.uiCoverage?.platforms || 
-                    currentState.meta?.uiCoverage?.platforms ||
-                    {};
-                    
-  Object.values(platforms).forEach(platform => {
-    const screens = platform.screens || {};
-    Object.values(screens).forEach(screenDef => {
-      const def = Array.isArray(screenDef) ? screenDef[0] : screenDef;
-      if (def.functions) {
-        Object.entries(def.functions).forEach(([funcName, funcData]) => {
-          if (funcData.storeAs) {
-            variables.push({
-              name: funcData.storeAs,
-              path: funcData.storeAs,
-              source: `function:${funcName}`
-            });
-          }
-        });
-      }
-    });
-  });
-  
-  console.log('📦 Collected stored variables:', variables);
-  return variables;
-};
 
   // ========================================
   // RENDER
@@ -1076,7 +1166,7 @@ const getStoredVariables = () => {
 
                {/* DEBUG - remove after */}
 {console.log('🔍 FULL currentState:', JSON.stringify(currentState, null, 2))}    
-             <UIScreenEditor
+<UIScreenEditor
   state={{
     ...currentState,
     filePath: state.files.implication,
@@ -1086,7 +1176,7 @@ const getStoredVariables = () => {
   }}
   projectPath={projectPath}
   theme={theme}
-  storedVariables={getStoredVariables()}  // ✅ Pass to editor
+  storedVariables={storedVariables}  // ✅ Now uses state instead of function call
   onSave={handleUIUpdate}
   onCancel={() => console.log('UI edit cancelled')}
 />

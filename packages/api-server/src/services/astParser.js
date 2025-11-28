@@ -134,6 +134,149 @@ export async function parseFileWithMethods(filePath) {
 }
 
 /**
+ * ✨ NEW: Extract return object keys from a function body
+ * Handles: return { key1, key2, key3: value }
+ */
+function extractReturnKeys(functionBody) {
+  const returnInfo = {
+    type: 'unknown',
+    keys: []
+  };
+  
+  if (!functionBody || functionBody.type !== 'BlockStatement') {
+    return returnInfo;
+  }
+  
+  // Find return statements recursively
+  const findReturns = (node, results = []) => {
+    if (!node) return results;
+    
+    if (node.type === 'ReturnStatement' && node.argument) {
+      results.push(node);
+    }
+    
+    // Traverse children
+    if (Array.isArray(node.body)) {
+      node.body.forEach(child => findReturns(child, results));
+    } else if (node.body) {
+      findReturns(node.body, results);
+    }
+    
+    if (node.consequent) findReturns(node.consequent, results);
+    if (node.alternate) findReturns(node.alternate, results);
+    if (node.block) findReturns(node.block, results);
+    
+    return results;
+  };
+  
+  const returnStatements = findReturns(functionBody);
+  
+  // Process return statements - look for object returns
+  for (const returnStmt of returnStatements) {
+    const argument = returnStmt.argument;
+    
+    if (!argument) continue;
+    
+    if (argument.type === 'ObjectExpression') {
+      returnInfo.type = 'object';
+      
+      argument.properties.forEach(prop => {
+        if (prop.type === 'ObjectProperty' || prop.type === 'Property') {
+          const keyName = prop.key?.name || prop.key?.value;
+          if (keyName && !returnInfo.keys.includes(keyName)) {
+            returnInfo.keys.push(keyName);
+          }
+        } else if (prop.type === 'SpreadElement') {
+          returnInfo.keys.push('...<spread>');
+        }
+      });
+      
+      // If we found an object return, use it (prioritize explicit returns)
+      if (returnInfo.keys.length > 0) {
+        break;
+      }
+    } else if (argument.type === 'ArrayExpression') {
+      returnInfo.type = 'array';
+    } else if (argument.type === 'Identifier') {
+      returnInfo.type = 'variable';
+      returnInfo.variableName = argument.name;
+    }
+  }
+  
+  return returnInfo;
+}
+
+/**
+ * ✨ ENHANCED: Parse file with methods AND return keys
+ * For storeAs autocomplete support
+ */
+export async function parseFileWithMethodsAndReturns(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    const classes = [];
+    
+    traverse.default(ast, {
+      ClassDeclaration(path) {
+        const className = path.node.id?.name;
+        const functions = [];
+        
+        path.node.body.body.forEach(member => {
+          if (member.type === 'ClassMethod') {
+            // Extract parameters
+            const params = member.params.map(param => {
+              if (param.type === 'Identifier') {
+                return param.name;
+              } else if (param.type === 'AssignmentPattern') {
+                return `${param.left.name} = ${extractValueFromNode(param.right)}`;
+              }
+              return 'unknown';
+            });
+            
+            const signature = `${member.key?.name}(${params.join(', ')})`;
+            
+            // ✨ Extract return keys
+            const returns = extractReturnKeys(member.body);
+            
+            functions.push({
+              name: member.key?.name,
+              signature: signature,
+              params: params,
+              static: member.static,
+              async: member.async,
+              returns: returns  // ✨ NEW: { type: 'object', keys: ['index', 'price', ...] }
+            });
+          }
+        });
+        
+        classes.push({
+          name: className,
+          functions: functions,
+        });
+      },
+    });
+    
+    return {
+      path: filePath,
+      classes,
+      error: null,
+    };
+    
+  } catch (error) {
+    return {
+      path: filePath,
+      classes: [],
+      error: error.message,
+    };
+  }
+}
+
+/**
  * Check if parsed file has a specific pattern
  */
 export function hasPattern(parsed, patternName) {
@@ -156,6 +299,8 @@ export function hasPattern(parsed, patternName) {
       return false;
   }
 }
+
+
 
 /**
  * Extract XState transitions from xstateConfig

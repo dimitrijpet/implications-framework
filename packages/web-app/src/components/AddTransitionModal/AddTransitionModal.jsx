@@ -2,12 +2,78 @@
 // ✨ ENHANCED VERSION v2.0
 // Features: Edit Mode, Platform-Filtered Navigation, POM Discovery, Smart Args
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
 import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform, clearCache } from '../../cache/pomCache';
 import { getRequiresSuggestions, getKnownKeys } from '../../utils/requiresColors.js';
 
 const API_URL = "http://localhost:3000";
+
+const AvailableVariablesHint = ({ availableVars, onInsert }) => {
+  if (!availableVars || availableVars.length === 0) return null;
+  
+  return (
+    <div 
+      className="mt-2 p-2 rounded text-xs"
+      style={{ 
+        backgroundColor: `${defaultTheme.colors.accents.cyan}10`,
+        border: `1px solid ${defaultTheme.colors.accents.cyan}30`
+      }}
+    >
+      <div className="flex items-center gap-1 mb-1">
+        <span>📦</span>
+        <span style={{ color: defaultTheme.colors.accents.cyan, fontWeight: 600 }}>
+          Available from previous steps:
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {availableVars.map((varInfo, i) => (
+          <div key={i} className="flex flex-col">
+            <button
+              type="button"
+              onClick={() => onInsert && onInsert(`{{${varInfo.name}}}`)}
+              className="px-2 py-1 rounded font-mono text-xs transition hover:brightness-110"
+              style={{
+                backgroundColor: defaultTheme.colors.background.tertiary,
+                color: defaultTheme.colors.accents.yellow,
+                border: `1px solid ${defaultTheme.colors.accents.yellow}40`
+              }}
+            >
+              {`{{${varInfo.name}}}`}
+            </button>
+            {varInfo.keys && varInfo.keys.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1 ml-2">
+                {varInfo.keys
+                  .filter(k => !k.includes('Wrapper') && !k.startsWith('...'))
+                  .slice(0, 5)
+                  .map((key, j) => (
+                    <button
+                      key={j}
+                      type="button"
+                      onClick={() => onInsert && onInsert(`{{${varInfo.name}.${key}}}`)}
+                      className="px-1 py-0.5 rounded font-mono transition hover:brightness-110"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.secondary,
+                        color: defaultTheme.colors.text.secondary,
+                        fontSize: '10px'
+                      }}
+                    >
+                      .{key}
+                    </button>
+                  ))}
+                {varInfo.keys.filter(k => !k.includes('Wrapper') && !k.startsWith('...')).length > 5 && (
+                  <span style={{ color: defaultTheme.colors.text.tertiary, fontSize: '10px' }}>
+                    +{varInfo.keys.filter(k => !k.includes('Wrapper')).length - 5} more
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 export default function AddTransitionModal({
   isOpen,
@@ -59,6 +125,35 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
   const [selectedNavFile, setSelectedNavFile] = useState("");
   const [loadingNavigation, setLoadingNavigation] = useState(false);
   const [editModeInitialized, setEditModeInitialized] = useState(false)
+
+// ✨ NEW: Compute available storeAs variables from previous steps
+  const availableStoreAsVars = useMemo(() => {
+    const vars = [];
+    
+    // Guard against undefined steps/imports
+    if (!formData.steps || !formData.imports) return vars;
+    
+    formData.steps.forEach((step, index) => {
+      if (step.storeAs) {
+        const matchingImport = formData.imports.find(imp => imp.varName === step.instance);
+        const methodInfo = matchingImport?.functions?.find(f => f.name === step.method);
+        
+        vars.push({
+          name: step.storeAs,
+          stepIndex: index,
+          method: step.method,
+          keys: methodInfo?.returns?.keys || []
+        });
+      }
+    });
+    
+    return vars;
+  }, [formData.steps, formData.imports]);
+
+  // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
+  const getAvailableVarsForStep = (stepIndex) => {
+    return availableStoreAsVars.filter(v => v.stepIndex < stepIndex);
+  };
 
  // ═══════════════════════════════════════════════════════════════════════════
 // EDIT MODE INITIALIZATION
@@ -244,21 +339,18 @@ useEffect(() => {
 // RESET FORM IN CREATE MODE
 // ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
-  if (isOpen && mode === 'create') {
-    // ✅ Clear cache when opening in create mode
-    // clearCache();
-    
-    setFormData({
-      event: "",
-      description: "",
-      platform: "web",
-      hasActionDetails: false,
-      navigationMethod: "",
-      navigationFile: "",
-      imports: [],
-      steps: [],
-      requires: {},
-    });
+    if (isOpen && mode === 'create') {
+      setFormData({
+        event: "",
+        description: "",
+        platform: "web",
+        hasActionDetails: false,
+        navigationMethod: "",
+        navigationFile: "",
+        imports: [],
+        steps: [],
+        requires: {},  // ← ADD THIS
+      });
     setErrors({});
     setSelectedNavFile("");
     setNavigationFiles([]);
@@ -511,6 +603,7 @@ const filterPOMsByPlatform = (poms, platform) => {
         navigationFile: "",
         imports: [],
         steps: [],
+         requires: {},  // ← ADD THIS
       });
       setErrors({});
       setSelectedNavFile("");
@@ -630,13 +723,18 @@ const filterPOMsByPlatform = (poms, platform) => {
   };
 
   // Handle method selection with signature
-  const handleStepMethodSelect = (stepIndex, methodSignature) => {
+ const handleStepMethodSelect = (stepIndex, methodSignature) => {
     const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
 
     if (match) {
       const methodName = match[1];
       const paramsStr = match[2];
       const params = paramsStr ? paramsStr.split(",").map((p) => p.trim()) : [];
+
+      // ✨ NEW: Find the method's return info
+      const step = formData.steps[stepIndex];
+      const matchingImport = formData.imports.find(imp => imp.varName === step.instance);
+      const methodInfo = matchingImport?.functions?.find(f => f.name === methodName);
 
       setFormData((prev) => ({
         ...prev,
@@ -650,6 +748,7 @@ const filterPOMsByPlatform = (poms, platform) => {
                   const paramName = p.split("=")[0].trim();
                   return `ctx.data.${paramName}`;
                 }),
+                selectedMethodReturns: methodInfo?.returns || null,  // ✨ NEW
               }
             : step
         ),
@@ -691,6 +790,23 @@ const filterPOMsByPlatform = (poms, platform) => {
       steps: prev.steps.map((step, i) =>
         i === index ? { ...step, args: argsArray } : step
       ),
+    }));
+  };
+
+   const handleInsertVariable = (stepIndex, variable) => {
+    setFormData((prev) => ({
+      ...prev,
+      steps: prev.steps.map((step, i) => {
+        if (i === stepIndex) {
+          const currentArgs = step.args.join(', ');
+          const newArgs = currentArgs ? `${currentArgs}, ${variable}` : variable;
+          return {
+            ...step,
+            args: newArgs.split(',').map(a => a.trim()).filter(Boolean)
+          };
+        }
+        return step;
+      }),
     }));
   };
 
@@ -1709,110 +1825,130 @@ const submitData = {
                       </select>
                     </div>
 
-                    {/* Method with Signature */}
-                    <div className="mb-2">
-                      <label
-                        className="text-xs"
-                        style={{ color: defaultTheme.colors.text.secondary }}
-                      >
-                        Method * (with signature)
-                      </label>
-                      <select
-                        value={step.signature || ""}
-                        onChange={(e) =>
-                          handleStepMethodSelect(index, e.target.value)
-                        }
-                        disabled={!step.instance}
-                        className="w-full px-3 py-1 rounded text-sm font-mono"
-                        style={{
-                          backgroundColor:
-                            defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
-                          opacity: !step.instance ? 0.5 : 1,
-                        }}
-                      >
-                        <option value="">-- Select method --</option>
-                        {step.availableMethods &&
-                          step.availableMethods.map((method, i) => (
-                            <option key={i} value={method.signature}>
-                              {method.signature}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
+                   {/* Method with Signature */}
+<div className="mb-2">
+  <label
+    className="text-xs"
+    style={{ color: defaultTheme.colors.text.secondary }}
+  >
+    Method * (with signature)
+  </label>
+  <select
+    value={step.signature || ""}
+    onChange={(e) =>
+      handleStepMethodSelect(index, e.target.value)
+    }
+    disabled={!step.instance}
+    className="w-full px-3 py-1 rounded text-sm font-mono"
+    style={{
+      backgroundColor:
+        defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
+      opacity: !step.instance ? 0.5 : 1,
+    }}
+  >
+    <option value="">-- Select method --</option>
+    {step.availableMethods &&
+      step.availableMethods.map((method, i) => (
+        <option key={i} value={method.signature}>
+          {method.signature}
+        </option>
+      ))}
+  </select>
+  
+  {/* ✨ NEW: Show return keys when method is selected */}
+  {step.selectedMethodReturns?.type === 'object' && step.selectedMethodReturns.keys?.length > 0 && (
+    <div className="mt-1 p-2 rounded text-xs"
+      style={{ backgroundColor: `${defaultTheme.colors.accents.green}10`, border: `1px solid ${defaultTheme.colors.accents.green}30` }}>
+      <span style={{ color: defaultTheme.colors.accents.green }}>
+        📤 Returns: {step.selectedMethodReturns.keys
+          .filter(k => !k.includes('Wrapper') && !k.startsWith('...'))
+          .join(', ')}
+      </span>
+    </div>
+  )}
+</div>
 
-                    {/* Args Input with Smart Validation */}
-                    <div>
-                      <label
-                        className="text-xs"
-                        style={{ color: defaultTheme.colors.text.secondary }}
-                      >
-                        Arguments (comma-separated)
-                      </label>
-                      <input
-                        type="text"
-                        value={step.args.join(", ")}
-                        onChange={(e) =>
-                          handleStepArgsChange(index, e.target.value)
-                        }
-                        placeholder="ctx.data.field1, ctx.data.field2 || defaultValue"
-                        className="w-full px-3 py-1 rounded text-sm font-mono"
-                        style={{
-                          backgroundColor:
-                            defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${defaultTheme.colors.border}`,
-                        }}
-                      />
+                  {/* Args Input with Smart Validation */}
+<div>
+  <label
+    className="text-xs"
+    style={{ color: defaultTheme.colors.text.secondary }}
+  >
+    Arguments (comma-separated)
+  </label>
+  <input
+    type="text"
+    value={step.args.join(", ")}
+    onChange={(e) =>
+      handleStepArgsChange(index, e.target.value)
+    }
+    placeholder="ctx.data.field1, ctx.data.field2 || defaultValue"
+    className="w-full px-3 py-1 rounded text-sm font-mono"
+    style={{
+      backgroundColor:
+        defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${defaultTheme.colors.border}`,
+    }}
+  />
 
-                      {/* Helper Text */}
-                      <div
-                        className="text-xs mt-1"
-                        style={{ color: defaultTheme.colors.text.tertiary }}
-                      >
-                        💡 Use{" "}
-                        <code
-                          className="px-1 rounded"
-                          style={{
-                            backgroundColor:
-                              defaultTheme.colors.background.secondary,
-                          }}
-                        >
-                          ||
-                        </code>{" "}
-                        for defaults, not{" "}
-                        <code
-                          className="px-1 rounded"
-                          style={{
-                            backgroundColor:
-                              defaultTheme.colors.background.secondary,
-                          }}
-                        >
-                          =
-                        </code>
-                      </div>
+  {/* ✨ NEW: Show available variables from previous steps */}
+  {getAvailableVarsForStep(index).length > 0 && (
+    <AvailableVariablesHint 
+      availableVars={getAvailableVarsForStep(index)}
+      onInsert={(variable) => handleInsertVariable(index, variable)}
+    />
+  )}
 
-                      {/* Live Warning */}
-                      {step.args.some((arg) => arg.includes(" = ")) && (
-                        <div
-                          className="text-xs mt-2 px-2 py-1 rounded flex items-center gap-2"
-                          style={{
-                            backgroundColor:
-                              defaultTheme.colors.accents.yellow + "20",
-                            color: defaultTheme.colors.accents.yellow,
-                            border: `1px solid ${defaultTheme.colors.accents.yellow}`,
-                          }}
-                        >
-                          <span>⚠️</span>
-                          <span>
-                            Args will be auto-converted to use ||
-                          </span>
-                        </div>
-                      )}
-                    </div>
+  {/* Helper Text */}
+  <div
+    className="text-xs mt-1"
+    style={{ color: defaultTheme.colors.text.tertiary }}
+  >
+    💡 Use{" "}
+    <code
+      className="px-1 rounded"
+      style={{
+        backgroundColor:
+          defaultTheme.colors.background.secondary,
+      }}
+    >
+      ||
+    </code>{" "}
+    for defaults, not{" "}
+    <code
+      className="px-1 rounded"
+      style={{
+        backgroundColor:
+          defaultTheme.colors.background.secondary,
+      }}
+    >
+      =
+    </code>
+  </div>
 
-                  {/* ✅ NEW: StoreAs Input */}
+  {/* Live Warning */}
+  {step.args.some((arg) => arg.includes(" = ")) && (
+    <div
+      className="text-xs mt-2 px-2 py-1 rounded flex items-center gap-2"
+      style={{
+        backgroundColor:
+          defaultTheme.colors.accents.yellow + "20",
+        color: defaultTheme.colors.accents.yellow,
+        border: `1px solid ${defaultTheme.colors.accents.yellow}`,
+      }}
+    >
+      <span>⚠️</span>
+      <span>
+        Args will be auto-converted to use ||
+      </span>
+    </div>
+  )}
+</div>
+
+{/* ✅ NEW: StoreAs Input */}
 <div className="mt-3">
   <label
     className="text-xs"
@@ -1846,7 +1982,19 @@ const submitData = {
         border: `1px solid ${defaultTheme.colors.accents.yellow}30`
       }}
     >
-      ✨ Access in validations: <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>{`{{${step.storeAs}}}`}</code> or <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>{`{{${step.storeAs}.propertyName}}`}</code>
+      ✨ Access in validations:{' '}
+      <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>
+        {`{{${step.storeAs}}}`}
+      </code>
+      {/* ✨ NEW: Show available keys if we know what the method returns */}
+      {step.selectedMethodReturns?.keys?.length > 0 && (
+        <span>
+          {' '}or{' '}
+          <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>
+            {`{{${step.storeAs}.${step.selectedMethodReturns.keys.filter(k => !k.includes('Wrapper'))[0] || 'property'}}}`}
+          </code>
+        </span>
+      )}
     </div>
   )}
 </div>
