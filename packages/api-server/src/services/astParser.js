@@ -729,7 +729,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                             console.log(`      ⚠️ Unknown element type: ${element.type}`);
                           }
                         }
-                       } else if (screenProp.value?.type === 'CallExpression') {
+                                    } else if (screenProp.value?.type === 'CallExpression') {
                         console.log('      📞 Direct CallExpression (not in array)');
                         const merged = await parseScreenValidation(
                           screenProp.value,
@@ -741,7 +741,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                           screenDefinitions.push(merged);
                         }
                       } else if (screenProp.value?.type === 'MemberExpression') {
-                        console.log('      🔗 Direct base reference');
+                        console.log('      📗 Direct base reference');
                         const baseData = await resolveBaseImplication(
                           {
                             className: screenProp.value.object?.object?.name,
@@ -756,7 +756,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                           screenDefinitions.push(baseData);
                         }
                       } else if (screenProp.value?.type === 'ObjectExpression') {
-                        // ✅ NEW: Handle direct object (single screen, not in array)
+                        // ✅ Handle direct object (not in array)
                         console.log('      📝 Direct ObjectExpression (single screen)');
                         const def = extractScreenDefinition(screenProp.value);
                         if (def) {
@@ -941,49 +941,231 @@ function extractScreenDefinition(objectNode) {
       text: {},
       contains: {}
     }
+    // blocks, screen, instance, functions, _pomSource added dynamically
   };
   
   objectNode.properties.forEach(prop => {
     const key = prop.key?.name;
     
-    if (key === 'visible' || key === 'hidden') {
+    // ─────────────────────────────────────────────────────────
+    // Simple string fields
+    // ─────────────────────────────────────────────────────────
+    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance') {
+      const value = extractValueFromNode(prop.value);
+      if (value) {
+        def[key] = value;
+      }
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Array fields: visible, hidden, truthy, falsy
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'visible' || key === 'hidden' || key === 'truthy' || key === 'falsy') {
       if (prop.value?.type === 'ArrayExpression') {
         def[key] = prop.value.elements
           .map(el => extractValueFromNode(el))
           .filter(Boolean);
       }
-    } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
-      // ✅ Use the shared helper instead of inline parsing
-      def.checks = parseChecksObject(prop.value);
-    } else if (key === 'truthy' && prop.value?.type === 'ArrayExpression') {
-      def.truthy = prop.value.elements
-        .map(el => extractValueFromNode(el))
-        .filter(Boolean);
-    } else if (key === 'falsy' && prop.value?.type === 'ArrayExpression') {
-      def.falsy = prop.value.elements
-        .map(el => extractValueFromNode(el))
-        .filter(Boolean);
-    } else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Assertions array: [{ fn, expect, value }]
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
       def.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
         .map(el => {
-          if (el.type === 'ObjectExpression') {
-            const assertion = {};
-            el.properties.forEach(p => {
-              if (p.key) {
-                const k = p.key.name || p.key.value;
-                assertion[k] = extractValueFromNode(p.value);
-              }
-            });
-            return assertion;
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            if (k === 'fn' || k === 'expect') {
+              assertion[k] = extractValueFromNode(p.value);
+            } else if (k === 'value') {
+              assertion.value = extractValueFromNode(p.value);
+            }
+          });
+          return assertion;
+        });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Checks object: { visible, hidden, text, contains }
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        
+        if (checkKey === 'visible' || checkKey === 'hidden') {
+          if (checkProp.value?.type === 'ArrayExpression') {
+            def.checks[checkKey] = checkProp.value.elements
+              .map(el => extractValueFromNode(el))
+              .filter(Boolean);
           }
-          return null;
-        })
-        .filter(Boolean);
+        } else if ((checkKey === 'text' || checkKey === 'contains') && checkProp.value?.type === 'ObjectExpression') {
+          def.checks[checkKey] = {};
+          checkProp.value.properties.forEach(textProp => {
+            const textKey = textProp.key?.name || textProp.key?.value;
+            const textValue = extractValueFromNode(textProp.value);
+            if (textKey && textValue !== undefined) {
+              def.checks[checkKey][textKey] = textValue;
+            }
+          });
+        }
+      });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Functions object: { funcName: { signature, parameters, storeAs } }
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'functions' && prop.value?.type === 'ObjectExpression') {
+      def.functions = {};
+      prop.value.properties.forEach(funcProp => {
+        const funcName = funcProp.key?.name;
+        if (!funcName || funcProp.value?.type !== 'ObjectExpression') return;
+        
+        def.functions[funcName] = {};
+        funcProp.value.properties.forEach(fp => {
+          const fk = fp.key?.name;
+          if (fk === 'signature' || fk === 'storeAs' || fk === 'type' || fk === 'name') {
+            def.functions[funcName][fk] = extractValueFromNode(fp.value);
+          } else if (fk === 'parameters' && fp.value?.type === 'ObjectExpression') {
+            def.functions[funcName].parameters = {};
+            fp.value.properties.forEach(paramProp => {
+              const paramKey = paramProp.key?.name || paramProp.key?.value;
+              def.functions[funcName].parameters[paramKey] = extractValueFromNode(paramProp.value);
+            });
+          }
+        });
+      });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // _pomSource object: { path, name, className }
+    // ─────────────────────────────────────────────────────────
+    else if (key === '_pomSource' && prop.value?.type === 'ObjectExpression') {
+      def._pomSource = {};
+      prop.value.properties.forEach(pomProp => {
+        const pomKey = pomProp.key?.name;
+        if (pomKey) {
+          def._pomSource[pomKey] = extractValueFromNode(pomProp.value);
+        }
+      });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // ✅ BLOCKS ARRAY - The key addition!
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'blocks' && prop.value?.type === 'ArrayExpression') {
+      console.log('      🧱 Extracting blocks array...');
+      def.blocks = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(blockNode => extractBlockFromNode(blockNode));
+      console.log(`      🧱 Extracted ${def.blocks.length} blocks`);
     }
   });
   
   return def;
 }
+
+function extractBlockFromNode(blockNode) {
+  const block = {};
+  
+  blockNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    // Simple fields
+    if (key === 'id' || key === 'type' || key === 'label' || key === 'code' || key === 'testStepName') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Number fields
+    else if (key === 'order') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Boolean fields
+    else if (key === 'expanded' || key === 'enabled' || key === 'wrapInTestStep') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Data object (for ui-assertion and function-call blocks)
+    else if (key === 'data' && prop.value?.type === 'ObjectExpression') {
+      block.data = extractBlockDataFromNode(prop.value);
+    }
+    // Dependencies object (for custom-code blocks)
+    else if (key === 'dependencies' && prop.value?.type === 'ObjectExpression') {
+      block.dependencies = { poms: [], imports: [] };
+      prop.value.properties.forEach(depProp => {
+        const depKey = depProp.key?.name;
+        if ((depKey === 'poms' || depKey === 'imports') && depProp.value?.type === 'ArrayExpression') {
+          block.dependencies[depKey] = depProp.value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+        }
+      });
+    }
+  });
+  
+  return block;
+}
+
+/**
+ * Extract block.data from AST node
+ */
+function extractBlockDataFromNode(dataNode) {
+  const data = {};
+  
+  dataNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    // Arrays: visible, hidden, truthy, falsy, args
+    if (key === 'visible' || key === 'hidden' || key === 'truthy' || key === 'falsy' || key === 'args') {
+      if (prop.value?.type === 'ArrayExpression') {
+        data[key] = prop.value.elements
+          .map(el => extractValueFromNode(el))
+          .filter(v => v !== null && v !== undefined);
+      }
+    }
+    // Simple strings: instance, method, storeAs
+    else if (key === 'instance' || key === 'method' || key === 'storeAs') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Numbers: timeout
+    else if (key === 'timeout') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Booleans: await
+    else if (key === 'await') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Checks object
+    else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+      data.checks = { text: {}, contains: {} };
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        if ((checkKey === 'text' || checkKey === 'contains') && checkProp.value?.type === 'ObjectExpression') {
+          checkProp.value.properties.forEach(textProp => {
+            const textKey = textProp.key?.name || textProp.key?.value;
+            data.checks[checkKey][textKey] = extractValueFromNode(textProp.value);
+          });
+        }
+      });
+    }
+    // Assertions array
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      data.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(el => {
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            assertion[k] = extractValueFromNode(p.value);
+          });
+          return assertion;
+        });
+    }
+  });
+  
+  return data;
+}
+
 /**
  * Process a single platform's screens (async)
  * NOW with caching support

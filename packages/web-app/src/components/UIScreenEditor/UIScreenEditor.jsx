@@ -10,6 +10,8 @@ import FieldAutocomplete from './FieldAutocomplete';
 import FunctionSelector from './FunctionSelector';
 import ElementList from '../SourceAttribution/ElementList';
 import SourceLegend from '../SourceAttribution/SourceLegend';
+import BlockList from './BlockList';
+import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
 
 // ============================================
 // Helper Functions (outside component)
@@ -699,48 +701,49 @@ function PlatformSection({
 // ============================================
 
 function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete, theme, storedVariables = [] }) {
-    console.log('🔍 ScreenCard received:', screen.screenName || screen.name, {
-    checks: screen.checks,
-    hasContains: !!screen.checks?.contains,
-    containsKeys: Object.keys(screen.checks?.contains || {})
+  console.log('🔍 ScreenCard received:', screen.screenName || screen.name, {
+    hasBlocks: !!screen.blocks,
+    blocksCount: screen.blocks?.length || 0,
+    isLegacy: !screen.blocks && (screen.visible?.length > 0 || screen.hidden?.length > 0)
   });
+
   const [isExpanded, setIsExpanded] = useState(false);
   const [pomName, setPomName] = useState(screen.screen || '');
-  const [instanceName, setInstanceName] = useState(null);
+  const [instanceName, setInstanceName] = useState(screen.instance || null);
+  const [viewMode, setViewMode] = useState('blocks'); // 'blocks' or 'legacy'
 
-  const topLevelVisible = screen.visible || [];
-  const topLevelHidden = screen.hidden || [];
-  const checksVisible = screen.checks?.visible || [];
-  const checksHidden = screen.checks?.hidden || [];
-  
-  const allVisibleElements = [...new Set([...topLevelVisible, ...checksVisible])];
-  const allHiddenElements = [...new Set([...topLevelHidden, ...checksHidden])];
-  
-  const textChecks = screen.checks?.text || {};
-  const functions = screen.functions || {};
+  // Determine if we should show the new block view or legacy view
+  const hasBlocks = screen.blocks && screen.blocks.length > 0;
+  const hasLegacyData = !hasBlocks && (
+    screen.visible?.length > 0 ||
+    screen.hidden?.length > 0 ||
+    Object.keys(screen.checks || {}).length > 0 ||
+    Object.keys(screen.functions || {}).length > 0
+  );
 
-const updateScreen = (updates) => {
-  console.log('🔧 ScreenCard onUpdate:', updates);
-  onUpdate(updates);
-};
-
+  // Handle POM change
   const handlePOMChange = (selectedPOM, selectedInstance) => {
-  setPomName(selectedPOM || '');
-  setInstanceName(selectedInstance || null);
-  
-  // ✅ Build _pomSource from the screen field
-  const pomSource = selectedPOM ? {
-    path: `screenObjects/${selectedPOM}.js`,
-    name: selectedPOM,
-    className: selectedPOM.split('.').pop()
-  } : null;
-  
-  onUpdate({
-    screen: selectedPOM || '',
-    instance: selectedInstance || null,
-    _pomSource: pomSource
-  });
-};
+    setPomName(selectedPOM || '');
+    setInstanceName(selectedInstance || null);
+    
+    const pomSource = selectedPOM ? {
+      path: `screenObjects/${selectedPOM}.js`,
+      name: selectedPOM,
+      className: selectedPOM.split('.').pop()
+    } : null;
+    
+    onUpdate({
+      screen: selectedPOM || '',
+      instance: selectedInstance || null,
+      _pomSource: pomSource
+    });
+  };
+
+  // Handle blocks change
+  const handleBlocksChange = (newBlocks) => {
+    console.log('📦 Blocks changed:', newBlocks.length, 'blocks');
+    onUpdate({ blocks: newBlocks });
+  };
 
   return (
     <div 
@@ -750,6 +753,7 @@ const updateScreen = (updates) => {
         border: `1px solid ${theme.colors.border}`
       }}
     >
+      {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full p-3 flex items-center justify-between hover:brightness-105 transition"
@@ -767,6 +771,19 @@ const updateScreen = (updates) => {
               </div>
             )}
           </div>
+          
+          {/* Block count badge */}
+          {hasBlocks && (
+            <span 
+              className="px-2 py-0.5 rounded text-xs font-medium"
+              style={{ 
+                background: `${theme.colors.accents.blue}30`,
+                color: theme.colors.accents.blue
+              }}
+            >
+              🧱 {screen.blocks.length} blocks
+            </span>
+          )}
         </div>
         <span 
           className="transition-transform"
@@ -779,10 +796,13 @@ const updateScreen = (updates) => {
         </span>
       </button>
 
+      {/* Expanded Content */}
       {isExpanded && (
         <div className="p-3 pt-0 space-y-3">
+          {/* Source Legend */}
           {screen.sourceInfo && <SourceLegend theme={theme} />}
           
+          {/* POM Selector */}
           <POMFieldSelector
             projectPath={projectPath}
             selectedPOM={pomName}
@@ -793,126 +813,64 @@ const updateScreen = (updates) => {
             theme={theme}
           />
 
-          {(allVisibleElements.length > 0 || editMode) && (
-            editMode ? (
-              <ElementSection
-                title="✅ Visible Elements"
-                elements={allVisibleElements}
-                color={theme.colors.accents.green}
-                editMode={editMode}
-                pomName={pomName}
-                instanceName={instanceName}
-                projectPath={projectPath}
-                functions={functions}
-                onChange={(newElements) => onUpdate({ visible: newElements })}
-                theme={theme}
-                screen={screen}
-              />
-            ) : (
-              <ElementList
-                elements={allVisibleElements}
-                sourceInfo={screen.sourceInfo?.visible || {}}
-                title="Visible Elements"
-                icon="✅"
-                color={theme.colors.accents.green}
-                theme={theme}
-                emptyMessage="No visible elements"
-              />
-            )
+          {/* View Mode Toggle (only show if we have legacy data AND edit mode) */}
+          {hasLegacyData && editMode && (
+            <div className="flex items-center gap-2 p-2 rounded" style={{ background: theme.colors.background.tertiary }}>
+              <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>View:</span>
+              <button
+                onClick={() => setViewMode('blocks')}
+                className={`px-3 py-1 rounded text-xs font-semibold transition ${viewMode === 'blocks' ? 'ring-2' : ''}`}
+                style={{ 
+                  background: viewMode === 'blocks' ? theme.colors.accents.blue : 'transparent',
+                  color: viewMode === 'blocks' ? 'white' : theme.colors.text.secondary,
+                  ringColor: theme.colors.accents.blue
+                }}
+              >
+                🧱 Blocks
+              </button>
+              <button
+                onClick={() => setViewMode('legacy')}
+                className={`px-3 py-1 rounded text-xs font-semibold transition ${viewMode === 'legacy' ? 'ring-2' : ''}`}
+                style={{ 
+                  background: viewMode === 'legacy' ? theme.colors.accents.purple : 'transparent',
+                  color: viewMode === 'legacy' ? 'white' : theme.colors.text.secondary,
+                  ringColor: theme.colors.accents.purple
+                }}
+              >
+                📋 Legacy
+              </button>
+            </div>
           )}
 
-          {(allHiddenElements.length > 0 || editMode) && (
-            editMode ? (
-              <ElementSection
-                title="❌ Hidden Elements"
-                elements={allHiddenElements}
-                color={theme.colors.accents.red}
-                editMode={editMode}
-                pomName={pomName}
-                instanceName={instanceName}
-                projectPath={projectPath}
-                functions={functions}
-                onChange={(newElements) => onUpdate({ hidden: newElements })}
-                theme={theme}
-                screen={screen}
-              />
-            ) : (
-              <ElementList
-                elements={allHiddenElements}
-                sourceInfo={screen.sourceInfo?.hidden || {}}
-                title="Hidden Elements"
-                icon="❌"
-                color={theme.colors.accents.red}
-                theme={theme}
-                emptyMessage="No hidden elements"
-              />
-            )
-          )}
-
-{(Object.keys(textChecks).length > 0 || Object.keys(screen.checks?.contains || {}).length > 0 || editMode) && (
-  <TextChecksSection
-    textChecks={textChecks}
-    containsChecks={screen.checks?.contains || {}}
-    editMode={editMode}
-    pomName={pomName}
-    instanceName={instanceName}
-    projectPath={projectPath}
-    storedVariables={storedVariables}  // ✅ ADD THIS
-    onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
-    onContainsChange={(newContainsChecks) => onUpdate({ checks: { ...screen.checks, contains: newContainsChecks } })}
-    theme={theme}
-  />
-)}
-
-          {(Object.keys(functions).length > 0 || editMode) && (
-            <FunctionSection
-              functions={functions}
+          {/* Block-based View (new) */}
+          {(viewMode === 'blocks' || !hasLegacyData) && (
+            <BlockList
+              screen={screen}
               editMode={editMode}
-              pomName={pomName}
-              projectPath={projectPath}
-              contextFields={getContextFields(screen)}
-              onChange={(newFunctions) => onUpdate({ functions: newFunctions })}
               theme={theme}
+              onBlocksChange={handleBlocksChange}
+              pomName={pomName}
+              instanceName={instanceName}
+              projectPath={projectPath}
+              storedVariables={storedVariables}
             />
           )}
 
-         {/* ✅ NEW: Truthy Section */}
-          {((screen.truthy && screen.truthy.length > 0) || editMode) && (
-            <TruthySection
-              truthy={screen.truthy || []}
+          {/* Legacy View (existing sections) */}
+          {viewMode === 'legacy' && hasLegacyData && (
+            <LegacyScreenContent
+              screen={screen}
               editMode={editMode}
-              pomName={pomName}
-              projectPath={projectPath}
-              onChange={(newTruthy) => onUpdate({ truthy: newTruthy })}
               theme={theme}
+              pomName={pomName}
+              instanceName={instanceName}
+              projectPath={projectPath}
+              storedVariables={storedVariables}
+              onUpdate={onUpdate}
             />
           )}
 
-          {/* ✅ NEW: Falsy Section */}
-          {((screen.falsy && screen.falsy.length > 0) || editMode) && (
-            <FalsySection
-              falsy={screen.falsy || []}
-              editMode={editMode}
-              pomName={pomName}
-              projectPath={projectPath}
-              onChange={(newFalsy) => onUpdate({ falsy: newFalsy })}
-              theme={theme}
-            />
-          )}
-
-          {/* Assertions Section - pass storedVariables */}
-    {(screen.assertions?.length > 0 || editMode) && (
-      <AssertionsSection
-        assertions={screen.assertions || []}
-        editMode={editMode}
-        pomName={pomName}
-        projectPath={projectPath}
-        storedVariables={storedVariables}  // ✅ Pass stored variables
-        onChange={(newAssertions) => onUpdate({ assertions: newAssertions })}
-        theme={theme}
-      />
-    )}
-
+          {/* Action Buttons */}
           {editMode && (
             <div className="flex gap-2 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
               <button
@@ -936,6 +894,152 @@ const updateScreen = (updates) => {
     </div>
   );
 }
+
+/**
+ * LegacyScreenContent - Renders the old section-based format
+ * This preserves backward compatibility and allows viewing old data
+ */
+function LegacyScreenContent({ screen, editMode, theme, pomName, instanceName, projectPath, storedVariables, onUpdate }) {
+  const topLevelVisible = screen.visible || [];
+  const topLevelHidden = screen.hidden || [];
+  const checksVisible = screen.checks?.visible || [];
+  const checksHidden = screen.checks?.hidden || [];
+  
+  const allVisibleElements = [...new Set([...topLevelVisible, ...checksVisible])];
+  const allHiddenElements = [...new Set([...topLevelHidden, ...checksHidden])];
+  
+  const textChecks = screen.checks?.text || {};
+  const functions = screen.functions || {};
+
+  return (
+    <div className="space-y-3">
+      {/* Visible Elements */}
+      {(allVisibleElements.length > 0 || editMode) && (
+        editMode ? (
+          <ElementSection
+            title="✅ Visible Elements"
+            elements={allVisibleElements}
+            color={theme.colors.accents.green}
+            editMode={editMode}
+            pomName={pomName}
+            instanceName={instanceName}
+            projectPath={projectPath}
+            functions={functions}
+            onChange={(newElements) => onUpdate({ visible: newElements })}
+            theme={theme}
+            screen={screen}
+          />
+        ) : (
+          <ElementList
+            elements={allVisibleElements}
+            sourceInfo={screen.sourceInfo?.visible || {}}
+            title="Visible Elements"
+            icon="✅"
+            color={theme.colors.accents.green}
+            theme={theme}
+            emptyMessage="No visible elements"
+          />
+        )
+      )}
+
+      {/* Hidden Elements */}
+      {(allHiddenElements.length > 0 || editMode) && (
+        editMode ? (
+          <ElementSection
+            title="❌ Hidden Elements"
+            elements={allHiddenElements}
+            color={theme.colors.accents.red}
+            editMode={editMode}
+            pomName={pomName}
+            instanceName={instanceName}
+            projectPath={projectPath}
+            functions={functions}
+            onChange={(newElements) => onUpdate({ hidden: newElements })}
+            theme={theme}
+            screen={screen}
+          />
+        ) : (
+          <ElementList
+            elements={allHiddenElements}
+            sourceInfo={screen.sourceInfo?.hidden || {}}
+            title="Hidden Elements"
+            icon="❌"
+            color={theme.colors.accents.red}
+            theme={theme}
+            emptyMessage="No hidden elements"
+          />
+        )
+      )}
+
+      {/* Text Checks */}
+      {(Object.keys(textChecks).length > 0 || Object.keys(screen.checks?.contains || {}).length > 0 || editMode) && (
+        <TextChecksSection
+          textChecks={textChecks}
+          containsChecks={screen.checks?.contains || {}}
+          editMode={editMode}
+          pomName={pomName}
+          instanceName={instanceName}
+          projectPath={projectPath}
+          storedVariables={storedVariables}
+          onChange={(newTextChecks) => onUpdate({ checks: { ...screen.checks, text: newTextChecks } })}
+          onContainsChange={(newContainsChecks) => onUpdate({ checks: { ...screen.checks, contains: newContainsChecks } })}
+          theme={theme}
+        />
+      )}
+
+      {/* Functions */}
+      {(Object.keys(functions).length > 0 || editMode) && (
+        <FunctionSection
+          functions={functions}
+          editMode={editMode}
+          pomName={pomName}
+          projectPath={projectPath}
+          contextFields={getContextFields(screen)}
+          onChange={(newFunctions) => onUpdate({ functions: newFunctions })}
+          theme={theme}
+        />
+      )}
+
+      {/* Truthy */}
+      {((screen.truthy && screen.truthy.length > 0) || editMode) && (
+        <TruthySection
+          truthy={screen.truthy || []}
+          editMode={editMode}
+          pomName={pomName}
+          projectPath={projectPath}
+          onChange={(newTruthy) => onUpdate({ truthy: newTruthy })}
+          theme={theme}
+        />
+      )}
+
+      {/* Falsy */}
+      {((screen.falsy && screen.falsy.length > 0) || editMode) && (
+        <FalsySection
+          falsy={screen.falsy || []}
+          editMode={editMode}
+          pomName={pomName}
+          projectPath={projectPath}
+          onChange={(newFalsy) => onUpdate({ falsy: newFalsy })}
+          theme={theme}
+        />
+      )}
+
+      {/* Assertions */}
+      {(screen.assertions?.length > 0 || editMode) && (
+        <AssertionsSection
+          assertions={screen.assertions || []}
+          editMode={editMode}
+          pomName={pomName}
+          projectPath={projectPath}
+          storedVariables={storedVariables}
+          onChange={(newAssertions) => onUpdate({ assertions: newAssertions })}
+          theme={theme}
+        />
+      )}
+    </div>
+  );
+}
+
 
 const INDEX_OPTIONS = [
   { value: '', label: '(none)' },

@@ -1596,76 +1596,540 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
     
     if (!originalScreenProp) continue;
     
-    let screenArrayNode;
+    let screenNode;
     
     // Check if this screen is in the update
-   // Check if this screen is in the update
     if (newScreensMap[screenName]) {
-      // ✅ Screen is being updated - check for changes
+      // ✅ Screen is being updated
       const screens = newScreensMap[screenName];
+      const screen = screens[0]; // Usually just one screen per key
       
-      if (t.isArrayExpression(originalScreenProp.value)) {
+      // ═══════════════════════════════════════════════════════════
+      // DETECT ORIGINAL FORMAT
+      // ═══════════════════════════════════════════════════════════
+      const originalFormat = detectScreenFormat(originalScreenProp.value);
+      console.log(`    📋 ${screenName}: original format = ${originalFormat}`);
+      
+      if (originalFormat === 'direct-object') {
+        // ─────────────────────────────────────────────────────────
+        // DIRECT OBJECT FORMAT: { visible: [...], hidden: [...] }
+        // ─────────────────────────────────────────────────────────
+        const comparisonResult = screenHasChangesDirectObject(screen, originalScreenProp.value);
+        
+        if (!comparisonResult.hasChanges) {
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
+        } else {
+          console.log(`    🔧 Regenerating ${screenName} as direct object`);
+          // Preserve original function nodes
+          if (comparisonResult.originalFunctions.prerequisites) {
+            screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+          }
+          if (comparisonResult.originalFunctions.expect) {
+            screen._originalExpect = comparisonResult.originalFunctions.expect;
+          }
+          // ✅ Use buildScreenObjectAstWithBlocks (direct object, no mergeWithBase)
+          screenNode = buildScreenObjectAstWithBlocks(screen);
+        }
+        
+      } else if (originalFormat === 'array-direct') {
+        // ─────────────────────────────────────────────────────────
+        // ARRAY OF DIRECT OBJECTS: [{ visible: [...] }]
+        // ─────────────────────────────────────────────────────────
         const comparisonResult = screensHaveChanges(screens, originalScreenProp.value);
         
         if (!comparisonResult.hasChanges) {
-          // ✅ NO CHANGES - Use original AST (preserves mergeWithBase!)
-          console.log(`  ✨ Preserving original AST for ${screenName}`);
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
         } else {
-          // ❌ HAS CHANGES - Generate new AST with preserved functions
-          console.log(`  🔧 Regenerating AST for ${screenName} (modified)`);
-          const builtScreens = screens.map(screen => {
-            // ✨ Attach original functions to screen data
-            if (comparisonResult.originalFunctions.prerequisites) {
-              screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
-            }
-            if (comparisonResult.originalFunctions.expect) {
-              screen._originalExpect = comparisonResult.originalFunctions.expect;
-            }
-            return buildScreenAst(screen, screenName, platformName, className, originalContent);
-          });
-          
-          // ✅ FIX: Only wrap in array if multiple screens
-          screenArrayNode = builtScreens.length === 1 
-            ? builtScreens[0] 
-            : t.arrayExpression(builtScreens);
+          console.log(`    🔧 Regenerating ${screenName} as array of direct objects`);
+          screenNode = t.arrayExpression(
+            screens.map(s => {
+              if (comparisonResult.originalFunctions.prerequisites) {
+                s._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+              }
+              if (comparisonResult.originalFunctions.expect) {
+                s._originalExpect = comparisonResult.originalFunctions.expect;
+              }
+              return buildScreenObjectAstWithBlocks(s);
+            })
+          );
         }
-    } else {
-        // New screen - build from scratch
-        const builtScreens = screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent));
-        screenArrayNode = builtScreens.length === 1 
-          ? builtScreens[0] 
-          : t.arrayExpression(builtScreens);
+        
+      } else if (originalFormat === 'array-mergeWithBase') {
+        // ─────────────────────────────────────────────────────────
+        // ARRAY WITH mergeWithBase: [ImplicationHelper.mergeWithBase(...)]
+        // ─────────────────────────────────────────────────────────
+        const comparisonResult = screensHaveChanges(screens, originalScreenProp.value);
+        
+        if (!comparisonResult.hasChanges) {
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
+        } else {
+          console.log(`    🔧 Regenerating ${screenName} with mergeWithBase`);
+          screenNode = t.arrayExpression(
+            screens.map(s => {
+              if (comparisonResult.originalFunctions.prerequisites) {
+                s._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+              }
+              if (comparisonResult.originalFunctions.expect) {
+                s._originalExpect = comparisonResult.originalFunctions.expect;
+              }
+              return buildScreenAst(s, screenName, platformName, className);
+            })
+          );
+        }
+        
+      } else {
+        // ─────────────────────────────────────────────────────────
+        // UNKNOWN FORMAT - preserve original
+        // ─────────────────────────────────────────────────────────
+        console.log(`    ⚠️  Unknown format for ${screenName}, preserving original`);
+        screenNode = originalScreenProp.value;
       }
       
       // Remove from map so we know it's processed
       delete newScreensMap[screenName];
+      
     } else {
       // ✅ Screen NOT in update - preserve original completely!
-      console.log(`  ♻️ Preserving untouched screen: ${screenName}`);
-      screenArrayNode = originalScreenProp.value;
+      console.log(`    ♻️  Preserving untouched screen: ${screenName}`);
+      screenNode = originalScreenProp.value;
     }
     
     screenProps.push(
       t.objectProperty(
         t.identifier(screenName),
-        screenArrayNode
+        screenNode
       )
     );
   }
   
   // ✅ Add any NEW screens that weren't in original
-    for (const [screenName, screens] of Object.entries(newScreensMap)) {
-    console.log(`  ➕ Adding new screen: ${screenName}`);
-    const builtScreens = screens.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent));
+  // For new screens, use direct object format (simpler)
+  for (const [screenName, screens] of Object.entries(newScreensMap)) {
+    console.log(`    ➕ Adding new screen: ${screenName}`);
+    const screen = screens[0];
     screenProps.push(
       t.objectProperty(
         t.identifier(screenName),
-        builtScreens.length === 1 ? builtScreens[0] : t.arrayExpression(builtScreens)
+        buildScreenObjectAstWithBlocks(screen)
       )
     );
   }
   
   return screenProps;
+}
+
+/**
+ * Detect the format of the original screen AST node
+ * Returns: 'direct-object' | 'array-direct' | 'array-mergeWithBase' | 'unknown'
+ */
+function detectScreenFormat(node) {
+  if (t.isObjectExpression(node)) {
+    return 'direct-object';
+  }
+  
+  if (t.isArrayExpression(node)) {
+    if (node.elements.length === 0) {
+      return 'array-direct'; // Empty array, treat as direct
+    }
+    
+    const firstElement = node.elements[0];
+    
+    // Check if first element is a CallExpression (mergeWithBase)
+    if (t.isCallExpression(firstElement)) {
+      const callee = firstElement.callee;
+      if (t.isMemberExpression(callee) &&
+          callee.object?.name === 'ImplicationHelper' &&
+          callee.property?.name === 'mergeWithBase') {
+        return 'array-mergeWithBase';
+      }
+    }
+    
+    // Check if first element is direct object
+    if (t.isObjectExpression(firstElement)) {
+      return 'array-direct';
+    }
+  }
+  
+  // Also handle single CallExpression (mergeWithBase not in array)
+  if (t.isCallExpression(node)) {
+    const callee = node.callee;
+    if (t.isMemberExpression(callee) &&
+        callee.object?.name === 'ImplicationHelper' &&
+        callee.property?.name === 'mergeWithBase') {
+      return 'single-mergeWithBase';
+    }
+  }
+  
+  return 'unknown';
+}
+
+/**
+ * Check if a single screen (direct object) has changes
+ */
+function screenHasChangesDirectObject(newScreen, originalNode) {
+  let originalFunctions = {};
+  
+  // Extract function nodes from original
+  if (t.isObjectExpression(originalNode)) {
+    originalNode.properties.forEach(prop => {
+      if (prop.key?.name === 'prerequisites') {
+        originalFunctions.prerequisites = prop.value;
+      } else if (prop.key?.name === 'expect') {
+        originalFunctions.expect = prop.value;
+      }
+    });
+  }
+  
+  // Extract data for comparison
+  const originalData = extractScreenDataFromAst(originalNode);
+  
+  // Compare
+  if (!screensMatch(newScreen, originalData)) {
+    return { hasChanges: true, originalFunctions };
+  }
+  
+  return { hasChanges: false, originalFunctions };
+}
+
+
+// ============================================
+// ALSO ADD: buildScreenObjectAstWithBlocks
+// ============================================
+// This is like buildScreenObjectAst but with blocks support
+
+function buildScreenObjectAstWithBlocks(screen) {
+  const props = [];
+  
+  // name
+  if (screen.name) {
+    props.push(t.objectProperty(
+      t.identifier('name'),
+      t.stringLiteral(screen.name)
+    ));
+  }
+  
+  // description
+  if (screen.description) {
+    props.push(t.objectProperty(
+      t.identifier('description'),
+      t.stringLiteral(screen.description)
+    ));
+  }
+  
+  // screen (POM reference)
+  if (screen.screen) {
+    props.push(t.objectProperty(
+      t.identifier('screen'),
+      t.stringLiteral(screen.screen)
+    ));
+  }
+  
+  // instance
+  if (screen.instance) {
+    props.push(t.objectProperty(
+      t.identifier('instance'),
+      t.stringLiteral(screen.instance)
+    ));
+  }
+  
+  // visible
+  if (screen.visible && screen.visible.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('visible'),
+      t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
+    ));
+  }
+  
+  // hidden
+  if (screen.hidden && screen.hidden.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('hidden'),
+      t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
+    ));
+  }
+  
+  // truthy
+  if (screen.truthy && screen.truthy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(tr => t.stringLiteral(tr)))
+    ));
+  }
+  
+  // falsy
+  if (screen.falsy && screen.falsy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(f => t.stringLiteral(f)))
+    ));
+  }
+  
+  // assertions
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertProps = [];
+      if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+      if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+      if (assertion.value !== undefined) {
+        assertProps.push(t.objectProperty(
+          t.identifier('value'),
+          typeof assertion.value === 'number' 
+            ? t.numericLiteral(assertion.value)
+            : typeof assertion.value === 'boolean'
+              ? t.booleanLiteral(assertion.value)
+              : t.stringLiteral(String(assertion.value))
+        ));
+      }
+      return t.objectExpression(assertProps);
+    });
+    props.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+  }
+  
+  // checks
+  if (screen.checks) {
+    const checkProps = [];
+    
+    if (screen.checks.visible && screen.checks.visible.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('visible'),
+        t.arrayExpression(screen.checks.visible.map(v => t.stringLiteral(v)))
+      ));
+    }
+    
+    if (screen.checks.hidden && screen.checks.hidden.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('hidden'),
+        t.arrayExpression(screen.checks.hidden.map(h => t.stringLiteral(h)))
+      ));
+    }
+    
+    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('text'),
+        t.objectExpression(textProps)
+      ));
+    }
+    
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
+      ));
+    }
+    
+    if (checkProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('checks'),
+        t.objectExpression(checkProps)
+      ));
+    }
+  }
+  
+  // functions
+  if (screen.functions && Object.keys(screen.functions).length > 0) {
+    const functionProps = [];
+    
+    for (const [funcName, funcData] of Object.entries(screen.functions)) {
+      const funcObjectProps = [];
+      
+      if (funcData.signature) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('signature'),
+          t.stringLiteral(funcData.signature)
+        ));
+      }
+      
+      if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
+        const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
+          t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+        );
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('parameters'),
+          t.objectExpression(paramProps)
+        ));
+      }
+      
+      if (funcData.storeAs) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('storeAs'),
+          t.stringLiteral(funcData.storeAs)
+        ));
+      }
+      
+      functionProps.push(t.objectProperty(
+        t.identifier(funcName),
+        t.objectExpression(funcObjectProps)
+      ));
+    }
+    
+    props.push(t.objectProperty(
+      t.identifier('functions'),
+      t.objectExpression(functionProps)
+    ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ BLOCKS ARRAY
+  // ═══════════════════════════════════════════════════════════
+  if (screen.blocks && Array.isArray(screen.blocks) && screen.blocks.length > 0) {
+    console.log(`    🧱 Including ${screen.blocks.length} blocks`);
+    console.log('    🔍 DEBUG blocks data:', JSON.stringify(screen.blocks, null, 2));
+    
+    const blockElements = screen.blocks.map(block => {
+      const blockProps = [];
+      
+      // Basic block properties
+      if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+      if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+      if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
+      if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
+      if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
+      if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+      
+      // UI-ASSERTION block data
+      if (block.type === 'ui-assertion' && block.data) {
+        const dataProps = [];
+        
+        if (block.data.visible?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('visible'), t.arrayExpression(block.data.visible.map(v => t.stringLiteral(v)))));
+        }
+        if (block.data.hidden?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('hidden'), t.arrayExpression(block.data.hidden.map(h => t.stringLiteral(h)))));
+        }
+        if (block.data.truthy?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('truthy'), t.arrayExpression(block.data.truthy.map(tr => t.stringLiteral(tr)))));
+        }
+        if (block.data.falsy?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('falsy'), t.arrayExpression(block.data.falsy.map(f => t.stringLiteral(f)))));
+        }
+        
+        // checks
+        if (block.data.checks) {
+          const checksProps = [];
+          if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([k, v]) =>
+              t.objectProperty(t.identifier(k), t.stringLiteral(String(v)))
+            );
+            checksProps.push(t.objectProperty(t.identifier('text'), t.objectExpression(textProps)));
+          }
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([k, v]) =>
+              t.objectProperty(t.identifier(k), t.stringLiteral(String(v)))
+            );
+            checksProps.push(t.objectProperty(t.identifier('contains'), t.objectExpression(containsProps)));
+          }
+          if (checksProps.length > 0) {
+            dataProps.push(t.objectProperty(t.identifier('checks'), t.objectExpression(checksProps)));
+          }
+        }
+        
+        // assertions
+        if (block.data.assertions?.length > 0) {
+          const assertElements = block.data.assertions.map(a => {
+            const aProps = [];
+            if (a.fn) aProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(a.fn)));
+            if (a.expect) aProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(a.expect)));
+            if (a.value !== undefined) {
+              aProps.push(t.objectProperty(t.identifier('value'),
+                typeof a.value === 'number' ? t.numericLiteral(a.value) :
+                typeof a.value === 'boolean' ? t.booleanLiteral(a.value) :
+                t.stringLiteral(String(a.value))
+              ));
+            }
+            return t.objectExpression(aProps);
+          });
+          dataProps.push(t.objectProperty(t.identifier('assertions'), t.arrayExpression(assertElements)));
+        }
+        
+        if (block.data.timeout) {
+          dataProps.push(t.objectProperty(t.identifier('timeout'), t.numericLiteral(block.data.timeout)));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+        }
+      }
+      
+      // CUSTOM-CODE block
+      if (block.type === 'custom-code') {
+        if (block.code) blockProps.push(t.objectProperty(t.identifier('code'), t.stringLiteral(block.code)));
+        if (block.wrapInTestStep !== undefined) blockProps.push(t.objectProperty(t.identifier('wrapInTestStep'), t.booleanLiteral(block.wrapInTestStep)));
+        if (block.testStepName) blockProps.push(t.objectProperty(t.identifier('testStepName'), t.stringLiteral(block.testStepName)));
+      }
+      
+      // FUNCTION-CALL block
+      if (block.type === 'function-call' && block.data) {
+        const dataProps = [];
+        if (block.data.instance) dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
+        if (block.data.method) dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
+        if (block.data.args?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('args'),
+            t.arrayExpression(block.data.args.map(arg =>
+              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+            ))
+          ));
+        }
+        if (block.data.await !== undefined) dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
+        if (block.data.storeAs) dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+        }
+      }
+      
+      return t.objectExpression(blockProps);
+    });
+    
+    props.push(t.objectProperty(
+      t.identifier('blocks'),
+      t.arrayExpression(blockElements)
+    ));
+  }
+  
+  // _pomSource (preserve if exists)
+  if (screen._pomSource) {
+    const pomProps = [];
+    if (screen._pomSource.path) pomProps.push(t.objectProperty(t.identifier('path'), t.stringLiteral(screen._pomSource.path)));
+    if (screen._pomSource.name) pomProps.push(t.objectProperty(t.identifier('name'), t.stringLiteral(screen._pomSource.name)));
+    if (screen._pomSource.className) pomProps.push(t.objectProperty(t.identifier('className'), t.stringLiteral(screen._pomSource.className)));
+    
+    if (pomProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('_pomSource'),
+        t.objectExpression(pomProps)
+      ));
+    }
+  }
+  
+  // Preserved prerequisites
+  if (screen._originalPrerequisites) {
+    props.push(t.objectProperty(
+      t.identifier('prerequisites'),
+      screen._originalPrerequisites
+    ));
+  }
+  
+  // Preserved expect
+  if (screen._originalExpect) {
+    props.push(t.objectProperty(
+      t.identifier('expect'),
+      screen._originalExpect
+    ));
+  }
+  
+  return t.objectExpression(props);
 }
 
 
@@ -1770,10 +2234,24 @@ function extractScreenDataFromAst(objectNode) {
     
     if (t.isStringLiteral(prop.value)) {
       data[key] = prop.value.value;
+    } else if (t.isBooleanLiteral(prop.value)) {
+      data[key] = prop.value.value;
+    } else if (t.isNumericLiteral(prop.value)) {
+      data[key] = prop.value.value;
     } else if (t.isArrayExpression(prop.value)) {
-      data[key] = prop.value.elements
-        .filter(e => t.isStringLiteral(e))
-        .map(e => e.value);
+      // ✅ Handle blocks array specially
+      if (key === 'blocks') {
+        data[key] = prop.value.elements.map(blockNode => {
+          if (t.isObjectExpression(blockNode)) {
+            return extractScreenDataFromAst(blockNode);
+          }
+          return null;
+        }).filter(Boolean);
+      } else {
+        data[key] = prop.value.elements
+          .filter(e => t.isStringLiteral(e))
+          .map(e => e.value);
+      }
     } else if (t.isObjectExpression(prop.value)) {
       data[key] = extractScreenDataFromAst(prop.value);
     }
@@ -1821,7 +2299,8 @@ function deepEqual(obj1, obj2) {
 }
 
 function stripMetadata(screen) {
-  const { screenName, sourceInfo, alwaysVisible, sometimesVisible, functions, ...cleanScreen } = screen;
+  // Note: blocks is intentionally NOT stripped - we want to compare it
+  const { screenName, sourceInfo, alwaysVisible, sometimesVisible, ...cleanScreen } = screen;
   
   // Also strip empty arrays from checks
   if (cleanScreen.checks) {
@@ -1829,12 +2308,23 @@ function stripMetadata(screen) {
     if (cleanChecks.visible?.length === 0) delete cleanChecks.visible;
     if (cleanChecks.hidden?.length === 0) delete cleanChecks.hidden;
     if (Object.keys(cleanChecks.text || {}).length === 0) delete cleanChecks.text;
-    cleanScreen.checks = cleanChecks;
+    if (Object.keys(cleanChecks.contains || {}).length === 0) delete cleanChecks.contains;
+    if (Object.keys(cleanChecks).length === 0) {
+      delete cleanScreen.checks;
+    } else {
+      cleanScreen.checks = cleanChecks;
+    }
   }
   
   // Strip empty arrays
   if (cleanScreen.visible?.length === 0) delete cleanScreen.visible;
   if (cleanScreen.hidden?.length === 0) delete cleanScreen.hidden;
+  if (cleanScreen.truthy?.length === 0) delete cleanScreen.truthy;
+  if (cleanScreen.falsy?.length === 0) delete cleanScreen.falsy;
+  if (cleanScreen.assertions?.length === 0) delete cleanScreen.assertions;
+  
+  // ✅ Keep blocks but clean empty ones
+  if (cleanScreen.blocks?.length === 0) delete cleanScreen.blocks;
   
   return cleanScreen;
 }
@@ -2193,46 +2683,14 @@ function buildUIAst(uiData, className) {
     )
   ]);
 }
-
-/**
- * Helper: Build AST for screen object
- */
-function buildScreenAst(screen, screenName, platformName, className, originalContent) {
-  // ✅ CHECK: Does this file use inheritance?
-  const usesInheritance = originalContent.includes('BaseBookingImplications') && 
-                          originalContent.includes('ImplicationHelper');
-  
+function buildScreenAst(screen, screenName, platformName, className) {
   const overrideProps = [];
-  
-  // ✅ ADD: name
- if (screen.name || screen.screenName) {
-  overrideProps.push(t.objectProperty(
-    t.identifier('name'),
-    t.stringLiteral(screen.name || screen.screenName)
-  ));
-}
   
   // description (always include if present)
   if (screen.description) {
     overrideProps.push(t.objectProperty(
       t.identifier('description'), 
       t.stringLiteral(screen.description)
-    ));
-  }
-  
-  // ✅ ADD: screen (POM reference)
-  if (screen.screen) {
-    overrideProps.push(t.objectProperty(
-      t.identifier('screen'),
-      t.stringLiteral(screen.screen)
-    ));
-  }
-  
-  // ✅ ADD: instance
-  if (screen.instance) {
-    overrideProps.push(t.objectProperty(
-      t.identifier('instance'),
-      t.stringLiteral(screen.instance)
     ));
   }
   
@@ -2249,6 +2707,46 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
     overrideProps.push(t.objectProperty(
       t.identifier('hidden'),
       t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
+    ));
+  }
+  
+  // truthy (only if has elements)
+  if (screen.truthy && screen.truthy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(tr => t.stringLiteral(tr)))
+    ));
+  }
+  
+  // falsy (only if has elements)
+  if (screen.falsy && screen.falsy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(f => t.stringLiteral(f)))
+    ));
+  }
+  
+  // assertions (only if has elements)
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertProps = [];
+      if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+      if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+      if (assertion.value !== undefined) {
+        assertProps.push(t.objectProperty(
+          t.identifier('value'),
+          typeof assertion.value === 'number' 
+            ? t.numericLiteral(assertion.value)
+            : typeof assertion.value === 'boolean'
+              ? t.booleanLiteral(assertion.value)
+              : t.stringLiteral(String(assertion.value))
+        ));
+      }
+      return t.objectExpression(assertProps);
+    });
+    overrideProps.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
     ));
   }
   
@@ -2280,7 +2778,6 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
       ));
     }
     
-    // ✅ ADD THIS: contains checks
     if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
       const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
         t.objectProperty(t.identifier(key), t.stringLiteral(value))
@@ -2299,13 +2796,14 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
     }
   }
   
-  // Functions
+  // ✅ Functions
   if (screen.functions && Object.keys(screen.functions).length > 0) {
     const functionProps = [];
     
     for (const [funcName, funcData] of Object.entries(screen.functions)) {
       const funcObjectProps = [];
       
+      // signature
       if (funcData.signature) {
         funcObjectProps.push(t.objectProperty(
           t.identifier('signature'),
@@ -2313,6 +2811,7 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
         ));
       }
       
+      // parameters object
       if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
         const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
           t.objectProperty(
@@ -2327,6 +2826,14 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
         ));
       }
       
+      // storeAs
+      if (funcData.storeAs) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('storeAs'),
+          t.stringLiteral(funcData.storeAs)
+        ));
+      }
+      
       functionProps.push(t.objectProperty(
         t.identifier(funcName),
         t.objectExpression(funcObjectProps)
@@ -2338,157 +2845,310 @@ function buildScreenAst(screen, screenName, platformName, className, originalCon
       t.objectExpression(functionProps)
     ));
     
-      console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
+    console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
   }
 
-  // ✅ NEW: truthy (array of function names that must return truthy)
-  if (screen.truthy && screen.truthy.length > 0) {
-    overrideProps.push(t.objectProperty(
-      t.identifier('truthy'),
-      t.arrayExpression(screen.truthy.map(fn => t.stringLiteral(fn)))
-    ));
-    console.log(`    ✓ Including truthy for ${screenName}:`, screen.truthy);
-  }
-
-  // ✅ NEW: falsy (array of function names that must return falsy)
-  if (screen.falsy && screen.falsy.length > 0) {
-    overrideProps.push(t.objectProperty(
-      t.identifier('falsy'),
-      t.arrayExpression(screen.falsy.map(fn => t.stringLiteral(fn)))
-    ));
-    console.log(`    ✗ Including falsy for ${screenName}:`, screen.falsy);
-  }
-
-  // ✅ NEW: assertions (array of { fn, expect, value } objects)
-  if (screen.assertions && screen.assertions.length > 0) {
-    const assertionElements = screen.assertions.map(assertion => {
-      const assertionProps = [];
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: BLOCKS ARRAY (for block-based validation)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.blocks && Array.isArray(screen.blocks) && screen.blocks.length > 0) {
+    console.log(`    🧱 Including ${screen.blocks.length} blocks for ${screenName}`);
+    console.log('    🔍 DEBUG blocks data:', JSON.stringify(screen.blocks, null, 2));
+    
+    const blockElements = screen.blocks.map(block => {
+      const blockProps = [];
       
-      // fn (required)
-      assertionProps.push(t.objectProperty(
-        t.identifier('fn'),
-        t.stringLiteral(assertion.fn)
-      ));
-      
-      // expect (required)
-      assertionProps.push(t.objectProperty(
-        t.identifier('expect'),
-        t.stringLiteral(assertion.expect)
-      ));
-      
-      // value (optional, can be string, number, boolean, null)
-      if (assertion.value !== undefined) {
-        let valueNode;
-        if (typeof assertion.value === 'number') {
-          valueNode = t.numericLiteral(assertion.value);
-        } else if (typeof assertion.value === 'boolean') {
-          valueNode = t.booleanLiteral(assertion.value);
-        } else if (assertion.value === null) {
-          valueNode = t.nullLiteral();
-        } else {
-          valueNode = t.stringLiteral(String(assertion.value));
-        }
-        assertionProps.push(t.objectProperty(
-          t.identifier('value'),
-          valueNode
+      // id
+      if (block.id) {
+        blockProps.push(t.objectProperty(
+          t.identifier('id'),
+          t.stringLiteral(block.id)
         ));
       }
       
-      return t.objectExpression(assertionProps);
+      // type
+      if (block.type) {
+        blockProps.push(t.objectProperty(
+          t.identifier('type'),
+          t.stringLiteral(block.type)
+        ));
+      }
+      
+      // label
+      if (block.label) {
+        blockProps.push(t.objectProperty(
+          t.identifier('label'),
+          t.stringLiteral(block.label)
+        ));
+      }
+      
+      // order
+      if (block.order !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('order'),
+          t.numericLiteral(block.order)
+        ));
+      }
+      
+      // expanded
+      if (block.expanded !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('expanded'),
+          t.booleanLiteral(block.expanded)
+        ));
+      }
+      
+      // enabled
+      if (block.enabled !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('enabled'),
+          t.booleanLiteral(block.enabled)
+        ));
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle UI-ASSERTION block data
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'ui-assertion' && block.data) {
+        const dataProps = [];
+        
+        // visible array
+        if (block.data.visible && block.data.visible.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('visible'),
+            t.arrayExpression(block.data.visible.map(v => t.stringLiteral(v)))
+          ));
+        }
+        
+        // hidden array
+        if (block.data.hidden && block.data.hidden.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('hidden'),
+            t.arrayExpression(block.data.hidden.map(h => t.stringLiteral(h)))
+          ));
+        }
+        
+        // truthy array
+        if (block.data.truthy && block.data.truthy.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('truthy'),
+            t.arrayExpression(block.data.truthy.map(tr => t.stringLiteral(tr)))
+          ));
+        }
+        
+        // falsy array
+        if (block.data.falsy && block.data.falsy.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('falsy'),
+            t.arrayExpression(block.data.falsy.map(f => t.stringLiteral(f)))
+          ));
+        }
+        
+        // checks object
+        if (block.data.checks) {
+          const checksProps = [];
+          
+          if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([key, value]) =>
+              t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('text'),
+              t.objectExpression(textProps)
+            ));
+          }
+          
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([key, value]) =>
+              t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('contains'),
+              t.objectExpression(containsProps)
+            ));
+          }
+          
+          if (checksProps.length > 0) {
+            dataProps.push(t.objectProperty(
+              t.identifier('checks'),
+              t.objectExpression(checksProps)
+            ));
+          }
+        }
+        
+        // assertions array
+        if (block.data.assertions && block.data.assertions.length > 0) {
+          const assertionElements = block.data.assertions.map(assertion => {
+            const assertProps = [];
+            if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+            if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+            if (assertion.value !== undefined) {
+              assertProps.push(t.objectProperty(
+                t.identifier('value'),
+                typeof assertion.value === 'number' 
+                  ? t.numericLiteral(assertion.value)
+                  : typeof assertion.value === 'boolean'
+                    ? t.booleanLiteral(assertion.value)
+                    : t.stringLiteral(String(assertion.value))
+              ));
+            }
+            return t.objectExpression(assertProps);
+          });
+          dataProps.push(t.objectProperty(
+            t.identifier('assertions'),
+            t.arrayExpression(assertionElements)
+          ));
+        }
+        
+        // timeout
+        if (block.data.timeout) {
+          dataProps.push(t.objectProperty(
+            t.identifier('timeout'),
+            t.numericLiteral(block.data.timeout)
+          ));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(
+            t.identifier('data'),
+            t.objectExpression(dataProps)
+          ));
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle CUSTOM-CODE block
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'custom-code') {
+        if (block.code) {
+          blockProps.push(t.objectProperty(
+            t.identifier('code'),
+            t.stringLiteral(block.code)
+          ));
+        }
+        
+        if (block.wrapInTestStep !== undefined) {
+          blockProps.push(t.objectProperty(
+            t.identifier('wrapInTestStep'),
+            t.booleanLiteral(block.wrapInTestStep)
+          ));
+        }
+        
+        if (block.testStepName) {
+          blockProps.push(t.objectProperty(
+            t.identifier('testStepName'),
+            t.stringLiteral(block.testStepName)
+          ));
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle FUNCTION-CALL block
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'function-call' && block.data) {
+        const dataProps = [];
+        
+        if (block.data.instance) {
+          dataProps.push(t.objectProperty(
+            t.identifier('instance'),
+            t.stringLiteral(block.data.instance)
+          ));
+        }
+        
+        if (block.data.method) {
+          dataProps.push(t.objectProperty(
+            t.identifier('method'),
+            t.stringLiteral(block.data.method)
+          ));
+        }
+        
+        if (block.data.args && block.data.args.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('args'),
+            t.arrayExpression(block.data.args.map(arg => 
+              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+            ))
+          ));
+        }
+        
+        if (block.data.await !== undefined) {
+          dataProps.push(t.objectProperty(
+            t.identifier('await'),
+            t.booleanLiteral(block.data.await)
+          ));
+        }
+        
+        if (block.data.storeAs) {
+          dataProps.push(t.objectProperty(
+            t.identifier('storeAs'),
+            t.stringLiteral(block.data.storeAs)
+          ));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(
+            t.identifier('data'),
+            t.objectExpression(dataProps)
+          ));
+        }
+      }
+      
+      return t.objectExpression(blockProps);
     });
     
     overrideProps.push(t.objectProperty(
-      t.identifier('assertions'),
-      t.arrayExpression(assertionElements)
+      t.identifier('blocks'),
+      t.arrayExpression(blockElements)
     ));
-    console.log(`    ⚡ Including assertions for ${screenName}:`, screen.assertions.length);
   }
+  // ═══════════════════════════════════════════════════════════
+  // END BLOCKS SUPPORT
+  // ═══════════════════════════════════════════════════════════
 
-  // ✅ ADD: _pomSource (preserve POM metadata)
-  if (screen._pomSource) {
-    const pomSourceProps = [];
-    
-    if (screen._pomSource.path) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('path'),
-        t.stringLiteral(screen._pomSource.path)
-      ));
-    }
-    
-    if (screen._pomSource.name) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('name'),
-        t.stringLiteral(screen._pomSource.name)
-      ));
-    }
-    
-    if (screen._pomSource.className) {
-      pomSourceProps.push(t.objectProperty(
-        t.identifier('className'),
-        t.stringLiteral(screen._pomSource.className)
-      ));
-    }
-    
-    if (pomSourceProps.length > 0) {
-      overrideProps.push(t.objectProperty(
-        t.identifier('_pomSource'),
-        t.objectExpression(pomSourceProps)
-      ));
-      console.log(`    📦 Including _pomSource for ${screenName}`);
-    }
-  }
-  
-  // Prerequisites (preserved from original AST)
+  // ✨ prerequisites (preserved from original AST)
   if (screen._originalPrerequisites) {
     console.log('    📦 Including preserved prerequisites');
     overrideProps.push(t.objectProperty(
       t.identifier('prerequisites'),
-      screen._originalPrerequisites
+      screen._originalPrerequisites // AST node from original file
     ));
   }
   
-  // Expect (preserved from original AST)
+  // ✨ expect (preserved from original AST)
   if (screen._originalExpect) {
     console.log('    📦 Including preserved expect function');
     overrideProps.push(t.objectProperty(
       t.identifier('expect'),
-      screen._originalExpect
+      screen._originalExpect // AST node from original file
     ));
   }
   
-  // ✅ FIX: Return mergeWithBase ONLY if file uses inheritance
-  if (usesInheritance) {
-    console.log(`    🔗 Using mergeWithBase for ${screenName} (inheritance detected)`);
-    return t.callExpression(
+  // ✅ Build: ImplicationHelper.mergeWithBase(base, overrides, options)
+  return t.callExpression(
+    t.memberExpression(
+      t.identifier('ImplicationHelper'),
+      t.identifier('mergeWithBase')
+    ),
+    [
+      // First arg: BaseBookingImplications.platform.screenName
       t.memberExpression(
-        t.identifier('ImplicationHelper'),
-        t.identifier('mergeWithBase')
-      ),
-      [
-        // First arg: BaseBookingImplications.platform.screenName
         t.memberExpression(
-          t.memberExpression(
-            t.identifier('BaseBookingImplications'),
-            t.identifier(platformName)
-          ),
-          t.identifier(screenName)
+          t.identifier('BaseBookingImplications'),
+          t.identifier(platformName)
         ),
-        // Second arg: override object
-        t.objectExpression(overrideProps),
-        // Third arg: { parentClass: ClassName }
-        t.objectExpression([
-          t.objectProperty(
-            t.identifier('parentClass'),
-            t.identifier(className)
-          )
-        ])
-      ]
-    );
-  } else {
-    // ✅ Simple case: Just return the object directly
-    console.log(`    📦 Using simple object for ${screenName} (no inheritance)`);
-    return t.objectExpression(overrideProps);
-  }
+        t.identifier(screenName)
+      ),
+      // Second arg: override object
+      t.objectExpression(overrideProps),
+      // Third arg: { parentClass: AcceptedBookingImplications }
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier('parentClass'),
+          t.identifier(className)
+        )
+      ])
+    ]
+  );
 }
 
 /**
