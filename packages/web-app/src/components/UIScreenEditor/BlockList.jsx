@@ -1,8 +1,8 @@
 // packages/web-app/src/components/UIScreenEditor/BlockList.jsx
-// ✅ UPDATED: With @dnd-kit drag & drop support
+// ✅ PHASE 3.5: With storeAs variable collection
 //
-// INSTALL: pnpm add @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities
-//          (run in packages/web-app directory)
+// Each block receives storedVariables from ALL PREVIOUS blocks
+// So Block 3 can use variables stored in Block 1 and Block 2
 
 import { useState, useMemo } from 'react';
 import {
@@ -39,12 +39,15 @@ import {
   sortBlocksByOrder,
   reindexBlockOrders
 } from './blockUtils';
+import { collectStoredVariables } from './variableUtils';
+import usePOMData from '../../hooks/usePOMData';
 
 /**
  * SortableBlock - Wrapper that makes a block draggable
  */
 function SortableBlock({
   block,
+  blockIndex,
   editMode,
   theme,
   onUpdate,
@@ -92,6 +95,7 @@ function SortableBlock({
 
 /**
  * BlockList - Renders and manages a list of blocks with drag & drop
+ * ✅ Now collects storeAs variables and passes them to subsequent blocks
  */
 export default function BlockList({
   screen,
@@ -101,16 +105,19 @@ export default function BlockList({
   pomName,
   instanceName,
   projectPath,
-  storedVariables = []
+  testDataSchema = null  // ✅ NEW: Optional test data schema
 }) {
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeId, setActiveId] = useState(null);
+
+  // Get POM data for return keys
+  const { getMethodReturnKeys } = usePOMData(projectPath);
 
   // Configure drag sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8, // 8px movement required before drag starts
+        distance: 8,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -126,6 +133,19 @@ export default function BlockList({
     return migrateToBlocksFormat(screen);
   }, [screen]);
 
+  // ✅ NEW: Collect stored variables for each block position
+  // This creates a map: blockIndex -> variables available at that position
+  const variablesByBlockIndex = useMemo(() => {
+    const result = {};
+    
+    for (let i = 0; i < blocks.length; i++) {
+      // Each block gets variables from all PREVIOUS blocks (not including itself)
+      result[i] = collectStoredVariables(blocks, i, getMethodReturnKeys);
+    }
+    
+    return result;
+  }, [blocks, getMethodReturnKeys]);
+
   // Get active block for drag overlay
   const activeBlock = useMemo(() => {
     if (!activeId) return null;
@@ -135,6 +155,12 @@ export default function BlockList({
   // Check content state
   const hasContent = blocks.length > 0;
   const allExpanded = blocks.every(b => b.expanded);
+
+  // ✅ NEW: Summary of stored variables
+  const totalStoredVariables = useMemo(() => {
+    const allVars = collectStoredVariables(blocks, -1, getMethodReturnKeys);
+    return allVars.length;
+  }, [blocks, getMethodReturnKeys]);
 
   // Drag handlers
   const handleDragStart = (event) => {
@@ -241,6 +267,20 @@ export default function BlockList({
               ⋮⋮ Drag to reorder
             </span>
           )}
+
+          {/* ✅ NEW: Show stored variables count */}
+          {totalStoredVariables > 0 && (
+            <span 
+              className="text-xs px-2 py-1 rounded"
+              style={{ 
+                background: `${theme.colors.accents.yellow}20`,
+                color: theme.colors.accents.yellow 
+              }}
+              title="Variables stored by function blocks, available in subsequent blocks"
+            >
+              💾 {totalStoredVariables} variable{totalStoredVariables !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
 
         {editMode && (
@@ -314,10 +354,11 @@ export default function BlockList({
             strategy={verticalListSortingStrategy}
           >
             <div className="space-y-2">
-              {blocks.map((block) => (
+              {blocks.map((block, index) => (
                 <SortableBlock
                   key={block.id}
                   block={block}
+                  blockIndex={index}
                   editMode={editMode}
                   theme={theme}
                   onUpdate={(updates) => handleUpdateBlock(block.id, updates)}
@@ -326,13 +367,13 @@ export default function BlockList({
                   pomName={pomName}
                   instanceName={instanceName}
                   projectPath={projectPath}
-                  storedVariables={storedVariables}
+                  storedVariables={variablesByBlockIndex[index] || []}  // ✅ Pass variables for THIS position
                 />
               ))}
             </div>
           </SortableContext>
 
-          {/* Drag Overlay - shows dragged item */}
+          {/* Drag Overlay */}
           <DragOverlay>
             {activeBlock ? (
               <div style={{ opacity: 0.9 }}>
@@ -343,6 +384,7 @@ export default function BlockList({
                   onUpdate={() => {}}
                   onDelete={() => {}}
                   onDuplicate={() => {}}
+                  storedVariables={[]}
                 />
               </div>
             ) : null}
@@ -408,59 +450,6 @@ export default function BlockList({
           </span>
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * BlockListCompact - Compact version without full header
- */
-export function BlockListCompact({
-  blocks,
-  editMode,
-  theme,
-  onBlocksChange,
-  pomName,
-  instanceName,
-  projectPath,
-  storedVariables = []
-}) {
-  const sortedBlocks = useMemo(() => sortBlocksByOrder(blocks || []), [blocks]);
-
-  const handleUpdateBlock = (blockId, updates) => {
-    const newBlocks = updateBlock(sortedBlocks, blockId, updates);
-    onBlocksChange(newBlocks);
-  };
-
-  const handleDeleteBlock = (blockId) => {
-    const newBlocks = deleteBlock(sortedBlocks, blockId);
-    onBlocksChange(newBlocks);
-  };
-
-  const handleDuplicateBlock = (blockId) => {
-    const newBlocks = duplicateBlock(sortedBlocks, blockId);
-    onBlocksChange(newBlocks);
-  };
-
-  if (sortedBlocks.length === 0) return null;
-
-  return (
-    <div className="space-y-2">
-      {sortedBlocks.map((block) => (
-        <BlockRenderer
-          key={block.id}
-          block={block}
-          editMode={editMode}
-          theme={theme}
-          onUpdate={(updates) => handleUpdateBlock(block.id, updates)}
-          onDelete={() => handleDeleteBlock(block.id)}
-          onDuplicate={() => handleDuplicateBlock(block.id)}
-          pomName={pomName}
-          instanceName={instanceName}
-          projectPath={projectPath}
-          storedVariables={storedVariables}
-        />
-      ))}
     </div>
   );
 }
