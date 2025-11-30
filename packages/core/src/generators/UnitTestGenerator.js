@@ -92,13 +92,13 @@ class UnitTestGenerator {
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
    */
 generate(implFilePath, options = {}) {
-  const { 
-    platform = 'web', 
-    state = null, 
-    transition = null,
-    event = null,
+  const {
+    platform = 'web',
+    state = null,
     preview = false,
-    forceRawValidation = false
+    projectPath,
+    transition = null,
+    forceRawValidation = false  // ← ADD THIS
   } = options;
   
   console.log('\n🎯 UnitTestGenerator.generate()');
@@ -238,23 +238,23 @@ _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
   };
 }
 
-  /**
- * ═══════════════════════════════════════════════════════════════════════════
- * NEW METHOD: Extract Ordered Screens for Validation (Phase 3.7)
- * ═══════════════════════════════════════════════════════════════════════════
+/**
+ * Extract ordered screens for Phase 3.7 validation with hybrid support
  * 
- * This method extracts screens with Phase 3.7 features:
- * - Screen ordering (order field)
- * - Per-screen navigation
- * - Block-based assertions
- * - Fallback to legacy visible/hidden if no blocks
+ * Features:
+ * - Processes screens in order (by `order` field)
+ * - Smart detection: ExpectImplication for simple, raw for complex
+ * - External POM detection and initialization
+ * - Deduplicates POM requires across screens
+ * - forceRawValidation option for verbose output
  * 
- * @param {object} metadata - Extracted metadata from implication
+ * @param {object} metadata - Implication metadata
  * @param {string} platform - Platform key (web, dancer, etc.)
- * @returns {object} { hasOrderedScreens, orderedScreens, usesBlocks, usesLegacy }
+ * @param {object} options - Options including forceRawValidation
+ * @returns {object} { hasOrderedScreens, orderedScreens, orderedScreenCount, uniquePomRequires, ... }
  */
 _extractOrderedScreensForValidation(metadata, platform, options = {}) {
-  const { forceRawValidation = false } = options;  // ← ADD THIS
+  const { forceRawValidation = false } = options;
   
   console.log(`\n🔄 _extractOrderedScreensForValidation for ${platform}`);
   if (forceRawValidation) {
@@ -264,6 +264,8 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
   const result = {
     hasOrderedScreens: false,
     orderedScreens: [],
+    orderedScreenCount: 0,
+    uniquePomRequires: [],
     usesBlocks: false,
     usesLegacy: false
   };
@@ -286,9 +288,13 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
   const isPlaywright = platform === 'web' || platform === 'cms';
   const screens = [];
   
-    for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
+  // ═══════════════════════════════════════════════════════════
+  // PASS 1: Process all screens
+  // ═══════════════════════════════════════════════════════════
+  for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
     let screen;
     
+    // Handle array or object format
     if (Array.isArray(screenDef)) {
       if (screenDef.length === 0) continue;
       screen = screenDef[0];
@@ -310,9 +316,9 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     if (hasBlocks) result.usesBlocks = true;
     else result.usesLegacy = true;
     
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     // Process navigation
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     let navigation = null;
     
     if (hasNavigation) {
@@ -340,10 +346,10 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       };
     }
     
-     // ═══════════════════════════════════════════════════════════
-    // ✅ SMART DETECTION: Determine validation mode per-screen
-    // ═══════════════════════════════════════════════════════════
-    let useRawValidation = forceRawValidation;  // ← Start with force flag
+    // ───────────────────────────────────────────────────────
+    // SMART DETECTION: Determine validation mode per-screen
+    // ───────────────────────────────────────────────────────
+    let useRawValidation = forceRawValidation;
     let rawValidationReason = forceRawValidation ? 'forced by user' : null;
     
     // Only do auto-detection if NOT forced
@@ -355,12 +361,14 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       for (const block of screen.blocks) {
         if (block.enabled === false) continue;
         
+        // Check 1: Custom code blocks always need raw
         if (block.type === 'custom-code' && block.code?.trim()) {
           useRawValidation = true;
           rawValidationReason = 'custom-code block';
           break;
         }
         
+        // Check 2: Function calls to DIFFERENT POMs need raw
         if (block.type === 'function-call') {
           const blockInstance = (block.data?.instance || '').toLowerCase()
             .replace(/\.(wrapper|screen|page)$/i, '')
@@ -377,10 +385,10 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     
     console.log(`      🎯 Validation mode: ${useRawValidation ? 'RAW' : 'ExpectImplication'}${rawValidationReason ? ` (${rawValidationReason})` : ''}`);
     
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     // Process blocks (for raw mode) OR legacy assertions
-    // ═══════════════════════════════════════════════════════════
-      let processedBlocks = [];
+    // ───────────────────────────────────────────────────────
+    let processedBlocks = [];
     let externalPoms = [];
     let legacyAssertions = null;
     
@@ -399,10 +407,11 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       };
     }
     
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     // Calculate POM path with proper format
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     let pomPathValue = null;
+    let pomClassName = null;
     
     if (screen.screen) {
       let screenPath = screen.screen;
@@ -416,51 +425,67 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
         }
         pomPathValue = `../../../screenObjects/${screenPath}`;
       }
+      
+      // Generate class name from screen path
+      pomClassName = this._toPascalCase(
+        screen.screen
+          .replace(/\./g, '')
+          .replace(/\//g, '')
+          .replace(/\.js$/, '')
+      );
+    } else {
+      // No screen property - use screenKey
+      pomClassName = this._toPascalCase(screenKey);
     }
     
-    console.log(`      📁 POM path: ${pomPathValue}`);
+    console.log(`      📁 POM: ${pomClassName} from ${pomPathValue || 'N/A'}`);
     
-    // ═══════════════════════════════════════════════════════════
+    // ───────────────────────────────────────────────────────
     // Build screen object
-    // ═══════════════════════════════════════════════════════════
-     screens.push({
+    // ───────────────────────────────────────────────────────
+    screens.push({
       screenKey,
       order,
       
-      pomClassName: screen.screen 
-        ? this._toPascalCase(screen.screen.replace(/\./g, '').replace(/\//g, '')) 
-        : this._toPascalCase(screenKey),
+      // POM info
+      pomClassName: pomClassName,
       pomPath: pomPathValue,
       pomInstance: screen.instance || this._toCamelCase(screenKey),
+      hasPom: !!pomPathValue,
       
+      // Navigation
       hasNavigation: !!navigation,
       navigation,
       
-      // ✅ Block info
+      // Block info
       hasBlocks: hasBlocks,
       blocks: processedBlocks,
       blockCount: processedBlocks.length,
       
-      // ✅ FIX: Add external POMs
+      // External POMs for function calls
       externalPoms: externalPoms,
       hasExternalPoms: externalPoms.length > 0,
       
-      // ✅ NEW: Validation mode flags
+      // Validation mode flags
       useRawValidation: useRawValidation,
       useExpectImplication: hasBlocks && !useRawValidation,
       rawValidationReason: rawValidationReason,
       
-      // Legacy support
+      // Legacy support (no blocks)
       hasLegacyAssertions: !hasBlocks && !!legacyAssertions && 
                            (legacyAssertions.hasVisible || legacyAssertions.hasHidden || legacyAssertions.hasTextChecks),
       legacyAssertions,
       useLegacyValidation: !hasBlocks,
       
+      // Platform
       platformKey,
       isPlaywright
     });
   }
   
+  // ═══════════════════════════════════════════════════════════
+  // PASS 2: Sort by order and add position info
+  // ═══════════════════════════════════════════════════════════
   screens.sort((a, b) => a.order - b.order);
   
   screens.forEach((screen, index) => {
@@ -470,14 +495,54 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     screen.isLast = index === screens.length - 1;
   });
   
+  // ═══════════════════════════════════════════════════════════
+  // PASS 3: Collect unique POM requires (DEDUPLICATION FIX)
+  // ═══════════════════════════════════════════════════════════
+  const uniquePomRequires = new Map();
+  
+  for (const screen of screens) {
+    // Add screen's own POM
+    if (screen.pomPath && screen.pomClassName) {
+      if (!uniquePomRequires.has(screen.pomClassName)) {
+        uniquePomRequires.set(screen.pomClassName, {
+          className: screen.pomClassName,
+          path: screen.pomPath,
+          isScreenPom: true
+        });
+      }
+    }
+    
+    // Add external POMs from function calls
+    if (screen.externalPoms && screen.externalPoms.length > 0) {
+      for (const pom of screen.externalPoms) {
+        if (!uniquePomRequires.has(pom.className)) {
+          uniquePomRequires.set(pom.className, {
+            className: pom.className,
+            path: pom.pomPath,
+            isScreenPom: false
+          });
+        }
+      }
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // Build result
+  // ═══════════════════════════════════════════════════════════
   result.hasOrderedScreens = screens.length > 0;
   result.orderedScreens = screens;
+  result.orderedScreenCount = screens.length;
+  result.uniquePomRequires = Array.from(uniquePomRequires.values());
   
   // Summary
   const rawCount = screens.filter(s => s.useRawValidation).length;
   const expectCount = screens.filter(s => s.useExpectImplication).length;
   const legacyCount = screens.filter(s => s.useLegacyValidation).length;
-  console.log(`   ✅ Prepared ${screens.length} screen(s): ${expectCount} ExpectImplication, ${rawCount} Raw, ${legacyCount} Legacy`);
+  console.log(`\n   ✅ Prepared ${screens.length} screen(s):`);
+  console.log(`      - ${expectCount} ExpectImplication`);
+  console.log(`      - ${rawCount} Raw validation`);
+  console.log(`      - ${legacyCount} Legacy`);
+  console.log(`      - ${result.uniquePomRequires.length} unique POM(s) to require`);
   
   return result;
 }
@@ -1777,17 +1842,26 @@ _findImplicationFile(status, currentFilePath) {
   /**
    * Build template context from metadata
    */
+/**
+ * Build template context from metadata
+ * 
+ * @param {object} metadata - Extracted metadata from Implication
+ * @param {string} platform - Platform (web, cms, dancer, etc.)
+ * @param {object} transition - Current transition info (optional)
+ * @param {object} options - Options including forceRawValidation
+ * @returns {object} Template context
+ */
 _buildContext(metadata, platform, transition = null, options = {}) {
   const { forceRawValidation = false } = options;
   const implClassName = metadata.className;
   const targetStatus = metadata.status;
   
   // Determine test mode
-const { mode } = this._determineTestMode(
-  metadata,  // ← Use metadata instead
-  platform,
-  targetStatus
-);
+  const { mode } = this._determineTestMode(
+    metadata,
+    platform,
+    targetStatus
+  );
   
   const isInducer = mode === 'inducer';
   const isVerify = mode === 'verify';
@@ -1869,17 +1943,14 @@ const { mode } = this._determineTestMode(
   }
   
   // ═══════════════════════════════════════════════════════════
-  // ✅ NEW: Phase 3.7 - Ordered Screens with Blocks
+  // ✅ Phase 3.7 - Ordered Screens with Blocks & POM Deduplication
   // ═══════════════════════════════════════════════════════════
-  // IMPORTANT: This must be OUTSIDE the if block above!
-  // Get force raw flag from options (comes from UI/API)
-  
-  // Extract ordered screens with force flag
- const orderedScreensResult = this._extractOrderedScreensForValidation(
+  const orderedScreensResult = this._extractOrderedScreensForValidation(
     metadata, 
     platform,
-    { forceRawValidation }  // ← ADD THIS
+    { forceRawValidation }
   );
+  
   const useBlocksValidation = orderedScreensResult.usesBlocks;
   const useOrderedScreens = orderedScreensResult.hasOrderedScreens && 
                              (orderedScreensResult.usesBlocks || 
@@ -1892,10 +1963,12 @@ const { mode } = this._determineTestMode(
   console.log(`   useBlocksValidation: ${useBlocksValidation}`);
   console.log(`   useOrderedScreens: ${useOrderedScreens}`);
   console.log(`   useLegacyValidation: ${useLegacyValidation}`);
+  console.log(`   forceRawValidation: ${forceRawValidation}`);
+  console.log(`   uniquePomRequires: ${orderedScreensResult.uniquePomRequires?.length || 0}`);
+  
   // ═══════════════════════════════════════════════════════════
-  
-  
   // Build context
+  // ═══════════════════════════════════════════════════════════
   const context = {
     // Header
     timestamp: new Date().toISOString(),
@@ -1981,15 +2054,23 @@ const { mode } = this._determineTestMode(
     hasHelperFunctions: false,
     helperFunctions: [],
     
-    // Legacy UI Validation
-    hasUIValidation: uiValidation.hasValidation,
+    // Legacy UI Validation (backward compatibility)
+    hasUIValidation: uiValidation.hasValidation || orderedScreensResult.hasOrderedScreens,
     validationScreens: uiValidation.screens,
     useExpectImplication: true,
     
-    // ✅ Phase 3.7: Ordered Screens with Blocks
+    // ═══════════════════════════════════════════════════════════
+    // ✅ Phase 3.7: Ordered Screens with Blocks & POM Deduplication
+    // ═══════════════════════════════════════════════════════════
     hasOrderedScreens: orderedScreensResult.hasOrderedScreens,
     orderedScreens: orderedScreensResult.orderedScreens,
     orderedScreenCount: orderedScreensResult.orderedScreens.length,
+    
+    // ✅ NEW: Deduplicated POM requires
+    uniquePomRequires: orderedScreensResult.uniquePomRequires || [],
+    hasUniquePomRequires: (orderedScreensResult.uniquePomRequires || []).length > 0,
+    
+    // Validation mode flags
     useBlocksValidation: useBlocksValidation,
     useOrderedScreens: useOrderedScreens,
     useLegacyValidation: useLegacyValidation,
