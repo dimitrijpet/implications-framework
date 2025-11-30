@@ -1,15 +1,11 @@
 // packages/web-app/src/components/GenerateTestsButton.jsx
-// Button to generate unit tests from implications
-
 import { useState } from 'react';
-import axios from 'axios';
-
-const API_URL = 'http://localhost:3000';
 
 export default function GenerateTestsButton({ state, projectPath, discoveryResult }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [forceRawValidation, setForceRawValidation] = useState(false);
   
   const handleGenerate = async () => {
     setLoading(true);
@@ -18,87 +14,50 @@ export default function GenerateTestsButton({ state, projectPath, discoveryResul
     
     try {
       console.log('🎯 Generating tests for:', state.name);
-      console.log('📊 Discovery available:', !!discoveryResult);
+      console.log('🔲 forceRawValidation:', forceRawValidation);
       
-      // ✅ Helper: Look up actionDetails from source implication metadata
+      // Helper: Look up actionDetails from source implication
       const findActionDetails = (fromState, event) => {
-  console.log(`🔍 Looking for actionDetails: ${fromState} --${event}-->`);
-  
-  if (!fromState || !event) {
-    console.log(`   ❌ Missing fromState or event`);
-    return null;
-  }
-  
-  // Find the source implication by status
-  const sourceImpl = discoveryResult?.files?.implications?.find(
-    impl => impl.metadata?.status === fromState
-  );
-  
-  if (!sourceImpl) {
-    console.log(`   ❌ Source implication not found for state: ${fromState}`);
-    return null;
-  }
-  
-  console.log(`   ✅ Found source: ${sourceImpl.className}`);
-  
-  // ✅ FIX: Get actionDetails from xstateConfig.on[event]
-  const transition = sourceImpl.metadata?.xstateConfig?.on?.[event];
-  
-  if (!transition) {
-    console.log(`   ❌ Event ${event} not found in xstateConfig.on`);
-    return null;
-  }
-  
-  const actionDetails = transition.actionDetails || null;
-  
-  if (actionDetails) {
-    console.log(`   ✅ Found actionDetails with ${actionDetails.steps?.length || 0} steps`);
-  } else {
-    console.log(`   ⚠️  No actionDetails for ${event}`);
-  }
-  
-  return actionDetails;
-};
+        if (!fromState || !event) return null;
+        
+        const sourceImpl = discoveryResult?.files?.implications?.find(
+          impl => impl.metadata?.status === fromState
+        );
+        
+        if (!sourceImpl) {
+          console.log(`   ❌ Source not found: ${fromState}`);
+          return null;
+        }
+        
+        const transition = sourceImpl.metadata?.xstateConfig?.on?.[event];
+        return transition?.actionDetails || null;
+      };
       
-   const incomingTransitions = discoveryResult?.transitions?.filter(t => 
-  t.to === state.name || t.target === state.name
-) || [];
-
-console.log(`📥 Found ${incomingTransitions.length} incoming transition(s)`);
-incomingTransitions.forEach(t => {
-  console.log(`   - ${t.from} --${t.event}--> ${t.to}`);
-});
-
-// ✅ Expand transitions with multiple platforms and enrich with actionDetails
-const transitionsToGenerate = [];
-
-for (const t of incomingTransitions) {
-  console.log(`\n🔄 Processing: ${t.from} --${t.event}--> ${t.to}`);
-  
-  const platforms = t.platforms || [t.platform || state.meta?.platform || 'web'];
-  console.log(`   Platforms: ${platforms.join(', ')}`);
-  
-  // Create one transition per platform
-  for (const platform of platforms) {
-    // ✅ Look up actionDetails from source implication
-    const actionDetails = findActionDetails(t.from, t.event);
-    
-    const transitionObj = {
-      event: t.event,
-      fromState: t.from,
-      target: state.name,
-      platform: platform,
-      actionDetails: actionDetails
-    };
-    
-    console.log(`   ✅ Added transition:`, transitionObj.event, transitionObj.platform);
-    transitionsToGenerate.push(transitionObj);
-  }
-}
-
-console.log(`\n📊 Total transitions to generate: ${transitionsToGenerate.length}`);
+      // Find incoming transitions
+      const incomingTransitions = discoveryResult?.transitions?.filter(t => 
+        t.to === state.name || t.target === state.name
+      ) || [];
       
-      // ✅ Fallback: If no incoming transitions, generate for main platform
+      console.log(`📥 Found ${incomingTransitions.length} incoming transition(s)`);
+      
+      // Build transitions to generate
+      const transitionsToGenerate = [];
+      
+      for (const t of incomingTransitions) {
+        const platforms = t.platforms || [t.platform || state.meta?.platform || 'web'];
+        
+        for (const platform of platforms) {
+          transitionsToGenerate.push({
+            event: t.event,
+            fromState: t.from,
+            target: state.name,
+            platform: platform,
+            actionDetails: findActionDetails(t.from, t.event)
+          });
+        }
+      }
+      
+      // Fallback if no transitions
       if (transitionsToGenerate.length === 0) {
         transitionsToGenerate.push({
           event: null,
@@ -109,58 +68,78 @@ console.log(`\n📊 Total transitions to generate: ${transitionsToGenerate.lengt
         });
       }
       
-      console.log('🔄 Transitions to generate:', transitionsToGenerate);
-      console.log('🔄 First transition actionDetails:', transitionsToGenerate[0]?.actionDetails);
+      const implFilePath = `${projectPath}/tests/implications/bookings/status/${state.className}.js`;
       
-      const response = await axios.post(`${API_URL}/api/generate/unit-test`, {
-        implPath: state.files?.implication,
-        platform: state.meta?.platform || 'web',
-        transitions: transitionsToGenerate,
-        projectPath
+      console.log('📂 implFilePath:', implFilePath);
+      console.log('📊 Transitions:', transitionsToGenerate.length);
+      console.log('⚡ forceRawValidation:', forceRawValidation);
+      
+      const response = await fetch('/api/generate/unit-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          implFilePath,
+          platform: state.meta?.platform || 'web',
+          transitions: transitionsToGenerate,
+          forceRawValidation  // ✅ USE THE STATE VARIABLE!
+        })
       });
       
-      setResult(response.data);
-      const count = response.data.results?.length || 1;
-      console.log(`✅ Generated ${count} test(s)`);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Generation failed');
+      }
+      
+      setResult(data);
+      console.log(`✅ Generated ${data.results?.length || 1} test(s)`);
       
     } catch (err) {
       console.error('❌ Generation failed:', err);
-      setError(err.response?.data?.error || err.message);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
   
   return (
-    <div className="generate-tests-section">
-      <button
-        onClick={handleGenerate}
-        disabled={loading || !state.files?.implication}
-        className={`
-          px-4 py-2 rounded-lg font-medium transition-all
-          ${loading 
-            ? 'bg-gray-400 cursor-not-allowed' 
-            : 'bg-blue-600 hover:bg-blue-700 text-white'}
-        `}
-      >
-        {loading ? '⏳ Generating...' : '🧪 Generate Unit Test'}
-      </button>
+    <div className="generate-tests-section space-y-3">
+      <div className="flex items-center gap-4">
+        <button
+          onClick={handleGenerate}
+          disabled={loading}
+          className={`
+            px-4 py-2 rounded-lg font-medium transition-all
+            ${loading 
+              ? 'bg-gray-400 cursor-not-allowed' 
+              : 'bg-blue-600 hover:bg-blue-700 text-white'}
+          `}
+        >
+          {loading ? '⏳ Generating...' : '🧪 Generate Unit Test'}
+        </button>
+        
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={forceRawValidation}
+            onChange={(e) => setForceRawValidation(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <span>Force raw assertions (verbose)</span>
+        </label>
+      </div>
       
       {result && (
-        <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
           <div className="flex items-center gap-2 text-green-800 font-medium mb-2">
-            <span>✅</span>
-            <span>Generated {result.count || 1} Test(s) Successfully!</span>
+            ✅ Generated {result.count || 1} Test(s)!
           </div>
           <div className="text-sm text-green-700 space-y-3">
             {result.results?.map((r, i) => (
               <div key={i} className="border-l-2 border-green-300 pl-3">
-                <div className="font-semibold">Test {i + 1}:</div>
-                <div>📄 <strong>File:</strong> {r.fileName}</div>
-                {r.filePath && (
-                  <div className="text-xs">📁 {r.filePath}</div>
-                )}
-                <div>📏 <strong>Size:</strong> {r.code?.length || 0} characters</div>
+                <div className="font-semibold">Test {i + 1}: {r.fileName}</div>
+                {r.filePath && <div className="text-xs opacity-75">📁 {r.filePath}</div>}
+                <div className="text-xs">📏 {r.code?.length || 0} chars</div>
                 <button
                   onClick={() => navigator.clipboard.writeText(r.code)}
                   className="mt-2 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
@@ -174,14 +153,9 @@ console.log(`\n📊 Total transitions to generate: ${transitionsToGenerate.lengt
       )}
       
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <div className="flex items-center gap-2 text-red-800 font-medium mb-2">
-            <span>❌</span>
-            <span>Generation Failed</span>
-          </div>
-          <div className="text-sm text-red-700">
-            {error}
-          </div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-red-800 font-medium mb-1">❌ Generation Failed</div>
+          <div className="text-sm text-red-700">{error}</div>
         </div>
       )}
     </div>

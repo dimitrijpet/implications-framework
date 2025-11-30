@@ -13,7 +13,13 @@
 {{else}}
 // Test Mode: INDUCER (performs action + saves state)
 {{/if}}
-
+{{#if useOrderedScreens}}
+// Validation Mode: ORDERED SCREENS (Phase 3.7)
+// Screens: {{orderedScreenCount}} ({{#each orderedScreens}}{{screenKey}}{{#unless @last}}, {{/unless}}{{/each}})
+{{else if useLegacyValidation}}
+// Validation Mode: LEGACY (ExpectImplication.validateImplications)
+{{/if}}
+// ═══════════════════════════════════════════════════════════
 {{#if isPlaywright}}
 const { test, expect, devices } = require('@playwright/test');
 {{/if}}
@@ -514,7 +520,7 @@ if (!shouldSkipRegistration) {
 
 {{#if useOrderedScreens}}
       // ═══════════════════════════════════════════════════════════
-      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION
+      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION WITH BLOCKS
       // ═══════════════════════════════════════════════════════════
       console.log('\n🔍 Validating {{targetStatus}} UI ({{orderedScreenCount}} screen(s) in order)...');
       
@@ -528,11 +534,15 @@ if (!shouldSkipRegistration) {
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
 {{#if navigation.pomPath}}
-      const {{navigation.className}}Nav = require('{{{navigation.pomPath}}}');
+      const {{navigation.className}} = require('{{{navigation.pomPath}}}');
 {{else}}
-      const {{navigation.className}}Nav = require('../../../screenObjects/{{navigation.pomName}}.js');
+      const {{navigation.className}} = require('../../../screenObjects/{{navigation.pomName}}.js');
 {{/if}}
-      const {{navigation.instanceName}} = new {{navigation.className}}Nav(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{#if ../isPlaywright}}
+      const {{navigation.instanceName}} = new {{navigation.className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{else}}
+      const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
+{{/if}}
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
 {{/if}}
@@ -540,43 +550,33 @@ if (!shouldSkipRegistration) {
 {{#if pomPath}}
       // Initialize screen object
       const {{pomClassName}} = require('{{{pomPath}}}');
+{{#if ../isPlaywright}}
       const {{pomInstance}} = new {{pomClassName}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{else}}
+      const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
+{{/if}}
 {{/if}}
       
-{{#if useExpectImplication}}
-      // ✅ ExpectImplication handles blocks internally
-      await ExpectImplication.validateImplications(
-        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-        result.data,
-        {{pomInstance}}
-      );
-{{else if useRawValidation}}
-      // 🔧 Raw validation ({{rawValidationReason}})
-{{#if hasExternalPoms}}
-      // Initialize external POMs for function calls
-{{#each externalPoms}}
-      const {{className}} = require('{{{pomPath}}}');
-      const {{instanceName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/each}}
-{{/if}}
+{{#if hasBlocks}}
+      // 🧱 Block-based validation ({{blockCount}} blocks)
 {{#each blocks}}
-{{#if (eq blockType 'function-call')}}
-      // Block {{position}}: {{description}}
-      {{{callCode}}}
-{{else if (eq blockType 'custom-code')}}
-      // Block {{position}}: {{description}}
-{{#if wrapInTestStep}}
-      await test.step('{{testStepName}}', async () => {
-{{{formattedCode}}}
-      });
-{{else}}
-{{{formattedCode}}}
-{{/if}}
-{{else if (eq blockType 'ui-assertion')}}
+{{#if (ifEquals blockType 'ui-assertion')}}
       // Block {{position}}: {{description}}
 {{#each assertions}}
+{{#if (ifEquals assertionType 'visible')}}
       {{{expectCode}}}
+{{else if (ifEquals assertionType 'hidden')}}
+      {{{expectCode}}}
+{{else if (ifEquals assertionType 'text')}}
+      {{{expectCode}}}
+{{/if}}
 {{/each}}
+{{else if (ifEquals blockType 'function-call')}}
+      // Block {{position}}: {{description}}
+      {{{callCode}}}
+{{else if (ifEquals blockType 'custom-code')}}
+      // Block {{position}}: {{description}}
+{{{formattedCode}}}
 {{/if}}
 {{/each}}
 {{else if hasLegacyAssertions}}
@@ -586,8 +586,8 @@ if (!shouldSkipRegistration) {
         result.data,
         {{pomInstance}}
       );
-{{else if pomPath}}
-      // 📋 Default validation via ExpectImplication
+{{else if useLegacyValidation}}
+      // 📋 Legacy validation via ExpectImplication
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,
@@ -721,7 +721,7 @@ if (!shouldSkipRegistration) {
       
 {{#if useOrderedScreens}}
       // ═══════════════════════════════════════════════════════════
-      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION (APPIUM)
+      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION WITH BLOCKS (APPIUM)
       // ═══════════════════════════════════════════════════════════
       console.log('\n🔍 Validating {{targetStatus}} UI ({{orderedScreenCount}} screen(s) in order)...');
       
@@ -735,11 +735,11 @@ if (!shouldSkipRegistration) {
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
 {{#if navigation.pomPath}}
-      const {{navigation.className}}Nav = require('{{{navigation.pomPath}}}');
+      const {{navigation.className}} = require('{{{navigation.pomPath}}}');
 {{else}}
-      const {{navigation.className}}Nav = require('../../../screenObjects/{{navigation.pomName}}.js');
+      const {{navigation.className}} = require('../../../screenObjects/{{navigation.pomName}}.js');
 {{/if}}
-      const {{navigation.instanceName}} = new {{navigation.className}}Nav(result.data.lang || 'en');
+      const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
 {{/if}}
@@ -750,38 +750,24 @@ if (!shouldSkipRegistration) {
       const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
 {{/if}}
       
-{{#if useExpectImplication}}
-      // ✅ ExpectImplication handles blocks internally
-      await ExpectImplication.validateImplications(
-        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-        result.data,
-        {{pomInstance}}
-      );
-{{else if useRawValidation}}
-      // 🔧 Raw validation ({{rawValidationReason}})
+{{#if hasBlocks}}
+      // 🧱 Block-based validation ({{blockCount}} blocks)
 {{#each blocks}}
-{{#if (eq blockType 'function-call')}}
-      // Block {{position}}: {{description}}
-      {{{callCode}}}
-{{else if (eq blockType 'custom-code')}}
-      // Block {{position}}: {{description}}
-{{{formattedCode}}}
-{{else if (eq blockType 'ui-assertion')}}
+{{#if (ifEquals blockType 'ui-assertion')}}
       // Block {{position}}: {{description}}
 {{#each assertions}}
       {{{expectCode}}}
 {{/each}}
+{{else if (ifEquals blockType 'function-call')}}
+      // Block {{position}}: {{description}}
+      {{{callCode}}}
+{{else if (ifEquals blockType 'custom-code')}}
+      // Block {{position}}: {{description}}
+{{{formattedCode}}}
 {{/if}}
 {{/each}}
 {{else if hasLegacyAssertions}}
       // 📋 Legacy validation (visible/hidden arrays)
-      await ExpectImplication.validateImplications(
-        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-        result.data,
-        {{pomInstance}}
-      );
-{{else if pomPath}}
-      // 📋 Default validation via ExpectImplication
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,

@@ -91,33 +91,35 @@ class UnitTestGenerator {
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
    */
- generate(implFilePath, options = {}) {
-  const {
-    platform = 'web',
-    state = null,
+generate(implFilePath, options = {}) {
+  const { 
+    platform = 'web', 
+    state = null, 
+    transition = null,
+    event = null,
     preview = false,
-    projectPath,
-    transition = null  // âœ… ADD THIS!
+    forceRawValidation = false
   } = options;
   
-  console.log('\nðŸŽ¯ UnitTestGenerator.generate()');
+  console.log('\n🎯 UnitTestGenerator.generate()');
   console.log(`   Implication: ${implFilePath}`);
   console.log(`   Platform: ${platform}`);
   if (state) console.log(`   State: ${state}`);
-  if (transition) console.log(`   ðŸ”„ Transition: ${transition.event} (${transition.platform})`);  // âœ… ADD THIS!
+  if (transition) console.log(`   🔄 Transition: ${transition.event} (${transition.platform})`);
   
-  // âœ… Store projectPath and transition
-  this.projectPath = projectPath || this._findProjectRoot(implFilePath);
-  this.currentTransition = transition;  // âœ… ADD THIS!
+  // Store for later use
+  this.projectPath = this._findProjectRoot(implFilePath);
+  this.currentTransition = transition;
+  this.forceRawValidation = forceRawValidation;
   
-  console.log(`   ðŸ“ Project root: ${this.projectPath}`);
+  console.log(`   📂 Project root: ${this.projectPath}`);
   
-  // âœ… Auto-detect output directory
+  // Auto-detect output directory
   if (!this.options.outputDir) {
     this.options.outputDir = path.dirname(path.resolve(implFilePath));
-    console.log(`   ðŸ—‚ï¸ Auto-detected output: ${this.options.outputDir}`);
+    console.log(`   🗂️ Auto-detected output: ${this.options.outputDir}`);
   }
-    
+
   // 1. Load Implication class
   const ImplClass = this._loadImplication(implFilePath);
   
@@ -125,15 +127,12 @@ class UnitTestGenerator {
   const isMultiState = this._isMultiStateMachine(ImplClass);
   
   if (isMultiState && !state) {
-    // Generate for ALL states
-    console.log(`   âœ¨ Multi-state machine detected`);
+    console.log(`   ✨ Multi-state machine detected`);
     return this._generateMultiState(ImplClass, implFilePath, platform, preview);
   } else if (isMultiState && state) {
-    // Generate for specific state
-    console.log(`   âœ¨ Generating for state: ${state}`);
+    console.log(`   ✨ Generating for state: ${state}`);
     return this._generateSingleState(ImplClass, implFilePath, platform, state, preview);
   } else {
-    // Single-state machine (original behavior)
     return this._generateSingleState(ImplClass, implFilePath, platform, null, preview);
   }
 }
@@ -198,44 +197,607 @@ _generateSingleState(ImplClass, implFilePath, platform, stateName, preview) {
   // 2. Extract metadata
   const metadata = this._extractMetadata(ImplClass, platform, stateName, implFilePath);
     
-    // 3. Build template context
-    const context = this._buildContext(metadata, platform, ImplClass);  // âœ… Pass ImplClass!
+  // 3. Build template context - ✅ Pass transition and forceRawValidation
+  const context = this._buildContext(metadata, platform, this.currentTransition, {
+    forceRawValidation: this.forceRawValidation || false
+  });
     
-    // 4. Validate context
-    this._validateContext(context);
+  // 4. Validate context
+  this._validateContext(context);
     
-    // 5. Render template
-    const engine = new TemplateEngine();
-    const code = engine.render('unit-test.hbs', context);
+  // 5. Render template
+  const engine = new TemplateEngine();
+  const code = engine.render('unit-test.hbs', context);
     
   // 6. Generate file name
-const event = this.currentTransition?.event;
-console.log(`ðŸ› DEBUG _generateFileName inputs:`);
-console.log(`   event: ${event}`);
-console.log(`   platform: ${platform}`);
-console.log(`   metadata.status: ${metadata.status}`);
+  const event = this.currentTransition?.event;
+  console.log(`🛠 DEBUG _generateFileName inputs:`);
+  console.log(`   event: ${event}`);
+  console.log(`   platform: ${platform}`);
+  console.log(`   metadata.status: ${metadata.status}`);
 
-const fileName = this._generateFileName(metadata, platform, { event });
-console.log(`   âœ… Generated fileName: ${fileName}`);
+  const fileName = this._generateFileName(metadata, platform, { event });
+  console.log(`   ✅ Generated fileName: ${fileName}`);
     
-    // 7. Optionally write file
-    let filePath = null;
-    if (!preview && this.options.outputDir) {
-      filePath = path.join(this.options.outputDir, fileName);
-      fs.writeFileSync(filePath, code);
-      console.log(`      Ã¢Å“â€¦ Written: ${filePath}`);
+  // 7. Optionally write file
+  let filePath = null;
+  if (!preview && this.options.outputDir) {
+    filePath = path.join(this.options.outputDir, fileName);
+    fs.writeFileSync(filePath, code);
+    console.log(`      ✅ Written: ${filePath}`);
+  } else {
+    console.log(`      ✅ Preview generated (${code.length} chars)`);
+  }
+    
+  return {
+    code,
+    fileName,
+    filePath,
+    metadata,
+    state: stateName
+  };
+}
+
+  /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * NEW METHOD: Extract Ordered Screens for Validation (Phase 3.7)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * This method extracts screens with Phase 3.7 features:
+ * - Screen ordering (order field)
+ * - Per-screen navigation
+ * - Block-based assertions
+ * - Fallback to legacy visible/hidden if no blocks
+ * 
+ * @param {object} metadata - Extracted metadata from implication
+ * @param {string} platform - Platform key (web, dancer, etc.)
+ * @returns {object} { hasOrderedScreens, orderedScreens, usesBlocks, usesLegacy }
+ */
+_extractOrderedScreensForValidation(metadata, platform, options = {}) {
+  const { forceRawValidation = false } = options;  // ← ADD THIS
+  
+  console.log(`\n🔄 _extractOrderedScreensForValidation for ${platform}`);
+  if (forceRawValidation) {
+    console.log(`   ⚡ Force raw validation: ENABLED`);
+  }
+  
+  const result = {
+    hasOrderedScreens: false,
+    orderedScreens: [],
+    usesBlocks: false,
+    usesLegacy: false
+  };
+  
+  if (!metadata.mirrorsOn?.UI) {
+    console.log('   ⚠️  No mirrorsOn.UI found');
+    return result;
+  }
+  
+  const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+  const platformScreens = metadata.mirrorsOn.UI[platformKey];
+  
+  if (!platformScreens || typeof platformScreens !== 'object') {
+    console.log(`   ⚠️  No screens for platform: ${platformKey}`);
+    return result;
+  }
+  
+  console.log(`   📺 Found ${Object.keys(platformScreens).length} screen(s) for ${platformKey}`);
+  
+  const isPlaywright = platform === 'web' || platform === 'cms';
+  const screens = [];
+  
+    for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
+    let screen;
+    
+    if (Array.isArray(screenDef)) {
+      if (screenDef.length === 0) continue;
+      screen = screenDef[0];
+    } else if (typeof screenDef === 'object' && screenDef !== null) {
+      screen = screenDef;
     } else {
-      console.log(`      Ã¢Å“â€¦ Preview generated (${code.length} chars)`);
+      continue;
     }
     
-    return {
-      code,
-      fileName,
-      filePath,
-      metadata,
-      state: stateName
-    };
+    if (!screen || typeof screen !== 'object') continue;
+    
+    const order = typeof screen.order === 'number' ? screen.order : 999;
+    const hasBlocks = Array.isArray(screen.blocks) && screen.blocks.length > 0;
+    const hasNavigation = screen.navigation && 
+                          (screen.navigation.pomName || screen.navigation.method);
+    
+    console.log(`   📺 ${screenKey}: order=${order}, blocks=${hasBlocks}, nav=${hasNavigation}`);
+    
+    if (hasBlocks) result.usesBlocks = true;
+    else result.usesLegacy = true;
+    
+    // ═══════════════════════════════════════════════════════════
+    // Process navigation
+    // ═══════════════════════════════════════════════════════════
+    let navigation = null;
+    
+    if (hasNavigation) {
+      const nav = screen.navigation;
+      const instanceName = nav.pomName 
+        ? this._toCamelCase(nav.pomName)
+        : 'navigationScreen';
+      
+      let pomPath = nav.pomPath || null;
+      if (!pomPath && nav.pomName && this.implFilePath) {
+        pomPath = this._calculateScreenObjectPath(this.implFilePath, nav.pomName);
+      }
+      
+      const resolvedArgs = (nav.args || []).map(arg => this._resolveTemplateArg(arg));
+      
+      navigation = {
+        pomName: nav.pomName,
+        pomPath: pomPath,
+        method: nav.method,
+        args: nav.args || [],
+        resolvedArgs: resolvedArgs,
+        resolvedArgsString: resolvedArgs.join(', '),
+        instanceName: instanceName,
+        className: nav.pomName ? this._toPascalCase(nav.pomName) : null
+      };
+    }
+    
+     // ═══════════════════════════════════════════════════════════
+    // ✅ SMART DETECTION: Determine validation mode per-screen
+    // ═══════════════════════════════════════════════════════════
+    let useRawValidation = forceRawValidation;  // ← Start with force flag
+    let rawValidationReason = forceRawValidation ? 'forced by user' : null;
+    
+    // Only do auto-detection if NOT forced
+    if (!forceRawValidation && hasBlocks) {
+      const screenPomName = (screen.screen || screenKey).toLowerCase()
+        .replace(/\.(wrapper|screen|page)$/i, '')
+        .replace(/\//g, '');
+      
+      for (const block of screen.blocks) {
+        if (block.enabled === false) continue;
+        
+        if (block.type === 'custom-code' && block.code?.trim()) {
+          useRawValidation = true;
+          rawValidationReason = 'custom-code block';
+          break;
+        }
+        
+        if (block.type === 'function-call') {
+          const blockInstance = (block.data?.instance || '').toLowerCase()
+            .replace(/\.(wrapper|screen|page)$/i, '')
+            .replace(/\//g, '');
+          
+          if (blockInstance && !screenPomName.includes(blockInstance) && !blockInstance.includes(screenPomName)) {
+            useRawValidation = true;
+            rawValidationReason = `external function call to ${block.data?.instance}`;
+            break;
+          }
+        }
+      }
+    }
+    
+    console.log(`      🎯 Validation mode: ${useRawValidation ? 'RAW' : 'ExpectImplication'}${rawValidationReason ? ` (${rawValidationReason})` : ''}`);
+    
+    // ═══════════════════════════════════════════════════════════
+    // Process blocks (for raw mode) OR legacy assertions
+    // ═══════════════════════════════════════════════════════════
+      let processedBlocks = [];
+    let externalPoms = [];
+    let legacyAssertions = null;
+    
+    if (hasBlocks && useRawValidation) {
+      const blockResult = this._processBlocksForTemplate(screen.blocks, screenKey, isPlaywright);
+      processedBlocks = blockResult.blocks;
+      externalPoms = blockResult.externalPoms;
+    } else if (!hasBlocks) {
+      legacyAssertions = {
+        visible: screen.visible || [],
+        hidden: screen.hidden || [],
+        checks: screen.checks || {},
+        hasVisible: (screen.visible || []).length > 0,
+        hasHidden: (screen.hidden || []).length > 0,
+        hasTextChecks: Object.keys(screen.checks?.text || {}).length > 0
+      };
+    }
+    
+    // ═══════════════════════════════════════════════════════════
+    // Calculate POM path with proper format
+    // ═══════════════════════════════════════════════════════════
+    let pomPathValue = null;
+    
+    if (screen.screen) {
+      let screenPath = screen.screen;
+      
+      if (screenPath.startsWith('../')) {
+        pomPathValue = screenPath;
+      } else {
+        screenPath = screenPath.replace(/^screenObjects\//, '');
+        if (!screenPath.endsWith('.js')) {
+          screenPath = screenPath + '.js';
+        }
+        pomPathValue = `../../../screenObjects/${screenPath}`;
+      }
+    }
+    
+    console.log(`      📁 POM path: ${pomPathValue}`);
+    
+    // ═══════════════════════════════════════════════════════════
+    // Build screen object
+    // ═══════════════════════════════════════════════════════════
+     screens.push({
+      screenKey,
+      order,
+      
+      pomClassName: screen.screen 
+        ? this._toPascalCase(screen.screen.replace(/\./g, '').replace(/\//g, '')) 
+        : this._toPascalCase(screenKey),
+      pomPath: pomPathValue,
+      pomInstance: screen.instance || this._toCamelCase(screenKey),
+      
+      hasNavigation: !!navigation,
+      navigation,
+      
+      // ✅ Block info
+      hasBlocks: hasBlocks,
+      blocks: processedBlocks,
+      blockCount: processedBlocks.length,
+      
+      // ✅ FIX: Add external POMs
+      externalPoms: externalPoms,
+      hasExternalPoms: externalPoms.length > 0,
+      
+      // ✅ NEW: Validation mode flags
+      useRawValidation: useRawValidation,
+      useExpectImplication: hasBlocks && !useRawValidation,
+      rawValidationReason: rawValidationReason,
+      
+      // Legacy support
+      hasLegacyAssertions: !hasBlocks && !!legacyAssertions && 
+                           (legacyAssertions.hasVisible || legacyAssertions.hasHidden || legacyAssertions.hasTextChecks),
+      legacyAssertions,
+      useLegacyValidation: !hasBlocks,
+      
+      platformKey,
+      isPlaywright
+    });
   }
+  
+  screens.sort((a, b) => a.order - b.order);
+  
+  screens.forEach((screen, index) => {
+    screen.position = index + 1;
+    screen.totalScreens = screens.length;
+    screen.isFirst = index === 0;
+    screen.isLast = index === screens.length - 1;
+  });
+  
+  result.hasOrderedScreens = screens.length > 0;
+  result.orderedScreens = screens;
+  
+  // Summary
+  const rawCount = screens.filter(s => s.useRawValidation).length;
+  const expectCount = screens.filter(s => s.useExpectImplication).length;
+  const legacyCount = screens.filter(s => s.useLegacyValidation).length;
+  console.log(`   ✅ Prepared ${screens.length} screen(s): ${expectCount} ExpectImplication, ${rawCount} Raw, ${legacyCount} Legacy`);
+  
+  return result;
+}
+
+
+_processBlocksForTemplate(blocks, screenKey, isPlaywright) {
+  console.log(`\n🔍 _processBlocksForTemplate for ${screenKey}`);
+  
+  if (!Array.isArray(blocks)) return [];
+  
+  const processed = [];
+  const screenInstance = this._toCamelCase(screenKey);
+  
+  // Track external POMs that need to be required
+  const externalPoms = new Map();
+  
+  const enabledBlocks = blocks
+    .filter(block => block.enabled !== false)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  
+  enabledBlocks.forEach((block, index) => {
+    const blockType = block.type || 'ui-assertion';
+    const blockData = block.data || block;
+    
+    switch (blockType) {
+      case 'ui-assertion': {
+        const assertions = [];
+        const timeout = blockData.timeout || 30000;
+        
+        // Visible assertions
+        const visibleFields = blockData.visible || block.visible || [];
+        if (Array.isArray(visibleFields) && visibleFields.length > 0) {
+          for (const field of visibleFields) {
+            const safeField = this._sanitizeFieldName(field);
+            assertions.push({
+              assertionType: 'visible',
+              field: safeField,
+              originalField: field,
+              locator: `${screenInstance}.${safeField}`,
+              expectCode: isPlaywright
+                ? `await expect(${screenInstance}.${safeField}).toBeVisible({ timeout: ${timeout} });`
+                : `await expect(${screenInstance}.${safeField}).toBeDisplayed();`
+            });
+          }
+        }
+        
+        // Hidden assertions
+        const hiddenFields = blockData.hidden || block.hidden || [];
+        if (Array.isArray(hiddenFields) && hiddenFields.length > 0) {
+          for (const field of hiddenFields) {
+            const safeField = this._sanitizeFieldName(field);
+            assertions.push({
+              assertionType: 'hidden',
+              field: safeField,
+              originalField: field,
+              locator: `${screenInstance}.${safeField}`,
+              expectCode: isPlaywright
+                ? `await expect(${screenInstance}.${safeField}).toBeHidden({ timeout: ${timeout} });`
+                : `await expect(${screenInstance}.${safeField}).not.toBeDisplayed();`
+            });
+          }
+        }
+        
+        // Text checks (exact)
+        const checks = blockData.checks || block.checks || {};
+        if (checks.text && typeof checks.text === 'object') {
+          for (const [field, expectedText] of Object.entries(checks.text)) {
+            const safeField = this._sanitizeFieldName(field);
+            const resolvedText = this._resolveTemplateArg(expectedText);
+            assertions.push({
+              assertionType: 'text',
+              field: safeField,
+              expectedText: resolvedText,
+              locator: `${screenInstance}.${safeField}`,
+              expectCode: isPlaywright
+                ? `await expect(${screenInstance}.${safeField}).toHaveText(${resolvedText}, { timeout: ${timeout} });`
+                : `await expect(${screenInstance}.${safeField}).toHaveText(${resolvedText});`
+            });
+          }
+        }
+        
+        // Contains checks
+        if (checks.contains && typeof checks.contains === 'object') {
+          for (const [field, expectedText] of Object.entries(checks.contains)) {
+            const safeField = this._sanitizeFieldName(field);
+            const resolvedText = this._resolveTemplateArg(expectedText);
+            assertions.push({
+              assertionType: 'contains',
+              field: safeField,
+              expectedText: resolvedText,
+              locator: `${screenInstance}.${safeField}`,
+              expectCode: isPlaywright
+                ? `await expect(${screenInstance}.${safeField}).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                : `await expect(${screenInstance}.${safeField}).toHaveTextContaining(${resolvedText});`
+            });
+          }
+        }
+        
+        // Truthy checks
+        const truthyFields = blockData.truthy || [];
+        if (Array.isArray(truthyFields) && truthyFields.length > 0) {
+          for (const funcName of truthyFields) {
+            const safeFn = this._sanitizeFieldName(funcName);
+            assertions.push({
+              assertionType: 'truthy',
+              field: safeFn,
+              expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeTruthy();`
+            });
+          }
+        }
+        
+        // Falsy checks
+        const falsyFields = blockData.falsy || [];
+        if (Array.isArray(falsyFields) && falsyFields.length > 0) {
+          for (const funcName of falsyFields) {
+            const safeFn = this._sanitizeFieldName(funcName);
+            assertions.push({
+              assertionType: 'falsy',
+              field: safeFn,
+              expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeFalsy();`
+            });
+          }
+        }
+        
+        if (assertions.length > 0) {
+          processed.push({
+            blockType: 'ui-assertion',
+            position: index + 1,
+            description: block.label || block.description || 'UI assertions',
+            assertions,
+            assertionCount: assertions.length,
+            enabled: true
+          });
+          console.log(`   ✅ Added ui-assertion block with ${assertions.length} assertion(s)`);
+        } else {
+          console.log(`   ⚠️  Skipping empty UI assertion block at position ${index + 1}`);
+        }
+        break;
+      }
+      
+      case 'function-call': {
+        const rawInstance = blockData.instance || block.instance || null;
+        const method = blockData.method || block.method || 'doSomething';
+        const storeAs = blockData.storeAs || block.storeAs || null;
+        const args = (blockData.args || block.args || []).map(arg => this._resolveTemplateArg(arg));
+        const argsString = args.join(', ');
+        
+        // Determine if this is the same POM or an external one
+        let instanceName;
+        let isExternal = false;
+        
+        if (!rawInstance || this._isSamePom(rawInstance, screenKey)) {
+          // Same POM - use screenInstance
+          instanceName = screenInstance;
+        } else {
+          // External POM - need to require it
+          isExternal = true;
+          const cleanName = rawInstance.replace(/\.(wrapper|screen|page)$/i, '');
+          instanceName = this._toCamelCase(cleanName);
+          
+          // Track for external POM requires
+          if (!externalPoms.has(instanceName)) {
+            externalPoms.set(instanceName, {
+              instanceName,
+              className: this._toPascalCase(cleanName) + 'Wrapper',
+              rawInstance: rawInstance,
+              pomPath: `../../../screenObjects/${cleanName}.wrapper.js`
+            });
+          }
+        }
+        
+        let callCode;
+        if (storeAs) {
+          callCode = `const ${storeAs} = await ${instanceName}.${method}(${argsString});`;
+        } else {
+          callCode = `await ${instanceName}.${method}(${argsString});`;
+        }
+        
+        processed.push({
+          blockType: 'function-call',
+          position: index + 1,
+          description: block.label || block.description || `Call ${instanceName}.${method}()`,
+          instance: instanceName,
+          rawInstance: rawInstance,
+          method,
+          args,
+          argsString,
+          storeAs,
+          callCode,
+          isExternal,
+          enabled: true
+        });
+        console.log(`   ✅ Added function-call block: ${instanceName}.${method}()${isExternal ? ' (EXTERNAL)' : ''}`);
+        break;
+      }
+      
+      case 'custom-code': {
+        const code = block.code || blockData.code || '';
+        
+        if (!code.trim()) {
+          console.log(`   ⚠️  Skipping empty custom-code block at position ${index + 1}`);
+          break;
+        }
+        
+        // Indent each line (6 spaces base, 8 if inside test.step)
+        const baseIndent = block.wrapInTestStep ? '        ' : '      ';
+        const formattedCode = code
+          .split('\n')
+          .map(line => `${baseIndent}${line}`)
+          .join('\n');
+        
+        processed.push({
+          blockType: 'custom-code',
+          position: index + 1,
+          description: block.label || block.description || 'Custom code',
+          code: code,
+          formattedCode: formattedCode,
+          testStepName: block.testStepName || null,
+          wrapInTestStep: block.wrapInTestStep || false,
+          enabled: true
+        });
+        console.log(`   ✅ Added custom-code block`);
+        break;
+      }
+      
+      default:
+        console.warn(`⚠️  Unknown block type: ${blockType}`);
+    }
+  });
+  
+  // Renumber positions after filtering
+  processed.forEach((block, idx) => {
+    block.position = idx + 1;
+  });
+  
+  console.log(`   📊 Processed ${processed.length} block(s), ${externalPoms.size} external POM(s)`);
+  
+ return {
+    blocks: processed,
+    externalPoms: Array.from(externalPoms.values())
+  };
+}
+
+// Helper: Sanitize field name for valid JS property access
+_sanitizeFieldName(field) {
+  if (!field) return field;
+  // Replace spaces with camelCase
+  return field.replace(/\s+(.)/g, (_, char) => char.toUpperCase()).replace(/\s+/g, '');
+}
+
+// Helper: Check if instance refers to same POM
+_isSamePom(instance, screenKey) {
+  if (!instance) return true;
+  const normalizedInstance = instance.toLowerCase().replace(/\.(wrapper|screen|page)$/i, '');
+  const normalizedScreen = screenKey.toLowerCase().replace(/\.(wrapper|screen|page)$/i, '');
+  return normalizedInstance.includes(normalizedScreen) || normalizedScreen.includes(normalizedInstance);
+}
+
+// Helper: Sanitize field name for valid JS property access
+_sanitizeFieldName(field) {
+  if (!field) return field;
+  // If field has spaces or special chars, we need bracket notation
+  // But for now, just replace spaces with camelCase
+  return field.replace(/\s+(.)/g, (_, char) => char.toUpperCase()).replace(/\s+/g, '');
+}
+
+// Helper: Check if instance refers to same POM
+_isSamePom(instance, screenKey) {
+  if (!instance) return true;
+  const normalizedInstance = instance.toLowerCase().replace(/\.(wrapper|screen|page)$/i, '');
+  const normalizedScreen = screenKey.toLowerCase().replace(/\.(wrapper|screen|page)$/i, '');
+  return normalizedInstance.includes(normalizedScreen) || normalizedScreen.includes(normalizedInstance);
+}
+
+
+/**
+ * Resolve template argument
+ * 
+ * Converts:
+ * - "{{ctx.data.x}}" → "ctx.data.x"
+ * - "{{email}}" → "ctx.data.email"
+ * - "ctx.data.x" → "ctx.data.x"
+ * - "result.data.x" → "result.data.x"
+ * - "literal" → "'literal'"
+ * 
+ * @param {string} arg - Argument to resolve
+ * @returns {string} Resolved argument
+ */
+_resolveTemplateArg(arg) {
+  if (typeof arg !== 'string') return String(arg);
+  
+  // Template variable: {{ctx.data.x}} → ctx.data.x
+  if (arg.startsWith('{{') && arg.endsWith('}}')) {
+    const inner = arg.slice(2, -2);
+    // If it's already ctx.data or result.data, use as-is
+    if (inner.startsWith('ctx.data.') || inner.startsWith('result.data.')) {
+      return inner;
+    }
+    // Otherwise, assume it's a data field
+    return `ctx.data.${inner}`;
+  }
+  
+  // Already a context reference - use as-is
+  if (arg.startsWith('ctx.data.') || arg.startsWith('result.data.')) {
+    return arg;
+  }
+  
+  // Number - use as-is
+  if (!isNaN(arg)) {
+    return arg;
+  }
+  
+  // Boolean - use as-is
+  if (arg === 'true' || arg === 'false') {
+    return arg;
+  }
+  
+  // Literal string - wrap in quotes
+  return `'${arg}'`;
+}
 
   /**
  * Determine if this is an INDUCER or VERIFY test
@@ -246,15 +808,16 @@ console.log(`   âœ… Generated fileName: ${fileName}`);
  * 
  * @returns {object} { mode: 'inducer'|'verify', transition: {...} }
  */
-_determineTestMode(ImplClass, platform, stateName) {
-  console.log(`\nðŸ” Determining test mode for ${stateName} on ${platform}`);
+_determineTestMode(source, platform, stateName) {
+  console.log(`\n🔍 Determining test mode for ${stateName} on ${platform}`);
   
-  // Find transition TO this state
-  const xstateConfig = ImplClass.xstateConfig;
+  // Handle both ImplClass and metadata being passed
+  const xstateConfig = source.xstateConfig || source.meta?.xstateConfig || source;
+  
   let transition = null;
   
   // Check all states for transitions TO stateName
-  if (xstateConfig.states) {
+  if (xstateConfig && xstateConfig.states) {
     for (const [sourceState, sourceConfig] of Object.entries(xstateConfig.states)) {
       for (const [event, target] of Object.entries(sourceConfig.on || {})) {
         const targetState = typeof target === 'string' ? target : target.target;
@@ -274,7 +837,7 @@ _determineTestMode(ImplClass, platform, stateName) {
   
   // No transition found = initial state (always inducer)
   if (!transition) {
-    console.log(`   âœ… Mode: INDUCER (initial state)`);
+    console.log(`   ✅ Mode: INDUCER (initial state or no states found)`);
     return { mode: 'inducer', transition: null };
   }
   
@@ -282,10 +845,10 @@ _determineTestMode(ImplClass, platform, stateName) {
   const canInduce = transition.platforms.includes(platform);
   
   if (canInduce) {
-    console.log(`   âœ… Mode: INDUCER (${platform} in platforms: ${transition.platforms})`);
+    console.log(`   ✅ Mode: INDUCER (${platform} in platforms: ${transition.platforms})`);
     return { mode: 'inducer', transition };
   } else {
-    console.log(`   âœ… Mode: VERIFY (${platform} NOT in platforms: ${transition.platforms})`);
+    console.log(`   ✅ Mode: VERIFY (${platform} NOT in platforms: ${transition.platforms})`);
     return { mode: 'verify', transition };
   }
 }
@@ -1214,232 +1777,234 @@ _findImplicationFile(status, currentFilePath) {
   /**
    * Build template context from metadata
    */
-_buildContext(metadata, platform, ImplClass) {  // âœ… Add ImplClass parameter!
+_buildContext(metadata, platform, transition = null, options = {}) {
+  const { forceRawValidation = false } = options;
   const implClassName = metadata.className;
   const targetStatus = metadata.status;
   
-  // âœ… NEW: Determine test mode
-  const { mode, transition } = this._determineTestMode(
-    ImplClass,  // âœ… Use parameter, not metadata.ImplClass!
-    platform,
-    targetStatus
-  );
+  // Determine test mode
+const { mode } = this._determineTestMode(
+  metadata,  // ← Use metadata instead
+  platform,
+  targetStatus
+);
   
   const isInducer = mode === 'inducer';
   const isVerify = mode === 'verify';
-    const actionName = this._generateActionName(metadata); 
-    const testFileName = this._generateFileName(metadata, platform, { 
-  event: this.currentTransition?.event 
-});
+  const actionName = this._generateActionName(metadata); 
+  const testFileName = this._generateFileName(metadata, platform, { 
+    event: this.currentTransition?.event 
+  });
+  
+  // Platform detection
+  const isPlaywright = platform === 'web' || platform === 'cms';
+  const isMobile = platform.startsWith('mobile-');
+  
+  // Prerequisites
+  const requiresPrerequisites = !!metadata.previousStatus;
+  const hasPrerequisites = requiresPrerequisites;
+  
+  // Action description
+  const actionDescription = metadata.actionDetails?.description || 
+                            `Transition to ${targetStatus} state`;
+  
+  // Entity logic
+  const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
+  const entityName = this._inferEntityName(metadata);
+  
+  // Delta fields
+  const deltaFields = this._extractDeltaFields(metadata.entry, targetStatus);
+  const hasDeltaLogic = deltaFields.length > 0;
+  
+  // Action details
+  const hasActionDetails = !!metadata.actionDetails;
+  
+  // Navigation extraction
+  const navigation = hasActionDetails 
+    ? this._extractNavigation(metadata.actionDetails)
+    : null;
+  
+  // Test cases
+  const testCases = this._generateTestCases(metadata, entityName);
+  
+  // Calculate smart import paths
+  const paths = this._calculateImportPaths();
+  
+  // Extract action from triggeredBy
+  const triggeredByAction = this._extractTriggeredByAction(metadata);
+  const transitionInfo = this._extractTransitionInfo(metadata, targetStatus);
+  const uiScreens = this._getUIScreensForPlatform(metadata.mirrorsOn, platform);
+  const suggestedScreens = this._extractSuggestedScreens(uiScreens);
+  
+  // Generate smart TODO
+  const smartTODOComment = this._generateSmartTODO(
+    transitionInfo,
+    suggestedScreens,
+    { implClassName, actionName, testFileName, platform }
+  );
+  
+  // ═══════════════════════════════════════════════════════════
+  // LEGACY: UI validation screens (existing code)
+  // ═══════════════════════════════════════════════════════════
+  const uiValidation = {
+    hasValidation: false,
+    screens: []
+  };
+
+  if (metadata.mirrorsOn?.UI) {
+    const platformKey = this._getPlatformKeyForMirrorsOn(platform);
     
-    // Platform detection
-    const isPlaywright = platform === 'web' || platform === 'cms';
-    const isMobile = platform.startsWith('mobile-');
+    if (metadata.mirrorsOn.UI[platformKey]) {
+      const validationScreens = prepareValidationScreens(
+        metadata.mirrorsOn.UI,
+        platformKey,
+        {}
+      );
+      
+      uiValidation.hasValidation = validationScreens.length > 0;
+      uiValidation.screens = validationScreens;
+      
+      console.log(`   ✅ Function-aware validation: ${validationScreens.length} screens`);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: Phase 3.7 - Ordered Screens with Blocks
+  // ═══════════════════════════════════════════════════════════
+  // IMPORTANT: This must be OUTSIDE the if block above!
+  // Get force raw flag from options (comes from UI/API)
+  
+  // Extract ordered screens with force flag
+ const orderedScreensResult = this._extractOrderedScreensForValidation(
+    metadata, 
+    platform,
+    { forceRawValidation }  // ← ADD THIS
+  );
+  const useBlocksValidation = orderedScreensResult.usesBlocks;
+  const useOrderedScreens = orderedScreensResult.hasOrderedScreens && 
+                             (orderedScreensResult.usesBlocks || 
+                              orderedScreensResult.orderedScreens.some(s => s.hasNavigation));
+  const useLegacyValidation = !useBlocksValidation && 
+                               !useOrderedScreens && 
+                               uiValidation.hasValidation;
+  
+  console.log(`\n📊 Validation Mode Decision:`);
+  console.log(`   useBlocksValidation: ${useBlocksValidation}`);
+  console.log(`   useOrderedScreens: ${useOrderedScreens}`);
+  console.log(`   useLegacyValidation: ${useLegacyValidation}`);
+  // ═══════════════════════════════════════════════════════════
+  
+  
+  // Build context
+  const context = {
+    // Header
+    timestamp: new Date().toISOString(),
+    implClassName,
+    platform,
+    platformKey: this._getPlatformKeyForMirrorsOn(platform),
+    targetStatus,
+    previousStatus: metadata.previousStatus,
+    meta: metadata.meta || {},
+    
+    // Transition context
+    transitionEvent: this.currentTransition?.event || null,
+    transitionFrom: this.currentTransition?.fromState || metadata.previousStatus || null,
+    transitionTo: targetStatus,
+    hasTransitionContext: !!(this.currentTransition?.event),
+    
+    // Platform
+    isPlaywright,
+    isMobile,
+    testMode: mode,
+    isInducer,
+    isVerify,
+    
+    // Paths
+    testContextPath: paths.testContext,
+    expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
+    testPlannerPath: paths.testPlanner,
+    testSetupPath: paths.testSetup,
+    
+    // Function
+    actionName,
+    actionDescription,
+    testFileName,
+    testDescription: `${targetStatus} State Transition`,
+    
+    // Descriptions
+    transitionDescription: this.currentTransition?.event 
+      ? `${this.currentTransition.event} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+      : `Transition to ${targetStatus} state`,
+    deltaLabel: this.currentTransition?.event
+      ? `${this._toTitleCase(this.currentTransition.event.replace(/_/g, ' '))} (${this.currentTransition.fromState || 'unknown'} → ${targetStatus})`
+      : `${targetStatus} State`,
     
     // Prerequisites
-    const requiresPrerequisites = !!metadata.previousStatus;
-    const hasPrerequisites = requiresPrerequisites;
+    requiresPrerequisites,
+    hasPrerequisites,
+    prerequisiteImports: [],
     
-    // Action description
-    const actionDescription = metadata.actionDetails?.description || 
-                              `Transition to ${targetStatus} state`;
+    // Options
+    optionParams: this._generateOptionParams(isPlaywright, hasEntityLogic),
     
-    // Entity logic (for things like bookings, users, etc.)
-    const hasEntityLogic = this._shouldGenerateEntityLogic(metadata);
-  
-  // ðŸ› ADD THIS DEBUG:
-  console.log(`\nðŸ› DEBUG hasEntityLogic:`);
-  console.log(`   entry: ${JSON.stringify(metadata.entry)}`);
-  console.log(`   entry.toString(): ${metadata.entry?.toString()}`);
-  console.log(`   hasEntityLogic: ${hasEntityLogic}`);
-    const entityName = this._inferEntityName(metadata);
+    // Entity logic
+    hasEntityLogic,
+    entityName,
     
-
+    // Action
+    allTransitions: metadata.allTransitions || [],
+    hasMultipleTransitions: (metadata.allTransitions || []).length > 1,
+    hasActionDetails: !!metadata.actionDetails,
+    actionDetails: metadata.actionDetails,
+    hasStoreAs: metadata.actionDetails?.steps?.some(step => step.storeAs) || false,
+    storeAsFields: metadata.actionDetails?.storeAsFields || [],
+    hasNavigation: !!navigation,
+    navigation: navigation,
+    triggerButton: metadata.triggerButton,
+    navigationExample: this._generateNavigationExample(platform, metadata),
+    actionExample: this._generateActionExample(metadata, platform),
+    appObjectName: isMobile ? 'app' : 'page',
+    smartTODOComment,
+    transitionInfo,
+    suggestedScreens,
     
-   // Line 649-651 (BEFORE calling _extractDeltaFields)
-console.log('\nðŸ› DEBUG Delta Extraction:');
-console.log(`   metadata.entry:`, metadata.entry);
-console.log(`   typeof:`, typeof metadata.entry);
-const deltaFields = this._extractDeltaFields(metadata.entry, targetStatus);
-console.log(`   deltaFields:`, deltaFields);
-
-    const hasDeltaLogic = deltaFields.length > 0;
+    // Triggered by
+    hasTriggeredByAction: triggeredByAction.hasAction,
+    triggeredByActionCall: triggeredByAction.actionCall,
+    triggeredByInstanceName: triggeredByAction.instanceName,
     
-     // Action details
-    const hasActionDetails = !!metadata.actionDetails;
+    // Delta
+    hasDeltaLogic,
+    deltaFields,
     
-    // âœ… ADD NAVIGATION EXTRACTION
-    const navigation = hasActionDetails 
-      ? this._extractNavigation(metadata.actionDetails)
-      : null;
+    // Helper functions
+    hasHelperFunctions: false,
+    helperFunctions: [],
+    
+    // Legacy UI Validation
+    hasUIValidation: uiValidation.hasValidation,
+    validationScreens: uiValidation.screens,
+    useExpectImplication: true,
+    
+    // ✅ Phase 3.7: Ordered Screens with Blocks
+    hasOrderedScreens: orderedScreensResult.hasOrderedScreens,
+    orderedScreens: orderedScreensResult.orderedScreens,
+    orderedScreenCount: orderedScreensResult.orderedScreens.length,
+    useBlocksValidation: useBlocksValidation,
+    useOrderedScreens: useOrderedScreens,
+    useLegacyValidation: useLegacyValidation,
+    hasAnyValidation: useBlocksValidation || useOrderedScreens || useLegacyValidation,
     
     // Test cases
-    const testCases = this._generateTestCases(metadata, entityName);
+    testCases,
+    defaultTestDataPath: 'tests/data/shared.json',
     
-    // Ã¢Å“Â¨ NEW: Calculate smart import paths
-    const paths = this._calculateImportPaths();
-    
-    // Ã¢Å“Â¨ FIX #5: Extract action from triggeredBy
-    const triggeredByAction = this._extractTriggeredByAction(metadata);
-    const transitionInfo = this._extractTransitionInfo(metadata, targetStatus);
-const uiScreens = this._getUIScreensForPlatform(metadata.mirrorsOn, platform);
-const suggestedScreens = this._extractSuggestedScreens(uiScreens);
-
-// Generate smart TODO (not used in template, can remove later)
-const smartTODOComment = this._generateSmartTODO(
-  transitionInfo,
-  suggestedScreens,
-  { implClassName, actionName, testFileName, platform }
-);
-    
-    // Ã¢Å“Â¨ FIX #6: Extract UI validation screens
-    const uiValidation = {
-  hasValidation: false,
-  screens: []
-};
-
-if (metadata.mirrorsOn?.UI) {
-  const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+    // Change log
+    changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : 'State'}`,
+  };
   
-  if (metadata.mirrorsOn.UI[platformKey]) {
-    const validationScreens = prepareValidationScreens(
-      metadata.mirrorsOn.UI,
-      platformKey,
-      {} // testData resolved at runtime
-    );
-    
-    uiValidation.hasValidation = validationScreens.length > 0;
-    uiValidation.screens = validationScreens;
-    
-    console.log(`   âœ… Function-aware validation: ${validationScreens.length} screens`);
-  }
+  return context;
 }
-    
-    // Build context
-    const context = {
-  // Header
-  timestamp: new Date().toISOString(),
-  implClassName,
-  platform,
-  platformKey: this._getPlatformKeyForMirrorsOn(platform),
-  targetStatus,
-  previousStatus: metadata.previousStatus,
-  meta: metadata.meta || {},
-  
-  // âœ… NEW: Transition context
-  transitionEvent: this.currentTransition?.event || null,
-  transitionFrom: this.currentTransition?.fromState || metadata.previousStatus || null,
-  transitionTo: targetStatus,
-  hasTransitionContext: !!(this.currentTransition?.event),
-  
-  // Platform
-  isPlaywright,
-  isMobile,
-
-  testMode: mode,
-  isInducer,
-  isVerify,
-  
-  // Paths
-  testContextPath: paths.testContext,
-  expectImplicationPath: paths.testContext.replace('/TestContext', '/ExpectImplication'),
-  testPlannerPath: paths.testPlanner,
-  testSetupPath: paths.testSetup,
-  
-  // Function
-  actionName,
-  actionDescription,  // Keep this for backward compatibility
-  testFileName,
-  testDescription: `${targetStatus} State Transition`,
-  
-  // âœ… NEW: Better descriptions
-  transitionDescription: this.currentTransition?.event 
-    ? `${this.currentTransition.event} (${this.currentTransition.fromState || 'unknown'} â†’ ${targetStatus})`
-    : `Transition to ${targetStatus} state`,
-  deltaLabel: this.currentTransition?.event
-    ? `${this._toTitleCase(this.currentTransition.event.replace(/_/g, ' '))} (${this.currentTransition.fromState || 'unknown'} â†’ ${targetStatus})`
-    : `${targetStatus} State`,
-      
-      // Prerequisites
-      requiresPrerequisites,
-      hasPrerequisites,
-      prerequisiteImports: [], // TODO: Extract from triggeredBy
-      
-      // Options
-      optionParams: this._generateOptionParams(isPlaywright, hasEntityLogic),
-      
-      // Entity logic
-      hasEntityLogic,
-      entityName,
-      
-      // Action
-     // âœ… NEW: Support multiple transitions
-  allTransitions: metadata.allTransitions || [],
-  hasMultipleTransitions: (metadata.allTransitions || []).length > 1,
-  
-  // Keep backward compatibility (first transition)
-  hasActionDetails: !!metadata.actionDetails,
-  actionDetails: metadata.actionDetails,
-  // ✅ Check if any step has storeAs
-  hasStoreAs: metadata.actionDetails?.steps?.some(step => step.storeAs) || false,
-  // ✅ storeAsFields at root level for template
-  storeAsFields: metadata.actionDetails?.storeAsFields || [],
-      hasNavigation: !!navigation, // ✅ ADD THIS
-      navigation: navigation,       // âœ… ADD THIS
-      triggerButton: metadata.triggerButton,
-      navigationExample: this._generateNavigationExample(platform, metadata),
-      actionExample: this._generateActionExample(metadata, platform),
-      appObjectName: isMobile ? 'app' : 'page',
-   smartTODOComment,
-transitionInfo,
-suggestedScreens, 
-      
-      // Ã¢Å“Â¨ FIX #5: Extracted action from triggeredBy
-      hasTriggeredByAction: triggeredByAction.hasAction,
-      triggeredByActionCall: triggeredByAction.actionCall,
-      triggeredByInstanceName: triggeredByAction.instanceName,
-      
-      // Delta
-      hasDeltaLogic,
-      deltaFields,
-      
-      // Helper functions
-      hasHelperFunctions: false,
-      helperFunctions: [],
-      
-      // Ã¢Å“Â¨ FIX #6: UI Validation screens
-      hasUIValidation: uiValidation.hasValidation,
-      validationScreens: uiValidation.screens,
-      useExpectImplication: true,
-      
-      // Test cases
-      testCases,
-      defaultTestDataPath: 'tests/data/shared.json',
-      
-      // Change log
-      changeLogLabel: `${targetStatus} ${hasEntityLogic ? entityName : 'State'}`,
-    };
-    // âœ… ADD THIS DEBUG
-console.log('\nðŸ› DEBUG Context:');
-console.log(`   meta:`, context.meta);
-console.log(`   meta.entity:`, context.meta?.entity);
-console.log(`   hasDeltaLogic:`, context.hasDeltaLogic);
-console.log(`   deltaFields:`, context.deltaFields);
-// âœ… ADD THIS DEBUG RIGHT BEFORE return context;
-console.log('\nðŸ› DEBUG Navigation Context:');
-console.log('   hasNavigation:', context.hasNavigation);
-console.log('   navigation:', JSON.stringify(context.navigation, null, 2));
-console.log('   hasActionDetails:', context.hasActionDetails);
-console.log('   actionDetails.navigationMethod:', context.actionDetails?.navigationMethod);
-console.log('   actionDetails.navigationFile:', context.actionDetails?.navigationFile);
-console.log('');
-// âœ… ADD THIS DEBUG RIGHT BEFORE return context;
-console.log('\nðŸ› DEBUG CONTEXT BEFORE TEMPLATE:');
-console.log('   platformKey:', context.platformKey);
-console.log('   platform:', context.platform);
-console.log('');
-    return context;
-  }
   
   /**
    * Calculate smart import paths based on file locations
@@ -1458,18 +2023,17 @@ console.log('');
    * 
    * @returns {object} { testContext, testPlanner }
    */
-  _calculateImportPaths() {
-    // Get the Implication file path (absolute or relative)
-    const implFilePath = this.implFilePath || '';
-    
-    if (!implFilePath) {
-      // Fallback to safe default
-      console.log('   Ã¢Å¡Â Ã¯Â¸Â  No implFilePath set, using default paths');
-      return {
-  testContext: `${relativePath}/TestContext`,
-  testPlanner: `${relativePath}/TestPlanner`,
-  testSetup: `${relativePath.replace('/ai-testing/utils', '/helpers')}/TestSetup`
-};
+ _calculateImportPaths() {
+  const implFilePath = this.implFilePath || '';
+  
+  if (!implFilePath) {
+    // Fallback to safe default
+    console.log('   ⚠️  No implFilePath set, using default paths');
+    return {
+      testContext: '../../ai-testing/utils/TestContext',
+      testPlanner: '../../ai-testing/utils/TestPlanner',
+      testSetup: '../../helpers/TestSetup'
+    };
     }
     
     // Get directory of Implication file (where test will be generated)

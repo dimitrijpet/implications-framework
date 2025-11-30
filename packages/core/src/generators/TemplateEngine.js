@@ -155,6 +155,15 @@ render(templateName, context) {
       return str.split(separator || ',');
     });
 
+    hbs.registerHelper('eq', (a, b) => {
+      return a === b;
+    });
+
+    /**
+     * Simple not-equal (for subexpressions)
+     */
+    hbs.registerHelper('neq', (a, b) => a !== b);
+
     hbs.registerHelper('formatRequirement', function(key, value) {
       // Handle boolean
       if (typeof value === 'boolean') {

@@ -98,6 +98,7 @@ async function updateImplicationSetup(implFilePath, testFileName, transition, im
  */
 router.post('/unit-test', async (req, res) => {
   try {
+    console.log('=== STARTING GENERATION ===');
     console.log('🔍 Received request body:', JSON.stringify(req.body, null, 2));
     
     const { 
@@ -107,7 +108,8 @@ router.post('/unit-test', async (req, res) => {
       platform = 'web', 
       state = null, 
       targetState = null,
-      transitions = []  // ✅ Extract transitions!
+      transitions = [],
+      forceRawValidation = false  // ← ADD THIS
     } = req.body;
     
     const implFilePathFinal = implPath || filePath || implFilePath;
@@ -127,11 +129,12 @@ router.post('/unit-test', async (req, res) => {
       });
     }
     
-    console.log('🎯 Generate Unit Test Request:');
+     console.log('🎯 Generate Unit Test Request:');
     console.log(`   Implication: ${implFilePathFinal}`);
     console.log(`   Platform: ${platform}`);
     console.log(`   State: ${stateToUse || 'all states'}`);
     console.log(`   Transitions to generate: ${transitions.length}`);
+    console.log(`   Force Raw Validation: ${forceRawValidation}`);  // ← ADD THIS
     
     const generator = new UnitTestGenerator({});
     
@@ -141,7 +144,7 @@ router.post('/unit-test', async (req, res) => {
     // ✅ Generate multiple tests - one per transition!
     const results = [];
     
-    if (transitions.length > 0) {
+   if (transitions.length > 0) {
       console.log('\n🔄 Generating transition tests...');
       
       for (const transition of transitions) {
@@ -152,7 +155,8 @@ router.post('/unit-test', async (req, res) => {
           state: stateToUse,
           transition: transition,
           event: transition.event,
-          preview: false
+          preview: false,
+          forceRawValidation  // ← ADD THIS
         });
         
         results.push(result);
@@ -178,14 +182,15 @@ router.post('/unit-test', async (req, res) => {
           );
         }
       }
-    } else {
+  } else {
       // Fallback: Generate single test (old behavior)
       console.log('\n📝 Generating single test (no transitions)');
       
       const result = generator.generate(implFilePathFinal, {
         platform,
         state: stateToUse,
-        preview: false
+        preview: false,
+        forceRawValidation  // ← ADD THIS
       });
       
       results.push(result);
