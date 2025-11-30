@@ -12,6 +12,10 @@ import ElementList from '../SourceAttribution/ElementList';
 import SourceLegend from '../SourceAttribution/SourceLegend';
 import BlockList from './BlockList';
 import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
+// ✅ ADD these imports
+import PlatformSectionWithOrdering from './PlatformSectionWithOrdering';
+import { screensObjectToArray, screensArrayToObject } from './screenOrderingUtils';
+
 import { 
   collectVariablesFromTransition, 
   collectVariablesFromState,
@@ -613,79 +617,73 @@ const getAvailablePlatforms = () => {
 
       {/* Platforms List */}
       <div className="space-y-4">
-        {platformNames.map(platformName => {
-          const platformData = platforms[platformName];
-          
-          // Normalize screens to array for display
-          const screens = normalizeScreens(platformData.screens);
+      {platformNames.map(platformName => {
+  const platformData = platforms[platformName];
 
-          return (
-           <PlatformSection
-  key={platformName}
-  platformName={platformName}
-  platformData={platformData}
-  screens={screens}
-  editMode={editMode}
-  projectPath={projectPath}
-  theme={theme}
-  storedVariables={storedVariables}  // ✅ ADD THIS
-  onScreenUpdate={(screenName, updatedScreen) => {
-                console.log('🔧 onScreenUpdate called:', { screenName, updatedScreen });
-                
-                setEditedUI(prev => {
-                  if (!prev || !prev[platformName]) return prev;
-                  
-                  const platform = prev[platformName];
-                  
-                  return {
-                    ...prev,
-                    [platformName]: {
-                      ...platform,
-                      screens: {
-                        ...platform.screens,
-                        [screenName]: updatedScreen
-                      }
-                    }
-                  };
-                });
-                
-                setHasChanges(true);
-                
-                const screenKey = `${platformName}.${screenName}`;
-                setEditedScreens(prev => {
-                  const newSet = new Set(prev);
-                  newSet.add(screenKey);
-                  return newSet;
-                });
-              }}
-              onAddScreen={() => {
-                setAddScreenModal({
-                  isOpen: true,
-                  platformName,
-                  platformDisplayName: platformData.displayName || platformName
-                });
-              }}
-              onDeleteScreen={(screenName) => {
-                const screen = platformData.screens[screenName];
-                setDeleteConfirmDialog({
-                  isOpen: true,
-                  screen,
-                  platformName,
-                  platformDisplayName: platformData.displayName || platformName,
-                  screenName
-                });
-              }}
-              onCopyScreen={(screen) => {
-                setCopyScreenDialog({
-                  isOpen: true,
-                  screen,
-                  platformName,
-                  platformDisplayName: platformData.displayName || platformName
-                });
-              }}
-            />
-          );
-        })}
+  return (
+    <PlatformSectionWithOrdering
+      key={platformName}
+      platformName={platformName}
+      platformData={platformData}
+      editMode={editMode}
+      projectPath={projectPath}
+      theme={theme}
+      storedVariables={storedVariables}
+      onScreensChange={(newScreens) => {
+        console.log('🔄 Platform screens changed:', platformName, newScreens);
+        
+        setEditedUI(prev => {
+          if (!prev || !prev[platformName]) return prev;
+          
+          return {
+            ...prev,
+            [platformName]: {
+              ...prev[platformName],
+              screens: newScreens
+            }
+          };
+        });
+        
+        setHasChanges(true);
+        
+        // Mark all screens in this platform as edited
+        Object.keys(newScreens).forEach(screenName => {
+          const screenKey = `${platformName}.${screenName}`;
+          setEditedScreens(prev => {
+            const newSet = new Set(prev);
+            newSet.add(screenKey);
+            return newSet;
+          });
+        });
+      }}
+      onAddScreen={() => {
+        setAddScreenModal({
+          isOpen: true,
+          platformName,
+          platformDisplayName: platformData.displayName || platformName
+        });
+      }}
+      onDeleteScreen={(screenName) => {
+        const screen = platformData.screens?.[screenName]?.[0] || platformData.screens?.[screenName];
+        setDeleteConfirmDialog({
+          isOpen: true,
+          screen,
+          platformName,
+          platformDisplayName: platformData.displayName || platformName,
+          screenName
+        });
+      }}
+      onCopyScreen={(screen) => {
+        setCopyScreenDialog({
+          isOpen: true,
+          screen,
+          platformName,
+          platformDisplayName: platformData.displayName || platformName
+        });
+      }}
+    />
+  );
+})}
       </div>
 
       {/* Modals */}

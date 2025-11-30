@@ -10,6 +10,109 @@ import { loadConfig } from '../services/configService.js';
 
 const router = express.Router();
 
+/**
+ * GET /api/discovery/screens
+ * Scan project for POM/Screen Object files and return list
+ */
+router.get('/screens', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    
+    if (!projectPath) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'projectPath is required' 
+      });
+    }
+    
+    console.log(`🔍 Scanning for screen objects in: ${projectPath}`);
+    
+    // Load config to find screenObjects directory
+    const config = await loadConfig(projectPath);
+    const screenObjectsDir = config?.paths?.screenObjects || 'tests/screenObjects';
+    const fullPath = path.join(projectPath, screenObjectsDir);
+    
+    // Check if directory exists
+    if (!await fs.pathExists(fullPath)) {
+      console.log(`⚠️ Screen objects directory not found: ${fullPath}`);
+      return res.json({ 
+        success: true, 
+        screens: [],
+        message: `Directory not found: ${screenObjectsDir}`
+      });
+    }
+    
+    // Scan for .js files recursively
+    const screens = [];
+    
+    async function scanDirectory(dir, relativePath = '') {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const entryPath = path.join(dir, entry.name);
+        const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        
+        if (entry.isDirectory()) {
+          // Recurse into subdirectories
+          await scanDirectory(entryPath, entryRelative);
+        } else if (entry.isFile() && entry.name.endsWith('.js')) {
+          // Parse the file to extract class info
+          try {
+            const content = await fs.readFile(entryPath, 'utf-8');
+            
+            // Extract class name
+            const classMatch = content.match(/class\s+(\w+)/);
+            const className = classMatch ? classMatch[1] : entry.name.replace('.js', '');
+            
+            // Extract instance name (commonly used variable name)
+            // Look for patterns like: const searchBar = new SearchBar()
+            const instanceMatch = content.match(/(?:const|let|var)\s+(\w+)\s*=\s*new\s+\w+/);
+            const instanceName = instanceMatch ? instanceMatch[1] : null;
+            
+            // Get the POM name (file name without extension, or with path for nested)
+            const pomName = entryRelative.replace('.js', '');
+            
+            screens.push({
+              name: pomName,
+              className: className,
+              instanceName: instanceName,
+              path: entryRelative,
+              fullPath: entryPath
+            });
+            
+          } catch (parseError) {
+            console.warn(`⚠️ Could not parse ${entryPath}:`, parseError.message);
+            // Still add it with basic info
+            screens.push({
+              name: entry.name.replace('.js', ''),
+              className: entry.name.replace('.js', ''),
+              path: entryRelative,
+              fullPath: entryPath
+            });
+          }
+        }
+      }
+    }
+    
+    await scanDirectory(fullPath);
+    
+    console.log(`✅ Found ${screens.length} screen objects`);
+    
+    res.json({
+      success: true,
+      screens: screens,
+      directory: screenObjectsDir
+    });
+    
+  } catch (error) {
+    console.error('❌ Screen discovery error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
 router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;

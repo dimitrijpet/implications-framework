@@ -1795,11 +1795,10 @@ function screenHasChangesDirectObject(newScreen, originalNode) {
 }
 
 
-// ============================================
-// ALSO ADD: buildScreenObjectAstWithBlocks
-// ============================================
-// This is like buildScreenObjectAst but with blocks support
-
+/**
+ * ✅ FIXED: Build screen object AST with blocks support
+ * Now includes: navigation, order
+ */
 function buildScreenObjectAstWithBlocks(screen) {
   const props = [];
   
@@ -1833,6 +1832,56 @@ function buildScreenObjectAstWithBlocks(screen) {
       t.identifier('instance'),
       t.stringLiteral(screen.instance)
     ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: order (for screen execution order)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.order !== undefined) {
+    props.push(t.objectProperty(
+      t.identifier('order'),
+      t.numericLiteral(screen.order)
+    ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: navigation (for screen navigation before validation)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.navigation && (screen.navigation.pomName || screen.navigation.method)) {
+    const navProps = [];
+    
+    if (screen.navigation.pomName) {
+      navProps.push(t.objectProperty(
+        t.identifier('pomName'), 
+        t.stringLiteral(screen.navigation.pomName)
+      ));
+    }
+    if (screen.navigation.instanceName) {
+      navProps.push(t.objectProperty(
+        t.identifier('instanceName'), 
+        t.stringLiteral(screen.navigation.instanceName)
+      ));
+    }
+    if (screen.navigation.method) {
+      navProps.push(t.objectProperty(
+        t.identifier('method'), 
+        t.stringLiteral(screen.navigation.method)
+      ));
+    }
+    if (screen.navigation.args && screen.navigation.args.length > 0) {
+      navProps.push(t.objectProperty(
+        t.identifier('args'),
+        t.arrayExpression(screen.navigation.args.map(arg => t.stringLiteral(String(arg))))
+      ));
+    }
+    
+    if (navProps.length > 0) {
+      console.log(`    🧭 Including navigation for screen`);
+      props.push(t.objectProperty(
+        t.identifier('navigation'),
+        t.objectExpression(navProps)
+      ));
+    }
   }
   
   // visible
@@ -1985,7 +2034,6 @@ function buildScreenObjectAstWithBlocks(screen) {
   // ═══════════════════════════════════════════════════════════
   if (screen.blocks && Array.isArray(screen.blocks) && screen.blocks.length > 0) {
     console.log(`    🧱 Including ${screen.blocks.length} blocks`);
-    console.log('    🔍 DEBUG blocks data:', JSON.stringify(screen.blocks, null, 2));
     
     const blockElements = screen.blocks.map(block => {
       const blockProps = [];
