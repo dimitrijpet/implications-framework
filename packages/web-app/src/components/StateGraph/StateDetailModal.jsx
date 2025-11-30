@@ -7,7 +7,7 @@
 // - DynamicContextFields with add/delete
 // - GenerateTestsButton with discoveryResult
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import { useSuggestions } from '../../hooks/useSuggestions';
@@ -93,63 +93,123 @@ export default function StateDetailModal({
   // Add new state near the top with other useState calls
 const [storedVariables, setStoredVariables] = useState([]);
 
+ // ✅ PHASE 3.6: Build allStates map with FULL xstateConfig (including actionDetails)
+  const allStatesMap = useMemo(() => {
+    if (!discoveryResult?.files?.implications) return {};
+    
+    const map = {};
+    discoveryResult.files.implications.forEach(imp => {
+      const status = imp.metadata?.status;
+      if (status) {
+        map[status] = {
+          id: status,
+          className: imp.metadata.className,
+          mirrorsOn: imp.metadata.mirrorsOn || {},
+          // ✅ CRITICAL: Include the full xstateConfig with actionDetails!
+          xstateConfig: imp.metadata.xstateConfig || {},
+          meta: imp.metadata
+        };
+      }
+    });
+    console.log(`📦 Built allStatesMap with ${Object.keys(map).length} states`);
+    return map;
+  }, [discoveryResult?.files?.implications]);
+
+  // Get all transitions from discovery
+  const allTransitions = useMemo(() => {
+    return discoveryResult?.transitions || [];
+  }, [discoveryResult?.transitions]);
+
+  // ✅ PHASE 3.6: Compute incoming transitions WITH actionDetails
+  const incomingTransitions = useMemo(() => {
+    if (!allTransitions.length || !state?.meta?.status) return [];
+    
+    const currentStatus = state.meta.status;
+    console.log(`🔍 Finding incoming transitions for "${currentStatus}"...`);
+    
+    // Find all transitions that TARGET this state
+    const incoming = allTransitions.filter(t => {
+      const target = (t.to || t.target || '').toLowerCase();
+      return target === currentStatus.toLowerCase();
+    });
+    
+    console.log(`   Found ${incoming.length} incoming transitions`);
+    
+    // ✅ CRITICAL: Enrich with actionDetails from source state's xstateConfig!
+    const enriched = incoming.map(t => {
+      const sourceState = allStatesMap[t.from];
+      if (!sourceState?.xstateConfig?.on) {
+        console.log(`   ⚠️ No xstateConfig.on for source state "${t.from}"`);
+        return t;
+      }
+      
+      const transitionDef = sourceState.xstateConfig.on[t.event];
+      if (!transitionDef) {
+        console.log(`   ⚠️ Transition "${t.event}" not in ${t.from}.xstateConfig.on`);
+        return t;
+      }
+      
+      // Handle array format (multi-platform)
+      if (Array.isArray(transitionDef)) {
+        const variant = transitionDef.find(v => 
+          v.target?.toLowerCase() === t.to?.toLowerCase()
+        );
+        if (variant?.actionDetails) {
+          console.log(`   ✅ Found actionDetails for ${t.event} (${t.from} → ${t.to}) [array]`);
+          return { ...t, actionDetails: variant.actionDetails };
+        }
+      } else if (transitionDef.actionDetails) {
+        console.log(`   ✅ Found actionDetails for ${t.event} (${t.from} → ${t.to})`);
+        return { ...t, actionDetails: transitionDef.actionDetails };
+      }
+      
+      return t;
+    });
+    
+    // Log what variables we found
+    const varsFound = enriched.flatMap(t => 
+      t.actionDetails?.steps?.filter(s => s.storeAs).map(s => s.storeAs) || []
+    );
+    if (varsFound.length > 0) {
+      console.log(`   💾 Variables from incoming transitions:`, varsFound);
+    }
+    
+    return enriched;
+  }, [allTransitions, state?.meta?.status, allStatesMap]);
+
 
 
 const fetchStoredVariables = async () => {
   const variables = [];
   
-  console.log('🔍 Fetching ALL stored variables from project...');
+  console.log('🔍 Collecting stored variables from allStatesMap...');
   
-  try {
-    // ✅ USE the discoveryResult prop instead of re-fetching!
-    if (!discoveryResult?.files?.implications) {
-      console.log('⚠️ No discovery result available');
-      return;
-    }
+  // Use the already-computed allStatesMap instead of API calls
+  Object.entries(allStatesMap).forEach(([stateName, stateData]) => {
+    const xstateOn = stateData.xstateConfig?.on || {};
     
-    const states = discoveryResult.files.implications;
-    console.log(`   📊 Found ${states.length} states in project`);
-    
-    // 2. For each state, fetch each transition's full data to find storeAs
-    for (const imp of states) {
-      const stateFilePath = `${projectPath}/${imp.path}`;
-      const transitions = imp.metadata?.xstateConfig?.on || {};
+    Object.entries(xstateOn).forEach(([event, transData]) => {
+      // Handle array format
+      const transitions = Array.isArray(transData) ? transData : [transData];
       
-      for (const [event, transData] of Object.entries(transitions)) {
-        try {
-          const transResponse = await fetch(
-            `http://localhost:3000/api/implications/get-transition?` +
-            `filePath=${encodeURIComponent(stateFilePath)}&` +
-            `event=${encodeURIComponent(event)}`
-          );
-          
-          if (transResponse.ok) {
-            const data = await transResponse.json();
-            const steps = data.transition?.actionDetails?.steps || [];
-            
-            steps.forEach(step => {
-              if (step.storeAs && !variables.find(v => v.path === step.storeAs)) {
-                console.log(`   💾 Found: ${step.storeAs} (${imp.metadata.status} → ${event})`);
-                variables.push({
-                  name: step.storeAs,
-                  path: step.storeAs,
-                  source: `${imp.metadata.status}:${event}`,
-                  fromState: imp.metadata.status
-                });
-              }
+      transitions.forEach(t => {
+        const steps = t.actionDetails?.steps || [];
+        steps.forEach(step => {
+          if (step.storeAs && !variables.find(v => v.path === step.storeAs)) {
+            console.log(`   💾 Found: ${step.storeAs} (${stateName} → ${event})`);
+            variables.push({
+              name: step.storeAs,
+              path: step.storeAs,
+              source: `${stateName}:${event}`,
+              fromState: stateName
             });
           }
-        } catch (err) {
-          // Silently skip
-        }
-      }
-    }
-    
-  } catch (error) {
-    console.error('❌ Error fetching variables:', error);
-  }
+        });
+      });
+    });
+  });
   
-  // 3. Also get from functions with storeAs in current state's mirrorsOn
+  // Also get from functions with storeAs in current state's mirrorsOn
   const platforms = state.uiCoverage?.platforms || state.meta?.uiCoverage?.platforms || {};
   Object.values(platforms).forEach(platform => {
     const screens = platform.screens || {};
@@ -172,38 +232,7 @@ const fetchStoredVariables = async () => {
     });
   });
   
-  // 4. Extract referenced variables from checks (like {{flightData.price}})
-  Object.values(platforms).forEach(platform => {
-    const screens = platform.screens || {};
-    Object.values(screens).forEach(screenDef => {
-      const defArray = Array.isArray(screenDef) ? screenDef : [screenDef];
-      defArray.forEach(def => {
-        const textChecks = def.checks?.text || {};
-        const containsChecks = def.checks?.contains || {};
-        
-        [...Object.values(textChecks), ...Object.values(containsChecks)].forEach(value => {
-          const matches = String(value).match(/\{\{([^}]+)\}\}/g);
-          if (matches) {
-            matches.forEach(match => {
-              const varPath = match.replace(/\{\{|\}\}/g, '');
-              if (!variables.find(v => v.path === varPath)) {
-                variables.push({
-                  name: varPath.split('.')[0],
-                  path: varPath,
-                  source: `referenced`,
-                  fromState: state.name
-                });
-              }
-            });
-          }
-        });
-      });
-    });
-  });
-  
   console.log(`📦 Total stored variables found: ${variables.length}`);
-  variables.forEach(v => console.log(`   - ${v.path} (from ${v.fromState})`));
-  
   setStoredVariables(variables);
 };
 
@@ -1176,7 +1205,10 @@ const fullTransitionData = {
   }}
   projectPath={projectPath}
   theme={theme}
-  storedVariables={storedVariables}  // ✅ Now uses state instead of function call
+  storedVariables={storedVariables}
+  incomingTransitions={incomingTransitions}
+  allStates={allStatesMap}
+  allTransitions={allTransitions}
   onSave={handleUIUpdate}
   onCancel={() => console.log('UI edit cancelled')}
 />

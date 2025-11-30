@@ -105,7 +105,8 @@ export default function BlockList({
   pomName,
   instanceName,
   projectPath,
-  testDataSchema = null  // ✅ NEW: Optional test data schema
+  testDataSchema = null,
+  storedVariables = []  // ✅ ADD THIS - transition variables from parent
 }) {
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeId, setActiveId] = useState(null);
@@ -135,16 +136,28 @@ export default function BlockList({
 
   // ✅ NEW: Collect stored variables for each block position
   // This creates a map: blockIndex -> variables available at that position
-  const variablesByBlockIndex = useMemo(() => {
-    const result = {};
+const variablesByBlockIndex = useMemo(() => {
+  const result = {};
+  
+  for (let i = 0; i < blocks.length; i++) {
+    // Get variables from previous blocks within this screen
+    const blockVars = collectStoredVariables(blocks, i, getMethodReturnKeys);
     
-    for (let i = 0; i < blocks.length; i++) {
-      // Each block gets variables from all PREVIOUS blocks (not including itself)
-      result[i] = collectStoredVariables(blocks, i, getMethodReturnKeys);
-    }
+    // Start with transition variables (available to ALL blocks)
+    const merged = [...storedVariables];
     
-    return result;
-  }, [blocks, getMethodReturnKeys]);
+    // Add block variables (avoid duplicates)
+    blockVars.forEach(bv => {
+      if (!merged.some(v => v.name === bv.name)) {
+        merged.push(bv);
+      }
+    });
+    
+    result[i] = merged;
+  }
+  
+  return result;
+}, [blocks, getMethodReturnKeys, storedVariables]);  // ✅ Add storedVariables to deps
 
   // Get active block for drag overlay
   const activeBlock = useMemo(() => {

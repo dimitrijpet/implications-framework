@@ -12,6 +12,11 @@ import ElementList from '../SourceAttribution/ElementList';
 import SourceLegend from '../SourceAttribution/SourceLegend';
 import BlockList from './BlockList';
 import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
+import { 
+  collectVariablesFromTransition, 
+  collectVariablesFromState,
+  testDataSchemaToVariables  // ✅ ADD THIS IMPORT
+} from './crossStateVariables';
 
 // ============================================
 // Helper Functions (outside component)
@@ -87,7 +92,17 @@ function getContextFields(screen) {
 // Main Component
 // ============================================
 
-export default function UIScreenEditor({ state, projectPath, theme, onSave, onCancel, storedVariables = [] }) {
+export default function UIScreenEditor({ 
+  state, 
+  projectPath, 
+  theme, 
+  onSave, 
+  onCancel,
+  // ✅ NEW: Optional props for cross-state variables
+  incomingTransitions = [],  // Transitions that lead TO this state
+  allStates = {},            // Map of all states (for chain tracing)
+  allTransitions = []        // All transitions in the system
+}) {
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -97,6 +112,8 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
   // ✅ NEW: Available POM screens for dropdown
   const [availablePOMScreens, setAvailablePOMScreens] = useState([]);
   const [isLoadingPOMScreens, setIsLoadingPOMScreens] = useState(false);
+  // ✅ NEW: Test data schema from config
+const [testDataSchema, setTestDataSchema] = useState([]);
 
   // Modal states
   const [addScreenModal, setAddScreenModal] = useState({
@@ -120,15 +137,90 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
     screenIndex: -1
   });
 
-  const computedStoredVariables = useMemo(() => {
-  if (storedVariables.length > 0) return storedVariables;
+const storedVariables = useMemo(() => {
+  const variables = [];
   
-  // Try to extract from state's incoming transitions
-  const vars = [];
-  // This would need access to the full state machine to work properly
-  // For now, return empty or hardcode for testing
-  return vars;
-}, [storedVariables, state]);
+  // 1. Variables from incoming transitions' actionDetails
+  if (incomingTransitions.length > 0) {
+    incomingTransitions.forEach(transition => {
+      const transVars = collectVariablesFromTransition(transition);
+      transVars.forEach(v => {
+        if (!variables.some(existing => existing.name === v.name)) {
+          variables.push(v);
+        }
+      });
+    });
+  }
+  
+  // 2. Try to extract from state's setup metadata
+  const setup = state?.meta?.setup || state?.xstateConfig?.meta?.setup;
+  if (setup) {
+    const setupArray = Array.isArray(setup) ? setup : [setup];
+    setupArray.forEach(s => {
+      if (s.actionDetails) {
+        const setupVars = collectVariablesFromTransition({ 
+          event: s.actionName || 'SETUP',
+          actionDetails: s.actionDetails 
+        });
+        setupVars.forEach(v => {
+          if (!variables.some(existing => existing.name === v.name)) {
+            variables.push(v);
+          }
+        });
+      }
+    });
+  }
+  
+  // 3. Variables from previous states in chain (if available)
+  if (Object.keys(allStates).length > 0 && allTransitions.length > 0) {
+    const stateName = state?.id || state?.meta?.status;
+    if (stateName) {
+      const incoming = allTransitions.filter(t => 
+        (t.target || t.to || '').toLowerCase() === stateName.toLowerCase()
+      );
+      
+      incoming.forEach(t => {
+        const sourceStateName = t.from || t.source;
+        const sourceState = allStates[sourceStateName];
+        if (sourceState) {
+          const stateVars = collectVariablesFromState(sourceState, sourceStateName);
+          stateVars.forEach(v => {
+            if (!variables.some(existing => existing.name === v.name)) {
+              v.fromState = sourceStateName;
+              variables.push(v);
+            }
+          });
+        }
+      });
+    }
+  }
+  
+  // 4. ✅ CHANGED: Add test data fields from config (not hardcoded!)
+  const testDataVars = testDataSchemaToVariables(testDataSchema);
+  testDataVars.forEach(v => {
+    if (!variables.some(existing => existing.name === v.name)) {
+      variables.push(v);
+    }
+  });
+  
+  console.log(`💾 UIScreenEditor: Computed ${variables.length} available variables`, variables);
+  
+  return variables;
+}, [state, incomingTransitions, allStates, allTransitions, testDataSchema]); // ✅ Add testDataSchema to deps
+
+useEffect(() => {
+  if (projectPath) {
+    fetch(`/api/config/test-data-schema/${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.schema) {
+          console.log('📋 Loaded test data schema:', data.schema.length, 'fields');
+          setTestDataSchema(data.schema);
+        }
+      })
+      .catch(err => console.warn('⚠️ Test data schema fetch failed:', err));
+  }
+}, [projectPath]);
 
   // ✅ Fetch POM screens when entering edit mode
   useEffect(() => {
@@ -136,6 +228,31 @@ export default function UIScreenEditor({ state, projectPath, theme, onSave, onCa
       fetchPOMScreens();
     }
   }, [editMode, projectPath]);
+
+  // ✅ NEW: Fetch test data schema from config
+useEffect(() => {
+  if (projectPath) {
+    fetchTestDataSchema();
+  }
+}, [projectPath]);
+
+const fetchTestDataSchema = async () => {
+  try {
+    const response = await fetch(
+      `/api/config/test-data-schema/${encodeURIComponent(projectPath)}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.schema) {
+        console.log('📋 Loaded test data schema:', data.schema.length, 'fields');
+        setTestDataSchema(data.schema);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to fetch test data schema:', error);
+  }
+};
 
   const fetchPOMScreens = async () => {
     setIsLoadingPOMScreens(true);
@@ -440,6 +557,19 @@ const getAvailablePlatforms = () => {
           <h3 style={{ fontSize: '18px', fontWeight: 600, color: theme.colors.text.primary }}>
             UI Screens
           </h3>
+            {/* ✅ NEW: Show variables count */}
+          {storedVariables.length > 0 && (
+            <span 
+              className="px-2 py-1 rounded text-xs font-medium"
+              style={{ 
+                background: `${theme.colors.accents.yellow}20`,
+                color: theme.colors.accents.yellow
+              }}
+              title={`${storedVariables.length} variables available from transitions and test data`}
+            >
+              💾 {storedVariables.length} variables
+            </span>
+          )}
         </div>
 
         {!editMode ? (

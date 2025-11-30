@@ -513,27 +513,27 @@ function TextChecksSection({
             </div>
           )}
           
-          {/* TestData suggestions */}
-          <div className="space-y-1">
-            <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-              📋 Test data:
-            </span>
-            <div className="flex items-center gap-1 flex-wrap">
-              {['agencyName', 'flightType', 'locations', 'noOfPax', 'lang', 'device'].map(field => (
-                <button
-                  key={field}
-                  onClick={() => setNewValue(`{{ctx.data.${field}}}`)}
-                  className="px-1.5 py-0.5 rounded font-mono text-xs transition hover:brightness-110"
-                  style={{ 
-                    background: `${theme.colors.accents.blue}30`,
-                    color: theme.colors.accents.blue
-                  }}
-                >
-                  {`{{ctx.data.${field}}}`}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* TestData suggestions */}
+<div className="space-y-1">
+  <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+    📋 Test data:
+  </span>
+  <div className="flex items-center gap-1 flex-wrap">
+    {['agencyName', 'flightType', 'locations', 'noOfPax', 'lang', 'device'].map(field => (
+      <button
+        key={field}
+        onClick={() => setNewValue(`{{ctx.data.${field}}}`)}
+        className="px-1.5 py-0.5 rounded font-mono text-xs transition hover:brightness-110"
+        style={{ 
+          background: `${theme.colors.accents.blue}30`,
+          color: theme.colors.accents.blue
+        }}
+      >
+        {`{{ctx.data.${field}}}`}
+      </button>
+    ))}
+  </div>
+</div>
 
           {/* Action buttons */}
           <div className="flex justify-end gap-2">
