@@ -22,6 +22,15 @@ import {
   testDataSchemaToVariables  // ✅ ADD THIS IMPORT
 } from './crossStateVariables';
 
+const INDEX_OPTIONS = [
+  { value: '', label: '(none)' },
+  { value: 'all', label: 'all' },
+  { value: 'any', label: 'any' },
+  { value: 'first', label: 'first' },
+  { value: 'last', label: 'last' },
+  { value: 'custom', label: 'index...' },
+];
+
 // ============================================
 // Helper Functions (outside component)
 // ============================================
@@ -55,6 +64,8 @@ const normalizeScreens = (screens) => {
   
   return [];
 };
+
+
 
 function getPlatformIcon(platformName) {
   const icons = {
@@ -140,6 +151,29 @@ const [testDataSchema, setTestDataSchema] = useState([]);
     platformDisplayName: '',
     screenIndex: -1
   });
+
+  const parseFieldWithIndex = (fieldStr) => {
+  const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
+  if (!match) {
+    return { field: fieldStr, indexType: '', customIndex: '' };
+  }
+  const idx = match[2];
+  if (idx === '0') {
+    return { field: match[1], indexType: 'first', customIndex: '' };
+  } else if (['last', 'all', 'any'].includes(idx)) {
+    return { field: match[1], indexType: idx, customIndex: '' };
+  } else {
+    return { field: match[1], indexType: 'custom', customIndex: idx };
+  }
+};
+
+// Build field string with index
+const buildFieldWithIndex = (field, indexType, customIndex) => {
+  if (!indexType || indexType === '') return field;
+  if (indexType === 'first') return `${field}[0]`;
+  if (indexType === 'custom') return `${field}[${customIndex}]`;
+  return `${field}[${indexType}]`;
+};
 
 const storedVariables = useMemo(() => {
   const variables = [];
@@ -1169,14 +1203,7 @@ function LegacyScreenContent({ screen, editMode, theme, pomName, instanceName, p
 }
 
 
-const INDEX_OPTIONS = [
-  { value: '', label: '(none)' },
-  { value: 'all', label: 'all' },
-  { value: 'any', label: 'any' },
-  { value: 'first', label: 'first' },
-  { value: 'last', label: 'last' },
-  { value: 'custom', label: 'index...' },
-];
+
 
 // Helper: Parse field name to extract index
 const parseFieldWithIndex = (fieldStr) => {

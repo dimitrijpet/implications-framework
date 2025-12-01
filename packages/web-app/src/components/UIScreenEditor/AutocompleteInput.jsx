@@ -1,23 +1,56 @@
 // packages/web-app/src/components/UIScreenEditor/AutocompleteInput.jsx
-// Reusable autocomplete input with dropdown
+// ✅ UPDATED: MultiSelectInput now supports array index selectors (first, last, all, any, custom)
 
 import { useState, useRef, useEffect, useMemo } from 'react';
 
+// ═══════════════════════════════════════════════════════════
+// INDEX OPTIONS for array element selection
+// ═══════════════════════════════════════════════════════════
+const INDEX_OPTIONS = [
+  { value: '', label: '(none)' },
+  { value: 'first', label: 'first' },
+  { value: 'last', label: 'last' },
+  { value: 'any', label: 'any' },
+  { value: 'all', label: 'all' },
+  { value: 'custom', label: 'nth...' },
+];
+
+/**
+ * Parse field name to extract index notation
+ * "element[all]" → { field: "element", indexType: "all", customIndex: "" }
+ */
+const parseFieldWithIndex = (fieldStr) => {
+  if (!fieldStr) return { field: '', indexType: '', customIndex: '' };
+  
+  const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
+  if (!match) {
+    return { field: fieldStr, indexType: '', customIndex: '' };
+  }
+  
+  const idx = match[2];
+  if (idx === '0') {
+    return { field: match[1], indexType: 'first', customIndex: '' };
+  } else if (['last', 'all', 'any'].includes(idx)) {
+    return { field: match[1], indexType: idx, customIndex: '' };
+  } else {
+    return { field: match[1], indexType: 'custom', customIndex: idx };
+  }
+};
+
+/**
+ * Build field string with index notation
+ */
+const buildFieldWithIndex = (field, indexType, customIndex) => {
+  if (!field) return '';
+  if (!indexType || indexType === '') return field;
+  if (indexType === 'first') return `${field}[0]`;
+  if (indexType === 'custom') return `${field}[${customIndex || '0'}]`;
+  return `${field}[${indexType}]`;
+};
+
 /**
  * AutocompleteInput - Input with dropdown suggestions
- * 
- * Props:
- * - value: Current value
- * - onChange: (value) => void
- * - options: Array of { value, label, description?, icon? }
- * - placeholder: Placeholder text
- * - disabled: Whether input is disabled
- * - theme: Theme object
- * - label: Field label
- * - icon: Icon to show before input
- * - loading: Show loading state
- * - allowFreeText: Allow values not in options
- * - onOptionSelect: (option) => void - Called when option selected (with full option object)
+ * (UNCHANGED from original)
  */
 export default function AutocompleteInput({
   value = '',
@@ -276,7 +309,12 @@ export default function AutocompleteInput({
 }
 
 /**
- * MultiSelectInput - For selecting multiple values (like visible/hidden fields)
+ * MultiSelectInput - For selecting multiple values WITH ARRAY INDEX SUPPORT
+ * 
+ * ✅ NEW FEATURES:
+ * - Each selected item can have an index selector (first, last, all, any, custom)
+ * - Stored as "element[all]", "element[last]", etc.
+ * - Set showIndexSelector={true} to enable (default: false for backward compatibility)
  */
 export function MultiSelectInput({
   values = [],
@@ -287,25 +325,36 @@ export function MultiSelectInput({
   theme,
   label,
   color = 'blue',
-  loading = false
+  loading = false,
+  showIndexSelector = false  // ✅ NEW: Enable index selector per item
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pendingIndexEdit, setPendingIndexEdit] = useState(null); // { value, indexType, customIndex }
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
 
   const accentColor = theme.colors.accents[color] || theme.colors.accents.blue;
 
-  // Filter options (exclude already selected)
+  // Parse all values to extract index info
+  const parsedValues = useMemo(() => {
+    return values.map(val => ({
+      raw: val,
+      ...parseFieldWithIndex(val)
+    }));
+  }, [values]);
+
+  // Filter options (exclude already selected base fields)
   const filteredOptions = useMemo(() => {
-    const available = options.filter(opt => !values.includes(opt.value));
+    const selectedBaseFields = parsedValues.map(pv => pv.field);
+    const available = options.filter(opt => !selectedBaseFields.includes(opt.value));
     if (!query) return available;
     const q = query.toLowerCase();
     return available.filter(opt => 
       opt.label?.toLowerCase().includes(q) ||
       opt.value?.toLowerCase().includes(q)
     );
-  }, [options, values, query]);
+  }, [options, parsedValues, query]);
 
   // Handle clicking outside
   useEffect(() => {
@@ -317,6 +366,7 @@ export function MultiSelectInput({
         !inputRef.current.contains(e.target)
       ) {
         setIsOpen(false);
+        setPendingIndexEdit(null);
       }
     };
 
@@ -324,13 +374,20 @@ export function MultiSelectInput({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Add value
-  const handleAdd = (value) => {
-    if (!values.includes(value)) {
-      onChange([...values, value]);
+  // Add value (with optional index)
+  const handleAdd = (baseValue, indexType = '', customIndex = '') => {
+    const finalValue = buildFieldWithIndex(baseValue, indexType, customIndex);
+    if (!values.includes(finalValue)) {
+      // Remove any existing entry for this base field
+      const newValues = values.filter(v => {
+        const parsed = parseFieldWithIndex(v);
+        return parsed.field !== baseValue;
+      });
+      onChange([...newValues, finalValue]);
     }
     setQuery('');
     setIsOpen(false);
+    setPendingIndexEdit(null);
   };
 
   // Remove value
@@ -338,15 +395,38 @@ export function MultiSelectInput({
     onChange(values.filter(v => v !== value));
   };
 
+  // Update index for existing value
+  const handleUpdateIndex = (oldValue, newIndexType, newCustomIndex) => {
+    const parsed = parseFieldWithIndex(oldValue);
+    const newValue = buildFieldWithIndex(parsed.field, newIndexType, newCustomIndex);
+    onChange(values.map(v => v === oldValue ? newValue : v));
+    setPendingIndexEdit(null);
+  };
+
   // Handle typing custom value
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && query.trim()) {
       e.preventDefault();
-      handleAdd(query.trim());
+      if (showIndexSelector) {
+        // Show index selector for new item
+        setPendingIndexEdit({ value: query.trim(), indexType: '', customIndex: '' });
+      } else {
+        handleAdd(query.trim());
+      }
     } else if (e.key === 'Backspace' && !query && values.length > 0) {
       handleRemove(values[values.length - 1]);
     } else if (e.key === 'Escape') {
       setIsOpen(false);
+      setPendingIndexEdit(null);
+    }
+  };
+
+  // Handle option click
+  const handleOptionClick = (option) => {
+    if (showIndexSelector) {
+      setPendingIndexEdit({ value: option.value, indexType: '', customIndex: '' });
+    } else {
+      handleAdd(option.value);
     }
   };
 
@@ -371,24 +451,77 @@ export function MultiSelectInput({
           border: `1px solid ${isOpen ? accentColor : theme.colors.border}`
         }}
       >
-        {/* Selected Tags */}
-        {values.map((val) => (
+        {/* Selected Tags with Index Badges */}
+        {parsedValues.map((pv) => (
           <span
-            key={val}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono"
+            key={pv.raw}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono group"
             style={{ 
               background: `${accentColor}20`,
               color: accentColor
             }}
           >
-            {val}
+            {/* Field name */}
+            <span>{pv.field}</span>
+            
+            {/* Index badge (if has index) */}
+            {pv.indexType && (
+              <span 
+                className="px-1 py-0.5 rounded text-[10px] font-bold cursor-pointer hover:brightness-125 transition"
+                style={{ 
+                  background: accentColor,
+                  color: theme.colors.background.primary
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!disabled && showIndexSelector) {
+                    setPendingIndexEdit({ 
+                      value: pv.raw, 
+                      indexType: pv.indexType, 
+                      customIndex: pv.customIndex,
+                      isEdit: true 
+                    });
+                  }
+                }}
+                title={showIndexSelector ? 'Click to change index' : undefined}
+              >
+                {pv.indexType === 'first' ? '[0]' : 
+                 pv.indexType === 'custom' ? `[${pv.customIndex}]` : 
+                 `[${pv.indexType}]`}
+              </span>
+            )}
+            
+            {/* Index selector button (if enabled and no index yet) */}
+            {showIndexSelector && !pv.indexType && !disabled && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPendingIndexEdit({ 
+                    value: pv.raw, 
+                    indexType: '', 
+                    customIndex: '',
+                    isEdit: true 
+                  });
+                }}
+                className="px-1 py-0.5 rounded text-[10px] opacity-50 hover:opacity-100 transition"
+                style={{ 
+                  background: `${accentColor}50`,
+                  color: theme.colors.background.primary
+                }}
+                title="Add index selector"
+              >
+                [?]
+              </button>
+            )}
+            
+            {/* Remove button */}
             {!disabled && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleRemove(val);
+                  handleRemove(pv.raw);
                 }}
-                className="hover:text-red-400 transition"
+                className="hover:text-red-400 transition opacity-60 hover:opacity-100"
               >
                 ×
               </button>
@@ -404,6 +537,7 @@ export function MultiSelectInput({
           onChange={(e) => {
             setQuery(e.target.value);
             setIsOpen(true);
+            setPendingIndexEdit(null);
           }}
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
@@ -419,8 +553,117 @@ export function MultiSelectInput({
         )}
       </div>
 
+      {/* Index Selector Popup */}
+      {pendingIndexEdit && (
+        <div
+          className="absolute z-50 mt-1 p-3 rounded-lg shadow-xl"
+          style={{
+            background: theme.colors.background.secondary,
+            border: `1px solid ${accentColor}`,
+            minWidth: '240px'
+          }}
+        >
+          <div className="text-xs font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
+            {pendingIndexEdit.isEdit ? 'Change' : 'Add'} index for: 
+            <span className="font-mono ml-1" style={{ color: accentColor }}>
+              {parseFieldWithIndex(pendingIndexEdit.value).field}
+            </span>
+          </div>
+          
+          {/* Index type selector */}
+          <div className="flex flex-wrap gap-1 mb-2">
+            {INDEX_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => {
+                  if (opt.value === 'custom') {
+                    setPendingIndexEdit(prev => ({ ...prev, indexType: 'custom' }));
+                  } else {
+                    const baseField = parseFieldWithIndex(pendingIndexEdit.value).field;
+                    if (pendingIndexEdit.isEdit) {
+                      handleUpdateIndex(pendingIndexEdit.value, opt.value, '');
+                    } else {
+                      handleAdd(baseField, opt.value, '');
+                    }
+                  }
+                }}
+                className={`px-2 py-1 rounded text-xs font-semibold transition ${
+                  pendingIndexEdit.indexType === opt.value ? 'ring-2 ring-offset-1' : ''
+                }`}
+                style={{ 
+                  background: pendingIndexEdit.indexType === opt.value 
+                    ? accentColor 
+                    : `${accentColor}30`,
+                  color: pendingIndexEdit.indexType === opt.value 
+                    ? theme.colors.background.primary 
+                    : accentColor,
+                  ringColor: accentColor
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          
+          {/* Custom index input */}
+          {pendingIndexEdit.indexType === 'custom' && (
+            <div className="flex gap-2 mb-2">
+              <input
+                type="number"
+                min="0"
+                value={pendingIndexEdit.customIndex}
+                onChange={(e) => setPendingIndexEdit(prev => ({ 
+                  ...prev, 
+                  customIndex: e.target.value 
+                }))}
+                placeholder="Index number (0, 1, 2...)"
+                className="flex-1 px-2 py-1 rounded text-sm"
+                style={{
+                  background: theme.colors.background.primary,
+                  border: `1px solid ${theme.colors.border}`,
+                  color: theme.colors.text.primary
+                }}
+                autoFocus
+              />
+              <button
+                onClick={() => {
+                  const baseField = parseFieldWithIndex(pendingIndexEdit.value).field;
+                  if (pendingIndexEdit.isEdit) {
+                    handleUpdateIndex(pendingIndexEdit.value, 'custom', pendingIndexEdit.customIndex);
+                  } else {
+                    handleAdd(baseField, 'custom', pendingIndexEdit.customIndex);
+                  }
+                }}
+                className="px-3 py-1 rounded text-sm font-semibold"
+                style={{ background: accentColor, color: theme.colors.background.primary }}
+              >
+                Apply
+              </button>
+            </div>
+          )}
+          
+          {/* Help text */}
+          <div className="text-[10px] space-y-0.5" style={{ color: theme.colors.text.tertiary }}>
+            <div><strong>first:</strong> First element [0]</div>
+            <div><strong>last:</strong> Last element</div>
+            <div><strong>any:</strong> At least one must match</div>
+            <div><strong>all:</strong> All elements must match</div>
+            <div><strong>nth:</strong> Specific index number</div>
+          </div>
+          
+          {/* Cancel */}
+          <button
+            onClick={() => setPendingIndexEdit(null)}
+            className="mt-2 text-xs w-full py-1 rounded transition hover:bg-white/10"
+            style={{ color: theme.colors.text.tertiary }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Dropdown */}
-      {isOpen && !disabled && filteredOptions.length > 0 && (
+      {isOpen && !disabled && !pendingIndexEdit && filteredOptions.length > 0 && (
         <div
           ref={dropdownRef}
           className="absolute z-50 w-full mt-1 rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto"
@@ -432,7 +675,7 @@ export function MultiSelectInput({
           {filteredOptions.map((option) => (
             <div
               key={option.value}
-              onClick={() => handleAdd(option.value)}
+              onClick={() => handleOptionClick(option)}
               className="px-3 py-2 cursor-pointer transition hover:bg-white/5"
             >
               <span 
@@ -441,6 +684,14 @@ export function MultiSelectInput({
               >
                 {option.label || option.value}
               </span>
+              {showIndexSelector && (
+                <span 
+                  className="ml-2 text-xs"
+                  style={{ color: theme.colors.text.tertiary }}
+                >
+                  (click to add index)
+                </span>
+              )}
             </div>
           ))}
         </div>

@@ -120,32 +120,34 @@ export default function UIAssertionContent({
       <div className="grid grid-cols-2 gap-4">
         {/* Visible Fields - uses LOCATORS */}
         <div>
-          <MultiSelectInput
-            values={data.visible || []}
-            onChange={(vals) => updateData('visible', vals)}
-            options={locatorOptions}
-            placeholder="Add visible fields..."
-            disabled={!editMode}
-            theme={theme}
-            label={`👁 Visible (${summary.visible})`}
-            color="green"
-            loading={loadingLocators}
-          />
+         <MultiSelectInput
+  values={data.visible || []}
+  onChange={(vals) => updateData('visible', vals)}
+  options={locatorOptions}
+  placeholder="Add visible fields..."
+  disabled={!editMode}
+  theme={theme}
+  label={`👁 Visible (${summary.visible})`}
+  color="green"
+  loading={loadingLocators}
+  showIndexSelector={true}
+/>
         </div>
 
         {/* Hidden Fields - uses LOCATORS */}
         <div>
-          <MultiSelectInput
-            values={data.hidden || []}
-            onChange={(vals) => updateData('hidden', vals)}
-            options={locatorOptions}
-            placeholder="Add hidden fields..."
-            disabled={!editMode}
-            theme={theme}
-            label={`🚫 Hidden (${summary.hidden})`}
-            color="red"
-            loading={loadingLocators}
-          />
+        <MultiSelectInput
+  values={data.hidden || []}
+  onChange={(vals) => updateData('hidden', vals)}
+  options={locatorOptions}
+  placeholder="Add hidden fields..."
+  disabled={!editMode}
+  theme={theme}
+  label={`🚫 Hidden (${summary.hidden})`}
+  color="red"
+  loading={loadingLocators}
+  showIndexSelector={true}
+/>
         </div>
       </div>
 

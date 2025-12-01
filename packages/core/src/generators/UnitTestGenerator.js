@@ -548,16 +548,82 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
 }
 
 
+/**
+ * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
+ * 
+ * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
+ * 
+ * Supports:
+ * - element         → element (single)
+ * - element[0]      → element.first() or element.nth(0)
+ * - element[last]   → element.last()
+ * - element[any]    → element.first() (at least one)
+ * - element[all]    → loop checking all elements
+ * - element[N]      → element.nth(N)
+ */
+/**
+ * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
+ * 
+ * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
+ * 
+ * Supports:
+ * - element         → element (single)
+ * - element[0]      → element.first() or element.nth(0)
+ * - element[last]   → element.last()
+ * - element[any]    → element.first() (at least one)
+ * - element[all]    → loop checking all elements
+ * - element[N]      → element.nth(N)
+ */
 _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
   console.log(`\n🔍 _processBlocksForTemplate for ${screenKey}`);
   
-  if (!Array.isArray(blocks)) return [];
+  if (!Array.isArray(blocks)) return { blocks: [], externalPoms: [] };
   
   const processed = [];
   const screenInstance = this._toCamelCase(screenKey);
   
   // Track external POMs that need to be required
   const externalPoms = new Map();
+  
+  // ═══════════════════════════════════════════════════════════
+  // Helper: Parse field with index notation
+  // ═══════════════════════════════════════════════════════════
+  const parseFieldWithIndex = (fieldStr) => {
+    const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
+    if (!match) {
+      return { field: fieldStr, indexType: '', customIndex: '' };
+    }
+    const idx = match[2];
+    if (idx === '0') {
+      return { field: match[1], indexType: 'first', customIndex: '' };
+    } else if (['last', 'all', 'any'].includes(idx)) {
+      return { field: match[1], indexType: idx, customIndex: '' };
+    } else {
+      return { field: match[1], indexType: 'custom', customIndex: idx };
+    }
+  };
+  
+  // ═══════════════════════════════════════════════════════════
+  // Helper: Generate locator code based on index type
+  // ═══════════════════════════════════════════════════════════
+  const generateLocatorCode = (screenInst, field, indexType, customIndex) => {
+    const base = `${screenInst}.${field}`;
+    
+    switch (indexType) {
+      case 'first':
+        return `${base}.first()`;
+      case 'last':
+        return `${base}.last()`;
+      case 'any':
+        return `${base}.first()`; // For visibility, check first exists
+      case 'all':
+        return base; // Will use different assertion pattern
+      case 'custom':
+        return `${base}.nth(${customIndex})`;
+      default:
+        return base;
+    }
+  };
   
   const enabledBlocks = blocks
     .filter(block => block.enabled !== false)
@@ -568,80 +634,288 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
     const blockData = block.data || block;
     
     switch (blockType) {
+      // ═══════════════════════════════════════════════════════════
+      // UI-ASSERTION BLOCK - WITH ARRAY INDEX SUPPORT
+      // ═══════════════════════════════════════════════════════════
       case 'ui-assertion': {
         const assertions = [];
         const timeout = blockData.timeout || 30000;
         
-        // Visible assertions
+        // ───────────────────────────────────────────────────────
+        // VISIBLE assertions
+        // ───────────────────────────────────────────────────────
         const visibleFields = blockData.visible || block.visible || [];
         if (Array.isArray(visibleFields) && visibleFields.length > 0) {
           for (const field of visibleFields) {
-            const safeField = this._sanitizeFieldName(field);
-            assertions.push({
-              assertionType: 'visible',
-              field: safeField,
-              originalField: field,
-              locator: `${screenInstance}.${safeField}`,
-              expectCode: isPlaywright
-                ? `await expect(${screenInstance}.${safeField}).toBeVisible({ timeout: ${timeout} });`
-                : `await expect(${screenInstance}.${safeField}).toBeDisplayed();`
-            });
+            const safeFieldRaw = this._sanitizeFieldName(field);
+            const { field: baseField, indexType, customIndex } = parseFieldWithIndex(safeFieldRaw);
+            const safeField = this._sanitizeFieldName(baseField);
+            
+            if (indexType === 'all') {
+              // ALL elements must be visible
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check ALL ${safeField} elements are visible`
+              });
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                expectCode: `const ${safeField}VisibleCount = await ${screenInstance}.${safeField}.count();`
+              });
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                expectCode: `expect(${safeField}VisibleCount).toBeGreaterThan(0);`
+              });
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}VisibleCount; i++) {`
+              });
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeVisible({ timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toBeDisplayed();`
+              });
+              assertions.push({
+                assertionType: 'visible-all',
+                field: safeField,
+                expectCode: `}`
+              });
+            } else if (indexType === 'any') {
+              // At least ONE must be visible
+              assertions.push({
+                assertionType: 'visible-any',
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check at least one ${safeField} is visible`
+              });
+              assertions.push({
+                assertionType: 'visible-any',
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toBeVisible({ timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).toBeDisplayed();`
+              });
+            } else {
+              // Single element (no index, first, last, or custom)
+              const locator = generateLocatorCode(screenInstance, safeField, indexType, customIndex);
+              assertions.push({
+                assertionType: 'visible',
+                field: safeField,
+                originalField: field,
+                indexType: indexType || 'single',
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toBeVisible({ timeout: ${timeout} });`
+                  : `await expect(${locator}).toBeDisplayed();`
+              });
+            }
           }
         }
         
-        // Hidden assertions
+        // ───────────────────────────────────────────────────────
+        // HIDDEN assertions
+        // ───────────────────────────────────────────────────────
         const hiddenFields = blockData.hidden || block.hidden || [];
         if (Array.isArray(hiddenFields) && hiddenFields.length > 0) {
           for (const field of hiddenFields) {
-            const safeField = this._sanitizeFieldName(field);
-            assertions.push({
-              assertionType: 'hidden',
-              field: safeField,
-              originalField: field,
-              locator: `${screenInstance}.${safeField}`,
-              expectCode: isPlaywright
-                ? `await expect(${screenInstance}.${safeField}).toBeHidden({ timeout: ${timeout} });`
-                : `await expect(${screenInstance}.${safeField}).not.toBeDisplayed();`
-            });
+            const safeFieldRaw = this._sanitizeFieldName(field);
+            const { field: baseField, indexType, customIndex } = parseFieldWithIndex(safeFieldRaw);
+            const safeField = this._sanitizeFieldName(baseField);
+            
+            if (indexType === 'all') {
+              // ALL elements must be hidden
+              assertions.push({
+                assertionType: 'hidden-all',
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check ALL ${safeField} elements are hidden`
+              });
+              assertions.push({
+                assertionType: 'hidden-all',
+                field: safeField,
+                expectCode: `const ${safeField}HiddenCount = await ${screenInstance}.${safeField}.count();`
+              });
+              assertions.push({
+                assertionType: 'hidden-all',
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}HiddenCount; i++) {`
+              });
+              assertions.push({
+                assertionType: 'hidden-all',
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeHidden({ timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).not.toBeDisplayed();`
+              });
+              assertions.push({
+                assertionType: 'hidden-all',
+                field: safeField,
+                expectCode: `}`
+              });
+            } else if (indexType === 'any') {
+              // At least ONE must be hidden
+              assertions.push({
+                assertionType: 'hidden-any',
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check at least one ${safeField} is hidden`
+              });
+              assertions.push({
+                assertionType: 'hidden-any',
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toBeHidden({ timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).not.toBeDisplayed();`
+              });
+            } else {
+              const locator = generateLocatorCode(screenInstance, safeField, indexType, customIndex);
+              assertions.push({
+                assertionType: 'hidden',
+                field: safeField,
+                originalField: field,
+                indexType: indexType || 'single',
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toBeHidden({ timeout: ${timeout} });`
+                  : `await expect(${locator}).not.toBeDisplayed();`
+              });
+            }
           }
         }
         
-        // Text checks (exact)
+        // ───────────────────────────────────────────────────────
+        // TEXT checks (exact match) - with index support
+        // ───────────────────────────────────────────────────────
         const checks = blockData.checks || block.checks || {};
         if (checks.text && typeof checks.text === 'object') {
           for (const [field, expectedText] of Object.entries(checks.text)) {
-            const safeField = this._sanitizeFieldName(field);
+            const { field: baseField, indexType, customIndex } = parseFieldWithIndex(field);
+            const safeField = this._sanitizeFieldName(baseField);
             const resolvedText = this._resolveTemplateArg(expectedText);
-            assertions.push({
-              assertionType: 'text',
-              field: safeField,
-              expectedText: resolvedText,
-              locator: `${screenInstance}.${safeField}`,
-              expectCode: isPlaywright
-                ? `await expect(${screenInstance}.${safeField}).toHaveText(${resolvedText}, { timeout: ${timeout} });`
-                : `await expect(${screenInstance}.${safeField}).toHaveText(${resolvedText});`
-            });
+            
+            if (indexType === 'all') {
+              assertions.push({
+                assertionType: 'text-all',
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check ALL ${safeField} elements have exact text`
+              });
+              assertions.push({
+                assertionType: 'text-all',
+                field: safeField,
+                expectCode: `const ${safeField}TextCount = await ${screenInstance}.${safeField}.count();`
+              });
+              assertions.push({
+                assertionType: 'text-all',
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}TextCount; i++) {`
+              });
+              assertions.push({
+                assertionType: 'text-all',
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText}, { timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText});`
+              });
+              assertions.push({
+                assertionType: 'text-all',
+                field: safeField,
+                expectCode: `}`
+              });
+            } else {
+              const locator = generateLocatorCode(screenInstance, safeField, indexType, customIndex);
+              assertions.push({
+                assertionType: 'text',
+                field: safeField,
+                expectedText: resolvedText,
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toHaveText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${locator}).toHaveText(${resolvedText});`
+              });
+            }
           }
         }
         
-        // Contains checks
+        // ───────────────────────────────────────────────────────
+        // CONTAINS checks - with index support
+        // ───────────────────────────────────────────────────────
         if (checks.contains && typeof checks.contains === 'object') {
           for (const [field, expectedText] of Object.entries(checks.contains)) {
-            const safeField = this._sanitizeFieldName(field);
+            const { field: baseField, indexType, customIndex } = parseFieldWithIndex(field);
+            const safeField = this._sanitizeFieldName(baseField);
             const resolvedText = this._resolveTemplateArg(expectedText);
-            assertions.push({
-              assertionType: 'contains',
-              field: safeField,
-              expectedText: resolvedText,
-              locator: `${screenInstance}.${safeField}`,
-              expectCode: isPlaywright
-                ? `await expect(${screenInstance}.${safeField}).toContainText(${resolvedText}, { timeout: ${timeout} });`
-                : `await expect(${screenInstance}.${safeField}).toHaveTextContaining(${resolvedText});`
-            });
+            
+            if (indexType === 'all') {
+              assertions.push({
+                assertionType: 'contains-all',
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check ALL ${safeField} elements contain text`
+              });
+              assertions.push({
+                assertionType: 'contains-all',
+                field: safeField,
+                expectCode: `const ${safeField}ContainsCount = await ${screenInstance}.${safeField}.count();`
+              });
+              assertions.push({
+                assertionType: 'contains-all',
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}ContainsCount; i++) {`
+              });
+              assertions.push({
+                assertionType: 'contains-all',
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveTextContaining(${resolvedText});`
+              });
+              assertions.push({
+                assertionType: 'contains-all',
+                field: safeField,
+                expectCode: `}`
+              });
+            } else if (indexType === 'any') {
+              assertions.push({
+                assertionType: 'contains-any',
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check at least one ${safeField} contains text`
+              });
+              assertions.push({
+                assertionType: 'contains-any',
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).toHaveTextContaining(${resolvedText});`
+              });
+            } else {
+              const locator = generateLocatorCode(screenInstance, safeField, indexType, customIndex);
+              assertions.push({
+                assertionType: 'contains',
+                field: safeField,
+                expectedText: resolvedText,
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${locator}).toHaveTextContaining(${resolvedText});`
+              });
+            }
           }
         }
         
-        // Truthy checks
+        // ───────────────────────────────────────────────────────
+        // TRUTHY function checks
+        // ───────────────────────────────────────────────────────
         const truthyFields = blockData.truthy || [];
         if (Array.isArray(truthyFields) && truthyFields.length > 0) {
           for (const funcName of truthyFields) {
@@ -654,7 +928,9 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
           }
         }
         
-        // Falsy checks
+        // ───────────────────────────────────────────────────────
+        // FALSY function checks
+        // ───────────────────────────────────────────────────────
         const falsyFields = blockData.falsy || [];
         if (Array.isArray(falsyFields) && falsyFields.length > 0) {
           for (const funcName of falsyFields) {
@@ -683,6 +959,9 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
         break;
       }
       
+      // ═══════════════════════════════════════════════════════════
+      // FUNCTION-CALL BLOCK (unchanged)
+      // ═══════════════════════════════════════════════════════════
       case 'function-call': {
         const rawInstance = blockData.instance || block.instance || null;
         const method = blockData.method || block.method || 'doSomething';
@@ -695,15 +974,12 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
         let isExternal = false;
         
         if (!rawInstance || this._isSamePom(rawInstance, screenKey)) {
-          // Same POM - use screenInstance
           instanceName = screenInstance;
         } else {
-          // External POM - need to require it
           isExternal = true;
           const cleanName = rawInstance.replace(/\.(wrapper|screen|page)$/i, '');
           instanceName = this._toCamelCase(cleanName);
           
-          // Track for external POM requires
           if (!externalPoms.has(instanceName)) {
             externalPoms.set(instanceName, {
               instanceName,
@@ -739,6 +1015,9 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
         break;
       }
       
+      // ═══════════════════════════════════════════════════════════
+      // CUSTOM-CODE BLOCK (unchanged)
+      // ═══════════════════════════════════════════════════════════
       case 'custom-code': {
         const code = block.code || blockData.code || '';
         
@@ -747,7 +1026,6 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
           break;
         }
         
-        // Indent each line (6 spaces base, 8 if inside test.step)
         const baseIndent = block.wrapInTestStep ? '        ' : '      ';
         const formattedCode = code
           .split('\n')
@@ -780,7 +1058,7 @@ _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
   
   console.log(`   📊 Processed ${processed.length} block(s), ${externalPoms.size} external POM(s)`);
   
- return {
+  return {
     blocks: processed,
     externalPoms: Array.from(externalPoms.values())
   };
