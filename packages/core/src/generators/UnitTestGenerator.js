@@ -574,6 +574,19 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
  * - element[all]    → loop checking all elements
  * - element[N]      → element.nth(N)
  */
+/**
+ * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
+ * 
+ * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
+ * 
+ * Supports:
+ * - element         → element (single)
+ * - element[0]      → element.first() or element.nth(0)
+ * - element[last]   → element.last()
+ * - element[any]    → element.first() (at least one)
+ * - element[all]    → loop checking all elements
+ * - element[N]      → element.nth(N)
+ */
 _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
   console.log(`\n🔍 _processBlocksForTemplate for ${screenKey}`);
   
