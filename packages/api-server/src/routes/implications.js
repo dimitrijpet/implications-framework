@@ -3373,7 +3373,8 @@ router.post('/add-transition', async (req, res) => {
     console.log('✅ Converting platform to array:', platform, '→', platformsArray);
     
     // Add transition to source file
-    const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires);
+    // Add transition to source file
+const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires, req.body.conditions);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
@@ -3464,7 +3465,7 @@ function extractStateName(ast) {
   return stateName;
 }
 
-function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires) {
+function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires, conditions) {
   let transitionAdded = false;
   
   // ✅ BUILD transitionObj OUTSIDE traverse!
@@ -3487,7 +3488,7 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
     );
   }
   
- // Add requires if provided (for conditional path selection)
+  // Add requires if provided (for conditional path selection)
   if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
     console.log('✅ Adding requires to transition:', requires);
     
@@ -3510,6 +3511,18 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       )
     );
   }
+
+  // Add conditions if provided (block-based)
+  if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+    console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('conditions'),
+        createValueNode(conditions)
+      )
+    );
+  }
   
   // Add actionDetails if provided
   if (actionDetails) {
@@ -3524,7 +3537,6 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       )
     );
   }
-  
   // NOW traverse and add the transition
   traverse(ast, {
     ClassProperty(path) {
@@ -3675,11 +3687,19 @@ function buildActionDetailsAST(actionDetails) {
           )
         ];
         
-        // ✅ NEW: Add storeAs if present
+       // ✅ NEW: Add storeAs if present
         if (step.storeAs) {
           console.log(`   💾 Adding storeAs to step: ${step.storeAs}`);
           stepProperties.push(
             t.objectProperty(t.identifier('storeAs'), t.stringLiteral(step.storeAs))
+          );
+        }
+        
+        // ✅ NEW: Add conditions if present (block-based system)
+        if (step.conditions && step.conditions.blocks && step.conditions.blocks.length > 0) {
+          console.log(`   🔒 Adding conditions to step: ${step.conditions.blocks.length} blocks`);
+          stepProperties.push(
+            t.objectProperty(t.identifier('conditions'), createValueNode(step.conditions))
           );
         }
         
@@ -4710,14 +4730,17 @@ router.delete('/graph/layout', async (req, res) => {
 
 router.post('/update-transition', async (req, res) => {
   try {
-    const { 
+   const { 
       sourceFile, 
       oldEvent,
       newEvent,
       newTarget,
       platform,         // ✅ NEW: single platform support
-      actionDetails     // ✅ ENHANCED: full actionDetails object
+      actionDetails,    // ✅ ENHANCED: full actionDetails object
+      conditions        // ✅ NEW: block-based conditions
     } = req.body;
+
+console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
     
     console.log('═══════════════════════════════════════');
     console.log('✏️ UPDATE-TRANSITION DEBUG');
@@ -4846,6 +4869,26 @@ router.post('/update-transition', async (req, res) => {
                 transitionProperties.push(existingRequires);
               }
             }
+
+             // 3.5. Conditions (block-based system - NEW)
+            if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+              console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('conditions'),
+                  createValueNode(conditions)
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing conditions if not updating
+              const existingConditions = oldTransition.value.properties.find(
+                p => p.key?.name === 'conditions'
+              );
+              if (existingConditions) {
+                console.log('⭐ Preserving existing conditions');
+                transitionProperties.push(existingConditions);
+              }
+            }
             
             // 4. ActionDetails (if provided, use buildActionDetailsAST helper)
             if (actionDetails) {
@@ -4867,6 +4910,27 @@ router.post('/update-transition', async (req, res) => {
                 transitionProperties.push(existingActionDetails);
               }
             }
+
+            // // 5. Conditions (if provided - new block-based system)
+            // if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+            //   console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+            //   transitionProperties.push(
+            //     t.objectProperty(
+            //       t.identifier('conditions'),
+            //       createValueNode(conditions)
+            //     )
+            //   );
+            // } else if (oldTransition.value?.type === 'ObjectExpression') {
+            //   // Preserve existing conditions if not updating
+            //   const existingConditions = oldTransition.value.properties.find(
+            //     p => p.key?.name === 'conditions'
+            //   );
+            //   if (existingConditions) {
+            //     console.log('⭐ Preserving existing conditions');
+            //     transitionProperties.push(existingConditions);
+            //   }
+            // }
+
             
             // ✅ REPLACE THE TRANSITION
             onProperty.value.properties[transitionIndex] = t.objectProperty(

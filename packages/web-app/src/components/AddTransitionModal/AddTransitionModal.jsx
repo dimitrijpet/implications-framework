@@ -91,7 +91,7 @@ availablePlatforms = ["web"],  // ✅ NEW - from config
   storedVariables = [],          // ✅ NEW: Variables from previous transitions
 }) {
 
-const [formData, setFormData] = useState({
+ const [formData, setFormData] = useState({
   event: "",
   description: "",
   platform: "web",
@@ -200,7 +200,8 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
 // ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
   if (mode === 'edit' && initialData && isOpen) {
-    console.log('📝 Edit mode - initializing form with:', initialData);
+    console.log('📝 Edit mode - initialData:', JSON.stringify(initialData, null, 2));  // ✅ ADD THIS
+    console.log('📝 initialData.conditions:', initialData.conditions);  // ✅ ADD THIS
     
     // Handle platforms as array OR string
     let platform = "web";
@@ -226,7 +227,7 @@ setFormData({
       navigationMethod: initialData.actionDetails?.navigationMethod || "",
       navigationFile: initialData.actionDetails?.navigationFile || "",
       requires: initialData.requires || {},
-      conditions: initialData.conditions || null,  // ✅ NEW
+      conditions: initialData.conditions || null,
       imports: (initialData.actionDetails?.imports || []).map(imp => ({
         ...imp,
         selectedPOM: imp.className,
@@ -936,6 +937,9 @@ const filterPOMsByPlatform = (poms, platform) => {
 const handleSubmit = async (e) => {
   e.preventDefault();
 
+  // ✅ ADD THIS DEBUG LOG
+  console.log('📋 Form conditions before submit:', JSON.stringify(formData.conditions, null, 2));
+
   if (!validateForm()) {
     return;
   }
@@ -946,14 +950,8 @@ const handleSubmit = async (e) => {
 const submitData = {
       event: formData.event.trim(),
       platform: formData.platform,
-      // ✅ NEW: Include conditions (block-based)
-      conditions: formData.conditions?.blocks?.length > 0 ? formData.conditions : undefined,
-      // Legacy requires - try to derive from conditions, or use direct requires
-      requires: formData.conditions?.blocks?.length > 0 
-        ? conditionsToRequires(formData.conditions) 
-        : (Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined),
-
-
+      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
       actionDetails: formData.hasActionDetails
         ? {
             description: formData.description.trim(),
@@ -966,19 +964,18 @@ const submitData = {
               path: imp.path,
               constructor: imp.constructor,
             })),
-             steps: formData.steps.map((step) => ({
-                description: step.description,
-                instance: step.instance,
-                method: step.method,
-                args: step.args.join(', '),
-                argsArray: step.args,
-                storeAs: step.storeAs || undefined,
-                conditions: step.conditions?.blocks?.length > 0 ? step.conditions : undefined,
-              })),
+            steps: formData.steps.map((step) => ({
+              description: step.description,
+              instance: step.instance,
+              method: step.method,
+              args: step.args.join(', '),
+              argsArray: step.args,
+              storeAs: step.storeAs || undefined,
+              conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+            })),
           }
         : null,
     };
-
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
@@ -1004,7 +1001,7 @@ const submitData = {
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl mx-4 my-8 rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="relative w-full max-w-4xl mx-4 my-8 rounded-xl shadow-2xl max-h-[90vh] flex flex-col"
         style={{
           backgroundColor: defaultTheme.colors.background.secondary,
           border: `2px solid ${defaultTheme.colors.border}`,
@@ -1060,7 +1057,7 @@ const submitData = {
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto flex-1">
           {/* Event Name */}
           <div>
             <label
@@ -1164,7 +1161,7 @@ const submitData = {
             requiresSuggestions={requiresSuggestions}
             legacyRequires={formData.requires}
           />
-          
+
           {/* Action Details Toggle */}
           <div className="flex items-center gap-3">
             <input
@@ -1565,6 +1562,7 @@ const submitData = {
                     style={{
                       backgroundColor: defaultTheme.colors.background.secondary,
                       border: `1px solid ${defaultTheme.colors.border}`,
+                      overflow: 'visible',
                     }}
                   >
                     {/* Step Header */}

@@ -403,11 +403,12 @@ export function extractXStateTransitions(parsed, className) {
                   return; // Skip rest of processing for this transition
                 }
                 
-                // Original handling for single transitions
+// Original handling for single transitions
                // Original handling for single transitions
                 let targetState = null;
                 let platforms = null;
                 let requires = null;
+                let conditions = null;
                 
                 // Handle different formats
                 if (transitionProp.value?.type === 'StringLiteral') {
@@ -466,7 +467,16 @@ export function extractXStateTransitions(parsed, className) {
                         requires[key] = value;
                       }
                     });
-                    console.log(`      🔒 Found requires for ${eventName}:`, requires);
+                    console.log(`      🔑 Found requires for ${eventName}:`, requires);
+                  }
+                  
+                  // Extract conditions (block-based system)
+                  const conditionsProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'conditions'
+                  );
+                  if (conditionsProp) {
+                    conditions = extractValueFromNode(conditionsProp.value);
+                    console.log(`      🔒 Found conditions for ${eventName}:`, conditions?.blocks?.length || 0, 'blocks');
                   }
                 }
                 
@@ -476,7 +486,8 @@ export function extractXStateTransitions(parsed, className) {
                     to: targetState,
                     event: eventName,
                     platforms: platforms,
-                    requires: requires
+                    requires: requires,
+                    conditions: conditions
                   });
                 }
               });

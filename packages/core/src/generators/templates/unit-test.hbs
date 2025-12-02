@@ -95,7 +95,30 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   const ctx = TestContext.load({{implClassName}}, testDataPath);
   
-  console.log('\n🎯 Starting: {{transitionDescription}}');
+  {{#if hasTransitionConditions}}
+  // ────────────────────────────────────────────────────────
+  // 🔒 TRANSITION CONDITIONS CHECK
+  // ────────────────────────────────────────────────────────
+  const transitionConditions = {{{transitionConditionsJson}}};
+  const conditionsResult = TestPlanner.evaluateConditions(transitionConditions, ctx.data);
+  
+  if (!conditionsResult.met) {
+    console.log('\n⏭️ Transition conditions not met - skipping action');
+    if (conditionsResult.results) {
+      for (const blockResult of conditionsResult.results) {
+        if (!blockResult.met && blockResult.checks) {
+          for (const check of blockResult.checks) {
+            if (!check.met) {
+              console.log(`   ❌ ${check.field} ${check.operator} ${JSON.stringify(check.expected)} (actual: ${JSON.stringify(check.actual)})`);
+            }
+          }
+        }
+      }
+    }
+    return ctx; // Return without executing action
+  }
+  console.log('✅ Transition conditions passed');
+{{/if}}
   console.log(`   Target Status: {{targetStatus}}`);
   console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
 {{#if hasTransitionContext}}
@@ -270,8 +293,15 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log('\n🎬 Executing action: {{actionDetails.description}}');
   
 {{#if actionDetails.steps}}
+  // Initialize storedVars for step conditions
+  const storedVars = {};
+  
 {{#each actionDetails.steps}}
   // Step {{addOne @index}}: {{description}}
+{{#if hasConditions}}
+  // 🔒 Step has conditions - check before executing
+  if (TestPlanner.evaluateStepConditions({{{conditionsJson}}}, ctx.data, storedVars)) {
+{{/if}}
 {{#if storeAs}}
 {{#if entity}}
   const {{storeAsKey}} = await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
@@ -280,6 +310,7 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{/if}}
   // 💾 Store captured value
   ExpectImplication.storeValue('{{storeAsKey}}', {{storeAsKey}});
+  storedVars.{{storeAsKey}} = {{storeAsKey}};
 {{#if storeAsGlobal}}
   ctx.data.{{storeAsKey}} = {{storeAsKey}};
   console.log('   💾 Stored {{storeAsKey}}:', typeof {{storeAsKey}} === 'object' ? JSON.stringify({{storeAsKey}}).slice(0, 100) + '...' : {{storeAsKey}});
@@ -297,6 +328,11 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{else}}
   await {{instance}}.{{method}}({{{args}}});
 {{/if}}
+{{/if}}
+{{#if hasConditions}}
+  } else {
+    console.log('   ⏭️ Skipping step {{addOne @index}}: conditions not met');
+  }
 {{/if}}
 {{/each}}
 {{/if}}

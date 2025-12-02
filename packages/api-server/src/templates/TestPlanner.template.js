@@ -1310,7 +1310,7 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
     
     const candidates = [];
     
-    for (const [event, config] of Object.entries(transitions)) {
+   for (const [event, config] of Object.entries(transitions)) {
       const configs = Array.isArray(config) ? config : [config];
       
       for (const singleConfig of configs) {
@@ -1321,13 +1321,21 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
         if (target === targetStatus || target.endsWith(`_${targetStatus}`)) {
           const configObj = typeof singleConfig === 'string' ? { target } : singleConfig;
           
-          const requirementCheck = this._checkTransitionRequires(configObj.requires, testData);
+          // Check new conditions format first, fallback to legacy requires
+          let requirementCheck;
+          if (configObj.conditions?.blocks?.length > 0) {
+            requirementCheck = this._evaluateConditions(configObj.conditions, testData);
+          } else {
+            requirementCheck = this._checkTransitionRequires(configObj.requires, testData);
+          }
+          
+          const hasRequirements = !!(configObj.conditions?.blocks?.length > 0 || configObj.requires);
           
           candidates.push({
             event,
             config: configObj,
             meetsRequirements: requirementCheck.met,
-            hasRequirements: !!configObj.requires,
+            hasRequirements: hasRequirements,
             requirementDetails: requirementCheck
           });
         }
@@ -1441,6 +1449,170 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
 
   _getNestedValue(pathStr, obj) {
     return pathStr.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // EVALUATE CONDITION BLOCKS (NEW! - Supports block-based conditions)
+  // ═══════════════════════════════════════════════════════════
+  _evaluateConditions(conditions, testData, storedVariables = {}) {
+    // If no conditions or empty, pass
+    if (!conditions?.blocks || conditions.blocks.length === 0) {
+      return { met: true, checks: [] };
+    }
+    
+    const { mode = 'all', blocks } = conditions;
+    const enabledBlocks = blocks.filter(b => b.enabled !== false);
+    
+    if (enabledBlocks.length === 0) {
+      return { met: true, checks: [] };
+    }
+    
+    const results = enabledBlocks.map(block => 
+      this._evaluateSingleBlock(block, testData, storedVariables)
+    );
+    
+    // mode: 'all' = AND, mode: 'any' = OR
+    const met = mode === 'any' 
+      ? results.some(r => r.met)
+      : results.every(r => r.met);
+    
+    return { met, results };
+  }
+
+  _evaluateSingleBlock(block, testData, storedVariables) {
+    if (block.type === 'condition-check') {
+      return this._evaluateConditionCheckBlock(block, testData, storedVariables);
+    } else if (block.type === 'custom-code') {
+      return this._evaluateCustomCodeBlock(block, testData, storedVariables);
+    }
+    return { met: true, type: 'unknown' };
+  }
+
+  _evaluateConditionCheckBlock(block, testData, storedVariables) {
+    const { mode = 'all', data } = block;
+    const checks = data?.checks || [];
+    
+    if (checks.length === 0) {
+      return { met: true, type: 'condition-check', checks: [] };
+    }
+    
+    const results = checks.map(check => {
+      const { field, operator, value, valueType } = check;
+      
+      // Resolve field value (support nested paths and stored variables)
+      let actualValue = this._resolveFieldValue(field, testData, storedVariables);
+      
+      // Resolve comparison value (might be a variable reference)
+      let compareValue = value;
+      if (valueType === 'variable' && typeof value === 'string') {
+        compareValue = this._resolveFieldValue(value.replace(/^\{\{|\}\}$/g, ''), testData, storedVariables);
+      }
+      
+      const met = this._evaluateOperator(actualValue, operator, compareValue);
+      
+      return { field, operator, expected: compareValue, actual: actualValue, met };
+    });
+    
+    const met = mode === 'any'
+      ? results.some(r => r.met)
+      : results.every(r => r.met);
+    
+    return { met, type: 'condition-check', checks: results };
+  }
+
+  _evaluateCustomCodeBlock(block, testData, storedVariables) {
+    try {
+      const code = block.code || '';
+      
+      // Create function with testData and storedVariables in scope
+      const fn = new Function('testData', 'storedVariables', `
+        ${code}
+      `);
+      
+      const result = fn(testData, storedVariables);
+      
+      return { met: !!result, type: 'custom-code' };
+    } catch (error) {
+      console.warn(`⚠️ Custom code evaluation failed: ${error.message}`);
+      return { met: false, type: 'custom-code', error: error.message };
+    }
+  }
+
+  _resolveFieldValue(fieldPath, testData, storedVariables) {
+    if (!fieldPath) return undefined;
+    
+    // Remove {{ }} wrapper if present
+    fieldPath = fieldPath.replace(/^\{\{|\}\}$/g, '').trim();
+    
+    // Check storedVariables first (for step conditions)
+    if (storedVariables) {
+      const [varName, ...rest] = fieldPath.split('.');
+      if (storedVariables[varName] !== undefined) {
+        if (rest.length === 0) {
+          return storedVariables[varName];
+        }
+        return rest.reduce((obj, key) => obj?.[key], storedVariables[varName]);
+      }
+    }
+    
+    // Check testData
+    return fieldPath.split('.').reduce((obj, key) => obj?.[key], testData);
+  }
+
+  _evaluateOperator(actual, operator, expected) {
+    switch (operator) {
+      // Equality
+      case 'equals':
+        return actual === expected;
+      case 'notEquals':
+        return actual !== expected;
+      
+      // Comparison
+      case 'greaterThan':
+        return Number(actual) > Number(expected);
+      case 'greaterThanOrEqual':
+        return Number(actual) >= Number(expected);
+      case 'lessThan':
+        return Number(actual) < Number(expected);
+      case 'lessThanOrEqual':
+        return Number(actual) <= Number(expected);
+      
+      // String
+      case 'contains':
+        return String(actual || '').includes(String(expected || ''));
+      case 'notContains':
+        return !String(actual || '').includes(String(expected || ''));
+      case 'startsWith':
+        return String(actual || '').startsWith(String(expected || ''));
+      case 'endsWith':
+        return String(actual || '').endsWith(String(expected || ''));
+      case 'matches':
+        try {
+          return new RegExp(expected).test(String(actual || ''));
+        } catch {
+          return false;
+        }
+      
+      // Array
+      case 'in':
+        return Array.isArray(expected) && expected.includes(actual);
+      case 'notIn':
+        return Array.isArray(expected) && !expected.includes(actual);
+      
+      // Existence
+      case 'exists':
+        return actual !== undefined && actual !== null;
+      case 'notExists':
+        return actual === undefined || actual === null;
+      case 'truthy':
+        return !!actual;
+      case 'falsy':
+        return !actual;
+      
+      default:
+        console.warn(`⚠️ Unknown operator: ${operator}`);
+        return false;
+    }
   }
 
   // Add this static helper near the top of the class (after _getPlatformPrerequisites):
@@ -1667,9 +1839,33 @@ static _getPlaywrightConfigPath() {
     const mismatches = [];
     
     // Check setup entry requires
+// Check setup entry requires
     const setupEntry = this._findSetupEntry(meta, { currentTestFile, testData });
     
-    if (setupEntry?.requires) {
+    // Check new conditions format first
+    if (setupEntry?.conditions?.blocks?.length > 0) {
+      const planner = new TestPlanner({ verbose: false });
+      const conditionResult = planner._evaluateConditions(setupEntry.conditions, testData);
+      
+      if (!conditionResult.met && conditionResult.results) {
+        for (const blockResult of conditionResult.results) {
+          if (!blockResult.met && blockResult.checks) {
+            for (const check of blockResult.checks) {
+              if (!check.met) {
+                mismatches.push({
+                  field: check.field,
+                  required: `${check.operator} ${JSON.stringify(check.expected)}`,
+                  actual: check.actual,
+                  source: 'setup-condition'
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    // Fallback to legacy requires
+    else if (setupEntry?.requires) {
       for (const [field, requiredValue] of Object.entries(setupEntry.requires)) {
         if (field === 'previousStatus') continue;
         
@@ -2452,6 +2648,38 @@ console.log(`🌐 Executing ${incompleteSegment.platform} segment...\n`);
       console.error(error.stack);
       process.exit(1);
     }
+  }
+// ═══════════════════════════════════════════════════════════
+  // STATIC: Evaluate conditions (for use in generated tests)
+  // ═══════════════════════════════════════════════════════════
+  static evaluateConditions(conditions, testData, storedVariables = {}) {
+    const planner = new TestPlanner({ verbose: false });
+    return planner._evaluateConditions(conditions, testData, storedVariables);
+  }
+
+  static evaluateStepConditions(stepConditions, testData, storedVariables = {}) {
+    if (!stepConditions?.blocks?.length) {
+      return true; // No conditions = always run
+    }
+    
+    const result = TestPlanner.evaluateConditions(stepConditions, testData, storedVariables);
+    
+    if (!result.met) {
+      console.log('⏭️ Step conditions not met:');
+      if (result.results) {
+        for (const blockResult of result.results) {
+          if (!blockResult.met && blockResult.checks) {
+            for (const check of blockResult.checks) {
+              if (!check.met) {
+                console.log(`   ❌ ${check.field} ${check.operator} ${JSON.stringify(check.expected)} (actual: ${JSON.stringify(check.actual)})`);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return result.met;
   }
 }
 

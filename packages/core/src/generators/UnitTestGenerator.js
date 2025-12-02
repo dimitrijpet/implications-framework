@@ -2182,7 +2182,11 @@ _buildContext(metadata, platform, transition = null, options = {}) {
   const hasDeltaLogic = deltaFields.length > 0;
   
   // Action details
-  const hasActionDetails = !!metadata.actionDetails;
+    const hasActionDetails = !!metadata.actionDetails;
+    
+    // Transition conditions (new block-based format)
+    const transitionConditions = this.currentTransition?.conditions || null;
+    const hasTransitionConditions = !!(transitionConditions?.blocks?.length > 0);
   
   // Navigation extraction
   const navigation = hasActionDetails 
@@ -2320,6 +2324,11 @@ _buildContext(metadata, platform, transition = null, options = {}) {
     hasMultipleTransitions: (metadata.allTransitions || []).length > 1,
     hasActionDetails: !!metadata.actionDetails,
     actionDetails: metadata.actionDetails,
+    
+    // Transition conditions
+    hasTransitionConditions: hasTransitionConditions,
+    transitionConditions: transitionConditions,
+    transitionConditionsJson: hasTransitionConditions ? JSON.stringify(transitionConditions, null, 2) : null,
     hasStoreAs: metadata.actionDetails?.steps?.some(step => step.storeAs) || false,
     storeAsFields: metadata.actionDetails?.storeAsFields || [],
     hasNavigation: !!navigation,
@@ -3438,6 +3447,9 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
         });
       }
       
+      // ✅ Parse step conditions
+      const hasStepConditions = !!(step.conditions?.blocks?.length > 0);
+      
       return {
         ...step,
         args: argsString,
@@ -3447,7 +3459,10 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
         storeAs: !!storeAsConfig,
         storeAsKey: storeAsConfig?.key,
         storeAsPersist: storeAsConfig?.persist,
-        storeAsGlobal: storeAsConfig?.global
+        storeAsGlobal: storeAsConfig?.global,
+        // ✅ Step conditions
+        hasConditions: hasStepConditions,
+        conditionsJson: hasStepConditions ? JSON.stringify(step.conditions) : null
       };
     });
     

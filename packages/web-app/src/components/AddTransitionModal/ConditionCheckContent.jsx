@@ -225,21 +225,28 @@ export default function ConditionCheckContent({
         ))}
       </div>
 
-      {/* Add Check Button */}
+           {/* Add Check Button */}
       {editMode && (
-        <button
-          type="button"
-          onClick={handleAddCheck}
-          className="w-full px-3 py-2 rounded text-sm font-semibold transition hover:brightness-110"
-          style={{
-            background: `${theme.colors.accents.purple}20`,
-            color: theme.colors.accents.purple,
-            border: `1px dashed ${theme.colors.accents.purple}50`
-          }}
-        >
-          + Add Check
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={handleAddCheck}
+            className="w-full py-1.5 rounded text-sm font-medium transition-colors"
+            style={{
+              backgroundColor: `${theme.colors.accents.green}20`,
+              color: theme.colors.accents.green,
+              border: `1px dashed ${theme.colors.accents.green}50`,
+            }}
+          >
+            + Add Check
+          </button>
+          
+          {/* Spacer for dropdown visibility */}
+          <div style={{ minHeight: '120px' }} />
+        </>
       )}
+
+      
 
       {/* Empty State */}
       {checks.length === 0 && !editMode && (
@@ -405,7 +412,9 @@ function CheckRow({
           background: theme.colors.background.secondary,
           border: `1px solid ${theme.colors.border}`,
           color: theme.colors.accents.purple,
-          minWidth: '80px'
+          minWidth: '80px',
+          position: 'relative',
+  zIndex: 9999,
         }}
       >
         {OPERATOR_GROUPS.map(group => (
@@ -431,7 +440,9 @@ function CheckRow({
             style={{
               background: theme.colors.background.secondary,
               border: `1px solid ${theme.colors.border}`,
-              color: theme.colors.text.secondary
+              color: theme.colors.text.secondary,
+              position: 'relative',
+  zIndex: 9999,
             }}
           >
             <option value="string">text</option>
@@ -452,7 +463,9 @@ function CheckRow({
                 background: theme.colors.background.secondary,
                 border: `1px solid ${theme.colors.border}`,
                 color: check.value ? theme.colors.accents.green : theme.colors.accents.red,
-                minWidth: '70px'
+                minWidth: '70px',
+                position: 'relative',
+  zIndex: 9999,
               }}
             >
               <option value="true">true</option>
@@ -519,7 +532,9 @@ function VariableSelector({ value, onChange, storedVariables, editMode, theme })
           background: theme.colors.background.secondary,
           border: `1px solid ${theme.colors.border}`,
           color: theme.colors.accents.yellow,
-          minWidth: '100px'
+          minWidth: '100px',
+          position: 'relative',
+  zIndex: 9999,
         }}
       >
         <option value="">Select...</option>

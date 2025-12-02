@@ -548,10 +548,10 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
       console.log('📡 Fetching full transition data...');
       
       const response = await fetch(
-        `http://localhost:3000/api/implications/get-transition?` + 
-        `filePath=${encodeURIComponent(state.files.implication)}&` +
-        `event=${encodeURIComponent(transition.event)}`
-      );
+    `http://localhost:3000/api/implications/get-transition?` + 
+    `filePath=${encodeURIComponent(state.files.implication)}&` +
+    `event=${encodeURIComponent(transition.event)}`
+  );
       
       if (response.ok) {
         const data = await response.json();
@@ -562,7 +562,8 @@ const fullTransitionData = {
           target: data.transition.target || transition.target,
           platforms: data.transition.platforms,
           actionDetails: data.transition.actionDetails,
-          requires: data.transition.requires || {}  // ✅ ADD THIS
+          requires: data.transition.requires || {},
+          conditions: data.transition.conditions || null  // ✅ ADD THIS
         };
         
         console.log('📦 Setting editingTransition:', fullTransitionData);
@@ -644,7 +645,7 @@ const fullTransitionData = {
         return;
         
       } else {
-       const response = await fetch('http://localhost:3000/api/implications/update-transition', {
+     const response = await fetch('http://localhost:3000/api/implications/update-transition', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -654,10 +655,10 @@ const fullTransitionData = {
             newTarget: transitionData.target || editingTransition.target,
             platform: transitionData.platform,
             actionDetails: transitionData.actionDetails,
-            requires: transitionData.requires  // ✅ ADD THIS
+            requires: transitionData.requires,
+            conditions: transitionData.conditions  // ✅ ADD THIS - transition-level conditions
           })
         });
-
         if (!response.ok) {
           const error = await response.json();
           throw new Error(error.error || 'Failed to update transition');
@@ -665,7 +666,7 @@ const fullTransitionData = {
 
         console.log('✅ Transition updated in file');
 
-  setEditedState(prev => ({
+ setEditedState(prev => ({
           ...prev,
           transitions: prev.transitions.map((t, i) => 
             i === editingTransitionIndex 
@@ -674,7 +675,8 @@ const fullTransitionData = {
                   target: transitionData.target || editingTransition.target,
                   platform: transitionData.platform,
                   actionDetails: transitionData.actionDetails,
-                  requires: transitionData.requires  // ✅ ADD THIS
+                  requires: transitionData.requires,
+                  conditions: transitionData.conditions  // ✅ ADD THIS
                 }
               : t
           )

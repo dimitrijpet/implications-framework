@@ -1,13 +1,9 @@
 // packages/web-app/src/components/AddTransitionModal/StepConditions.jsx
-// Compact conditions UI for individual action steps
+// Step-level conditions component - collapsible conditions for individual action steps
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ConditionBlockList from './ConditionBlockList';
 
-/**
- * Collapsible conditions section for a single step
- * Allows configuring when a step should run based on previous step results
- */
 export default function StepConditions({
   conditions,
   onChange,
@@ -17,65 +13,62 @@ export default function StepConditions({
   requiresSuggestions = [],
   theme
 }) {
-  const [isExpanded, setIsExpanded] = useState(
-    // Auto-expand if has conditions
-    conditions?.blocks?.length > 0
-  );
+  // Auto-expand if has conditions
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  useEffect(() => {
+    if (conditions?.blocks?.length > 0) {
+      setIsExpanded(true);
+    }
+  }, [conditions]);
 
   const hasConditions = conditions?.blocks?.length > 0;
-  const blockCount = conditions?.blocks?.length || 0;
+  const conditionCount = conditions?.blocks?.length || 0;
 
   return (
     <div 
-      className="mt-3 rounded overflow-hidden"
+      className="mt-3 rounded-lg"
       style={{ 
-        border: `1px solid ${hasConditions ? theme.colors.accents.purple + '50' : theme.colors.border}`,
-        backgroundColor: hasConditions ? `${theme.colors.accents.purple}05` : 'transparent'
+        backgroundColor: `${theme.colors.background.primary}50`,
+        border: `1px solid ${theme.colors.border}`,
+        overflow: 'visible',  // Allow dropdowns to overflow
       }}
     >
-      {/* Header - always visible */}
+      {/* Collapse Header */}
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-3 py-2 flex items-center justify-between text-left transition hover:brightness-110"
+        className="w-full px-3 py-2 flex items-center justify-between text-left transition-colors rounded-lg"
         style={{
           backgroundColor: hasConditions 
-            ? `${theme.colors.accents.purple}15` 
-            : theme.colors.background.tertiary,
+            ? `${theme.colors.accents.purple}15`
+            : 'transparent',
         }}
       >
         <div className="flex items-center gap-2">
-          <span style={{ color: theme.colors.accents.purple }}>
+          <span style={{ fontSize: '14px' }}>
             {hasConditions ? '🔒' : '🔓'}
           </span>
           <span 
-            className="text-xs font-medium"
+            className="text-sm font-medium"
             style={{ color: theme.colors.text.secondary }}
           >
             Step Conditions
+            {hasConditions && (
+              <span 
+                className="ml-2 px-1.5 py-0.5 rounded text-xs"
+                style={{ 
+                  backgroundColor: theme.colors.accents.purple,
+                  color: 'white'
+                }}
+              >
+                {conditionCount}
+              </span>
+            )}
           </span>
-          {hasConditions && (
-            <span 
-              className="px-1.5 py-0.5 rounded text-xs"
-              style={{ 
-                backgroundColor: theme.colors.accents.purple + '30',
-                color: theme.colors.accents.purple 
-              }}
-            >
-              {blockCount} {blockCount === 1 ? 'condition' : 'conditions'}
-            </span>
-          )}
-          {!hasConditions && (
-            <span 
-              className="text-xs"
-              style={{ color: theme.colors.text.tertiary }}
-            >
-              (optional)
-            </span>
-          )}
         </div>
         <span 
-          className="text-xs transition-transform"
+          className="text-sm transition-transform"
           style={{ 
             color: theme.colors.text.tertiary,
             transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
@@ -85,44 +78,47 @@ export default function StepConditions({
         </span>
       </button>
 
-      {/* Content - collapsible */}
+      {/* Expanded Content */}
       {isExpanded && (
-        <div className="p-3 border-t" style={{ borderColor: theme.colors.border }}>
-          {availableVariables.length === 0 && !hasConditions ? (
-            // No variables available yet
+        <div 
+          className="px-3 pb-3 pt-1"
+          style={{ overflow: 'visible' }}  // Allow dropdowns to overflow
+        >
+          {/* Helper text */}
+          <p 
+            className="text-xs mb-2"
+            style={{ color: theme.colors.text.tertiary }}
+          >
+            💡 Conditions determine if this step runs. Check testData fields
+            {availableVariables.length > 0 ? ', previous step results,' : ''} or use custom code.
+          </p>
+          
+          {/* Show available variables from previous steps */}
+          {availableVariables.length > 0 && (
             <div 
-              className="text-xs text-center py-3 rounded"
+              className="mb-2 p-2 rounded text-xs"
               style={{ 
-                backgroundColor: theme.colors.background.secondary,
-                color: theme.colors.text.tertiary 
+                backgroundColor: `${theme.colors.accents.yellow}10`,
+                border: `1px solid ${theme.colors.accents.yellow}30`
               }}
             >
-              <p>💡 Add a <strong>Store As</strong> value to previous steps</p>
-              <p className="mt-1">to use their results in conditions here.</p>
+              <span style={{ color: theme.colors.accents.yellow }}>
+                📦 Available from previous steps:{' '}
+                {availableVariables.map(v => `{{${v.name}}}`).join(', ')}
+              </span>
             </div>
-          ) : (
-            <>
-              {/* Help text */}
-              <p 
-                className="text-xs mb-3"
-                style={{ color: theme.colors.text.tertiary }}
-              >
-                This step will only run if these conditions pass:
-              </p>
-              
-              {/* Reuse ConditionBlockList */}
-              <ConditionBlockList
-                conditions={conditions}
-                onChange={onChange}
-                editMode={true}
-                theme={theme}
-                testDataSchema={testDataSchema}
-                storedVariables={availableVariables}
-                requiresSuggestions={requiresSuggestions}
-                compact={true}
-              />
-            </>
           )}
+
+          <ConditionBlockList
+            conditions={conditions}
+            onChange={onChange}
+            editMode={true}
+            theme={theme}
+            testDataSchema={testDataSchema}
+            storedVariables={availableVariables}
+            requiresSuggestions={requiresSuggestions}
+            compact={true}
+          />
         </div>
       )}
     </div>
