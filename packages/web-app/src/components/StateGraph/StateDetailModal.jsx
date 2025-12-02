@@ -18,6 +18,7 @@ import TestDataPanel from '../TestDataPanel/TestDataPanel';
 import TestDataLinker from '../TestDataLinker/TestDataLinker';
 import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWithEdit';
 import AddTransitionModal from '../AddTransitionModal/AddTransitionModal';
+import TestLockPanel from './TestLockPanel';
 
 function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -1294,6 +1295,29 @@ const fullTransitionData = {
                 </div>
               </div>
             )}
+{/* TEST LOCKS */}
+<div>
+  <h2 
+    className="text-2xl font-bold mb-4"
+    style={{ color: theme.colors.accents.orange }}
+  >
+    🔒 Test Locks
+  </h2>
+  <p 
+    className="text-sm mb-4"
+    style={{ color: theme.colors.text.secondary }}
+  >
+    Lock tests to prevent them from being overwritten during regeneration.
+  </p>
+  
+  <TestLockPanel 
+    state={currentState}
+    projectPath={projectPath}
+    theme={theme}
+    incomingTransitions={incomingTransitions}  // ← ADD THIS
+  />
+</div>
+
 
             {/* TEST GENERATION */}
             <div>

@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import UnitTestGenerator from '../../../core/src/generators/UnitTestGenerator.js';
 import ImplicationGenerator from '../../../core/src/generators/ImplicationGenerator.js';
+import { LockService } from '../services/lockService.js';
 
 const router = express.Router();
 
@@ -109,7 +110,9 @@ router.post('/unit-test', async (req, res) => {
       state = null, 
       targetState = null,
       transitions = [],
-      forceRawValidation = false  // ← ADD THIS
+      forceRawValidation = false,
+      skipLocked = true,  // ← NEW: Skip locked tests by default
+      projectPath        // ← NEW: Need this for lock checking
     } = req.body;
     
     const implFilePathFinal = implPath || filePath || implFilePath;
@@ -120,6 +123,7 @@ router.post('/unit-test', async (req, res) => {
     console.log(`   platform: ${platform}`);
     console.log(`   state: ${stateToUse}`);
     console.log(`   transitions: ${transitions.length}`);
+    console.log(`   skipLocked: ${skipLocked}`);
     
     if (!implFilePathFinal) {
       console.error('❌ Missing file path in request body!');
@@ -129,25 +133,59 @@ router.post('/unit-test', async (req, res) => {
       });
     }
     
-     console.log('🎯 Generate Unit Test Request:');
+    console.log('🎯 Generate Unit Test Request:');
     console.log(`   Implication: ${implFilePathFinal}`);
     console.log(`   Platform: ${platform}`);
     console.log(`   State: ${stateToUse || 'all states'}`);
     console.log(`   Transitions to generate: ${transitions.length}`);
-    console.log(`   Force Raw Validation: ${forceRawValidation}`);  // ← ADD THIS
+    console.log(`   Force Raw Validation: ${forceRawValidation}`);
     
     const generator = new UnitTestGenerator({});
     
     // Get the implication directory for relative paths
     const implDir = path.dirname(implFilePathFinal).replace(/^.*?tests\//, 'tests/');
     
+    // ═══════════════════════════════════════════════════════════
+    // NEW: Check for locked tests before generation
+    // ═══════════════════════════════════════════════════════════
+    let lockService = null;
+    let lockedPaths = [];
+    
+    if (skipLocked && projectPath) {
+      lockService = new LockService(projectPath);
+      lockedPaths = await lockService.getLockedPaths();
+      
+      if (lockedPaths.length > 0) {
+        console.log(`🔒 Found ${lockedPaths.length} locked test(s)`);
+      }
+    }
+    
     // ✅ Generate multiple tests - one per transition!
     const results = [];
+    const skipped = [];
     
-   if (transitions.length > 0) {
+    if (transitions.length > 0) {
       console.log('\n🔄 Generating transition tests...');
       
       for (const transition of transitions) {
+        // Build expected test file path to check against locks
+        const expectedFileName = buildTestFileName(stateToUse, transition);
+        const expectedTestPath = `${implDir}/${expectedFileName}`;
+        
+        // ═══════════════════════════════════════════════════════════
+        // NEW: Skip if locked
+        // ═══════════════════════════════════════════════════════════
+        if (skipLocked && isPathLocked(expectedTestPath, lockedPaths)) {
+          console.log(`   ⏭️  Skipping locked: ${expectedFileName}`);
+          skipped.push({
+            fileName: expectedFileName,
+            path: expectedTestPath,
+            reason: 'locked',
+            transition: transition.event
+          });
+          continue;
+        }
+        
         console.log(`\n📝 Generating test for: ${transition.event} (${transition.platform})`);
         
         const result = generator.generate(implFilePathFinal, {
@@ -156,13 +194,12 @@ router.post('/unit-test', async (req, res) => {
           transition: transition,
           event: transition.event,
           preview: false,
-          forceRawValidation  // ← ADD THIS
+          forceRawValidation
         });
         
         results.push(result);
         
-        // ✅ NEW: Update the SOURCE Implication file's setup.testFile
-        // The source is the state we're transitioning FROM (where the transition is defined)
+        // Update implication setup (existing code)
         if (result.filePath && transition.sourceImplPath) {
           await updateImplicationSetup(
             transition.sourceImplPath,
@@ -172,7 +209,6 @@ router.post('/unit-test', async (req, res) => {
           );
         }
         
-        // ✅ Also update the TARGET Implication (the one being generated for)
         if (result.filePath) {
           await updateImplicationSetup(
             implFilePathFinal,
@@ -182,7 +218,7 @@ router.post('/unit-test', async (req, res) => {
           );
         }
       }
-  } else {
+    } else {
       // Fallback: Generate single test (old behavior)
       console.log('\n📝 Generating single test (no transitions)');
       
@@ -190,24 +226,36 @@ router.post('/unit-test', async (req, res) => {
         platform,
         state: stateToUse,
         preview: false,
-        forceRawValidation  // ← ADD THIS
+        forceRawValidation
       });
       
-      results.push(result);
+      // Check if this single test is locked
+      if (skipLocked && result.filePath && isPathLocked(result.filePath, lockedPaths)) {
+        console.log(`   ⏭️  Skipping locked: ${result.fileName}`);
+        skipped.push({
+          fileName: result.fileName,
+          path: result.filePath,
+          reason: 'locked'
+        });
+      } else {
+        results.push(result);
+      }
     }
     
-    console.log(`\n✅ Generated ${results.length} test(s)`);
+    console.log(`\n✅ Generated ${results.length} test(s), skipped ${skipped.length} locked`);
     
     return res.json({
       success: true,
       count: results.length,
+      skippedCount: skipped.length,
       results: results.map(r => ({
         fileName: r.fileName,
         filePath: r.filePath,
         code: r.code,
         size: r.code?.length || 0,
         state: r.state
-      }))
+      })),
+      skipped: skipped
     });
     
   } catch (error) {
@@ -220,6 +268,48 @@ router.post('/unit-test', async (req, res) => {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// NEW: Helper functions for lock checking
+// ═══════════════════════════════════════════════════════════
+
+function isPathLocked(testPath, lockedPaths) {
+  if (!testPath || !lockedPaths.length) return false;
+  
+  // Normalize the path for comparison
+  const normalized = testPath.replace(/\\/g, '/');
+  
+  return lockedPaths.some(locked => {
+    const normalizedLocked = locked.replace(/\\/g, '/');
+    return normalized === normalizedLocked || 
+           normalized.endsWith(normalizedLocked) || 
+           normalizedLocked.endsWith(normalized);
+  });
+}
+
+function buildTestFileName(stateName, transition) {
+  // Build expected filename pattern
+  // e.g., PassengerDataSubmittedViaPassengerDataFilled-SUBMITPASSENGERSDATA-Web-UNIT.spec.js
+  
+  if (!transition.event) {
+    return `${stateName}-${transition.platform || 'Web'}-UNIT.spec.js`;
+  }
+  
+  const fromState = transition.fromState || 'Unknown';
+  const event = transition.event.toUpperCase().replace(/_/g, '');
+  const platform = (transition.platform || 'web').charAt(0).toUpperCase() + (transition.platform || 'web').slice(1);
+  
+  // Convert state names to PascalCase
+  const toPascal = (str) => str
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join('');
+  
+  const targetPascal = toPascal(stateName);
+  const fromPascal = toPascal(fromState);
+  
+  return `${targetPascal}Via${fromPascal}-${event}-${platform}-UNIT.spec.js`;
+}
 
 /**
  * POST /api/generate/implication
