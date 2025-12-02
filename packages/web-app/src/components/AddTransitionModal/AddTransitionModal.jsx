@@ -6,6 +6,9 @@ import { useState, useEffect, useMemo } from "react";
 import { defaultTheme } from "../../config/visualizerTheme";
 import { getCachedPOMs, getCachedNavigation, filterPOMsByPlatform, clearCache } from '../../cache/pomCache';
 import { getRequiresSuggestions, getKnownKeys } from '../../utils/requiresColors.js';
+import ConditionBlockList from './ConditionBlockList';
+import StepConditions from './StepConditions';
+import { migrateRequiresToConditions, conditionsToRequires } from './conditionBlockUtils';
 
 const API_URL = "http://localhost:3000";
 
@@ -84,9 +87,11 @@ export default function AddTransitionModal({
   projectPath,
   mode = 'create',           // ✅ NEW: 'create' | 'edit'
   initialData = null,        // ✅ NEW: For edit mode
-  availablePlatforms = ["web"],  // ✅ NEW - from config
+availablePlatforms = ["web"],  // ✅ NEW - from config
+  storedVariables = [],          // ✅ NEW: Variables from previous transitions
 }) {
- const [formData, setFormData] = useState({
+
+const [formData, setFormData] = useState({
   event: "",
   description: "",
   platform: "web",
@@ -96,16 +101,38 @@ export default function AddTransitionModal({
   imports: [],
   steps: [],
   requires: {},
+  conditions: null,
 });
-
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
 
-// Load suggestions when modal opens
+const [testDataSchema, setTestDataSchema] = useState([]);
+
+// Load suggestions and test data schema when modal opens
 useEffect(() => {
   if (isOpen) {
     setRequiresSuggestions(getRequiresSuggestions());
+    fetchTestDataSchema();
   }
-}, [isOpen]);
+}, [isOpen, projectPath]);
+
+// ✅ NEW: Fetch test data schema from config
+const fetchTestDataSchema = async () => {
+  if (!projectPath) return;
+  try {
+    const response = await fetch(
+      `${API_URL}/api/config/test-data-schema/${encodeURIComponent(projectPath)}`
+    );
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.schema) {
+        console.log('📋 Loaded test data schema:', data.schema.length, 'fields');
+        setTestDataSchema(data.schema);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to fetch test data schema:', error);
+  }
+};
 
 // State for requires input
 const [newRequiresKey, setNewRequiresKey] = useState('');
@@ -149,6 +176,19 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
     
     return vars;
   }, [formData.steps, formData.imports]);
+    // ✅ NEW: Combine stored variables from props + current steps for conditions
+  const allStoredVariables = useMemo(() => {
+    const vars = [...(storedVariables || [])];
+    
+    // Add variables from current form steps
+    availableStoreAsVars.forEach(v => {
+      if (!vars.some(existing => existing.name === v.name)) {
+        vars.push(v);
+      }
+    });
+    
+    return vars;
+  }, [storedVariables, availableStoreAsVars]);
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
@@ -186,6 +226,7 @@ setFormData({
       navigationMethod: initialData.actionDetails?.navigationMethod || "",
       navigationFile: initialData.actionDetails?.navigationFile || "",
       requires: initialData.requires || {},
+      conditions: initialData.conditions || null,  // ✅ NEW
       imports: (initialData.actionDetails?.imports || []).map(imp => ({
         ...imp,
         selectedPOM: imp.className,
@@ -349,7 +390,8 @@ useEffect(() => {
         navigationFile: "",
         imports: [],
         steps: [],
-        requires: {},  // ← ADD THIS
+        requires: {},
+        conditions: null,  // ← ADD THIS
       });
     setErrors({});
     setSelectedNavFile("");
@@ -409,6 +451,15 @@ console.log('🎯 First 5 POMs:', filteredPOMs.slice(0, 5).map(p => ({
   } finally {
     setLoadingPOMs(false);
   }
+};
+
+const handleStepConditionsChange = (stepIndex, newConditions) => {
+  const newSteps = [...formData.steps];
+  newSteps[stepIndex] = {
+    ...newSteps[stepIndex],
+    conditions: newConditions
+  };
+  setFormData(prev => ({ ...prev, steps: newSteps }));
 };
 
 /**
@@ -603,7 +654,8 @@ const filterPOMsByPlatform = (poms, platform) => {
         navigationFile: "",
         imports: [],
         steps: [],
-         requires: {},  // ← ADD THIS
+         requires: {},
+        conditions: null,  // ← ADD THIS
       });
       setErrors({});
       setSelectedNavFile("");
@@ -691,6 +743,7 @@ const filterPOMsByPlatform = (poms, platform) => {
           method: "",
           args: [],
           availableMethods: [],
+           conditions: null,  // ✅ NEW: Step-level conditions
         },
       ],
     }));
@@ -867,6 +920,18 @@ const filterPOMsByPlatform = (poms, platform) => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // ✅ NEW: Handle conditions change from ConditionBlockList
+  const handleConditionsChange = (newConditions) => {
+    setFormData(prev => ({
+      ...prev,
+      conditions: newConditions,
+      // Also update legacy requires for backward compat
+      requires: conditionsToRequires(newConditions) || {}
+    }));
+  };
+
+  // Handle submit
+
   // Handle submit
 const handleSubmit = async (e) => {
   e.preventDefault();
@@ -881,7 +946,14 @@ const handleSubmit = async (e) => {
 const submitData = {
       event: formData.event.trim(),
       platform: formData.platform,
-      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+      // ✅ NEW: Include conditions (block-based)
+      conditions: formData.conditions?.blocks?.length > 0 ? formData.conditions : undefined,
+      // Legacy requires - try to derive from conditions, or use direct requires
+      requires: formData.conditions?.blocks?.length > 0 
+        ? conditionsToRequires(formData.conditions) 
+        : (Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined),
+
+
       actionDetails: formData.hasActionDetails
         ? {
             description: formData.description.trim(),
@@ -894,14 +966,15 @@ const submitData = {
               path: imp.path,
               constructor: imp.constructor,
             })),
-            steps: formData.steps.map((step) => ({
-              description: step.description,
-              instance: step.instance,
-              method: step.method,
-              args: step.args.join(', '),
-              argsArray: step.args,
-              storeAs: step.storeAs || undefined,
-            })),
+             steps: formData.steps.map((step) => ({
+                description: step.description,
+                instance: step.instance,
+                method: step.method,
+                args: step.args.join(', '),
+                argsArray: step.args,
+                storeAs: step.storeAs || undefined,
+                conditions: step.conditions?.blocks?.length > 0 ? step.conditions : undefined,
+              })),
           }
         : null,
     };
@@ -1080,272 +1153,18 @@ const submitData = {
               💡 This transition will only work on the selected platform
             </p>
           </div>
-
-
-          {/* Requires Section - Conditional Path */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span style={{ fontSize: '18px' }}>🔒</span>
-              <label
-                className="text-sm font-semibold"
-                style={{ color: defaultTheme.colors.text.primary }}
-              >
-                Requires (Conditional Path)
-              </label>
-            </div>
-            
-            <p
-              className="text-xs"
-              style={{ color: defaultTheme.colors.text.tertiary }}
-            >
-              Set conditions that must be met in testData for this transition to be selected.
-              Leave empty for the default path.
-            </p>
-            
-            {/* Existing requires conditions */}
-            {Object.keys(formData.requires).length > 0 && (
-              <div className="space-y-2">
-                {Object.entries(formData.requires).map(([key, value]) => (
-                  <div 
-                    key={key}
-                    className="flex items-center gap-3 p-3 rounded-lg"
-                    style={{ 
-                      backgroundColor: `${defaultTheme.colors.accents.purple}15`,
-                      border: `1px solid ${defaultTheme.colors.accents.purple}40`
-                    }}
-                  >
-                    <span 
-                      className="font-mono text-sm px-2 py-1 rounded"
-                      style={{ 
-                        backgroundColor: defaultTheme.colors.background.tertiary,
-                        color: defaultTheme.colors.accents.purple 
-                      }}
-                    >
-                      {key}
-                    </span>
-                    <span style={{ color: defaultTheme.colors.text.tertiary }}>=</span>
-                    <span 
-                      className="font-mono text-sm px-2 py-1 rounded"
-                      style={{ 
-                        backgroundColor: defaultTheme.colors.background.tertiary,
-                        color: typeof value === 'boolean' 
-                          ? (value ? defaultTheme.colors.accents.green : defaultTheme.colors.accents.red)
-                          : defaultTheme.colors.accents.blue
-                      }}
-                    >
-                      {typeof value === 'boolean' ? (value ? 'true' : 'false') : JSON.stringify(value)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFormData(prev => {
-                          const updated = { ...prev.requires };
-                          delete updated[key];
-                          return { ...prev, requires: updated };
-                        });
-                      }}
-                      className="ml-auto px-2 py-1 rounded text-sm transition hover:brightness-110"
-                      style={{ 
-                        backgroundColor: `${defaultTheme.colors.accents.red}20`,
-                        color: defaultTheme.colors.accents.red 
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            {/* Add new requires condition */}
-            <div 
-              className="p-3 rounded-lg space-y-3"
-              style={{ 
-                backgroundColor: defaultTheme.colors.background.tertiary,
-                border: `1px solid ${defaultTheme.colors.border}`
-              }}
-            >
-
-              {/* Quick suggestions */}
-{requiresSuggestions.length > 0 && (
-  <div className="mb-2">
-    <label
-      className="text-xs mb-1 block"
-      style={{ color: defaultTheme.colors.text.tertiary }}
-    >
-      Quick add from previously used:
-    </label>
-    <div className="flex flex-wrap gap-2">
-      {requiresSuggestions
-        .filter(s => !formData.requires[s.key]) // Don't show already added
-        .slice(0, 6) // Limit to 6
-        .map((suggestion, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => {
-              setFormData(prev => ({
-                ...prev,
-                requires: {
-                  ...prev.requires,
-                  [suggestion.key]: suggestion.value
-                }
-              }));
-            }}
-            className="px-2 py-1 rounded text-xs font-mono transition hover:brightness-110"
-            style={{
-              backgroundColor: suggestion.color,
-              color: '#fff'
-            }}
-          >
-            {suggestion.label}
-          </button>
-        ))}
-    </div>
-  </div>
-)}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newRequiresKey}
-                  onChange={(e) => setNewRequiresKey(e.target.value)}
-                  placeholder="Field (e.g., no_agency)"
-                  className="flex-1 px-3 py-2 rounded text-sm font-mono"
-                  style={{
-                    backgroundColor: defaultTheme.colors.background.secondary,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`,
-                  }}
-                />
-                
-                <select
-                  value={newRequiresValueType}
-                  onChange={(e) => {
-                    setNewRequiresValueType(e.target.value);
-                    if (e.target.value === 'boolean') {
-                      setNewRequiresValue('true');
-                    } else {
-                      setNewRequiresValue('');
-                    }
-                  }}
-                  className="px-3 py-2 rounded text-sm"
-                  style={{
-                    backgroundColor: defaultTheme.colors.background.secondary,
-                    color: defaultTheme.colors.text.primary,
-                    border: `1px solid ${defaultTheme.colors.border}`,
-                  }}
-                >
-                  <option value="boolean">Boolean</option>
-                  <option value="string">String</option>
-                  <option value="number">Number</option>
-                </select>
-                
-                {newRequiresValueType === 'boolean' ? (
-                  <select
-                    value={newRequiresValue || 'true'}
-                    onChange={(e) => setNewRequiresValue(e.target.value)}
-                    className="px-3 py-2 rounded text-sm"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.secondary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  >
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                  </select>
-                ) : (
-                  <input
-                    type={newRequiresValueType === 'number' ? 'number' : 'text'}
-                    value={newRequiresValue}
-                    onChange={(e) => setNewRequiresValue(e.target.value)}
-                    placeholder={newRequiresValueType === 'number' ? '0' : 'value'}
-                    className="w-32 px-3 py-2 rounded text-sm"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.secondary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  />
-                )}
-                
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (newRequiresKey.trim()) {
-                      let parsedValue;
-                      if (newRequiresValueType === 'boolean') {
-                        parsedValue = newRequiresValue === 'true';
-                      } else if (newRequiresValueType === 'number') {
-                        parsedValue = Number(newRequiresValue) || 0;
-                      } else {
-                        parsedValue = newRequiresValue || '';
-                      }
-                      
-                      setFormData(prev => ({
-                        ...prev,
-                        requires: {
-                          ...prev.requires,
-                          [newRequiresKey.trim()]: parsedValue
-                        }
-                      }));
-                      
-                      setNewRequiresKey('');
-                      setNewRequiresValue('true');
-                    }
-                  }}
-                  disabled={!newRequiresKey.trim()}
-                  className="px-4 py-2 rounded text-sm font-semibold transition"
-                  style={{
-                    backgroundColor: newRequiresKey.trim() 
-                      ? defaultTheme.colors.accents.purple 
-                      : defaultTheme.colors.background.tertiary,
-                    color: newRequiresKey.trim() ? 'white' : defaultTheme.colors.text.tertiary,
-                    opacity: newRequiresKey.trim() ? 1 : 0.5,
-                  }}
-                >
-                  + Add
-                </button>
-              </div>
-              
-              <p
-                className="text-xs"
-                style={{ color: defaultTheme.colors.text.tertiary }}
-              >
-                💡 Examples: <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>no_agency: true</code>, 
-                <code className="px-1 rounded ml-1" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>booking_type: "group"</code>
-              </p>
-            </div>
-            
-            {Object.keys(formData.requires).length === 0 ? (
-              <div 
-                className="flex items-center gap-2 px-3 py-2 rounded"
-                style={{ 
-                  backgroundColor: `${defaultTheme.colors.accents.green}10`,
-                  border: `1px solid ${defaultTheme.colors.accents.green}30`
-                }}
-              >
-                <span>✓</span>
-                <span className="text-xs" style={{ color: defaultTheme.colors.accents.green }}>
-                  Default path - no conditions required
-                </span>
-              </div>
-            ) : (
-              <div 
-                className="flex items-center gap-2 px-3 py-2 rounded"
-                style={{ 
-                  backgroundColor: `${defaultTheme.colors.accents.purple}10`,
-                  border: `1px solid ${defaultTheme.colors.accents.purple}30`
-                }}
-              >
-                <span>🔀</span>
-                <span className="text-xs" style={{ color: defaultTheme.colors.accents.purple }}>
-                  Conditional path - TestPlanner will select this when {Object.keys(formData.requires).length} condition(s) match
-                </span>
-              </div>
-            )}
-          </div>
-
+ {/* ✅ NEW: Condition Blocks Section (replaces old Requires) */}
+          <ConditionBlockList
+            conditions={formData.conditions}
+            onChange={handleConditionsChange}
+            editMode={true}
+            theme={defaultTheme}
+            testDataSchema={testDataSchema}
+            storedVariables={allStoredVariables}
+            requiresSuggestions={requiresSuggestions}
+            legacyRequires={formData.requires}
+          />
+          
           {/* Action Details Toggle */}
           <div className="flex items-center gap-3">
             <input
@@ -1986,7 +1805,6 @@ const submitData = {
       <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>
         {`{{${step.storeAs}}}`}
       </code>
-      {/* ✨ NEW: Show available keys if we know what the method returns */}
       {step.selectedMethodReturns?.keys?.length > 0 && (
         <span>
           {' '}or{' '}
@@ -1998,6 +1816,17 @@ const submitData = {
     </div>
   )}
 </div>
+
+               {/* ✅ Step Conditions */}
+                   <StepConditions
+                      conditions={step.conditions}
+                      onChange={(newConditions) => handleStepConditionsChange(index, newConditions)}
+                      stepIndex={index}
+                      availableVariables={getAvailableVarsForStep(index)}
+                      testDataSchema={testDataSchema}
+                      requiresSuggestions={requiresSuggestions}
+                      theme={defaultTheme}
+                    />
                   </div>
                 ))}
 
@@ -2064,6 +1893,7 @@ const submitData = {
               {loading ? `${submitIcon} Saving...` : submitLabel}
             </button>
           </div>
+   
         </form>
       </div>
     </div>
