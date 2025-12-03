@@ -236,18 +236,18 @@ export default function UIAssertionContent({
           />
         </div>
       )}
-
-      {/* Assertions Section */}
-      {(editMode || summary.assertions > 0) && (
-        <AssertionsSection
-          assertions={data.assertions || []}
-          editMode={editMode}
-          theme={theme}
-          functionOptions={functionOptions}
-          locatorOptions={locatorOptions}
-          onChange={(vals) => updateData('assertions', vals)}
-        />
-      )}
+{/* Assertions Section */}
+{(editMode || summary.assertions > 0) && (
+  <AssertionsSection
+    assertions={data.assertions || []}
+    editMode={editMode}
+    theme={theme}
+    functionOptions={functionOptions}
+    locatorOptions={locatorOptions}
+    storedVariables={storedVariables}  // ✅ ADD THIS
+    onChange={(vals) => updateData('assertions', vals)}
+  />
+)}
 
       {/* Timeout */}
       <div className="flex items-center gap-3">
@@ -997,6 +997,7 @@ function AssertionsSection({
   theme, 
   functionOptions = [],
   locatorOptions = [],
+  storedVariables = [],  // ✅ ADD THIS PROP
   onChange 
 }) {
   const [isAdding, setIsAdding] = useState(false);
@@ -1005,6 +1006,8 @@ function AssertionsSection({
   const [newCustomIndex, setNewCustomIndex] = useState('');
   const [newExpect, setNewExpect] = useState('toBe');
   const [newValue, setNewValue] = useState('');
+  const [newStoreAs, setNewStoreAs] = useState('');  // ✅ NEW
+  const [useVariable, setUseVariable] = useState(false);  // ✅ NEW
 
   const allOptions = useMemo(() => {
     const combined = [
@@ -1019,18 +1022,75 @@ function AssertionsSection({
     });
   }, [functionOptions, locatorOptions]);
 
+  // ✅ ENHANCED: Categorized expectation types
+  const EXPECTATION_TYPES = {
+    value: [
+      { value: 'toBe', label: 'toBe (===)', needsValue: true },
+      { value: 'toEqual', label: 'toEqual (deep)', needsValue: true },
+      { value: 'toContain', label: 'toContain', needsValue: true },
+      { value: 'toMatch', label: 'toMatch (regex)', needsValue: true },
+      { value: 'toHaveLength', label: 'toHaveLength', needsValue: true },
+    ],
+    number: [
+      { value: 'toBeGreaterThan', label: '> greater than', needsValue: true },
+      { value: 'toBeGreaterThanOrEqual', label: '>= greater or equal', needsValue: true },
+      { value: 'toBeLessThan', label: '< less than', needsValue: true },
+      { value: 'toBeLessThanOrEqual', label: '<= less or equal', needsValue: true },
+    ],
+    boolean: [
+      { value: 'toBeTruthy', label: 'toBeTruthy', needsValue: false },
+      { value: 'toBeFalsy', label: 'toBeFalsy', needsValue: false },
+    ],
+    state: [
+      { value: 'toBeDefined', label: 'toBeDefined', needsValue: false },
+      { value: 'toBeUndefined', label: 'toBeUndefined', needsValue: false },
+      { value: 'toBeNull', label: 'toBeNull', needsValue: false },
+    ],
+    visibility: [
+      { value: 'toBeVisible', label: 'toBeVisible', needsValue: false },
+      { value: 'toBeHidden', label: 'toBeHidden', needsValue: false },
+    ],
+    // ✅ NEW: Getters (for storeAs - return actual values)
+    getter: [
+      { value: 'getValue', label: '📥 get input value', needsValue: false, returnsValue: true },
+      { value: 'getText', label: '📥 get text content', needsValue: false, returnsValue: true },
+      { value: 'getCount', label: '📥 get element count', needsValue: false, returnsValue: true },
+      { value: 'getAttribute', label: '📥 get attribute', needsValue: true, returnsValue: true },
+    ],
+    // ✅ NEW: Boolean checks (for storeAs - return true/false)
+    check: [
+      { value: 'isVisible', label: '❓ is visible?', needsValue: false, returnsBoolean: true },
+      { value: 'isEnabled', label: '❓ is enabled?', needsValue: false, returnsBoolean: true },
+      { value: 'isChecked', label: '❓ is checked?', needsValue: false, returnsBoolean: true },
+      { value: 'hasText', label: '❓ has text?', needsValue: true, returnsBoolean: true },
+    ],
+  };
+
+  // Flatten for lookup
+  const allExpectTypes = Object.values(EXPECTATION_TYPES).flat();
+  const getExpectType = (value) => allExpectTypes.find(t => t.value === value) || { needsValue: true };
+  
+  const selectedExpectType = getExpectType(newExpect);
+  const noValueExpectations = allExpectTypes.filter(t => !t.needsValue).map(t => t.value);
+
   const handleAdd = () => {
     if (!newFn.trim()) return;
     
     const finalFn = buildFieldWithIndex(newFn.trim(), newIndexType, newCustomIndex);
-    const noValueExpectations = ['toBeTruthy', 'toBeFalsy', 'toBeVisible', 'toBeHidden', 'toBeDefined', 'toBeUndefined', 'toBeNull'];
+    
+    // Handle value - wrap in {{}} if using variable
+    let finalValue = newValue;
+    if (useVariable && newValue) {
+      finalValue = `{{${newValue}}}`;
+    } else if (!isNaN(newValue) && newValue !== '') {
+      finalValue = Number(newValue);
+    }
     
     const newAssertion = {
       fn: finalFn,
       expect: newExpect,
-      ...(!noValueExpectations.includes(newExpect) && newValue && { 
-        value: isNaN(newValue) ? newValue : Number(newValue) 
-      })
+      ...(!noValueExpectations.includes(newExpect) && finalValue !== '' && { value: finalValue }),
+      ...(newStoreAs.trim() && { storeAs: newStoreAs.trim() })  // ✅ NEW
     };
     
     onChange([...assertions, newAssertion]);
@@ -1043,6 +1103,8 @@ function AssertionsSection({
     setNewCustomIndex('');
     setNewExpect('toBe');
     setNewValue('');
+    setNewStoreAs('');
+    setUseVariable(false);
     setIsAdding(false);
   };
 
@@ -1050,8 +1112,19 @@ function AssertionsSection({
     onChange(assertions.filter((_, i) => i !== idx));
   };
 
+  // ✅ NEW: Update storeAs for existing assertion
+  const handleUpdateStoreAs = (idx, newStoreAsValue) => {
+    const updated = [...assertions];
+    if (newStoreAsValue.trim()) {
+      updated[idx] = { ...updated[idx], storeAs: newStoreAsValue.trim() };
+    } else {
+      const { storeAs, ...rest } = updated[idx];
+      updated[idx] = rest;
+    }
+    onChange(updated);
+  };
+
   const color = theme.colors.accents.purple;
-  const noValueExpectations = ['toBeTruthy', 'toBeFalsy', 'toBeVisible', 'toBeHidden', 'toBeDefined', 'toBeUndefined', 'toBeNull'];
 
   return (
     <div>
@@ -1076,38 +1149,116 @@ function AssertionsSection({
         <div className="space-y-1 mb-2">
           {assertions.map((assertion, idx) => {
             const parsed = parseFieldWithIndex(assertion.fn);
+            const expectType = getExpectType(assertion.expect);
+            
             return (
               <div 
                 key={idx}
-                className="flex items-center gap-2 p-2 rounded text-sm font-mono"
+                className="p-2 rounded text-sm"
                 style={{ background: `${color}10` }}
               >
-                <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
-                <span style={{ color }}>{parsed.field}</span>
-                {parsed.indexType && (
-                  <span 
-                    className="px-1 py-0.5 rounded text-[10px] font-bold"
-                    style={{ background: color, color: theme.colors.background.primary }}
-                  >
-                    {getIndexLabel(parsed.indexType, parsed.customIndex)}
+                {/* Main assertion line */}
+                <div className="flex items-center gap-1 font-mono flex-wrap">
+                  {/* Getter/Check badge */}
+                  {(expectType.returnsValue || expectType.returnsBoolean) && (
+                    <span 
+                      className="px-1.5 py-0.5 rounded text-[10px] font-bold mr-1"
+                      style={{ 
+                        background: expectType.returnsValue ? theme.colors.accents.blue : theme.colors.accents.yellow,
+                        color: 'white'
+                      }}
+                    >
+                      {expectType.returnsValue ? '📥' : '❓'}
+                    </span>
+                  )}
+                  
+                  <span style={{ color: theme.colors.text.tertiary }}>
+                    {expectType.returnsValue || expectType.returnsBoolean ? '' : 'expect('}
                   </span>
-                )}
-                <span style={{ color: theme.colors.text.tertiary }}>).</span>
-                <span style={{ color: theme.colors.accents.blue }}>{assertion.expect}</span>
-                <span style={{ color: theme.colors.text.tertiary }}>(</span>
-                {assertion.value !== undefined && (
-                  <span style={{ color: theme.colors.accents.green }}>
-                    {typeof assertion.value === 'string' ? `"${assertion.value}"` : String(assertion.value)}
+                  <span style={{ color }}>{parsed.field}</span>
+                  {parsed.indexType && (
+                    <span 
+                      className="px-1 py-0.5 rounded text-[10px] font-bold"
+                      style={{ background: color, color: theme.colors.background.primary }}
+                    >
+                      {getIndexLabel(parsed.indexType, parsed.customIndex)}
+                    </span>
+                  )}
+                  <span style={{ color: theme.colors.text.tertiary }}>
+                    {expectType.returnsValue || expectType.returnsBoolean ? '()' : ').'}
                   </span>
-                )}
-                <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                  <span style={{ color: theme.colors.accents.blue }}>{assertion.expect}</span>
+                  <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                  {assertion.value !== undefined && (
+                    <span style={{ color: theme.colors.accents.green }}>
+                      {typeof assertion.value === 'string' && assertion.value.includes('{{') ? (
+                        <span 
+                          className="px-1 py-0.5 rounded"
+                          style={{ background: `${theme.colors.accents.yellow}30` }}
+                        >
+                          {assertion.value}
+                        </span>
+                      ) : (
+                        typeof assertion.value === 'string' ? `"${assertion.value}"` : String(assertion.value)
+                      )}
+                    </span>
+                  )}
+                  <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                  
+                  {editMode && (
+                    <button 
+                      onClick={() => handleRemove(idx)}
+                      className="ml-auto text-red-400 hover:text-red-300 transition"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
                 
-                {editMode && (
-                  <button 
-                    onClick={() => handleRemove(idx)}
-                    className="ml-auto text-red-400 hover:text-red-300 transition"
+                {/* ✅ NEW: StoreAs line */}
+                {assertion.storeAs ? (
+                  <div className="flex items-center gap-2 mt-1 ml-4">
+                    <span className="text-xs" style={{ color: theme.colors.accents.green }}>💾</span>
+                    {editMode ? (
+                      <>
+                        <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>ctx.</span>
+                        <input
+                          type="text"
+                          value={assertion.storeAs}
+                          onChange={(e) => handleUpdateStoreAs(idx, e.target.value)}
+                          className="px-2 py-0.5 rounded text-xs font-mono"
+                          style={{ 
+                            background: theme.colors.background.primary, 
+                            border: `1px solid ${theme.colors.accents.green}`,
+                            color: theme.colors.accents.green,
+                            width: '120px'
+                          }}
+                        />
+                        <button
+                          onClick={() => handleUpdateStoreAs(idx, '')}
+                          className="text-xs hover:text-red-400"
+                          style={{ color: theme.colors.text.tertiary }}
+                          title="Remove storeAs"
+                        >
+                          ×
+                        </button>
+                      </>
+                    ) : (
+                      <code 
+                        className="px-2 py-0.5 rounded text-xs font-mono"
+                        style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+                      >
+                        → ctx.{assertion.storeAs}
+                      </code>
+                    )}
+                  </div>
+                ) : editMode && (
+                  <button
+                    onClick={() => handleUpdateStoreAs(idx, `${parsed.field}Result`)}
+                    className="mt-1 ml-4 px-2 py-0.5 rounded text-[10px] transition hover:brightness-110"
+                    style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
                   >
-                    ×
+                    💾 + storeAs
                   </button>
                 )}
               </div>
@@ -1145,7 +1296,7 @@ function AssertionsSection({
                 </optgroup>
               )}
               {locatorOptions.length > 0 && (
-                <optgroup label="Getters">
+                <optgroup label="Locators">
                   {locatorOptions.map(opt => (
                     <option key={`get-${opt.value}`} value={opt.value}>{opt.label}</option>
                   ))}
@@ -1206,55 +1357,158 @@ function AssertionsSection({
             </div>
           </div>
 
-          {/* Expectation + value */}
-          <div className="flex gap-2">
+          {/* Expectation type - ✅ ENHANCED with categories */}
+          <div className="flex gap-2 flex-wrap">
             <select
               value={newExpect}
-              onChange={(e) => setNewExpect(e.target.value)}
-              className="w-44 px-2 py-1.5 rounded text-sm"
+              onChange={(e) => {
+                setNewExpect(e.target.value);
+                // Auto-suggest storeAs for getters
+                const type = getExpectType(e.target.value);
+                if (type.returnsValue || type.returnsBoolean) {
+                  setNewStoreAs(newFn ? `${newFn}Result` : '');
+                }
+              }}
+              className="w-52 px-2 py-1.5 rounded text-sm"
               style={{
                 background: theme.colors.background.primary,
                 border: `1px solid ${theme.colors.border}`,
                 color: theme.colors.text.primary
               }}
             >
-              <optgroup label="Value">
-                <option value="toBe">toBe</option>
-                <option value="toEqual">toEqual</option>
-                <option value="toContain">toContain</option>
-                <option value="toMatch">toMatch</option>
+              <optgroup label="📥 Getters (for storeAs)">
+                {EXPECTATION_TYPES.getter.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </optgroup>
-              <optgroup label="Number">
-                <option value="toBeGreaterThan">toBeGreaterThan</option>
-                <option value="toBeLessThan">toBeLessThan</option>
+              <optgroup label="❓ Boolean Checks">
+                {EXPECTATION_TYPES.check.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </optgroup>
-              <optgroup label="Boolean">
-                <option value="toBeTruthy">toBeTruthy</option>
-                <option value="toBeFalsy">toBeFalsy</option>
+              <optgroup label="Value Comparisons">
+                {EXPECTATION_TYPES.value.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </optgroup>
-              <optgroup label="State">
-                <option value="toBeDefined">toBeDefined</option>
-                <option value="toBeNull">toBeNull</option>
+              <optgroup label="Number Comparisons">
+                {EXPECTATION_TYPES.number.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Boolean State">
+                {EXPECTATION_TYPES.boolean.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Definition State">
+                {EXPECTATION_TYPES.state.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </optgroup>
               <optgroup label="Visibility">
-                <option value="toBeVisible">toBeVisible</option>
-                <option value="toBeHidden">toBeHidden</option>
+                {EXPECTATION_TYPES.visibility.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </optgroup>
             </select>
-            {!noValueExpectations.includes(newExpect) && (
+            
+            {/* Value input (if needed) */}
+            {selectedExpectType.needsValue && (
+              <div className="flex-1 flex gap-2 items-center">
+                {useVariable ? (
+                  <>
+                    <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'{{'}</span>
+                    <select
+                      value={newValue}
+                      onChange={(e) => setNewValue(e.target.value)}
+                      className="flex-1 px-2 py-1.5 rounded text-sm font-mono"
+                      style={{
+                        background: theme.colors.background.primary,
+                        border: `1px solid ${theme.colors.accents.yellow}`,
+                        color: theme.colors.accents.yellow
+                      }}
+                    >
+                      <option value="">Select variable...</option>
+                      {storedVariables.map(v => (
+                        <option key={v.name || v.path} value={v.path || v.name}>{v.path || v.name}</option>
+                      ))}
+                    </select>
+                    <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'}}'}</span>
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                    placeholder={selectedExpectType.value === 'getAttribute' ? 'attribute name' : 'Expected value'}
+                    className="flex-1 px-2 py-1.5 rounded text-sm"
+                    style={{
+                      background: theme.colors.background.primary,
+                      border: `1px solid ${theme.colors.border}`,
+                      color: theme.colors.text.primary
+                    }}
+                  />
+                )}
+                
+                {/* Toggle variable mode */}
+                <label className="text-xs flex items-center gap-1 cursor-pointer whitespace-nowrap" style={{ color: theme.colors.text.tertiary }}>
+                  <input
+                    type="checkbox"
+                    checked={useVariable}
+                    onChange={(e) => {
+                      setUseVariable(e.target.checked);
+                      setNewValue('');
+                    }}
+                    className="rounded"
+                  />
+                  use var
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* ✅ NEW: StoreAs input */}
+          <div 
+            className="p-2 rounded space-y-2"
+            style={{ 
+              background: `${theme.colors.accents.green}10`,
+              border: `1px dashed ${theme.colors.accents.green}40`
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold" style={{ color: theme.colors.accents.green }}>
+                💾 Store result as variable (optional)
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-mono" style={{ color: theme.colors.text.tertiary }}>ctx.</span>
               <input
                 type="text"
-                value={newValue}
-                onChange={(e) => setNewValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-                placeholder="Expected value"
-                className="flex-1 px-2 py-1.5 rounded text-sm"
-                style={{
-                  background: theme.colors.background.primary,
-                  border: `1px solid ${theme.colors.border}`,
-                  color: theme.colors.text.primary
+                value={newStoreAs}
+                onChange={(e) => setNewStoreAs(e.target.value.replace(/\s/g, ''))}
+                placeholder="variableName"
+                className="flex-1 px-2 py-1 rounded text-sm font-mono"
+                style={{ 
+                  background: theme.colors.background.primary, 
+                  border: `1px solid ${newStoreAs ? theme.colors.accents.green : theme.colors.border}`, 
+                  color: theme.colors.accents.green 
                 }}
               />
+            </div>
+            
+            {newStoreAs && (
+              <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+                {selectedExpectType.returnsValue ? (
+                  <>📝 Will store the actual value from <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>{newFn || 'function'}()</code></>
+                ) : selectedExpectType.returnsBoolean ? (
+                  <>✓/✗ Will store <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>true</code> or <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>false</code></>
+                ) : (
+                  <>✓/✗ Will store <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>true</code> if passes</>
+                )}
+              </div>
             )}
           </div>
 
@@ -1263,17 +1517,47 @@ function AssertionsSection({
             className="p-2 rounded text-xs font-mono"
             style={{ background: theme.colors.background.primary }}
           >
-            <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
-            <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}()</span>
-            <span style={{ color: theme.colors.text.tertiary }}>).</span>
-            <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
-            <span style={{ color: theme.colors.text.tertiary }}>(</span>
-            {newValue && !noValueExpectations.includes(newExpect) && (
-              <span style={{ color: theme.colors.accents.green }}>
-                {isNaN(newValue) ? `"${newValue}"` : newValue}
-              </span>
+            {selectedExpectType.returnsValue || selectedExpectType.returnsBoolean ? (
+              <>
+                <span style={{ color: theme.colors.text.tertiary }}>const result = await </span>
+                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
+                <span style={{ color: theme.colors.text.tertiary }}>.</span>
+                <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
+                <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                {newValue && selectedExpectType.needsValue && (
+                  <span style={{ color: theme.colors.accents.green }}>
+                    {useVariable ? `{{${newValue}}}` : (isNaN(newValue) ? `"${newValue}"` : newValue)}
+                  </span>
+                )}
+                <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                {newStoreAs && (
+                  <>
+                    <br />
+                    <span style={{ color: theme.colors.accents.green }}>// → ctx.{newStoreAs} = result</span>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
+                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}()</span>
+                <span style={{ color: theme.colors.text.tertiary }}>).</span>
+                <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
+                <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                {newValue && !noValueExpectations.includes(newExpect) && (
+                  <span style={{ color: theme.colors.accents.green }}>
+                    {useVariable ? `{{${newValue}}}` : (isNaN(newValue) ? `"${newValue}"` : newValue)}
+                  </span>
+                )}
+                <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                {newStoreAs && (
+                  <>
+                    <br />
+                    <span style={{ color: theme.colors.accents.green }}>// → ctx.{newStoreAs} = true/false</span>
+                  </>
+                )}
+              </>
             )}
-            <span style={{ color: theme.colors.text.tertiary }}>)</span>
           </div>
 
           {/* Actions */}

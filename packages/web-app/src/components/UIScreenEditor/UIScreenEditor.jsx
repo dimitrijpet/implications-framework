@@ -12,6 +12,7 @@ import ElementList from '../SourceAttribution/ElementList';
 import SourceLegend from '../SourceAttribution/SourceLegend';
 import BlockList from './BlockList';
 import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
+import { collectVariablesFromUIValidations } from './collectVariablesFromUIValidations';
 // ✅ ADD these imports
 import PlatformSectionWithOrdering from './PlatformSectionWithOrdering';
 import { screensObjectToArray, screensArrayToObject } from './screenOrderingUtils';
@@ -232,8 +233,7 @@ const storedVariables = useMemo(() => {
       });
     }
   }
-  
-  // 4. ✅ CHANGED: Add test data fields from config (not hardcoded!)
+  // 4. Test data fields from config
   const testDataVars = testDataSchemaToVariables(testDataSchema);
   testDataVars.forEach(v => {
     if (!variables.some(existing => existing.name === v.name)) {
@@ -241,10 +241,42 @@ const storedVariables = useMemo(() => {
     }
   });
   
+  // ✅ 5. NEW: Variables from UI validations (storeAs)
+  const uiVars = collectVariablesFromUIValidations(state);
+  uiVars.forEach(v => {
+    if (!variables.some(existing => existing.name === v.name)) {
+      variables.push(v);
+    }
+  });
+  
+  // ✅ 6. NEW: Variables from previous states' UI validations
+  if (Object.keys(allStates).length > 0 && allTransitions.length > 0) {
+    const stateName = state?.id || state?.meta?.status;
+    if (stateName) {
+      const incoming = allTransitions.filter(t => 
+        (t.target || t.to || '').toLowerCase() === stateName.toLowerCase()
+      );
+      
+      incoming.forEach(t => {
+        const sourceStateName = t.from || t.source;
+        const sourceState = allStates[sourceStateName];
+        if (sourceState) {
+          const sourceUIVars = collectVariablesFromUIValidations(sourceState);
+          sourceUIVars.forEach(v => {
+            if (!variables.some(existing => existing.name === v.name)) {
+              v.fromState = sourceStateName;
+              variables.push(v);
+            }
+          });
+        }
+      });
+    }
+  }
+  
   console.log(`💾 UIScreenEditor: Computed ${variables.length} available variables`, variables);
   
   return variables;
-}, [state, incomingTransitions, allStates, allTransitions, testDataSchema]); // ✅ Add testDataSchema to deps
+}, [state, incomingTransitions, allStates, allTransitions, testDataSchema]);
 
 useEffect(() => {
   if (projectPath) {

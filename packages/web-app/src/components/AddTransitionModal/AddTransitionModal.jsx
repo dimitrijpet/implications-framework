@@ -9,6 +9,7 @@ import { getRequiresSuggestions, getKnownKeys } from '../../utils/requiresColors
 import ConditionBlockList from './ConditionBlockList';
 import StepConditions from './StepConditions';
 import { migrateRequiresToConditions, conditionsToRequires } from './conditionBlockUtils';
+import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVariablesFromUIValidations';
 
 const API_URL = "http://localhost:3000";
 
@@ -85,10 +86,10 @@ export default function AddTransitionModal({
   sourceState,
   targetState,
   projectPath,
-  mode = 'create',           // ✅ NEW: 'create' | 'edit'
-  initialData = null,        // ✅ NEW: For edit mode
-availablePlatforms = ["web"],  // ✅ NEW - from config
-  storedVariables = [],          // ✅ NEW: Variables from previous transitions
+  mode = 'create',
+  initialData = null,
+  availablePlatforms = ["web"],
+  storedVariables = [],
 }) {
 
  const [formData, setFormData] = useState({
@@ -177,18 +178,38 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
     return vars;
   }, [formData.steps, formData.imports]);
     // ✅ NEW: Combine stored variables from props + current steps for conditions
+// ✅ NEW: Combine ALL available variables for conditions
+ // ✅ Combine ALL available variables for conditions
+  // Includes: props, form steps, and source state's UI validations
   const allStoredVariables = useMemo(() => {
-    const vars = [...(storedVariables || [])];
+    const vars = [];
+    const seen = new Set();
     
-    // Add variables from current form steps
-    availableStoreAsVars.forEach(v => {
-      if (!vars.some(existing => existing.name === v.name)) {
+    const addVar = (v) => {
+      if (!seen.has(v.name)) {
+        seen.add(v.name);
         vars.push(v);
       }
-    });
+    };
+    
+    // 1. Variables from props (passed from parent/previous states)
+    (storedVariables || []).forEach(addVar);
+    
+    // 2. Variables from current form steps (storeAs)
+    availableStoreAsVars.forEach(addVar);
+    
+    // 3. Variables from source state's UI validations (storeAs)
+    if (sourceState) {
+      const uiVars = collectVariablesFromUIValidations(sourceState);
+      uiVars.forEach(v => {
+        v.source = 'ui-storeAs';
+        v.fromState = sourceState.id || sourceState.meta?.status || 'source';
+        addVar(v);
+      });
+    }
     
     return vars;
-  }, [storedVariables, availableStoreAsVars]);
+  }, [storedVariables, availableStoreAsVars, sourceState]);
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
@@ -1817,14 +1838,15 @@ const submitData = {
 
                {/* ✅ Step Conditions */}
                    <StepConditions
-                      conditions={step.conditions}
-                      onChange={(newConditions) => handleStepConditionsChange(index, newConditions)}
-                      stepIndex={index}
-                      availableVariables={getAvailableVarsForStep(index)}
-                      testDataSchema={testDataSchema}
-                      requiresSuggestions={requiresSuggestions}
-                      theme={defaultTheme}
-                    />
+  conditions={step.conditions}
+  onChange={(newConditions) => handleStepConditionsChange(index, newConditions)}
+  stepIndex={index}
+  availableVariables={getAvailableVarsForStep(index)}
+  storedVariables={allStoredVariables}  // ✅ ADD THIS
+  testDataSchema={testDataSchema}
+  requiresSuggestions={requiresSuggestions}
+  theme={defaultTheme}
+/>
                   </div>
                 ))}
 
