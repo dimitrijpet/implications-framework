@@ -3,6 +3,15 @@ import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { defaultTheme, getPlatformStyle } from '../../config/visualizerTheme';
 
+// Normalize hex color - remove alpha channel if present
+function normalizeHexColor(color) {
+  if (!color) return '#8b5cf6';
+  if (color.length === 9 && color.startsWith('#')) {
+    return color.substring(0, 7);
+  }
+  return color;
+}
+
 // Fallback color function - only used if node.data.color is missing
 function getNodeColorFallback(ele) {
   const id = ele.id() || '';
@@ -259,11 +268,11 @@ export default function StateGraph({
           selector: 'node.screen-group',
           style: {
             'background-color': (ele) => ele.data('groupBgColor'),
-            'background-opacity': 0.05,
+            'background-opacity': 0.02,
             'border-width': 1.5,
             'border-color': (ele) => ele.data('groupBorderColor'),
             'border-style': 'dashed',
-            'border-opacity': 0.4,
+            'border-opacity': 0.2,
             'label': 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
@@ -276,19 +285,19 @@ export default function StateGraph({
           }
         },
         
-        // Tag group - solid
+        // Tag group - solid border only (NO fill)
         {
           selector: 'node.tag-group-solid',
           style: {
-            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.05),
-            'background-opacity': 1,
-            'border-width': 3,
-            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.7),
+            'background-opacity': 0,
+            'border-width': 2,
+            'border-color': (ele) => ele.data('groupColor') || '#8b5cf6',
             'border-style': 'solid',
+            'border-opacity': 0.4,
             'label': 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
-            'color': (ele) => hexToRgba(ele.data('groupColor'), 0.9),
+            'color': (ele) => ele.data('groupColor') || '#8b5cf6',
             'font-size': '13px',
             'font-weight': '600',
             'text-outline-width': 0,
@@ -298,19 +307,19 @@ export default function StateGraph({
           }
         },
         
-        // Tag group - dashed
+        // Tag group - dashed border only (NO fill)
         {
           selector: 'node.tag-group-dashed',
           style: {
-            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.03),
-            'background-opacity': 1,
+            'background-opacity': 0,
             'border-width': 2,
-            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.5),
+            'border-color': (ele) => ele.data('groupColor') || '#8b5cf6',
             'border-style': 'dashed',
+            'border-opacity': 0.4,
             'label': 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
-            'color': (ele) => hexToRgba(ele.data('groupColor'), 0.8),
+            'color': (ele) => ele.data('groupColor') || '#8b5cf6',
             'font-size': '12px',
             'font-weight': '500',
             'text-outline-width': 0,
@@ -320,22 +329,25 @@ export default function StateGraph({
           }
         },
         
-        // Tag group - filled
+        // Tag group - filled (50% opacity background)
         {
           selector: 'node.tag-group-filled',
           style: {
-            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.15),
-            'background-opacity': 1,
-            'border-width': 2,
-            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.4),
+            'background-color': (ele) => ele.data('groupColor') || '#8b5cf6',
+            'background-opacity': 0.1,
+            'border-width': 1,
+            'border-color': (ele) => ele.data('groupColor') || '#8b5cf6',
             'border-style': 'solid',
+            'border-opacity': 0.5,
             'label': 'data(label)',
             'text-valign': 'top',
             'text-halign': 'center',
-            'color': (ele) => hexToRgba(ele.data('groupColor'), 1),
+            'color': '#ffffff',
             'font-size': '13px',
             'font-weight': '600',
-            'text-outline-width': 0,
+            'text-outline-width': 2,
+            'text-outline-color': (ele) => ele.data('groupColor') || '#8b5cf6',
+            'text-outline-opacity': 0.2,
             'padding': '40px',
             'text-margin-y': -10,
             'shape': 'roundrectangle'

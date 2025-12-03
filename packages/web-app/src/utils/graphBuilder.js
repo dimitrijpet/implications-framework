@@ -1,18 +1,6 @@
 import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '../config/visualizerTheme';
 import { getRequiresObjectColor, formatRequiresLabel } from './requiresColors.js';
 
-// Default color configs (used if not in discovery result)
-const DEFAULT_GRAPH_COLORS = {
-  colorNodesBy: 'platform',  // ✅ Change to platform
-  platforms: {
-    'web': '#c4307a',        // ✅ Remove 'ff' suffix
-    'mobile-dancer': '#a855f7',
-    'mobile-manager': '#06b6d4',
-    'mobile': '#8b5cf6',
-    '_default': '#c4307a'    // ✅ Remove 'ff' suffix
-  },
-};
-
 /**
  * Normalize hex color - remove alpha channel if present (Cytoscape doesn't support 8-char hex)
  */
@@ -24,6 +12,32 @@ function normalizeHexColor(color) {
   }
   return color;
 }
+
+// Default color configs (used if not in discovery result)
+const DEFAULT_GRAPH_COLORS = {
+  colorNodesBy: 'platform',
+  platforms: {
+    'web': '#3b82f6',           // Blue
+    'mobile-dancer': '#a855f7', // Purple
+    'mobile-manager': '#06b6d4', // Cyan
+    'mobile': '#8b5cf6',        // Purple
+    '_default': '#3b82f6'       // Blue (was gray, now blue as fallback)
+  },
+  statuses: {
+    'pending': '#f59e0b',
+    'accepted': '#10b981',
+    'rejected': '#ef4444',
+    'cancelled': '#6b7280',
+    'completed': '#3b82f6',
+    'checked_in': '#8b5cf6',
+    '_default': '#8b5cf6'
+  },
+  patterns: {
+    'booking': '#3b82f6',
+    'cms': '#10b981',
+    '_default': '#8b5cf6'
+  }
+};
 
 /**
  * Get node color based on config
@@ -54,9 +68,10 @@ function getNodeColorFromConfig(metadata, graphColors) {
   
   const lookupValue = value ? value.toLowerCase() : '';
   const rawColor = colorMap[lookupValue] || colorMap['_default'] || '#3b82f6';
-  const color = normalizeHexColor(rawColor);  // ✅ Strip alpha
+  const color = normalizeHexColor(rawColor);  // Strip alpha if present
   
-  console.log(`🎨 Node color: colorBy=${colorBy}, value="${value}", color=${color}`);
+  // Debug logging
+  console.log(`🎨 Node color: colorBy=${colorBy}, value="${value}", lookupValue="${lookupValue}", color=${color}`);
   
   return color;
 }
@@ -68,8 +83,6 @@ export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
   const implications = files.implications || [];
   const projectPath = discoveryResult.projectPath;
-
-  console.log('🔧 Config received:', discoveryResult.config);
   
   // Get graph colors from config (passed from backend)
   const graphColors = discoveryResult.config?.graphColors || DEFAULT_GRAPH_COLORS;
