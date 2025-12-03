@@ -3,29 +3,42 @@ import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { defaultTheme, getPlatformStyle } from '../../config/visualizerTheme';
 
-function getNodeColor(ele) {
-  const status = ele.data('status') || ele.id();
+// Fallback color function - only used if node.data.color is missing
+function getNodeColorFallback(ele) {
+  const id = ele.id() || '';
+  const status = ele.data('status') || '';
+  const lookup = status || id;
+  
   const colors = {
     'pending': '#f59e0b',
     'accepted': '#10b981',
     'rejected': '#ef4444',
     'cancelled': '#6b7280',
-    'completed': '#3b82f6'
+    'completed': '#3b82f6',
+    'checked_in': '#8b5cf6',
   };
-  return colors[status.toLowerCase()] || '#8b5cf6';
+  return colors[lookup.toLowerCase()] || '#8b5cf6';
 }
 
 function getScreenGroupColor(screenName, index) {
   const colors = [
-    { bg: 'rgba(59, 130, 246, 0.02)', border: 'rgba(59, 130, 246, 0.15)', text: 'rgba(59, 130, 246, 0.9)' },
-    { bg: 'rgba(16, 185, 129, 0.02)', border: 'rgba(16, 185, 129, 0.15)', text: 'rgba(16, 185, 129, 0.9)' },
-    { bg: 'rgba(168, 85, 247, 0.02)', border: 'rgba(168, 85, 247, 0.15)', text: 'rgba(168, 85, 247, 0.9)' },
-    { bg: 'rgba(245, 158, 11, 0.02)', border: 'rgba(245, 158, 11, 0.15)', text: 'rgba(245, 158, 11, 0.9)' },
-    { bg: 'rgba(236, 72, 153, 0.02)', border: 'rgba(236, 72, 153, 0.15)', text: 'rgba(236, 72, 153, 0.9)' },
-    { bg: 'rgba(6, 182, 212, 0.02)', border: 'rgba(6, 182, 212, 0.15)', text: 'rgba(6, 182, 212, 0.9)' },
+    { bg: 'rgba(59, 130, 246, 0.02)', border: 'rgba(59, 130, 246, 0.15)', text: 'rgba(59, 130, 246, 0.6)' },
+    { bg: 'rgba(16, 185, 129, 0.02)', border: 'rgba(16, 185, 129, 0.15)', text: 'rgba(16, 185, 129, 0.6)' },
+    { bg: 'rgba(168, 85, 247, 0.02)', border: 'rgba(168, 85, 247, 0.15)', text: 'rgba(168, 85, 247, 0.6)' },
+    { bg: 'rgba(245, 158, 11, 0.02)', border: 'rgba(245, 158, 11, 0.15)', text: 'rgba(245, 158, 11, 0.6)' },
+    { bg: 'rgba(236, 72, 153, 0.02)', border: 'rgba(236, 72, 153, 0.15)', text: 'rgba(236, 72, 153, 0.6)' },
+    { bg: 'rgba(6, 182, 212, 0.02)', border: 'rgba(6, 182, 212, 0.15)', text: 'rgba(6, 182, 212, 0.6)' },
   ];
-  
   return colors[index % colors.length];
+}
+
+function hexToRgba(hex, alpha = 1) {
+  if (!hex) return `rgba(139, 92, 246, ${alpha})`;
+  hex = hex.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 cytoscape.use(dagre);
@@ -40,23 +53,89 @@ export default function StateGraph({
   showScreenGroups = false,
   screenGroups = {},
   savedLayout = null,
-  onLayoutChange = null
+  onLayoutChange = null,
+  tagConfig = {},
+  activeFilters = {},
 }) {
+
   const containerRef = useRef(null);
   const cyRef = useRef(null);
   
-  // Main graph creation - only runs when graphData changes
   useEffect(() => {
     if (!containerRef.current || !graphData) return;
     
-    console.log('🔄 StateGraph creating/updating graph');
-    
-    // Build elements with compound nodes if screen grouping enabled
+    // Build elements
     let elements = {
       nodes: [...graphData.nodes],
       edges: [...graphData.edges]
     };
 
+    // ✅ Tag filtering
+    const filterKeys = Object.keys(activeFilters || {});
+    if (filterKeys.length > 0) {
+      elements.nodes = elements.nodes.filter(node => {
+        const nodeTags = node.data.tags || {};
+        return Object.entries(nodeTags).some(([cat, val]) => {
+          const key = `${cat}:${val}`;
+          return activeFilters[key];
+        });
+      });
+      
+      const visibleIds = new Set(elements.nodes.map(n => n.data.id));
+      elements.edges = elements.edges.filter(e => 
+        visibleIds.has(e.data.source) && visibleIds.has(e.data.target)
+      );
+    }
+
+    // ✅ Tag grouping (only if style !== 'none')
+    const tagGroups = {};
+    Object.entries(tagConfig || {}).forEach(([key, config]) => {
+      if (config?.style && config.style !== 'none') {
+        const parts = key.split(':');
+        const value = parts.slice(1).join(':');
+        tagGroups[key] = { 
+          nodeIds: [], 
+          color: config.color || '#8b5cf6', 
+          label: value,
+          style: config.style
+        };
+      }
+    });
+
+    if (Object.keys(tagGroups).length > 0) {
+      elements.nodes.forEach(node => {
+        const nodeTags = node.data.tags || {};
+        Object.entries(nodeTags).forEach(([category, value]) => {
+          const key = `${category}:${value}`;
+          if (tagGroups[key]) {
+            tagGroups[key].nodeIds.push(node.data.id);
+          }
+        });
+      });
+
+      Object.entries(tagGroups).forEach(([key, group]) => {
+        if (group.nodeIds.length > 0) {
+          elements.nodes.push({
+            data: {
+              id: `taggroup_${key}`,
+              label: group.label,
+              type: 'tag_group',
+              groupColor: group.color,
+            },
+            classes: `tag-group tag-group-${group.style}`
+          });
+
+          group.nodeIds.forEach(nodeId => {
+            const node = elements.nodes.find(n => n.data.id === nodeId);
+            if (node && !node.data.parent) {
+              node.data.parent = `taggroup_${key}`;
+            }
+          });
+        }
+      });
+    }
+
+    // Screen groups
     if (showScreenGroups && screenGroups) {
       let screenIndex = 0;
       
@@ -97,10 +176,13 @@ export default function StateGraph({
       ],
       
       style: [
+        // ============================================
+        // STATE NODES
+        // ============================================
         {
           selector: 'node[type="state"]',
           style: {
-            'background-color': (ele) => getNodeColor(ele),
+            'background-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
             'label': 'data(label)',
             'text-valign': 'center',
             'text-halign': 'center',
@@ -108,7 +190,7 @@ export default function StateGraph({
             'font-size': '14px',
             'font-weight': 'bold',
             'text-outline-width': 2,
-            'text-outline-color': (ele) => getNodeColor(ele),
+            'text-outline-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
             'width': 80,
             'height': 80,
             'border-width': (ele) => {
@@ -121,15 +203,20 @@ export default function StateGraph({
               if (transitionMode && ele.id() === transitionSource) {
                 return theme.colors.accents.orange;
               }
-              return ele.id() === selectedNode ? theme.colors.accents.blue : getNodeColor(ele);
+              if (ele.id() === selectedNode) {
+                return theme.colors.accents.blue;
+              }
+              return ele.data('color') || getNodeColorFallback(ele);
             },
             'border-opacity': 1
           }
         },
+        
+        // Fallback for nodes without type
         {
-          selector: 'node',
+          selector: 'node:not([type])',
           style: {
-            'background-color': (ele) => getNodeColor(ele),
+            'background-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
             'label': 'data(label)',
             'text-valign': 'center',
             'text-halign': 'center',
@@ -137,24 +224,16 @@ export default function StateGraph({
             'font-size': '14px',
             'font-weight': 'bold',
             'text-outline-width': 2,
-            'text-outline-color': (ele) => getNodeColor(ele),
+            'text-outline-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
             'width': 80,
             'height': 80,
-            'border-width': (ele) => {
-              if (transitionMode && ele.id() === transitionSource) {
-                return 6;
-              }
-              return ele.id() === selectedNode ? 4 : 2;
-            },
-            'border-color': (ele) => {
-              if (transitionMode && ele.id() === transitionSource) {
-                return theme.colors.accents.orange;
-              }
-              return ele.id() === selectedNode ? theme.colors.accents.blue : getNodeColor(ele);
-            },
+            'border-width': 2,
+            'border-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
             'border-opacity': 1
           }
         },
+        
+        // Multi-platform nodes
         {
           selector: 'node[borderStyle="multi"]',
           style: {
@@ -164,6 +243,8 @@ export default function StateGraph({
             'border-opacity': 1
           }
         },
+        
+        // Highlighted node
         {
           selector: 'node.highlighted',
           style: {
@@ -172,6 +253,8 @@ export default function StateGraph({
             'border-style': 'solid'
           }
         },
+        
+        // Screen groups
         {
           selector: 'node.screen-group',
           style: {
@@ -185,18 +268,82 @@ export default function StateGraph({
             'text-valign': 'top',
             'text-halign': 'center',
             'color': (ele) => ele.data('groupTextColor'),
-            'font-size': '18px',
-            'font-weight': '400',
-            'text-outline-width': 0,
-            'text-outline-color': 'transparent',
-            'text-background-opacity': 0,
-            'padding': '35px',
-            'text-margin-y': -12,
+            'font-size': '14px',
+            'font-weight': '300',
+            'padding': '30px',
+            'text-margin-y': -10,
             'shape': 'roundrectangle'
           }
         },
-// ============================================
-        // EDGE STYLE - Default (no requires)
+        
+        // Tag group - solid
+        {
+          selector: 'node.tag-group-solid',
+          style: {
+            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.05),
+            'background-opacity': 1,
+            'border-width': 3,
+            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.7),
+            'border-style': 'solid',
+            'label': 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'color': (ele) => hexToRgba(ele.data('groupColor'), 0.9),
+            'font-size': '13px',
+            'font-weight': '600',
+            'text-outline-width': 0,
+            'padding': '40px',
+            'text-margin-y': -10,
+            'shape': 'roundrectangle'
+          }
+        },
+        
+        // Tag group - dashed
+        {
+          selector: 'node.tag-group-dashed',
+          style: {
+            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.03),
+            'background-opacity': 1,
+            'border-width': 2,
+            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.5),
+            'border-style': 'dashed',
+            'label': 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'color': (ele) => hexToRgba(ele.data('groupColor'), 0.8),
+            'font-size': '12px',
+            'font-weight': '500',
+            'text-outline-width': 0,
+            'padding': '35px',
+            'text-margin-y': -8,
+            'shape': 'roundrectangle'
+          }
+        },
+        
+        // Tag group - filled
+        {
+          selector: 'node.tag-group-filled',
+          style: {
+            'background-color': (ele) => hexToRgba(ele.data('groupColor'), 0.15),
+            'background-opacity': 1,
+            'border-width': 2,
+            'border-color': (ele) => hexToRgba(ele.data('groupColor'), 0.4),
+            'border-style': 'solid',
+            'label': 'data(label)',
+            'text-valign': 'top',
+            'text-halign': 'center',
+            'color': (ele) => hexToRgba(ele.data('groupColor'), 1),
+            'font-size': '13px',
+            'font-weight': '600',
+            'text-outline-width': 0,
+            'padding': '40px',
+            'text-margin-y': -10,
+            'shape': 'roundrectangle'
+          }
+        },
+        
+        // ============================================
+        // EDGES - with requires/conditions support
         // ============================================
         {
           selector: 'edge',
@@ -210,6 +357,7 @@ export default function StateGraph({
             'control-point-step-size': 60,
             'line-style': 'solid',
             
+            // ✅ Label with event + platform badges + requires
             'label': (ele) => {
               const event = ele.data('label');
               const platforms = ele.data('platforms');
@@ -217,6 +365,7 @@ export default function StateGraph({
               
               let label = event;
               
+              // Add platform badges
               if (platforms && platforms.length > 0) {
                 const badges = platforms.map(p => 
                   p === 'web' ? '🌐' : '📱'
@@ -224,6 +373,7 @@ export default function StateGraph({
                 label += ` ${badges}`;
               }
               
+              // Add requires label on new line
               if (requiresLabel) {
                 label += `\n${requiresLabel}`;
               }
@@ -242,79 +392,39 @@ export default function StateGraph({
           }
         },
         
-        // Conditional edges - dashed line + colored text
+        // ✅ Conditional edges (with requires) - dashed with custom color
         {
           selector: 'edge[?hasRequires]',
           style: {
             'line-style': 'dashed',
             'line-dash-pattern': [8, 4],
+            'line-color': (ele) => ele.data('requiresColor') || '#A855F7',
+            'target-arrow-color': (ele) => ele.data('requiresColor') || '#A855F7',
             'color': (ele) => ele.data('requiresColor') || '#A855F7',
           }
         }
       ],
       
       layout: {
-        name: 'preset',
-        fit: true,
-        padding: 50
-      },
-      
-      minZoom: 0.3,
-      maxZoom: 3,
-    });
-    
-    // Apply layout
-    // Apply layout
-const applyLayout = () => {
-  if (window.__savedGraphLayout && window.__savedGraphLayout.positions) {
-    console.log('📍 Applying saved layout from window global');
-    
-    cy.nodes().forEach(node => {
-      if (node.data('type') === 'screen_group') return;
-      
-      const savedPos = window.__savedGraphLayout.positions[node.id()];
-      if (savedPos) {
-        node.position(savedPos);
-      }
-    });
-    
-    // Mark as applied
-    window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
-    
-    cy.fit(null, 50);
-    console.log('✅ Layout applied!');
-  } else {
-    // ✨ ONLY run dagre if we've never saved a layout
-    // This prevents re-layout when toggling screens
-    if (!window.__savedGraphLayoutVersion) {
-      console.log('🎨 Running dagre layout (first time, no saved layout)');
-      
-      cy.layout({
         name: 'dagre',
         rankDir: 'LR',
         nodeSep: 100,
         rankSep: 150,
         padding: 50,
         animate: true,
-        animationDuration: 500,
-        stop: () => {
-          console.log('✅ Dagre layout complete');
-        }
-      }).run();
-    } else {
-      console.log('⏭️ Skipping dagre - using existing positions');
-    }
-  }
-};
-    
-    applyLayout();
+        animationDuration: 500
+      },
+      
+      minZoom: 0.3,
+      maxZoom: 3,
+    });
     
     // Event handlers
     cy.on('tap', 'node', (event) => {
       const node = event.target;
       const nodeData = node.data();
       
-      if (nodeData.type === 'screen_group') {
+      if (nodeData.type === 'screen_group' || nodeData.type === 'tag_group') {
         return;
       }
       
@@ -331,7 +441,7 @@ const applyLayout = () => {
       if (cyRef.current) {
         const container = cyRef.current.container();
         
-        if (nodeData.type === 'screen_group') {
+        if (nodeData.type === 'screen_group' || nodeData.type === 'tag_group') {
           container.style.cursor = 'default';
         } else {
           container.style.cursor = transitionMode ? 'crosshair' : 'pointer';
@@ -346,66 +456,14 @@ const applyLayout = () => {
       }
     });
     
-    cy.on('dragfree', 'node', () => {
-      if (onLayoutChange) {
-        const positions = {};
-        cy.nodes().forEach(node => {
-          positions[node.id()] = node.position();
-        });
-        
-        onLayoutChange({ positions });
-      }
-    });
-    
     cyRef.current = cy;
-    window.cytoscapeGraph = cy; 
     
     return () => {
       if (cyRef.current) {
         cyRef.current.destroy();
-        cyRef.current = null;
       }
     };
-  }, [graphData]); // Only re-create when graphData changes
-  
-  // Watch for saved layout version changes
-  useEffect(() => {
-    if (!cyRef.current) return;
-    
-    const interval = setInterval(() => {
-      if (window.__savedGraphLayoutVersion && 
-          window.__savedGraphLayoutVersion !== window.__lastAppliedVersion) {
-        
-        console.log('📍 New layout version detected:', window.__savedGraphLayoutVersion);
-        
-        if (window.__savedGraphLayout?.positions) {
-          console.log('🔄 Re-applying updated layout...');
-          
-          cyRef.current.nodes().forEach(node => {
-            if (node.data('type') === 'screen_group') return;
-            
-            const savedPos = window.__savedGraphLayout.positions[node.id()];
-            if (savedPos) {
-              node.position(savedPos);
-            }
-          });
-          
-          cyRef.current.fit(null, 50);
-          console.log('✅ Updated layout applied!');
-        }
-        
-        window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
-      }
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, []);
-  
-  // Handle screen groups toggle
-  useEffect(() => {
-    if (!cyRef.current) return;
-    console.log('📺 Screen groups toggled:', showScreenGroups);
-  }, [showScreenGroups]);
+  }, [graphData, onNodeClick, theme, showScreenGroups, screenGroups, transitionMode, transitionSource, selectedNode, tagConfig, activeFilters]);
   
   // Update selected node styling
   useEffect(() => {
@@ -415,33 +473,29 @@ const applyLayout = () => {
     cyRef.current.getElementById(selectedNode).addClass('highlighted');
   }, [selectedNode]);
   
-  // Expose graph controls globally
+  // Expose graph controls
   useEffect(() => {
-  if (!cyRef.current) return;
-  
-  const interval = setInterval(() => {
-    if (window.__savedGraphLayoutVersion && 
-        window.__savedGraphLayoutVersion !== window.__lastAppliedVersion) {
-      
-      console.log('🔄 New layout version detected!');
-      
-      if (window.__savedGraphLayout?.positions) {
-        cyRef.current.nodes().forEach(node => {
-          if (node.data('type') === 'screen_group') return;
-          
-          const savedPos = window.__savedGraphLayout.positions[node.id()];
-          if (savedPos) node.position(savedPos);
-        });
-        
-        cyRef.current.fit(null, 50);
+    if (!cyRef.current) return;
+    
+    window.cytoscapeGraph = {
+      fit: () => cyRef.current.fit(null, 50),
+      resetZoom: () => {
+        cyRef.current.zoom(1);
+        cyRef.current.center();
+      },
+      relayout: () => {
+        cyRef.current.layout({
+          name: 'dagre',
+          rankDir: 'LR',
+          nodeSep: 100,
+          rankSep: 150,
+          padding: 50,
+          animate: true,
+          animationDuration: 600
+        }).run();
       }
-      
-      window.__lastAppliedVersion = window.__savedGraphLayoutVersion;
-    }
-  }, 500);
-  
-  return () => clearInterval(interval);
-}, []);
+    };
+  }, []);
   
   return (
     <div 

@@ -53,23 +53,17 @@ router.get('/screens', async (req, res) => {
         const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
         
         if (entry.isDirectory()) {
-          // Recurse into subdirectories
           await scanDirectory(entryPath, entryRelative);
         } else if (entry.isFile() && entry.name.endsWith('.js')) {
-          // Parse the file to extract class info
           try {
             const content = await fs.readFile(entryPath, 'utf-8');
             
-            // Extract class name
             const classMatch = content.match(/class\s+(\w+)/);
             const className = classMatch ? classMatch[1] : entry.name.replace('.js', '');
             
-            // Extract instance name (commonly used variable name)
-            // Look for patterns like: const searchBar = new SearchBar()
             const instanceMatch = content.match(/(?:const|let|var)\s+(\w+)\s*=\s*new\s+\w+/);
             const instanceName = instanceMatch ? instanceMatch[1] : null;
             
-            // Get the POM name (file name without extension, or with path for nested)
             const pomName = entryRelative.replace('.js', '');
             
             screens.push({
@@ -82,7 +76,6 @@ router.get('/screens', async (req, res) => {
             
           } catch (parseError) {
             console.warn(`⚠️ Could not parse ${entryPath}:`, parseError.message);
-            // Still add it with basic info
             screens.push({
               name: entry.name.replace('.js', ''),
               className: entry.name.replace('.js', ''),
@@ -117,7 +110,6 @@ router.post('/scan', async (req, res) => {
   try {
     const { projectPath } = req.body;
     
-    // Validate input
     if (!projectPath) {
       return res.status(400).json({ error: 'projectPath is required' });
     }
@@ -155,14 +147,33 @@ router.post('/scan', async (req, res) => {
     console.log(`   - State Mappings: ${stateRegistry.size}`);
     console.log(`   - Issues Found: ${analysisResult.summary.totalIssues}`);
     
-    // 🔥 CACHE THE DISCOVERY RESULT FOR PATTERN ANALYSIS
+    // Cache the discovery result
     req.app.set('lastDiscoveryResult', discoveryResult);
+    
+    // ✅ Extract graphColors from config (safely)
+    let graphColors = null;
+    if (config?.graphColors) {
+      // Only pass serializable parts (no functions)
+      graphColors = {
+        colorNodesBy: config.graphColors.colorNodesBy || 'platform',
+        platforms: config.graphColors.platforms || null,
+        statuses: config.graphColors.statuses || null,
+        patterns: config.graphColors.patterns || null,
+        edgeColors: config.graphColors.edgeColors || null,
+      };
+      console.log(`   - Graph Colors: configured (colorNodesBy: ${graphColors.colorNodesBy})`);
+    }
     
     // Build complete response
     const response = {
       ...discoveryResult,
       analysis: analysisResult,
-      stateRegistry: stateRegistry.toJSON()
+      stateRegistry: stateRegistry.toJSON(),
+      // ✅ Pass config to frontend for graphBuilder
+      config: {
+        graphColors: graphColors,
+        projectName: config?.projectName || null,
+      }
     };
     
     res.json(response);
@@ -190,19 +201,16 @@ router.post('/parse-single-file', async (req, res) => {
     
     console.log(`⚡ Fast parsing: ${path.basename(filePath)}`);
     
-    // Check if file exists
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
       return res.status(404).json({ error: 'File not found' });
     }
     
-    // Get project path from the last scanned project
     const lastScannedProject = req.app.get('lastScannedProject');
     const projectPath = lastScannedProject || path.dirname(path.dirname(path.dirname(filePath)));
     
     console.log(`   Project path: ${projectPath}`);
     
-    // Parse the single file
     const implication = await parseImplicationFile(filePath, projectPath);
     
     if (!implication) {

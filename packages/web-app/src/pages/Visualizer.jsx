@@ -11,6 +11,8 @@ import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
 import { initializeFromDiscovery } from '../utils/requiresColors.js';
+// ADD THIS LINE after the other imports:
+import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
 const API_URL = 'http://localhost:3000';
 
 
@@ -68,6 +70,9 @@ const [createdFiles, setCreatedFiles] = useState([]);
   const [showScreenGroups, setShowScreenGroups] = useState(false);
   const [savedLayout, setSavedLayout] = useState(null);
 const [isSavingLayout, setIsSavingLayout] = useState(false);
+const [tagsPanelCollapsed, setTagsPanelCollapsed] = useState(false);
+  const { tagConfig, setTagConfig, activeFilters, setActiveFilters } = useTagConfig(projectPath);
+  const [discoveredTags, setDiscoveredTags] = useState({});
 
 
 
@@ -85,6 +90,7 @@ const [isSavingLayout, setIsSavingLayout] = useState(false);
     setGraphData(null);
     setSelectedState(null);
     setSelectedNodeId(null);
+    setDiscoveredTags({});
   };
 
   // ADD THIS FUNCTION after handleClearCache
@@ -278,6 +284,13 @@ useEffect(() => {
     });
   }
 }, [graphData, projectPath]);
+
+useEffect(() => {
+  if (graphData?.discoveredTags) {
+    setDiscoveredTags(graphData.discoveredTags);
+    console.log('🏷️ Discovered tags:', graphData.discoveredTags);
+  }
+}, [graphData]);
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 3. ADD SAVE LAYOUT FUNCTION
@@ -1171,7 +1184,7 @@ const disableTransitionMode = () => {
   </div>
 )}
 
-        {/* Stats Panel */}
+     {/* Stats Panel */}
         {discoveryResult && (
           <div className="mb-6">
             <StatsPanel 
@@ -1192,43 +1205,58 @@ const disableTransitionMode = () => {
           </div>
         )}
 
+        {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>
-  <button
-    onClick={enableTransitionMode}
-    disabled={transitionMode.enabled}
-    style={{
-      padding: '8px 16px',
-      marginRight: '8px',
-      background: transitionMode.enabled ? '#3b82f6' : '#6b7280',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: transitionMode.enabled ? 'default' : 'pointer'
-    }}
-  >
-    ðŸ”— Add Transition Mode
-    {transitionMode.enabled && transitionMode.source && ' (Select target)'}
-    {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
-  </button>
-  
-  {transitionMode.enabled && (
-    <button
-      onClick={disableTransitionMode}
-      style={{
-        padding: '8px 16px',
-        background: '#ef4444',
-        color: 'white',
-        border: 'none',
-        borderRadius: '4px',
-        cursor: 'pointer'
-      }}
-    >
-      âŒ Cancel
-    </button>
-  )}
-</div>
+          <button
+            onClick={enableTransitionMode}
+            disabled={transitionMode.enabled}
+            style={{
+              padding: '8px 16px',
+              marginRight: '8px',
+              background: transitionMode.enabled ? '#3b82f6' : '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: transitionMode.enabled ? 'default' : 'pointer'
+            }}
+          >
+            🔗 Add Transition Mode
+            {transitionMode.enabled && transitionMode.source && ' (Select target)'}
+            {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
+          </button>
+          
+          {transitionMode.enabled && (
+            <button
+              onClick={disableTransitionMode}
+              style={{
+                padding: '8px 16px',
+                background: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              ❌ Cancel
+            </button>
+          )}
+        </div>
+
+        {/* ✅ TAGS PANEL - Goes HERE, ABOVE the graph section! */}
+        {graphData && Object.keys(discoveredTags).length > 0 && (
+          <TagsPanel
+            discoveredTags={discoveredTags}
+            tagConfig={tagConfig}
+            onTagConfigChange={setTagConfig}
+            activeFilters={activeFilters}
+            onFilterChange={setActiveFilters}
+            theme={defaultTheme}
+            collapsed={tagsPanelCollapsed}
+            onToggleCollapse={() => setTagsPanelCollapsed(!tagsPanelCollapsed)}
+          />
+        )}
         
-        {/* Graph */}
+        {/* Graph - NO changes needed inside here! */}
         <div 
           className="glass rounded-xl p-6 mb-8"
           style={{ border: `1px solid ${defaultTheme.colors.border}` }}
@@ -1236,82 +1264,81 @@ const disableTransitionMode = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-2xl font-bold mb-1" style={{ color: defaultTheme.colors.accents.blue }}>
-                ðŸ“Š Interactive State Graph
+                📊 Interactive State Graph
               </h2>
               <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
-                ðŸ’¡ {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+                💡 {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+                {Object.keys(activeFilters).length > 0 && (
+                  <span style={{ color: defaultTheme.colors.accents.blue, marginLeft: '8px' }}>
+                    | 🔍 Filtered: {Object.keys(activeFilters).length} tags
+                  </span>
+                )}
               </p>
             </div>
             
-         {/* Graph Controls */}
-{graphData && (
-  <div className="flex gap-2">
-    <button onClick={() => window.cytoscapeGraph?.fit()}>
-      <span>ðŸŽ¯</span> Fit
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
-      <span>ðŸ”</span> Reset
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.relayout()}>
-      <span>ðŸ”„</span> Layout
-    </button>
-    
-    {/* âœ¨ ADD THESE */}
-    <button 
-      onClick={saveGraphLayout}
-      disabled={isSavingLayout}
-      title="Save current graph layout"
-      style={{
-        background: savedLayout 
-          ? defaultTheme.colors.accents.green 
-          : defaultTheme.colors.background.tertiary,
-        opacity: isSavingLayout ? 0.6 : 1
-      }}
-    >
-      <span>{isSavingLayout ? 'â³' : savedLayout ? 'âœ…' : 'ðŸ’¾'}</span>
-      {isSavingLayout ? 'Saving...' : 'Save Layout'}
-    </button>
-    
-    {savedLayout && (
-      <button 
-        onClick={resetGraphLayout}
-        title="Reset to default layout"
-      >
-        <span>ðŸ”„</span> Reset
-      </button>
-    )}
-  </div>
-)}
+            {/* Graph Controls - keep as-is */}
+            {graphData && (
+              <div className="flex gap-2">
+                <button onClick={() => window.cytoscapeGraph?.fit()}>
+                  <span>🎯</span> Fit
+                </button>
+                <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
+                  <span>🔍</span> Reset
+                </button>
+                <button onClick={() => window.cytoscapeGraph?.relayout()}>
+                  <span>🔄</span> Layout
+                </button>
+                
+                <button 
+                  onClick={saveGraphLayout}
+                  disabled={isSavingLayout}
+                  title="Save current graph layout"
+                  style={{
+                    background: savedLayout 
+                      ? defaultTheme.colors.accents.green 
+                      : defaultTheme.colors.background.tertiary,
+                    opacity: isSavingLayout ? 0.6 : 1
+                  }}
+                >
+                  <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
+                  {isSavingLayout ? 'Saving...' : 'Save Layout'}
+                </button>
+                
+                {savedLayout && (
+                  <button 
+                    onClick={resetGraphLayout}
+                    title="Reset to default layout"
+                  >
+                    <span>🔄</span> Reset
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           
+          {/* StateGraph - just add the two new props */}
           {graphData ? (
-   <StateGraph
-  graphData={graphData}
-  onNodeClick={(nodeData) => {
-    // âœ… Use ref to get current value, avoiding stale closure
-    const currentMode = transitionModeRef.current;
-    
-    console.log('ðŸ”µ onNodeClick fired:', { 
-      nodeId: nodeData.id, 
-      transitionModeEnabled: currentMode.enabled,
-      hasSource: !!currentMode.source 
-    });
-    
-    if (currentMode.enabled) {
-      console.log('ðŸŸ¢ Calling handleTransitionModeClick');
-      handleTransitionModeClick(nodeData);
-    } else {
-      console.log('ðŸŸ¡ Calling handleNodeClick (open modal)');
-      handleNodeClick(nodeData);
-    }
-  }}
-  selectedNodeId={selectedNodeId}
-  theme={defaultTheme}
-  showScreenGroups={showScreenGroups}
-  screenGroups={graphData.screenGroups}
-  savedLayout={savedLayout}
-  onLayoutChange={(layout) => {}}
-/>
+            <StateGraph
+              graphData={graphData}
+              onNodeClick={(nodeData) => {
+                const currentMode = transitionModeRef.current;
+                
+                if (currentMode.enabled) {
+                  handleTransitionModeClick(nodeData);
+                } else {
+                  handleNodeClick(nodeData);
+                }
+              }}
+              selectedNodeId={selectedNodeId}
+              theme={defaultTheme}
+              showScreenGroups={showScreenGroups}
+              screenGroups={graphData.screenGroups}
+              savedLayout={savedLayout}
+              onLayoutChange={(layout) => {}}
+              // ✅ ADD THESE TWO PROPS:
+              tagConfig={tagConfig}
+              activeFilters={activeFilters}
+            />
           ) : (
             <div 
               className="flex items-center justify-center"
@@ -1320,7 +1347,7 @@ const disableTransitionMode = () => {
                 color: defaultTheme.colors.text.tertiary
               }}
             >
-              <p>ðŸ” {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
+              <p>🔍 {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
             </div>
           )}
         </div>
