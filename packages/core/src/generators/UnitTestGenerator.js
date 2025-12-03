@@ -2185,8 +2185,25 @@ _buildContext(metadata, platform, transition = null, options = {}) {
     const hasActionDetails = !!metadata.actionDetails;
     
     // Transition conditions (new block-based format)
-    const transitionConditions = this.currentTransition?.conditions || null;
-    const hasTransitionConditions = !!(transitionConditions?.blocks?.length > 0);
+    // Transition conditions (new block-based format)
+// Transition conditions (new block-based format)
+// First check currentTransition, then fall back to reading from source file
+let transitionConditions = this.currentTransition?.conditions || null;
+
+// If no conditions in currentTransition, try to read from source implication
+if (!transitionConditions && this.currentTransition?.event && this.currentTransition?.fromState) {
+  const sourceConditions = this._getTransitionConditionsFromSource(
+    this.currentTransition.fromState,
+    this.currentTransition.event,
+    metadata.status
+  );
+  if (sourceConditions) {
+    transitionConditions = sourceConditions;
+    console.log('   ✅ Loaded transition conditions from source file');
+  }
+}
+
+const hasTransitionConditions = !!(transitionConditions?.blocks?.length > 0);
   
   // Navigation extraction
   const navigation = hasActionDetails 
@@ -2385,6 +2402,61 @@ _buildContext(metadata, platform, transition = null, options = {}) {
   };
   
   return context;
+}
+
+
+/**
+ * Get transition conditions from source implication file
+ * 
+ * @param {string} fromState - Source state (e.g., 'agency_selected_main')
+ * @param {string} event - Event name (e.g., 'SET_AGENCY_AS_PREFFERED')
+ * @param {string} targetState - Target state to match
+ * @returns {object|null} Conditions object or null
+ */
+_getTransitionConditionsFromSource(fromState, event, targetState) {
+  try {
+    const sourceFile = this._findImplicationFile(fromState, this.implFilePath);
+    
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      console.log(`   ⚠️ Source file not found for ${fromState}`);
+      return null;
+    }
+    
+    // Try require first
+    try {
+      delete require.cache[require.resolve(sourceFile)];
+      const SourceImpl = require(sourceFile);
+      const transitions = SourceImpl.xstateConfig?.on || {};
+      const transition = transitions[event];
+      
+      if (transition) {
+        const config = typeof transition === 'string' ? null : transition;
+        const target = config?.target || transition;
+        
+        // Verify this transition goes to our target
+        if (target === targetState || target?.endsWith(targetState)) {
+          return config?.conditions || null;
+        }
+      }
+    } catch (e) {
+      // Fall back to AST parsing
+      const content = fs.readFileSync(sourceFile, 'utf-8');
+      const xstateConfig = this._extractXStateFromAST(
+        parse(content, { sourceType: 'module', plugins: ['classProperties', 'objectRestSpread'] })
+      );
+      
+      if (xstateConfig?.on?.[event]) {
+        const transition = xstateConfig.on[event];
+        const config = typeof transition === 'string' ? null : transition;
+        return config?.conditions || null;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.log(`   ⚠️ Error reading conditions: ${error.message}`);
+    return null;
+  }
 }
   
   /**
