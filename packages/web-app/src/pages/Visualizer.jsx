@@ -319,12 +319,13 @@ const saveGraphLayout = async () => {
       const positions = {};
       
       if (typeof window.cytoscapeGraph.nodes === 'function') {
-        window.cytoscapeGraph.nodes().forEach(node => {
-          if (node.data('type') === 'screen_group') return;
-          const pos = node.position();
-          positions[node.id()] = { x: pos.x, y: pos.y };
-        });
-      } else {
+  window.cytoscapeGraph.nodes().forEach(node => {
+    const type = node.data('type');
+    if (type === 'screen_group' || type === 'group_box') return;
+    const pos = node.position();
+    positions[node.id()] = { x: pos.x, y: pos.y };
+  });
+} else {
         throw new Error('Cytoscape graph not fully initialized');
       }
       
@@ -1319,26 +1320,26 @@ const disableTransitionMode = () => {
           {/* StateGraph - just add the two new props */}
           {graphData ? (
             <StateGraph
-              graphData={graphData}
-              onNodeClick={(nodeData) => {
-                const currentMode = transitionModeRef.current;
-                
-                if (currentMode.enabled) {
-                  handleTransitionModeClick(nodeData);
-                } else {
-                  handleNodeClick(nodeData);
-                }
-              }}
-              selectedNodeId={selectedNodeId}
-              theme={defaultTheme}
-              showScreenGroups={showScreenGroups}
-              screenGroups={graphData.screenGroups}
-              savedLayout={savedLayout}
-              onLayoutChange={(layout) => {}}
-              // ✅ ADD THESE TWO PROPS:
-              tagConfig={tagConfig}
-              activeFilters={activeFilters}
-            />
+  graphData={graphData}
+  onNodeClick={(nodeData) => {
+    const currentMode = transitionModeRef.current;
+    
+    if (currentMode.enabled) {
+      handleTransitionModeClick(nodeData);
+    } else {
+      handleNodeClick(nodeData);
+    }
+  }}
+  selectedNodeId={selectedNodeId}
+  theme={defaultTheme}
+  showScreenGroups={showScreenGroups}
+  screenGroups={graphData.screenGroups}
+  savedLayout={savedLayout}
+  onLayoutChange={(layout) => {}}
+  tagConfig={tagConfig}
+activeFilters={activeFilters}
+projectPath={projectPath}
+/>
           ) : (
             <div 
               className="flex items-center justify-center"
