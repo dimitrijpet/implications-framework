@@ -658,11 +658,13 @@ if (Object.keys(tagGroups).length > 0) {
         
         // Update group boxes after layout, then auto-fit
         setTimeout(() => {
-          if (Object.keys(tagGroupsRef.current).length > 0) {
-            createOrUpdateGroupBoxes(cyRef.current, tagGroupsRef.current, theme);
-          }
-          cyRef.current.fit(null, 50);
-        }, 700);
+  if (cyRef.current && containerRef.current) {  // ✅ Add this check
+    if (Object.keys(tagGroups).length > 0) {
+      createOrUpdateGroupBoxes(cyRef.current, tagGroups, theme);
+    }
+    cyRef.current.fit(null, 50);
+  }
+}, 100);
       },
       saveLayout: () => saveLayoutToStorage(cyRef.current, projectPath),
       clearLayout: () => {

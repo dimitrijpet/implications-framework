@@ -3002,8 +3002,8 @@ _generateFileName(metadata, platform, options = {}) {
   
   // âœ… If event provided, include it in filename
 if (event) {
-  const eventName = this._toPascalCase(event);
-  return `${action}-${eventName}-${platformSuffix}-UNIT.spec.js`;
+  // Keep event name as-is (BOOK_FLIGHT stays BOOK_FLIGHT)
+  return `${action}-${event}-${platformSuffix}-UNIT.spec.js`;
 }
   
   // Fallback: no event

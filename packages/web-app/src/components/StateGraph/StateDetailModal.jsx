@@ -656,35 +656,146 @@ const fullTransitionData = {
     }
   };
 
-  const handleRemoveTransition = async (index) => {
-    const transition = currentState.transitions[index];
+const handleRemoveTransition = async (index) => {
+  const transition = currentState.transitions[index];
+  
+  if (!window.confirm(`Delete transition "${transition.event}"?`)) {
+    return;
+  }
+
+  console.log('🗑️ Deleting transition:', transition);
+
+  try {
+    // ✅ Get the target file path
+    const targetStateName = transition.target;
+    let targetFile = null;
     
-    if (!window.confirm(`Delete transition "${transition.event}"?`)) {
-      return;
+    if (discoveryResult?.files?.implications) {
+      const targetImp = discoveryResult.files.implications.find(imp => {
+        const impStateName = imp.metadata?.xstateConfig?.id || 
+          imp.metadata?.className?.replace(/Implications$/, '')
+            .replace(/([A-Z])/g, '_$1')
+            .toLowerCase()
+            .replace(/^_/, '');
+        return impStateName === targetStateName;
+      });
+      if (targetImp) {
+        targetFile = projectPath + '/' + targetImp.path;
+      }
+    }
+    
+    console.log('🎯 Target file for setup removal:', targetFile);
+
+    const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceFile: state.files.implication,
+        targetFile: targetFile,  // ✅ ADD THIS
+        event: transition.event
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to delete transition');
     }
 
-    console.log('🗑️ Deleting transition:', transition);
+    console.log('✅ Transition deleted from file');
 
-    try {
-      const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
+    setEditedState(prev => ({
+      ...prev,
+      transitions: prev.transitions.filter((_, i) => i !== index)
+    }));
+    
+    setHasChanges(true);
+
+    if (window.refreshDiscovery) {
+      console.log('🔄 Refreshing discovery...');
+      await window.refreshDiscovery();
+    }
+
+    alert('✅ Transition deleted successfully!');
+
+  } catch (error) {
+    console.error('❌ Delete failed:', error);
+    alert(`❌ Failed to delete transition: ${error.message}`);
+  }
+};
+
+  const handleTagChange = (field, value) => {
+  setTagsData(prev => ({ ...prev, [field]: value }));
+  setTagsChanges(prev => ({ ...prev, [field]: value }));
+  setHasChanges(true);
+};
+
+const handleTransitionSubmit = async (transitionData) => {
+  console.log('💾 Saving transition:', transitionMode, transitionData);
+
+  try {
+    if (transitionMode === 'create') {
+      console.warn('⚠️ Create mode called from detail modal - should use visualizer');
+      alert('Please use the graph to create transitions');
+      return;
+      
+    } else {
+      // ✅ Get the target file path from the transition target
+      const targetStateName = transitionData.target || editingTransition.target;
+      
+      let targetFile = null;
+      if (discoveryResult?.files?.implications) {
+        const targetImp = discoveryResult.files.implications.find(imp => {
+          const impStateName = imp.metadata?.xstateConfig?.id || 
+            imp.metadata?.className?.replace(/Implications$/, '')
+              .replace(/([A-Z])/g, '_$1')
+              .toLowerCase()
+              .replace(/^_/, '');
+          return impStateName === targetStateName;
+        });
+        if (targetImp) {
+          targetFile = projectPath + '/' + targetImp.path;
+        }
+      }
+      
+      console.log('🎯 Target file for setup update:', targetFile);
+      
+      const response = await fetch('http://localhost:3000/api/implications/update-transition', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceFile: state.files.implication,
-          event: transition.event
+          targetFile: targetFile,
+          oldEvent: editingTransition.event,
+          newEvent: transitionData.event,
+          newTarget: transitionData.target || editingTransition.target,
+          platform: transitionData.platform,
+          actionDetails: transitionData.actionDetails,
+          requires: transitionData.requires,
+          conditions: transitionData.conditions
         })
       });
-
+      
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to delete transition');
+        throw new Error(error.error || 'Failed to update transition');
       }
 
-      console.log('✅ Transition deleted from file');
+      console.log('✅ Transition updated in file');
 
       setEditedState(prev => ({
         ...prev,
-        transitions: prev.transitions.filter((_, i) => i !== index)
+        transitions: prev.transitions.map((t, i) => 
+          i === editingTransitionIndex 
+            ? {
+                event: transitionData.event,
+                target: transitionData.target || editingTransition.target,
+                platform: transitionData.platform,
+                actionDetails: transitionData.actionDetails,
+                requires: transitionData.requires,
+                conditions: transitionData.conditions
+              }
+            : t
+        )
       }));
       
       setHasChanges(true);
@@ -694,84 +805,16 @@ const fullTransitionData = {
         await window.refreshDiscovery();
       }
 
-      alert('✅ Transition deleted successfully!');
-
-    } catch (error) {
-      console.error('❌ Delete failed:', error);
-      alert(`❌ Failed to delete transition: ${error.message}`);
+      alert('✅ Transition updated successfully!');
     }
-  };
 
-  const handleTagChange = (field, value) => {
-  setTagsData(prev => ({ ...prev, [field]: value }));
-  setTagsChanges(prev => ({ ...prev, [field]: value }));
-  setHasChanges(true);
+    setShowTransitionModal(false);
+
+  } catch (error) {
+    console.error('❌ Save failed:', error);
+    alert(`❌ Failed to save transition: ${error.message}`);
+  }
 };
-
-  const handleTransitionSubmit = async (transitionData) => {
-    console.log('💾 Saving transition:', transitionMode, transitionData);
-
-    try {
-      if (transitionMode === 'create') {
-        console.warn('⚠️ Create mode called from detail modal - should use visualizer');
-        alert('Please use the graph to create transitions');
-        return;
-        
-      } else {
-     const response = await fetch('http://localhost:3000/api/implications/update-transition', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sourceFile: state.files.implication,
-            oldEvent: editingTransition.event,
-            newEvent: transitionData.event,
-            newTarget: transitionData.target || editingTransition.target,
-            platform: transitionData.platform,
-            actionDetails: transitionData.actionDetails,
-            requires: transitionData.requires,
-            conditions: transitionData.conditions  // ✅ ADD THIS - transition-level conditions
-          })
-        });
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to update transition');
-        }
-
-        console.log('✅ Transition updated in file');
-
- setEditedState(prev => ({
-          ...prev,
-          transitions: prev.transitions.map((t, i) => 
-            i === editingTransitionIndex 
-              ? {
-                  event: transitionData.event,
-                  target: transitionData.target || editingTransition.target,
-                  platform: transitionData.platform,
-                  actionDetails: transitionData.actionDetails,
-                  requires: transitionData.requires,
-                  conditions: transitionData.conditions  // ✅ ADD THIS
-                }
-              : t
-          )
-        }));
-        
-        setHasChanges(true);
-
-        if (window.refreshDiscovery) {
-          console.log('🔄 Refreshing discovery...');
-          await window.refreshDiscovery();
-        }
-
-        alert('✅ Transition updated successfully!');
-      }
-
-      setShowTransitionModal(false);
-
-    } catch (error) {
-      console.error('❌ Save failed:', error);
-      alert(`❌ Failed to save transition: ${error.message}`);
-    }
-  };
 
   // ========================================
   // SUGGESTION HANDLERS
