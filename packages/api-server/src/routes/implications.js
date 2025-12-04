@@ -346,32 +346,39 @@ router.post('/create-state', async (req, res) => {
     const stateId = stateName.toLowerCase();
     
     // Build template data
-   const templateData = {
+// Build template data
+const templateData = {
   className,
   stateId,
   timestamp: new Date().toISOString(),
-      initial: 'idle',
-      status: status || null,                    // ✅ Use status field
-      platform: platform || 'web',
-      description: description || null,           // ✅ Use description field
-      context: cleanContext,                      // ✅ Use cleaned context
-      hasEntry: !!status,
-      
-      meta: {
-        status: status || displayName || toPascalCase(stateName),
-        statusLabel: displayName || toPascalCase(stateName),
-        triggerAction: triggerButton ? toCamelCase(triggerButton) : null,
-        platform: platform || null,
-        triggerButton: triggerButton || null,
-        afterButton: afterButton || null,
-        previousButton: previousButton || null,
-        statusCode: statusCode || null,
-        statusNumber: statusNumber ? parseInt(statusNumber) : null,
-        notificationKey: notificationKey || null,
-        setupActions: setupActions || null,
-        requiredFields: requiredFields || null
-      }
-    };
+  initial: 'idle',
+  status: status || null,
+  platform: platform || 'web',
+  description: description || null,
+  context: cleanContext,
+  hasEntry: !!status,
+  
+  // ✅ NEW: Tags support
+  tags: req.body.tags || null,
+  
+  // ✅ NEW: Empty setup entries (will be populated when transitions are added)
+  setupEntries: [],
+  
+  meta: {
+    status: status || displayName || toPascalCase(stateName),
+    statusLabel: displayName || toPascalCase(stateName),
+    triggerAction: triggerButton ? toCamelCase(triggerButton) : null,
+    platform: platform || 'web',
+    triggerButton: triggerButton || null,
+    afterButton: afterButton || null,
+    previousButton: previousButton || null,
+    statusCode: statusCode || null,
+    statusNumber: statusNumber ? parseInt(statusNumber) : null,
+    notificationKey: notificationKey || null,
+    setupActions: setupActions || null,
+    requiredFields: requiredFields || null
+  }
+};
     
     console.log('📝 Template data:', templateData);
        // ✅ NEW: Copy UI from source if provided
@@ -441,10 +448,9 @@ router.post('/create-state', async (req, res) => {
     const templateContent = await fs.readFile(templatePath, 'utf-8');
     
     // Register JSON helper for Handlebars
-    Handlebars.registerHelper('json', function(context) {
-      return JSON.stringify(context);
-    });
-    
+   Handlebars.registerHelper('json', function(context) {
+  return JSON.stringify(context);
+});
     const template = Handlebars.compile(templateContent);
     
     // Generate code
@@ -1059,6 +1065,172 @@ router.post('/update-metadata', async (req, res) => {
     });
   }
 });
+
+router.post('/update-tags', async (req, res) => {
+  try {
+    const { filePath, tags } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`🏷️ Updating tags in: ${path.basename(filePath)}`);
+    console.log(`📊 Tags:`, tags);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse(ast, {
+      ClassDeclaration(classPath) {
+        console.log(`📍 Found class: ${classPath.node.id?.name}`);
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && member.static) {
+            console.log(`   📍 Static property: ${member.key?.name}`);
+          }
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            console.log(`   ✅ Found xstateConfig`);
+            if (t.isObjectExpression(member.value)) {
+              const metaProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'meta'
+              );
+              
+              console.log(`   📍 Found meta in xstateConfig: ${!!metaProp}`);
+              if (metaProp && t.isObjectExpression(metaProp.value)) {
+                // Find existing tags property
+                let tagsProp = metaProp.value.properties.find(
+                  p => t.isObjectProperty(p) && p.key.name === 'tags'
+                );
+                
+                // Helper to build array AST node
+                const buildArrayNode = (arr) => {
+                  if (!arr || !Array.isArray(arr) || arr.length === 0) return null;
+                  return t.arrayExpression(arr.map(item => t.stringLiteral(item)));
+                };
+                
+                // Build tags object - support arrays
+                const tagsProperties = [];
+                
+                // Handle screen - can be string or array
+                const screenArray = Array.isArray(tags?.screen) 
+                  ? tags.screen.filter(s => s && s.trim())
+                  : (tags?.screen?.trim() ? [tags.screen.trim()] : []);
+                if (screenArray.length > 0) {
+                  tagsProperties.push(
+                    t.objectProperty(
+                      t.identifier('screen'),
+                      buildArrayNode(screenArray)
+                    )
+                  );
+                }
+                
+                // Handle group - can be string or array
+                const groupArray = Array.isArray(tags?.group)
+                  ? tags.group.filter(g => g && g.trim())
+                  : (tags?.group?.trim() ? [tags.group.trim()] : []);
+                if (groupArray.length > 0) {
+                  tagsProperties.push(
+                    t.objectProperty(
+                      t.identifier('group'),
+                      buildArrayNode(groupArray)
+                    )
+                  );
+                }
+                
+                // If no tags, remove the tags property entirely
+                if (tagsProperties.length === 0) {
+                  if (tagsProp) {
+                    const idx = metaProp.value.properties.indexOf(tagsProp);
+                    if (idx > -1) {
+                      metaProp.value.properties.splice(idx, 1);
+                      console.log('🗑️ Removed empty tags property');
+                      modified = true;
+                    }
+                  }
+                } else {
+                  const tagsNode = t.objectExpression(tagsProperties);
+                  
+                  if (tagsProp) {
+                    // Update existing
+                    tagsProp.value = tagsNode;
+                    console.log('✏️ Updated existing tags:', { screen: screenArray, group: groupArray });
+                  } else {
+                    // Add new tags property after status
+                    const statusIdx = metaProp.value.properties.findIndex(
+                      p => t.isObjectProperty(p) && p.key.name === 'status'
+                    );
+                    const insertIdx = statusIdx >= 0 ? statusIdx + 1 : 0;
+                    
+                    metaProp.value.properties.splice(
+                      insertIdx,
+                      0,
+                      t.objectProperty(t.identifier('tags'), tagsNode)
+                    );
+                    console.log('➕ Added new tags property:', { screen: screenArray, group: groupArray });
+                  }
+                  modified = true;
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!modified) {
+      return res.json({ 
+        success: true,
+        message: 'No tags changes needed',
+        filePath
+      });
+    }
+    
+    // Generate code
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, originalContent);
+    
+    // Create backup
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    console.log('📦 Backup created:', path.basename(backupPath));
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Tags updated successfully');
+    
+    res.json({
+      success: true,
+      filePath,
+      backup: backupPath,
+      tags
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating tags:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 
 /**
  * POST /api/implications/update-composition
@@ -3402,7 +3574,17 @@ const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, pl
       .toLowerCase()
       .replace(/^_/, '');
     
-    const targetUpdated = addPrerequisiteToAST(targetAst, sourceStateName);
+    // Extract requires from transition conditions if present
+const transitionRequires = requires || {};
+
+const targetUpdated = addSetupEntryToAST(
+  targetAst, 
+  sourceStateName,      // from
+  targetStateName,      // to  
+  event,                // event name
+  platform || 'web',    // platform
+  transitionRequires    // conditions
+);
     
     // Write updated target file if modified
     if (targetUpdated) {
@@ -3766,7 +3948,19 @@ function findOrCreateOnProperty(configValue) {
   return onProperty;
 }
 
-function addPrerequisiteToAST(ast, sourceStateName) {
+/**
+ * Add a setup entry to the target implication's meta.setup array
+ * Called when a transition is added TO this state
+ * 
+ * @param {AST} ast - Babel AST of target file
+ * @param {string} sourceStateName - The state this transition comes FROM
+ * @param {string} targetStateName - The state this transition goes TO
+ * @param {string} event - The transition event name
+ * @param {string} platform - Platform for this transition
+ * @param {object} requires - Conditions from transition (optional)
+ * @returns {boolean} Whether the file was modified
+ */
+function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires) {
   let targetUpdated = false;
   
   traverse(ast, {
@@ -3774,49 +3968,105 @@ function addPrerequisiteToAST(ast, sourceStateName) {
       if (path.node.key?.name === 'xstateConfig' && path.node.static) {
         const configValue = path.node.value;
         
-        if (configValue?.type === 'ObjectExpression') {
-          // Find or create meta property
-          let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
-          
-          if (!metaProperty) {
-            metaProperty = {
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: 'meta' },
-              value: { type: 'ObjectExpression', properties: [] }
-            };
-            configValue.properties.unshift(metaProperty);
-          }
-          
-          // Find or create requires property
-          let requiresProperty = metaProperty.value.properties.find(p => p.key?.name === 'requires');
-          
-          if (!requiresProperty) {
-            requiresProperty = {
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: 'requires' },
-              value: { type: 'ObjectExpression', properties: [] }
-            };
-            metaProperty.value.properties.push(requiresProperty);
-          }
-          
-          // Check if previousStatus already exists
-          let prevStatusProperty = requiresProperty.value.properties.find(
-            p => p.key?.name === 'previousStatus'
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        // Find or create meta property
+        let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        
+        if (!metaProperty) {
+          metaProperty = t.objectProperty(
+            t.identifier('meta'),
+            t.objectExpression([])
           );
-          
-          if (!prevStatusProperty) {
-            requiresProperty.value.properties.push({
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: 'previousStatus' },
-              value: { type: 'StringLiteral', value: sourceStateName }
-            });
-            
-            console.log(`✅ Added requires.previousStatus = '${sourceStateName}'`);
-            targetUpdated = true;
-          } else {
-            console.log(`ℹ️  previousStatus already exists, not overwriting`);
-          }
+          configValue.properties.unshift(metaProperty);
         }
+        
+        // Find or create setup array
+        let setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        
+        if (!setupProperty) {
+          setupProperty = t.objectProperty(
+            t.identifier('setup'),
+            t.arrayExpression([])
+          );
+          metaProperty.value.properties.push(setupProperty);
+        }
+        
+        // Check if setup entry for this source already exists
+        const existingEntry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (existingEntry) {
+          console.log(`ℹ️  Setup entry from '${sourceStateName}' already exists`);
+          return;
+        }
+        
+        // Build the new setup entry
+        const toPascalCase = (str) => str
+          .split('_')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join('');
+        
+        const targetPascal = toPascalCase(targetStateName);
+        const sourcePascal = toPascalCase(sourceStateName);
+        const platformCapitalized = platform.charAt(0).toUpperCase() + platform.slice(1);
+        const eventClean = event.toUpperCase().replace(/_/g, '');
+        
+        const testFileName = `${targetPascal}Via${sourcePascal}-${eventClean}-${platformCapitalized}-UNIT.spec.js`;
+        const actionName = `${targetStateName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${sourcePascal}`;
+        
+        // Build setup entry properties
+        const setupEntryProps = [
+          t.objectProperty(
+            t.identifier('testFile'),
+            t.stringLiteral(`tests/implications/bookings/status/${testFileName}`)
+          ),
+          t.objectProperty(
+            t.identifier('actionName'),
+            t.stringLiteral(actionName)
+          ),
+          t.objectProperty(
+            t.identifier('platform'),
+            t.stringLiteral(platform)
+          ),
+          t.objectProperty(
+            t.identifier('previousStatus'),
+            t.stringLiteral(sourceStateName)
+          )
+        ];
+        
+        // Add requires if provided
+        if (requires && Object.keys(requires).length > 0) {
+          const requiresProps = Object.entries(requires).map(([key, value]) => {
+            let valueNode;
+            if (typeof value === 'boolean') {
+              valueNode = t.booleanLiteral(value);
+            } else if (typeof value === 'number') {
+              valueNode = t.numericLiteral(value);
+            } else {
+              valueNode = t.stringLiteral(String(value));
+            }
+            return t.objectProperty(t.identifier(key), valueNode);
+          });
+          
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('requires'),
+              t.objectExpression(requiresProps)
+            )
+          );
+        }
+        
+        // Add the new setup entry
+        setupProperty.value.elements.push(
+          t.objectExpression(setupEntryProps)
+        );
+        
+        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform})`);
+        targetUpdated = true;
       }
     }
   });

@@ -1,6 +1,6 @@
 // packages/web-app/src/pages/Visualizer.jsx (COMPLETE REPLACEMENT - FIXED)
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
 import StateDetailModal from '../components/StateGraph/StateDetailModal';
 import { buildGraphFromDiscovery } from '../utils/graphBuilder';
@@ -73,6 +73,43 @@ const [isSavingLayout, setIsSavingLayout] = useState(false);
 const [tagsPanelCollapsed, setTagsPanelCollapsed] = useState(false);
   const { tagConfig, setTagConfig, activeFilters, setActiveFilters } = useTagConfig(projectPath);
   const [discoveredTags, setDiscoveredTags] = useState({});
+
+// ✅ NEW: Compute existing tags for AddStateModal autocomplete
+// ✅ FIXED: Compute existing tags for AddStateModal autocomplete
+const existingTags = useMemo(() => {
+  if (!discoveryResult?.files?.implications) return { screen: [], group: [] };
+  
+  const screenTags = new Set();
+  const groupTags = new Set();
+  
+  discoveryResult.files.implications.forEach(imp => {
+    // Check multiple possible locations for tags
+    const tags = imp.metadata?.tags 
+      || imp.metadata?.xstateConfig?.meta?.tags
+      || imp.metadata?.meta?.tags;
+    
+    if (tags?.screen) screenTags.add(tags.screen);
+    if (tags?.group) groupTags.add(tags.group);
+  });
+  
+  // Also include from discoveredTags state (from graphData)
+  if (discoveredTags?.screen) {
+    Object.keys(discoveredTags.screen).forEach(tag => screenTags.add(tag));
+  }
+  if (discoveredTags?.group) {
+    Object.keys(discoveredTags.group).forEach(tag => groupTags.add(tag));
+  }
+  
+  console.log('🏷️ Computed existingTags:', { 
+    screen: Array.from(screenTags), 
+    group: Array.from(groupTags) 
+  });
+  
+  return {
+    screen: Array.from(screenTags).sort(),
+    group: Array.from(groupTags).sort()
+  };
+}, [discoveryResult, discoveredTags]);
 
 
 
@@ -1378,38 +1415,40 @@ projectPath={projectPath}
   />
 )}
       
-      {showAddStateModal && (
-        <AddStateModal
-          isOpen={showAddStateModal}
-          onClose={() => setShowAddStateModal(false)}
-          onCreate={handleCreateState}
-          existingStates={discoveryResult?.files.implications.map(imp => ({
-            id: extractStateName(imp.metadata.className),
-            className: imp.metadata.className,
-            platform: imp.metadata.platform || 'unknown',
-            uiCoverage: {
-              totalScreens: imp.metadata.uiCoverage?.total || 0
-            },
-            hasXState: imp.metadata.hasXStateConfig,
-            status: imp.metadata.status
-          }))
-            .filter(state => {
-              if (!state.hasXState) return false;
-              return state.uiCoverage.totalScreens > 0 || 
-                     state.className?.includes('Booking') ||
-                     state.status;
-            })
-            .sort((a, b) => {
-              if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
-                return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
-              }
-              return a.id.localeCompare(b.id);
-            })
-          || []}
-          projectPath={projectPath}
-          theme={defaultTheme}
-        />
-      )}
+     {showAddStateModal && (
+  <AddStateModal
+    isOpen={showAddStateModal}
+    onClose={() => setShowAddStateModal(false)}
+    onCreate={handleCreateState}
+    existingStates={discoveryResult?.files.implications.map(imp => ({
+      id: extractStateName(imp.metadata.className),
+      className: imp.metadata.className,
+      platform: imp.metadata.platform || 'unknown',
+      meta: imp.metadata,  // ✅ ADD THIS for setup info
+      uiCoverage: {
+        totalScreens: imp.metadata.uiCoverage?.total || 0
+      },
+      hasXState: imp.metadata.hasXStateConfig,
+      status: imp.metadata.status
+    }))
+      .filter(state => {
+        if (!state.hasXState) return false;
+        return state.uiCoverage.totalScreens > 0 || 
+               state.className?.includes('Booking') ||
+               state.status;
+      })
+      .sort((a, b) => {
+        if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
+          return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
+        }
+        return a.id.localeCompare(b.id);
+      })
+    || []}
+    existingTags={existingTags}  // ✅ ADD THIS
+    projectPath={projectPath}
+    theme={defaultTheme}
+  />
+)}
 <AddTransitionModal
         isOpen={showTransitionModal}
         onClose={() => {

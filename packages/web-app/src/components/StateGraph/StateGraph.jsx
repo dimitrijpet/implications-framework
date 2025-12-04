@@ -263,18 +263,22 @@ export default function StateGraph({
       edges: [...graphData.edges]
     };
 
-    // ========================================
-    // TAG FILTERING
-    // ========================================
-    const filterKeys = Object.keys(activeFilters || {});
-    if (filterKeys.length > 0) {
-      elements.nodes = elements.nodes.filter(node => {
-        const nodeTags = node.data.tags || {};
-        return Object.entries(nodeTags).some(([cat, val]) => {
-          const key = `${cat}:${val}`;
-          return activeFilters[key];
-        });
+// ========================================
+// TAG FILTERING
+// ========================================
+const filterKeys = Object.keys(activeFilters || {});
+if (filterKeys.length > 0) {
+  elements.nodes = elements.nodes.filter(node => {
+    const nodeTags = node.data.tags || {};
+    return Object.entries(nodeTags).some(([cat, val]) => {
+      // ✅ Handle both array and string values
+      const values = Array.isArray(val) ? val : [val];
+      return values.some(v => {
+        const key = `${cat}:${v}`;
+        return activeFilters[key];
       });
+    });
+  });
       
       const visibleIds = new Set(elements.nodes.map(n => n.data.id));
       elements.edges = elements.edges.filter(e => 
@@ -299,18 +303,22 @@ export default function StateGraph({
       }
     });
 
-    // Map nodes to their tag groups
-    if (Object.keys(tagGroups).length > 0) {
-      elements.nodes.forEach(node => {
-        const nodeTags = node.data.tags || {};
-        Object.entries(nodeTags).forEach(([category, value]) => {
-          const key = `${category}:${value}`;
-          if (tagGroups[key]) {
-            tagGroups[key].nodeIds.push(node.data.id);
-          }
-        });
+// Map nodes to their tag groups
+if (Object.keys(tagGroups).length > 0) {
+  elements.nodes.forEach(node => {
+    const nodeTags = node.data.tags || {};
+    Object.entries(nodeTags).forEach(([category, value]) => {
+      // ✅ Handle both array and string values
+      const values = Array.isArray(value) ? value : [value];
+      values.forEach(v => {
+        const key = `${category}:${v}`;
+        if (tagGroups[key]) {
+          tagGroups[key].nodeIds.push(node.data.id);
+        }
       });
-    }
+    });
+  });
+}
     
     // Store for later use
     tagGroupsRef.current = tagGroups;

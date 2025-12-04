@@ -88,6 +88,9 @@ export default function StateDetailModal({
   const [transitionMode, setTransitionMode] = useState('create');
   const [editingTransition, setEditingTransition] = useState(null);
   const [editingTransitionIndex, setEditingTransitionIndex] = useState(null);
+  // Update state to use arrays
+const [tagsData, setTagsData] = useState({ screen: [], group: [] });
+const [tagsChanges, setTagsChanges] = useState({});
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
@@ -178,6 +181,29 @@ const [storedVariables, setStoredVariables] = useState([]);
     return enriched;
   }, [allTransitions, state?.meta?.status, allStatesMap]);
 
+const existingTags = useMemo(() => {
+  const screenTags = new Set();
+  const groupTags = new Set();
+  
+  discoveryResult?.files?.implications?.forEach(imp => {
+    const tags = imp.metadata?.xstateConfig?.meta?.tags;
+    
+    // Handle both string and array formats
+    if (tags?.screen) {
+      const screens = Array.isArray(tags.screen) ? tags.screen : [tags.screen];
+      screens.forEach(s => screenTags.add(s));
+    }
+    if (tags?.group) {
+      const groups = Array.isArray(tags.group) ? tags.group : [tags.group];
+      groups.forEach(g => groupTags.add(g));
+    }
+  });
+  
+  return {
+    screen: Array.from(screenTags).sort(),
+    group: Array.from(groupTags).sort()
+  };
+}, [discoveryResult]);
 
 
 const fetchStoredVariables = async () => {
@@ -315,9 +341,21 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
   const statusIcon = getStatusIcon(currentState.name, theme);
   const platformStyle = getPlatformStyle(currentState.meta?.platform, theme);
 
+useEffect(() => {
+  const tags = state?.meta?.xstateConfig?.meta?.tags || {};
+  
+  setTagsData({
+    screen: Array.isArray(tags.screen) ? tags.screen : (tags.screen ? [tags.screen] : []),
+    group: Array.isArray(tags.group) ? tags.group : (tags.group ? [tags.group] : [])
+  });
+}, [state]);
+
+
+
   // ========================================
   // DATA LOADING FUNCTIONS
   // ========================================
+
 
   const loadContextData = async () => {
     setLoadingContext(true);
@@ -530,6 +568,35 @@ console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metada
     setHasChanges(true);
   };
 
+  // Update handler - add a tag
+const handleAddTag = (field, value) => {
+  if (!value.trim()) return;
+  if (tagsData[field].includes(value.trim())) return; // No duplicates
+  
+  setTagsData(prev => ({
+    ...prev,
+    [field]: [...prev[field], value.trim()]
+  }));
+  setTagsChanges(prev => ({
+    ...prev,
+    [field]: [...(tagsData[field]), value.trim()]
+  }));
+  setHasChanges(true);
+};
+
+// Remove a tag
+const handleRemoveTag = (field, value) => {
+  setTagsData(prev => ({
+    ...prev,
+    [field]: prev[field].filter(t => t !== value)
+  }));
+  setTagsChanges(prev => ({
+    ...prev,
+    [field]: tagsData[field].filter(t => t !== value)
+  }));
+  setHasChanges(true);
+};
+
   // ========================================
   // TRANSITION HANDLERS
   // ========================================
@@ -634,6 +701,12 @@ const fullTransitionData = {
       alert(`❌ Failed to delete transition: ${error.message}`);
     }
   };
+
+  const handleTagChange = (field, value) => {
+  setTagsData(prev => ({ ...prev, [field]: value }));
+  setTagsChanges(prev => ({ ...prev, [field]: value }));
+  setHasChanges(true);
+};
 
   const handleTransitionSubmit = async (transitionData) => {
     console.log('💾 Saving transition:', transitionMode, transitionData);
@@ -740,78 +813,101 @@ const fullTransitionData = {
   // SAVE HANDLER
   // ========================================
 
-  const handleSave = async () => {
-    setIsSaving(true);
+const handleSave = async () => {
+  setIsSaving(true);
+  
+  try {
+    console.log('💾 Starting save process...');
+    console.log('📦 Context changes to save:', contextChanges);
     
-    try {
-      console.log('💾 Starting save process...');
-      console.log('📦 Context changes to save:', contextChanges);
-      
-      const hasMetadataChanges = JSON.stringify(editedState.meta) !== JSON.stringify(state.meta);
-      
-      if (hasMetadataChanges) {
-        console.log('1️⃣ Saving metadata changes...');
-        const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filePath: state.files.implication,
-            metadata: editedState.meta
-          })
-        });
+    const hasMetadataChanges = JSON.stringify(editedState.meta) !== JSON.stringify(state.meta);
+    
+    if (hasMetadataChanges) {
+      console.log('1️⃣ Saving metadata changes...');
+      const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          metadata: editedState.meta
+        })
+      });
 
-        if (!metadataResponse.ok) {
-          const result = await metadataResponse.json();
-          throw new Error(result.error || 'Failed to save metadata');
-        }
-        
-        console.log('✅ Metadata saved');
-      } else {
-        console.log('⏭️ No metadata changes, skipping metadata save');
+      if (!metadataResponse.ok) {
+        const result = await metadataResponse.json();
+        throw new Error(result.error || 'Failed to save metadata');
       }
       
-      if (Object.keys(contextChanges).length > 0) {
-        console.log('2️⃣ Saving context changes...');
-        
-        const contextResponse = await fetch('http://localhost:3000/api/implications/update-context', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filePath: state.files.implication,
-            contextUpdates: contextChanges
-          })
-        });
-        
-        if (!contextResponse.ok) {
-          const result = await contextResponse.json();
-          throw new Error(result.error || 'Failed to save context');
-        }
-        
-        console.log('✅ Context saved');
-      } else {
-        console.log('⏭️ No context changes, skipping context save');
-      }
-      
-      if (!hasMetadataChanges && Object.keys(contextChanges).length === 0) {
-        alert('ℹ️ No changes to save');
-        setIsSaving(false);
-        return;
-      }
-      
-      alert('✅ Changes saved successfully!');
-      setHasChanges(false);
-      setContextChanges({});
-      setIsEditMode(false);
-      
-      await loadContextData();
-      
-    } catch (error) {
-      console.error('❌ Save failed:', error);
-      alert(`❌ Failed to save: ${error.message}`);
-    } finally {
-      setIsSaving(false);
+      console.log('✅ Metadata saved');
+    } else {
+      console.log('⏭️ No metadata changes, skipping metadata save');
     }
-  };
+
+    // Save tags if changed
+    if (Object.keys(tagsChanges).length > 0) {
+      console.log('🏷️ Saving tags changes...');
+      
+      const tagsResponse = await fetch('http://localhost:3000/api/implications/update-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          tags: tagsData
+        })
+      });
+      
+      if (!tagsResponse.ok) {
+        const result = await tagsResponse.json();
+        throw new Error(result.error || 'Failed to save tags');
+      }
+      
+      console.log('✅ Tags saved');
+    }
+    
+    if (Object.keys(contextChanges).length > 0) {
+      console.log('2️⃣ Saving context changes...');
+      
+      const contextResponse = await fetch('http://localhost:3000/api/implications/update-context', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          contextUpdates: contextChanges
+        })
+      });
+      
+      if (!contextResponse.ok) {
+        const result = await contextResponse.json();
+        throw new Error(result.error || 'Failed to save context');
+      }
+      
+      console.log('✅ Context saved');
+    } else {
+      console.log('⏭️ No context changes, skipping context save');
+    }
+    
+    // ✅ FIX 1: Include tagsChanges in the check
+    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0 && Object.keys(tagsChanges).length === 0) {
+      alert('ℹ️ No changes to save');
+      setIsSaving(false);
+      return;
+    }
+    
+    alert('✅ Changes saved successfully!');
+    setHasChanges(false);
+    setContextChanges({});
+    setTagsChanges({});  // ✅ FIX 2: Reset tagsChanges
+    setIsEditMode(false);
+    
+    await loadContextData();
+    
+  } catch (error) {
+    console.error('❌ Save failed:', error);
+    alert(`❌ Failed to save: ${error.message}`);
+  } finally {
+    setIsSaving(false);
+  }
+};
 
   // ========================================
   // UI EDITOR HANDLERS
@@ -1186,6 +1282,129 @@ const fullTransitionData = {
                 </div>
               )}
             </div>
+{/* TAGS */}
+<div className="flex flex-wrap gap-4 mt-2">
+  {/* Screen Tags */}
+  <div className="flex flex-wrap items-center gap-2">
+    <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>🖥️ Screen:</span>
+    {tagsData.screen.map(tag => (
+      <span
+        key={tag}
+        className="px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1"
+        style={{
+          background: `${theme.colors.accents.purple}20`,
+          color: theme.colors.accents.purple,
+          border: `1px solid ${theme.colors.accents.purple}`
+        }}
+      >
+        {tag}
+        {isEditMode && (
+          <button
+            onClick={() => handleRemoveTag('screen', tag)}
+            className="ml-1 hover:opacity-70"
+          >
+            ×
+          </button>
+        )}
+      </span>
+    ))}
+    {isEditMode && (
+      <input
+        type="text"
+        list="screen-tags-list"
+        placeholder="+ Add screen"
+        className="px-2 py-1 rounded text-xs"
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${theme.colors.border}`,
+          color: theme.colors.text.primary,
+          width: '120px'
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleAddTag('screen', e.target.value);
+            e.target.value = '';
+          }
+        }}
+        onBlur={(e) => {
+          if (e.target.value) {
+            handleAddTag('screen', e.target.value);
+            e.target.value = '';
+          }
+        }}
+      />
+    )}
+    <datalist id="screen-tags-list">
+      {existingTags.screen.filter(t => !tagsData.screen.includes(t)).map(tag => (
+        <option key={tag} value={tag} />
+      ))}
+    </datalist>
+  </div>
+
+  {/* Group Tags */}
+  <div className="flex flex-wrap items-center gap-2">
+    <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>📁 Group:</span>
+    {tagsData.group.map(tag => (
+      <span
+        key={tag}
+        className="px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1"
+        style={{
+          background: `${theme.colors.accents.orange}20`,
+          color: theme.colors.accents.orange,
+          border: `1px solid ${theme.colors.accents.orange}`
+        }}
+      >
+        {tag}
+        {isEditMode && (
+          <button
+            onClick={() => handleRemoveTag('group', tag)}
+            className="ml-1 hover:opacity-70"
+          >
+            ×
+          </button>
+        )}
+      </span>
+    ))}
+    {isEditMode && (
+      <input
+        type="text"
+        list="group-tags-list"
+        placeholder="+ Add group"
+        className="px-2 py-1 rounded text-xs"
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${theme.colors.border}`,
+          color: theme.colors.text.primary,
+          width: '120px'
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleAddTag('group', e.target.value);
+            e.target.value = '';
+          }
+        }}
+        onBlur={(e) => {
+          if (e.target.value) {
+            handleAddTag('group', e.target.value);
+            e.target.value = '';
+          }
+        }}
+      />
+    )}
+    <datalist id="group-tags-list">
+      {existingTags.group.filter(t => !tagsData.group.includes(t)).map(tag => (
+        <option key={tag} value={tag} />
+      ))}
+    </datalist>
+  </div>
+
+  {/* Empty state */}
+  {!isEditMode && tagsData.screen.length === 0 && tagsData.group.length === 0 && (
+    <span className="text-xs italic" style={{ color: theme.colors.text.tertiary }}>
+      No tags (click Edit to add)
+    </span>
+  )}
+</div>
             
             {/* UI SCREENS */}
             <div>
