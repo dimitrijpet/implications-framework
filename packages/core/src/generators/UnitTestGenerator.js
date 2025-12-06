@@ -407,38 +407,43 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       };
     }
     
-    // ───────────────────────────────────────────────────────
-    // Calculate POM path with proper format
+ // ───────────────────────────────────────────────────────
+    // Calculate POM path using _pomSource or screen property
     // ───────────────────────────────────────────────────────
     let pomPathValue = null;
     let pomClassName = null;
     
-    if (screen.screen) {
-      let screenPath = screen.screen;
+    if (screen._pomSource?.path && this.implFilePath) {
+      // Priority 1: Use _pomSource.path (has accurate project-relative path)
+      pomPathValue = this._calculateScreenObjectPath(
+        this.implFilePath,
+        screen._pomSource.path
+      );
+      pomClassName = screen._pomSource.className || this._toPascalCase(
+        (screen._pomSource.name || screenKey).replace(/\./g, '').replace(/screen$/i, '')
+      );
+      console.log(`      📁 POM from _pomSource: ${pomClassName} → ${pomPathValue}`);
       
-      if (screenPath.startsWith('../')) {
-        pomPathValue = screenPath;
-      } else {
-        screenPath = screenPath.replace(/^screenObjects\//, '');
-        if (!screenPath.endsWith('.js')) {
-          screenPath = screenPath + '.js';
-        }
-        pomPathValue = `../../../screenObjects/${screenPath}`;
-      }
-      
-      // Generate class name from screen path
+    } else if (screen.screen && this.implFilePath) {
+      // Priority 2: Use screen property and calculate path
+      pomPathValue = this._calculateScreenObjectPath(
+        this.implFilePath,
+        screen.screen
+      );
       pomClassName = this._toPascalCase(
         screen.screen
+          .replace(/\.screen$/i, '')
+          .replace(/\.wrapper$/i, '')
           .replace(/\./g, '')
           .replace(/\//g, '')
-          .replace(/\.js$/, '')
       );
+      console.log(`      📁 POM from screen: ${pomClassName} → ${pomPathValue}`);
+      
     } else {
-      // No screen property - use screenKey
+      // Priority 3: No path info - use screenKey for class name
       pomClassName = this._toPascalCase(screenKey);
+      console.log(`      📁 POM from screenKey only: ${pomClassName} (no path available)`);
     }
-    
-    console.log(`      📁 POM: ${pomClassName} from ${pomPathValue || 'N/A'}`);
     
     // ───────────────────────────────────────────────────────
     // Build screen object
@@ -3326,53 +3331,77 @@ _calculateScreenObjectPath(implFilePath, screenFile) {
   const path = require('path');
   const fs = require('fs');
   
-  console.log(`\nðŸ“ _calculateScreenObjectPath called:`);
+  console.log(`\n🔍 _calculateScreenObjectPath called:`);
   console.log(`   implFilePath: ${implFilePath}`);
   console.log(`   screenFile: ${screenFile}`);
   
-  // âœ… NEW: If screenFile is already an absolute or project-relative path, use it directly
- // âœ… NEW: If screenFile is already an absolute or project-relative path, use it directly
-if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.startsWith('mobile/')) {
-  console.log(`   âœ… Detected full/project-relative path`);
-  
   const implDir = path.dirname(implFilePath);
-  console.log(`   ðŸ“ Test directory: ${implDir}`);
   
-  // âœ… FIX: Just use the path as-is, don't strip anything!
-  const absoluteScreenPath = screenFile.startsWith('/') 
-    ? screenFile 
-    : path.join(this.projectPath, screenFile);  // âœ… Use FULL path as stored!
-  
-  console.log(`   ðŸ“ Absolute screen path: ${absoluteScreenPath}`);
-  
-  // Calculate relative path from test location to screen file
-  let relativePath = path.relative(implDir, absoluteScreenPath);
-  
-  // Normalize for require()
-  relativePath = relativePath.split(path.sep).join('/');
-  
-  if (!relativePath.startsWith('.')) {
-    relativePath = './' + relativePath;
+  // ═══════════════════════════════════════════════════════════
+  // PRIORITY 1: If screenFile is already a full project path, use it
+  // ═══════════════════════════════════════════════════════════
+  if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.startsWith('mobile/') || screenFile.startsWith('apps/')) {
+    console.log(`   ✅ Detected full/project-relative path`);
+    
+    const absoluteScreenPath = screenFile.startsWith('/') 
+      ? screenFile 
+      : path.join(this.projectPath, screenFile);
+    
+    console.log(`   📂 Absolute screen path: ${absoluteScreenPath}`);
+    
+    let relativePath = path.relative(implDir, absoluteScreenPath);
+    relativePath = relativePath.split(path.sep).join('/');
+    
+    if (!relativePath.startsWith('.')) {
+      relativePath = './' + relativePath;
+    }
+    
+    console.log(`   ✅ Calculated relative path: ${relativePath}`);
+    return relativePath;
   }
   
-  console.log(`   âœ… Calculated relative path: ${relativePath}`);
-  return relativePath;
-}
+  // ═══════════════════════════════════════════════════════════
+  // PRIORITY 2: Check config.screenObjectsPaths
+  // ═══════════════════════════════════════════════════════════
+  const config = this._loadProjectConfig();
   
-  // âœ… ORIGINAL LOGIC: For simple filenames like "StatusRequests.screen"
-  console.log(`   ðŸ” Treating as filename, searching for screenObjects directory...`);
+  if (config?.screenObjectsPaths && Array.isArray(config.screenObjectsPaths)) {
+    console.log(`   🔧 Checking ${config.screenObjectsPaths.length} configured screenObjectsPaths...`);
+    
+    // Normalize screenFile (remove .screen, .wrapper suffixes for matching)
+    const screenFileName = screenFile.endsWith('.js') ? screenFile : `${screenFile}.js`;
+    
+    for (const basePath of config.screenObjectsPaths) {
+      const fullPath = path.join(this.projectPath, basePath, screenFileName);
+      
+      if (fs.existsSync(fullPath)) {
+        console.log(`   ✅ Found in config path: ${basePath}`);
+        
+        let relativePath = path.relative(implDir, fullPath);
+        relativePath = relativePath.split(path.sep).join('/');
+        
+        if (!relativePath.startsWith('.')) {
+          relativePath = './' + relativePath;
+        }
+        
+        console.log(`   ✅ Calculated relative path: ${relativePath}`);
+        return relativePath;
+      }
+    }
+    
+    console.log(`   ⚠️  Not found in any configured path, falling back to discovery...`);
+  }
   
-  // Get directory of Implication file (where test will be generated)
-  const implDir = path.dirname(implFilePath);
+  // ═══════════════════════════════════════════════════════════
+  // PRIORITY 3: Discovery fallback (walk up directories)
+  // ═══════════════════════════════════════════════════════════
+  console.log(`   🔍 Falling back to directory discovery...`);
   
-  // âœ… STEP 1: Find screenObjects directory by walking up
   let screenObjectsDir = this._findScreenObjectsDir(implFilePath);
   
   if (!screenObjectsDir) {
-    // âœ… FALLBACK: Try common patterns
     const projectRoot = this._findProjectRoot(implFilePath);
     
-    // Try different possible locations:
     const possiblePaths = [
       path.join(projectRoot, 'tests/web/current/screenObjects'),
       path.join(projectRoot, 'tests/screenObjects'),
@@ -3383,35 +3412,59 @@ if (screenFile.startsWith('/') || screenFile.startsWith('tests/') || screenFile.
     for (const possiblePath of possiblePaths) {
       if (fs.existsSync(possiblePath)) {
         screenObjectsDir = possiblePath;
-        console.log(`   ðŸ“‚ Found screenObjects at: ${possiblePath}`);
+        console.log(`   📂 Found screenObjects at: ${possiblePath}`);
         break;
       }
     }
   }
   
   if (!screenObjectsDir) {
-    // Last resort fallback - assume relative to tests/
-    console.warn(`   âš ï¸  Could not find screenObjects directory, using fallback`);
+    console.warn(`   ⚠️  Could not find screenObjects directory, using fallback`);
     return `../screenObjects/${screenFile}.js`;
   }
   
-  // âœ… STEP 2: Build full path to screen object file
-  const screenObjectFile = path.join(screenObjectsDir, `${screenFile}.js`);
+  const screenFileName = screenFile.endsWith('.js') ? screenFile : `${screenFile}.js`;
+  const screenObjectFile = path.join(screenObjectsDir, screenFileName);
   
-  // âœ… STEP 3: Calculate relative path from test location to screen object
   let relativePath = path.relative(implDir, screenObjectFile);
-  
-  // Normalize for require() - use forward slashes
   relativePath = relativePath.split(path.sep).join('/');
   
-  // Ensure it starts with ./ or ../
   if (!relativePath.startsWith('.')) {
     relativePath = './' + relativePath;
   }
   
-  console.log(`   ðŸ“ Screen path: ${screenFile} â†’ ${relativePath}`);
+  console.log(`   🔍 Screen path: ${screenFile} → ${relativePath}`);
   
   return relativePath;
+}
+
+/**
+ * Load project config (ai-testing.config.js)
+ */
+_loadProjectConfig() {
+  if (this._configCache) {
+    return this._configCache;
+  }
+  
+  const path = require('path');
+  const fs = require('fs');
+  
+  const configPath = path.join(this.projectPath, 'ai-testing.config.js');
+  
+  if (!fs.existsSync(configPath)) {
+    console.log(`   ⚠️  No ai-testing.config.js found at ${configPath}`);
+    return null;
+  }
+  
+  try {
+    // Clear require cache to get fresh config
+    delete require.cache[require.resolve(configPath)];
+    this._configCache = require(configPath);
+    return this._configCache;
+  } catch (error) {
+    console.warn(`   ⚠️  Could not load config: ${error.message}`);
+    return null;
+  }
 }
 /**
  * Find screenObjects directory by walking up from impl file
@@ -3469,15 +3522,29 @@ _processActionDetailsImports(actionDetails, screenObjectsPath, implFilePath) {
   // Process imports if they exist
   if (processed.imports) {
     console.log(`   ðŸ“¦ Processing ${processed.imports.length} import(s)...`);
+  processed.imports = processed.imports.map(imp => {
+    console.log(`\n   📦 Import: ${imp.className}`);
+    console.log(`      raw path: ${imp.path}`);
     
-    processed.imports = processed.imports.map(imp => {
-      console.log(`\n   ðŸ” Import: ${imp.className}`);
-      console.log(`      path: ${imp.path}`);
-      
-      const relativePath = this._calculateScreenObjectPath(
-        implFilePath,
-        imp.path
-      );
+    // Clean up the path before processing
+    let cleanPath = imp.path;
+    
+    // Remove double .js extension if present
+    cleanPath = cleanPath.replace(/\.js\.js$/, '.js');
+    
+    // If path has weird nesting like "../screenObjects/apps/web/...", extract the real path
+    const nestedMatch = cleanPath.match(/screenObjects\/(apps\/.*)/);
+    if (nestedMatch) {
+      cleanPath = nestedMatch[1];
+      console.log(`      cleaned nested path: ${cleanPath}`);
+    }
+    
+    console.log(`      clean path: ${cleanPath}`);
+    
+    const relativePath = this._calculateScreenObjectPath(
+      implFilePath,
+      cleanPath
+    );
       
       console.log(`      âœ… relativePath: ${relativePath}`);
       
