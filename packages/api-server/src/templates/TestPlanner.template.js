@@ -88,25 +88,43 @@ class TestPlanner {
 static _findSetupEntry(meta, options = {}) {
   const { currentTestFile, explicitEvent, testData } = options;
   
+  console.log(`\n🔍 _findSetupEntry DEBUG:`);
+  console.log(`   testData passed: ${testData ? 'YES' : 'NO'}`);
+  console.log(`   testData.returnFlight: ${testData?.returnFlight}`);
+  console.log(`   setup entries: ${meta.setup?.length || 0}`);
+  console.log(`   explicitEvent: ${explicitEvent || 'none'}`);
+  
   if (!meta.setup || meta.setup.length === 0) {
     return null;
   }
   
   const verbose = process.env.DEBUG_SETUP_ENTRY === 'true';
   
-  if (verbose) {
-    console.log(`\n   🔍 _findSetupEntry: ${meta.setup.length} entries`);
-    console.log(`      testData.agency=${testData?.agency}`);
-    console.log(`      currentTestFile=${currentTestFile ? path.basename(currentTestFile) : 'none'}`);
-    console.log(`      explicitEvent=${explicitEvent || 'none'}`);
-  }
+ // STEP 0: Filter and prioritize setup entries by requires
+const entriesWithMatchingRequires = meta.setup.filter(entry => {
+  if (!entry.requires || !testData) return false; // Skip entries without requires
+  return Object.entries(entry.requires).every(([field, expected]) => {
+    return testData[field] === expected;
+  });
+});
+
+const entriesWithoutRequires = meta.setup.filter(entry => !entry.requires);
+
+// Prefer entries with matching requires, fall back to entries without requires
+const candidateEntries = entriesWithMatchingRequires.length > 0 
+  ? entriesWithMatchingRequires 
+  : entriesWithoutRequires.length > 0 
+    ? entriesWithoutRequires 
+    : meta.setup; // Last resort: all entries
+
+console.log(`   Valid entries: ${entriesWithMatchingRequires.length} with matching requires, ${entriesWithoutRequires.length} without requires`);
   
   // ═══════════════════════════════════════════════════════════
   // STEP 1: Match by exact test file path (highest priority)
   // ═══════════════════════════════════════════════════════════
   if (currentTestFile) {
     const currentBasename = path.basename(currentTestFile);
-    const entry = meta.setup.find(s => {
+    const entry = candidateEntries.find(s => {
       if (!s.testFile) return false;
       return path.basename(s.testFile) === currentBasename;
     });
@@ -117,134 +135,39 @@ static _findSetupEntry(meta, options = {}) {
   }
   
   // ═══════════════════════════════════════════════════════════
-  // STEP 2: Check requires against testData (PRIORITY!)
-  // This is the key fix - requires matching takes precedence
-  // ═══════════════════════════════════════════════════════════
-  if (testData && meta.setup.length > 1) {
-    if (verbose) console.log(`   🔍 Checking requires against testData...`);
-    
-    // Collect all entries that match the requires
-    const matchingEntries = [];
-    
-    for (let i = 0; i < meta.setup.length; i++) {
-      const entry = meta.setup[i];
-      
-      // Entry without requires is a "default" path
-      if (!entry.requires || Object.keys(entry.requires).length === 0) {
-        if (verbose) console.log(`   📋 Entry ${i}: No requires (default path, skipping for now)`);
-        continue;
-      }
-      
-      let allMet = true;
-      const checks = [];
-      
-      for (const [field, requiredValue] of Object.entries(entry.requires)) {
-        // Skip previousStatus - that's not a data field check
-        if (field === 'previousStatus') continue;
-        
-        const actualValue = field.includes('.')
-          ? field.split('.').reduce((obj, key) => obj?.[key], testData)
-          : testData[field];
-        
-        const matches = actualValue === requiredValue;
-        checks.push({ field, required: requiredValue, actual: actualValue, matches });
-        
-        if (!matches) {
-          allMet = false;
-        }
-      }
-      
-      if (verbose) {
-        console.log(`   📋 Entry ${i} (previousStatus: ${entry.previousStatus}):`);
-        checks.forEach(c => {
-          const icon = c.matches ? '✅' : '❌';
-          console.log(`      ${icon} ${c.field}: required=${JSON.stringify(c.required)}, actual=${JSON.stringify(c.actual)}`);
-        });
-        console.log(`      Result: ${allMet ? '✅ MATCHES' : '❌ No match'}`);
-      }
-      
-      if (allMet && checks.length > 0) {
-        matchingEntries.push({ entry, index: i, checksCount: checks.length });
-      }
-    }
-    
-    // If we found matching entries, pick the best one
-    if (matchingEntries.length > 0) {
-      // If only one matches, use it
-      if (matchingEntries.length === 1) {
-        const winner = matchingEntries[0];
-        if (verbose) console.log(`   ✅ Single requires match: Entry ${winner.index} (previousStatus: ${winner.entry.previousStatus})`);
-        return winner.entry;
-      }
-      
-      // Multiple matches - use explicitEvent as tiebreaker
-      if (explicitEvent && matchingEntries.length > 1) {
-        const normalizedEvent = explicitEvent.replace(/_/g, '').toUpperCase();
-        const eventMatch = matchingEntries.find(m => {
-          if (!m.entry.testFile) return false;
-          return m.entry.testFile.toUpperCase().includes(normalizedEvent);
-        });
-        if (eventMatch) {
-          if (verbose) console.log(`   ✅ Tiebreaker by explicitEvent: Entry ${eventMatch.index}`);
-          return eventMatch.entry;
-        }
-      }
-      
-      // Just return the first matching entry
-      const winner = matchingEntries[0];
-      if (verbose) console.log(`   ✅ First requires match: Entry ${winner.index} (previousStatus: ${winner.entry.previousStatus})`);
-      return winner.entry;
-    }
-    
-    // No requires matched - fall back to entry WITHOUT requires (default path)
-    const defaultEntry = meta.setup.find(s => !s.requires || Object.keys(s.requires).length === 0);
-    if (defaultEntry) {
-      if (verbose) console.log(`   ⚠️ No requires match, using default entry (no requires)`);
-      return defaultEntry;
-    }
-    
-    // All entries have requires but none match - configuration error!
-    console.warn(`\n   ⚠️ WARNING: No setup entry matches testData!`);
-    console.warn(`   ⚠️ testData values:`);
-    meta.setup.forEach((entry, i) => {
-      if (entry.requires) {
-        Object.keys(entry.requires).forEach(field => {
-          if (field !== 'previousStatus') {
-            const actual = field.includes('.') 
-              ? field.split('.').reduce((obj, key) => obj?.[key], testData)
-              : testData[field];
-            console.warn(`      ${field}: ${JSON.stringify(actual)}`);
-          }
-        });
-      }
-    });
-    console.warn(`   ⚠️ Available entries:`);
-    meta.setup.forEach((entry, i) => {
-      console.warn(`      Entry ${i}: requires=${JSON.stringify(entry.requires)}, previousStatus=${entry.previousStatus}`);
-    });
-  }
-  
-  // ═══════════════════════════════════════════════════════════
-  // STEP 3: Fall back to explicitEvent matching (legacy behavior)
+  // STEP 2: Match by explicitEvent (HIGH PRIORITY!)
   // ═══════════════════════════════════════════════════════════
   if (explicitEvent) {
     const normalizedEvent = explicitEvent.replace(/_/g, '').toUpperCase();
-    const entry = meta.setup.find(s => {
+    console.log(`   🔍 Matching by explicitEvent: ${explicitEvent} (normalized: ${normalizedEvent})`);
+    
+    const entry = candidateEntries.find(s => {
       if (!s.testFile) return false;
-      return s.testFile.toUpperCase().includes(normalizedEvent);
+      const normalizedTestFile = s.testFile.replace(/_/g, '').toUpperCase();
+      const matches = normalizedTestFile.includes(normalizedEvent);
+      if (matches) {
+        console.log(`   ✅ Matched: ${path.basename(s.testFile)} (previousStatus: ${s.previousStatus})`);
+      }
+      return matches;
     });
+    
     if (entry) {
-      if (verbose) console.log(`   ⚠️ Fallback: Matched by explicitEvent: ${explicitEvent}`);
+      console.log(`   ✅ Found by explicitEvent: previousStatus=${entry.previousStatus}`);
       return entry;
+    } else {
+      console.log(`   ⚠️ No match found for event ${explicitEvent}`);
     }
   }
   
   // ═══════════════════════════════════════════════════════════
-  // STEP 4: Default to first entry
+  // STEP 3: Default to first valid entry
   // ═══════════════════════════════════════════════════════════
-  if (verbose) console.log(`   ⚠️ Falling back to first entry`);
-  return meta.setup[0];
+  if (verbose) console.log(`   ⚠️ Falling back to first valid entry`);
+  console.log(`   📋 _getPreviousStatus: Using setupEntry.previousStatus = ${candidateEntries[0]?.previousStatus}`);
+  return candidateEntries[0];
 }
+
+
 
 
 // ═══════════════════════════════════════════════════════════
@@ -264,19 +187,6 @@ static _getPreviousStatus(meta, options = {}) {
   console.log(`   📋 _getPreviousStatus: Falling back to meta.requires.previousStatus = ${fallback}`);
   return fallback;
 }
-
-  // ═══════════════════════════════════════════════════════════
-  // STATIC HELPER: Get previousStatus from setup entry or meta.requires
-  // ═══════════════════════════════════════════════════════════
-  static _getPreviousStatus(meta, options = {}) {
-    const setupEntry = TestPlanner._findSetupEntry(meta, options);
-    
-    if (setupEntry?.previousStatus) {
-      return setupEntry.previousStatus;
-    }
-    
-    return meta.requires?.previousStatus || null;
-  }
 
   // ═══════════════════════════════════════════════════════════
   // STATIC HELPER: Extract event from filename (FIXED!)
@@ -376,6 +286,8 @@ static _getPreviousStatus(meta, options = {}) {
     });
   }
 
+  
+
   // ═══════════════════════════════════════════════════════════
   // STATIC HELPER: Merge _changeLog into data
   // ═══════════════════════════════════════════════════════════
@@ -398,87 +310,120 @@ static _getPreviousStatus(meta, options = {}) {
   // ═══════════════════════════════════════════════════════════
   // ANALYZE - Main entry point for prerequisite analysis
   // ═══════════════════════════════════════════════════════════
-  analyze(ImplicationClass, testData, options = {}) {
-    const xstateConfig = ImplicationClass.xstateConfig || {};
-    const meta = xstateConfig.meta || {};
-    
-    const targetStatus = meta.status;
-    const currentStatus = TestPlanner._getCurrentStatus(testData, ImplicationClass);
-    
-    const previousStatus = TestPlanner._getPreviousStatus(meta, { ...options, testData });
-    
-    if (this.options.verbose) {
-      console.log(`\n🔍 TestPlanner: Analyzing ${targetStatus} state`);
-      console.log(`   Current: ${currentStatus}`);
-      console.log(`   Target: ${targetStatus}`);
-      if (previousStatus) {
-        console.log(`   Required previous: ${previousStatus}`);
-      }
+analyze(ImplicationClass, testData, options = {}) {
+  const xstateConfig = ImplicationClass.xstateConfig || {};
+  const meta = xstateConfig.meta || {};
+  
+  const targetStatus = meta.status;
+  const currentStatus = TestPlanner._getCurrentStatus(testData, ImplicationClass);
+  
+  const previousStatus = TestPlanner._getPreviousStatus(meta, { ...options, testData });
+  
+  if (this.options.verbose) {
+    console.log(`\n🔍 TestPlanner: Analyzing ${targetStatus} state`);
+    console.log(`   Current: ${currentStatus}`);
+    console.log(`   Target: ${targetStatus}`);
+    if (previousStatus) {
+      console.log(`   Required previous: ${previousStatus}`);
     }
-    
-    const chain = this.buildPrerequisiteChain(
-      ImplicationClass, 
-      currentStatus, 
-      targetStatus, 
-      new Set(), 
-      true, 
-      testData, 
-      options
-    );
-    
-    const missingFields = this.findMissingFields(meta, testData);
-    
-    const entityFields = missingFields.filter(f => {
-      const fieldName = typeof f === 'string' ? f : f.field;
-      return fieldName && fieldName.endsWith('.status');
-    });
-
-    const regularFields = missingFields.filter(f => {
-      const fieldName = typeof f === 'string' ? f : f.field;
-      return fieldName && !fieldName.endsWith('.status');
-    });
-    
-    // Check for loop transition
-    const isLoopTransition = targetStatus === currentStatus && 
-                             previousStatus && 
-                             previousStatus !== currentStatus;
-    
-    const ready = this.isReady(chain, currentStatus, isLoopTransition) && regularFields.length === 0;
-    const nextStep = ready ? null : this.findNextStep(chain, currentStatus);
-    const stepsRemaining = chain.filter(step => !step.complete).length;
-    
-    const analysis = {
-      ready,
-      currentStatus,
-      targetStatus,
-      previousStatus,
-      isLoopTransition,
-      missingFields,
-      entityFields,
-      regularFields,
-      chain,
-      nextStep,
-      stepsRemaining
-    };
-    
-    if (this.options.verbose) {
-      console.log(`   Ready: ${analysis.ready ? '✅' : '❌'}`);
-      if (isLoopTransition) {
-        console.log(`   🔄 Loop transition: ${currentStatus} → ... → ${previousStatus} → ${targetStatus}`);
-      }
-      if (!analysis.ready) {
-        console.log(`   Missing steps: ${stepsRemaining}`);
-        if (regularFields.length > 0) {
-          console.log(`   Missing fields: ${regularFields.map(f => typeof f === 'string' ? f : f.field).join(', ')}`);
-        }
-        if (entityFields.length > 0) {
-          console.log(`   Entity status fields (auto-resolvable): ${entityFields.map(f => typeof f === 'string' ? f : f.field).join(', ')}`);
-        }
-      }
-    }
-    
-    return analysis;
   }
+
+  const isLoopTransition = targetStatus === currentStatus && 
+                           previousStatus && 
+                           previousStatus !== currentStatus;
+  
+  // For loop transitions, we need to build chain to previousStatus first
+  const effectiveTarget = isLoopTransition ? previousStatus : targetStatus;
+
+  let chain = this.buildPrerequisiteChain(
+    ImplicationClass, 
+    currentStatus, 
+    effectiveTarget,
+    new Set(), 
+    true, 
+    testData, 
+    { 
+      ...options, 
+      isLoopTransition,
+      loopFinalTarget: isLoopTransition ? targetStatus : null
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════
+  // POST-PROCESS: Insert mandatory detours at correct positions
+  // ═══════════════════════════════════════════════════════════
+  chain = this._insertMandatoryDetours(chain, testData);
+
+  // For loop transitions, add the final step back to target
+  if (isLoopTransition && chain.length > 0) {
+    const setupEntry = TestPlanner._findSetupEntry(meta, { ...options, testData });
+    
+    // Only add if chain doesn't already end at targetStatus
+    const lastStep = chain[chain.length - 1];
+    if (lastStep.status !== targetStatus) {
+      chain.push({
+        status: targetStatus,
+        className: ImplicationClass.name,
+        actionName: setupEntry?.actionName || meta.setup?.[0]?.actionName || 'unknown',
+        testFile: setupEntry?.testFile || meta.setup?.[0]?.testFile || 'unknown',
+        platform: setupEntry?.platform || meta.platform || 'unknown',
+        complete: false,
+        isCurrent: false,
+        isTarget: true,
+        entity: meta.entity,
+        previousStatus: previousStatus
+      });
+    }
+  }
+  
+  const missingFields = this.findMissingFields(meta, testData);
+  
+  const entityFields = missingFields.filter(f => {
+    const fieldName = typeof f === 'string' ? f : f.field;
+    return fieldName && fieldName.endsWith('.status');
+  });
+
+  const regularFields = missingFields.filter(f => {
+    const fieldName = typeof f === 'string' ? f : f.field;
+    return fieldName && !fieldName.endsWith('.status');
+  });
+  
+  const ready = this.isReady(chain, currentStatus, isLoopTransition) && regularFields.length === 0;
+  const nextStep = ready ? null : this.findNextStep(chain, currentStatus);
+  const stepsRemaining = chain.filter(step => !step.complete).length;
+  
+  const analysis = {
+    ready,
+    currentStatus,
+    targetStatus,
+    previousStatus,
+    isLoopTransition,
+    missingFields,
+    entityFields,
+    regularFields,
+    chain,
+    nextStep,
+    stepsRemaining
+  };
+  
+  if (this.options.verbose) {
+    console.log(`   Ready: ${analysis.ready ? '✅' : '❌'}`);
+    if (isLoopTransition) {
+      console.log(`   🔄 Loop transition: ${currentStatus} → ... → ${previousStatus} → ${targetStatus}`);
+    }
+    if (!analysis.ready) {
+      console.log(`   Missing steps: ${stepsRemaining}`);
+      if (regularFields.length > 0) {
+        console.log(`   Missing fields: ${regularFields.map(f => typeof f === 'string' ? f : f.field).join(', ')}`);
+      }
+      if (entityFields.length > 0) {
+        console.log(`   Entity status fields (auto-resolvable): ${entityFields.map(f => typeof f === 'string' ? f : f.field).join(', ')}`);
+      }
+    }
+  }
+  
+  return analysis;
+}
 
   // ═══════════════════════════════════════════════════════════
   // BUILD PREREQUISITE CHAIN
@@ -500,7 +445,7 @@ static _getPreviousStatus(meta, options = {}) {
     const xstateConfig = ImplicationClass.xstateConfig || {};
     const meta = xstateConfig.meta || {};
     
-    const previousStatus = TestPlanner._getPreviousStatus(meta, { ...options, testData });
+    let previousStatus = TestPlanner._getPreviousStatus(meta, { ...options, testData });
     
     // Check for loop transition
     const isLoopTransition = isOriginalTarget && 
@@ -670,101 +615,230 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
         }
       }
     }
+
+ // ═══════════════════════════════════════════════════════════
+// PREVIOUS STATUS CHAIN - WITH CONDITION CHECKING & ALTERNATIVES!
+// ═══════════════════════════════════════════════════════════
+if (previousStatus) {
+  if (meta.entity && this.options.verbose) {
+    console.log(`   ℹ️  Entity prerequisite: ${meta.entity}.status must be ${previousStatus}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // NEW: Check if this previousStatus path would go through our ORIGINAL target
+  // If so, we need to find an alternative setup entry
+  // ═══════════════════════════════════════════════════════════
+  const originalTarget = options.originalTarget || targetStatus;
+  
+  if (previousStatus !== originalTarget && !isOriginalTarget) {
+    // Check if previousStatus chain would go through originalTarget
+    const wouldGoThroughTarget = this._wouldPathGoThrough(previousStatus, originalTarget, new Set([...visited]));
     
-    // ═══════════════════════════════════════════════════════════
-    // PREVIOUS STATUS CHAIN - This is the key fix!
-    // ═══════════════════════════════════════════════════════════
-    if (previousStatus) {
-      if (meta.entity && this.options.verbose) {
-        console.log(`   ℹ️  Entity prerequisite: ${meta.entity}.status must be ${previousStatus}`);
+    if (wouldGoThroughTarget) {
+      if (this.options.verbose) {
+        console.log(`   ⚠️  Path via ${previousStatus} would go through target ${originalTarget}`);
+        console.log(`   🔄 Looking for alternative setup entry...`);
       }
       
-      const prevImplClassName = this.stateRegistry[previousStatus];
+      // Try to find alternative setup entry that doesn't go through target
+      const alternativeEntry = this._findAlternativeSetupEntry(meta, originalTarget, testData, visited);
       
-      const canVisitPrevious = !visited.has(previousStatus) || 
-                               (options.loopTarget === previousStatus) ||
-                               (isLoopTransition && previousStatus !== targetStatus);
-      
-      if (prevImplClassName && canVisitPrevious) {
-        try {
-          const prevImplPath = this.findImplicationFile(prevImplClassName);
-          
-          if (prevImplPath) {
-            // FIXED: Clear cache properly before require
-            this._clearImplicationCache(prevImplPath);
-            const PrevImplClass = require(prevImplPath);
-            
-            // Select the right transition if multiple paths exist
-            const selectedTransition = this._selectTransition(
-              PrevImplClass,
-              targetStatus,
-              meta.platform,
-              { 
-                explicitEvent: options?.explicitEvent,
-                preferSamePlatform: true,
-                testData
-              }
-            );
-            
-            const prevChain = this.buildPrerequisiteChain(
-              PrevImplClass, 
-              currentStatus, 
-              previousStatus, 
-              visited, 
-              false,
-              testData,
-              { 
-                explicitEvent: selectedTransition?.event,
-                loopTarget: isLoopTransition ? targetStatus : options.loopTarget
-              }
-            );
-            chain.push(...prevChain);
-          } else {
-            // File not found - add placeholder
-            console.error(`   ❌ Implication file not found for: ${prevImplClassName}`);
-            chain.push({
-              status: previousStatus,
-              className: prevImplClassName,
-              actionName: 'FILE_NOT_FOUND',
-              testFile: 'unknown',
-              platform: 'unknown',
-              complete: false,
-              isTarget: false,
-              loadError: 'File not found'
-            });
-          }
-        } catch (error) {
-          // CRITICAL: Don't silently skip - add to chain as incomplete!
-          console.error(`   ❌ Failed to load ${prevImplClassName}: ${error.message}`);
-          
-          // Try to get basic info from state registry or filename pattern
-          chain.push({
-            status: previousStatus,
-            className: prevImplClassName,
-            actionName: this._inferActionName(previousStatus),
-            testFile: this._inferTestFile(prevImplClassName, previousStatus),
-            platform: this._inferPlatform(previousStatus),
-            complete: false,
-            isCurrent: false,
-            isTarget: false,
-            loadError: error.message
-          });
+      if (alternativeEntry && alternativeEntry.previousStatus !== previousStatus) {
+        if (this.options.verbose) {
+          console.log(`   ✅ Using alternative: ${alternativeEntry.previousStatus} (instead of ${previousStatus})`);
         }
-      } else if (!prevImplClassName) {
-        // Status not in registry
-        console.error(`   ❌ Status "${previousStatus}" not found in state registry!`);
+        previousStatus = alternativeEntry.previousStatus;
+      }
+    }
+  }
+  
+  // ✅ Check if the transition FROM previousStatus TO targetStatus is valid
+  const transitionCheck = this._checkTransitionConditionsToTarget(previousStatus, targetStatus, testData);
+  
+  if (!transitionCheck.valid) {
+    // Transition is BLOCKED by conditions!
+    if (this.options.verbose) {
+      console.log(`   ⚠️  Transition ${previousStatus} → ${targetStatus} blocked by conditions`);
+      if (transitionCheck.blockedTransitions) {
+        transitionCheck.blockedTransitions.forEach(t => {
+          console.log(`      ❌ ${t.event}: ${t.blockedBy.map(b => `${b.field}=${JSON.stringify(b.actual)} (needs ${JSON.stringify(b.expected)})`).join(', ')}`);
+        });
+      }
+    }
+    // ═══════════════════════════════════════════════════════════
+    // ✅ FIX: Find the state we CAN reach that has a path to target
+    // We need to find an alternative from the state BEFORE the blocked one
+    // ═══════════════════════════════════════════════════════════
+    
+    // First, find what state comes before previousStatus (the blocked one)
+    // by looking at what can reach previousStatus
+    const stateBeforeBlocked = this._findStateBeforeBlocked(previousStatus, currentStatus, testData, visited);
+    
+    if (stateBeforeBlocked && this.options.verbose) {
+      console.log(`   🔍 Searching alternative path: ${stateBeforeBlocked} → ${targetStatus} (avoiding direct path via ${previousStatus})`);
+    }
+    
+    // ✅ NEW: Try to find an alternative path from the state BEFORE the blocked transition
+    const searchFrom = stateBeforeBlocked || currentStatus;
+    
+    const alternativePath = this._findAlternativePathToTarget(
+      searchFrom,
+      targetStatus,
+      testData,
+      new Set([...visited]),
+      previousStatus // The blocked previous status to avoid
+    );
+    
+    if (alternativePath && alternativePath.length > 0) {
+      if (this.options.verbose) {
+        console.log(`   ✅ Found alternative path: ${alternativePath.map(s => s.status).join(' → ')}`);
+      }
+      
+      // ✅ FIX: If we found an alternative, we need to ALSO build the chain TO searchFrom first!
+      if (stateBeforeBlocked && stateBeforeBlocked !== currentStatus) {
+        const chainToSearchFrom = this._buildChainToState(currentStatus, stateBeforeBlocked, testData, new Set([...visited]));
+        if (chainToSearchFrom && chainToSearchFrom.length > 0) {
+          chain.push(...chainToSearchFrom);
+        }
+      }
+      
+      chain.push(...alternativePath);
+      return chain;
+    }
+    
+    // No alternative found - mark as blocked
+    if (this.options.verbose) {
+      console.log(`   ❌ No alternative path found`);
+    }
+    
+    chain.push({
+      status: targetStatus,
+      className: ImplicationClass.name,
+      actionName: 'BLOCKED_BY_CONDITIONS',
+      testFile: 'N/A',
+      platform: meta.platform || 'unknown',
+      complete: false,
+      isCurrent: false,
+      isTarget: isOriginalTarget,
+      blocked: true,
+      blockedReason: `Transition from ${previousStatus} requires conditions not met in testData. No alternative path found.`,
+      blockedTransitions: transitionCheck.blockedTransitions
+    });
+    
+    return chain;
+  }
+  
+  // Transition is valid - continue building chain normally
+  const prevImplClassName = this.stateRegistry[previousStatus];
+  
+  const canVisitPrevious = !visited.has(previousStatus) || 
+                           (options.loopTarget === previousStatus) ||
+                           (isLoopTransition && previousStatus !== targetStatus);
+  
+  if (prevImplClassName && canVisitPrevious) {
+    try {
+      const prevImplPath = this.findImplicationFile(prevImplClassName);
+      
+      if (prevImplPath) {
+        this._clearImplicationCache(prevImplPath);
+        const PrevImplClass = require(prevImplPath);
+        
+        const selectedTransition = this._selectTransition(
+          PrevImplClass,
+          targetStatus,
+          meta.platform,
+          { 
+            explicitEvent: options?.explicitEvent,
+            preferSamePlatform: true,
+            testData
+          }
+        );
+        
+     const prevChain = this.buildPrerequisiteChain(
+  PrevImplClass, 
+  currentStatus, 
+  previousStatus, 
+  visited, 
+  false,
+  testData,
+  { 
+    explicitEvent: selectedTransition?.event,
+    loopTarget: isLoopTransition ? targetStatus : options.loopTarget,
+    originalTarget: options.originalTarget || targetStatus  // ← ADD THIS
+  }
+);
+        
+        // Check if the previous chain has any blocked steps
+        const hasBlockedSteps = prevChain.some(step => step.blocked);
+        if (hasBlockedSteps) {
+          if (this.options.verbose) {
+            console.log(`   ⚠️  Previous chain to ${previousStatus} contains blocked steps`);
+          }
+          
+          // ✅ NEW: Try alternative path when previous chain is blocked
+          const alternativePath = this._findAlternativePathToTarget(
+            currentStatus,
+            targetStatus,
+            testData,
+            new Set([...visited]),
+            previousStatus
+          );
+          
+          if (alternativePath && alternativePath.length > 0) {
+            if (this.options.verbose) {
+              console.log(`   ✅ Found alternative path: ${alternativePath.map(s => s.status).join(' → ')}`);
+            }
+            chain.push(...alternativePath);
+            return chain;
+          }
+          
+          // No alternative - propagate blocked status
+          chain.push(...prevChain);
+          return chain;
+        }
+        
+        chain.push(...prevChain);
+      } else {
+        console.error(`   ❌ Implication file not found for: ${prevImplClassName}`);
         chain.push({
           status: previousStatus,
-          className: 'UNKNOWN',
-          actionName: 'NOT_IN_REGISTRY',
+          className: prevImplClassName,
+          actionName: 'FILE_NOT_FOUND',
           testFile: 'unknown',
           platform: 'unknown',
           complete: false,
           isTarget: false,
-          loadError: 'Not in state registry'
+          loadError: 'File not found'
         });
       }
+    } catch (error) {
+      console.error(`   ❌ Failed to load ${prevImplClassName}: ${error.message}`);
+      chain.push({
+        status: previousStatus,
+        className: prevImplClassName,
+        actionName: this._inferActionName(previousStatus),
+        testFile: this._inferTestFile(prevImplClassName, previousStatus),
+        platform: this._inferPlatform(previousStatus),
+        complete: false,
+        isCurrent: false,
+        isTarget: false,
+        loadError: error.message
+      });
     }
+  } else if (!prevImplClassName) {
+    console.error(`   ❌ Status "${previousStatus}" not found in state registry!`);
+    chain.push({
+      status: previousStatus,
+      className: 'UNKNOWN',
+      actionName: 'NOT_IN_REGISTRY',
+      testFile: 'unknown',
+      platform: 'unknown',
+      complete: false,
+      isTarget: false,
+      loadError: 'Not in state registry'
+    });
+  }
+}
 
     // ═══════════════════════════════════════════════════════════
     // ADD CURRENT STATE TO CHAIN
@@ -826,6 +900,411 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
     
     return chain;
   }
+/**
+ * Post-process chain to insert mandatory detours at correct positions
+ */
+_insertMandatoryDetours(chain, testData) {
+  if (!testData || chain.length === 0) return chain;
+  
+  const result = [];
+  const detourInserted = new Set(); // Track which states already had detours inserted
+  
+  for (let i = 0; i < chain.length; i++) {
+    const step = chain[i];
+    
+    // Add the current step first
+    result.push(step);
+    
+    // Skip if we already processed a detour for this state
+    if (detourInserted.has(step.status)) continue;
+    
+    // Skip if this is already a detour step
+    if (step.isDetour) continue;
+    
+    // Check if this state has a mandatory detour
+    const implClassName = this.stateRegistry[step.status];
+    if (!implClassName) continue;
+    
+    try {
+      const implPath = this.findImplicationFile(implClassName);
+      if (!implPath) continue;
+      
+      this._clearImplicationCache(implPath);
+      const ImplClass = require(implPath);
+      
+      const detour = this._findMandatoryDetour(ImplClass, step.status, testData, new Set());
+      
+      if (detour) {
+        const detourEndpoint = this._findDetourEndpoint(detour.target, step.status, testData);
+        
+        if (detourEndpoint) {
+          if (this.options.verbose) {
+            console.log(`   🔄 Inserting detour after ${step.status}: ${detour.target} → ... → ${detourEndpoint} → ${step.status}`);
+          }
+          
+          // Mark this state as having a detour
+          detourInserted.add(step.status);
+          
+          // Build the detour path
+          const detourSteps = this._buildSimpleDetourPath(
+            step.status,      // from (e.g., landing_page)
+            detour.target,    // first step (e.g., agency_modal_opened)
+            detourEndpoint,   // last step before return (e.g., agency_preffered)
+            testData
+          );
+          
+          if (detourSteps.length > 0) {
+            result.push(...detourSteps);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`   ❌ Error checking detour for ${step.status}: ${error.message}`);
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Build a simple linear path through the detour
+ */
+_buildSimpleDetourPath(fromState, firstState, lastState, testData) {
+  const path = [];
+  const visited = new Set([fromState]);
+  let current = firstState;
+  let prevState = fromState;
+  
+  // Walk through detour states
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    
+    const implClassName = this.stateRegistry[current];
+    if (!implClassName) break;
+    
+    try {
+      const implPath = this.findImplicationFile(implClassName);
+      if (!implPath) break;
+      
+      this._clearImplicationCache(implPath);
+      const ImplClass = require(implPath);
+      const meta = ImplClass.xstateConfig?.meta || {};
+      const setupEntry = TestPlanner._findSetupEntry(meta, { testData });
+      
+      path.push({
+        status: current,
+        className: ImplClass.name,
+        actionName: setupEntry?.actionName || meta.setup?.[0]?.actionName || `${current}Via${prevState}`,
+        testFile: setupEntry?.testFile || meta.setup?.[0]?.testFile || 'unknown',
+        platform: setupEntry?.platform || meta.platform || 'web',
+        complete: false,
+        isTarget: false,
+        isDetour: true,
+        previousStatus: prevState
+      });
+      
+      // If we reached the endpoint, add return step and stop
+      if (current === lastState) {
+        // Add the return to fromState
+        const fromImplClassName = this.stateRegistry[fromState];
+        if (fromImplClassName) {
+          try {
+            const fromImplPath = this.findImplicationFile(fromImplClassName);
+            if (fromImplPath) {
+              this._clearImplicationCache(fromImplPath);
+              const FromImplClass = require(fromImplPath);
+              const fromMeta = FromImplClass.xstateConfig?.meta || {};
+              const returnSetup = fromMeta.setup?.find(s => s.previousStatus === lastState);
+              
+              path.push({
+                status: fromState,
+                className: FromImplClass.name,
+                actionName: returnSetup?.actionName || `${fromState}Via${lastState}`,
+                testFile: returnSetup?.testFile || 'unknown',
+                platform: returnSetup?.platform || fromMeta.platform || 'web',
+                complete: false,
+                isTarget: false,
+                isDetour: true,
+                isReturnFromDetour: true,
+                previousStatus: lastState
+              });
+            }
+          } catch (e) {
+            // Skip if can't load
+          }
+        }
+        break;
+      }
+      
+      // Find next state - follow first transition that's not back to fromState
+      const transitions = ImplClass.xstateConfig?.on || {};
+      let nextState = null;
+      
+      for (const [event, config] of Object.entries(transitions)) {
+        const target = typeof config === 'string' ? config : config?.target;
+        if (target && !visited.has(target) && target !== fromState) {
+          nextState = target;
+          break;
+        }
+      }
+      
+      prevState = current;
+      current = nextState;
+      
+    } catch (error) {
+      break;
+    }
+  }
+  
+  return path;
+}
+/**
+ * Build the path through a detour
+ */
+_buildDetourPath(fromState, firstDetourState, lastDetourState, testData) {
+  const path = [];
+  const visited = new Set([fromState]);
+  
+  let current = firstDetourState;
+  let previousState = fromState;
+  
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    
+    const implClassName = this.stateRegistry[current];
+    if (!implClassName) break;
+    
+    try {
+      const implPath = this.findImplicationFile(implClassName);
+      if (!implPath) break;
+      
+      this._clearImplicationCache(implPath);
+      const ImplClass = require(implPath);
+      const meta = ImplClass.xstateConfig?.meta || {};
+      const setupEntry = TestPlanner._findSetupEntry(meta, { testData });
+      
+      path.push({
+        status: current,
+        className: ImplClass.name,
+        actionName: setupEntry?.actionName || meta.setup?.[0]?.actionName || `${current}Via${previousState}`,
+        testFile: setupEntry?.testFile || meta.setup?.[0]?.testFile || 'unknown',
+        platform: setupEntry?.platform || meta.platform || 'web',
+        complete: false,
+        isTarget: false,
+        isDetour: true,
+        previousStatus: previousState
+      });
+      
+      // If we reached the endpoint, add the return step and stop
+      if (current === lastDetourState) {
+        // Find the setup entry for returning to fromState
+        const fromImplClassName = this.stateRegistry[fromState];
+        if (fromImplClassName) {
+          const fromImplPath = this.findImplicationFile(fromImplClassName);
+          if (fromImplPath) {
+            this._clearImplicationCache(fromImplPath);
+            const FromImplClass = require(fromImplPath);
+            const fromMeta = FromImplClass.xstateConfig?.meta || {};
+            
+            // Find setup entry that comes from detour endpoint
+            const returnSetup = fromMeta.setup?.find(s => s.previousStatus === lastDetourState);
+            
+            path.push({
+              status: fromState,
+              className: FromImplClass.name,
+              actionName: returnSetup?.actionName || `${fromState}Via${lastDetourState}`,
+              testFile: returnSetup?.testFile || 'unknown',
+              platform: returnSetup?.platform || fromMeta.platform || 'web',
+              complete: false,
+              isTarget: false,
+              isDetour: true,
+              isReturnFromDetour: true,
+              previousStatus: lastDetourState
+            });
+          }
+        }
+        break;
+      }
+      
+      // Find next state in detour
+      const transitions = ImplClass.xstateConfig?.on || {};
+      let nextState = null;
+      
+      for (const [event, config] of Object.entries(transitions)) {
+        const target = typeof config === 'string' ? config : config?.target;
+        if (target && !visited.has(target) && target !== fromState) {
+          nextState = target;
+          break;
+        }
+      }
+      
+      previousState = current;
+      current = nextState;
+    } catch (error) {
+      break;
+    }
+  }
+  
+  return path;
+}
+
+/**
+ * Find mandatory detour from a state based on testData
+ */
+_findMandatoryDetour(ImplicationClass, currentStatus, testData, visited) {
+  const xstateConfig = ImplicationClass.xstateConfig || {};
+  const transitions = xstateConfig.on || {};
+  
+  for (const [event, config] of Object.entries(transitions)) {
+    const configObj = typeof config === 'string' ? { target: config } : config;
+    const target = configObj.target;
+    
+    if (!target || visited.has(target)) continue;
+    
+    // Check if this transition has requires that match testData
+    if (configObj.requires) {
+      const allMatch = Object.entries(configObj.requires).every(([field, expected]) => {
+        return testData[field] === expected;
+      });
+      
+      if (allMatch) {
+        return { event, target, config: configObj };
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Find the endpoint of a detour (the state that returns to the original state)
+ */
+_findDetourEndpoint(detourStart, returnToState, testData) {
+  const visited = new Set();
+  let current = detourStart;
+  const maxDepth = 20;
+  let depth = 0;
+  
+  while (depth < maxDepth) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    
+    const implClassName = this.stateRegistry[current];
+    if (!implClassName) break;
+    
+    try {
+      const implPath = this.findImplicationFile(implClassName);
+      if (!implPath) break;
+      
+      this._clearImplicationCache(implPath);
+      const ImplClass = require(implPath);
+      const xstateConfig = ImplClass.xstateConfig || {};
+      const transitions = xstateConfig.on || {};
+      
+      // Check if any transition goes back to returnToState
+      for (const [event, config] of Object.entries(transitions)) {
+        const target = typeof config === 'string' ? config : config?.target;
+        if (target === returnToState) {
+          return current;
+        }
+      }
+      
+      // Follow the first available transition
+      const firstTransition = Object.entries(transitions)[0];
+      if (firstTransition) {
+        const [, config] = firstTransition;
+        current = typeof config === 'string' ? config : config?.target;
+      } else {
+        break;
+      }
+      
+      depth++;
+    } catch (error) {
+      break;
+    }
+  }
+  
+  return null;
+}
+
+  /**
+ * Find the state that comes before a blocked state in the normal flow
+ * This helps us find where to start searching for alternatives
+ * 
+ * @param {string} blockedStatus - The status that's blocked
+ * @param {string} currentStatus - Current test status
+ * @param {object} testData - Test data
+ * @param {Set} visited - Already visited states
+ * @returns {string|null} The state before the blocked one, or null
+ */
+_findStateBeforeBlocked(blockedStatus, currentStatus, testData, visited) {
+  // Look up the blocked status's implication to find ITS previousStatus
+  const blockedImplClassName = this.stateRegistry[blockedStatus];
+  if (!blockedImplClassName) return null;
+  
+  try {
+    const blockedImplPath = this.findImplicationFile(blockedImplClassName);
+    if (!blockedImplPath) return null;
+    
+    this._clearImplicationCache(blockedImplPath);
+    const BlockedImplClass = require(blockedImplPath);
+    const blockedMeta = BlockedImplClass.xstateConfig?.meta || {};
+    
+    // Get the previousStatus of the blocked state
+    const stateBeforeBlocked = TestPlanner._getPreviousStatus(blockedMeta, { testData });
+    
+    if (stateBeforeBlocked && stateBeforeBlocked !== blockedStatus) {
+      if (this.options.verbose) {
+        console.log(`   🔍 State before blocked (${blockedStatus}): ${stateBeforeBlocked}`);
+      }
+      return stateBeforeBlocked;
+    }
+  } catch (error) {
+    if (this.options.verbose) {
+      console.warn(`   ⚠️ Could not find state before ${blockedStatus}: ${error.message}`);
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Build a chain to reach a specific state (simplified version for alternative paths)
+ * 
+ * @param {string} fromStatus - Starting status
+ * @param {string} toStatus - Target status
+ * @param {object} testData - Test data
+ * @param {Set} visited - Already visited states
+ * @returns {Array} Chain of steps
+ */
+_buildChainToState(fromStatus, toStatus, testData, visited) {
+  const implClassName = this.stateRegistry[toStatus];
+  if (!implClassName) return [];
+  
+  try {
+    const implPath = this.findImplicationFile(implClassName);
+    if (!implPath) return [];
+    
+    this._clearImplicationCache(implPath);
+    const ImplClass = require(implPath);
+    
+    // Recursively build the chain
+    return this.buildPrerequisiteChain(
+      ImplClass,
+      fromStatus,
+      toStatus,
+      visited,
+      false,
+      testData,
+      {}
+    );
+  } catch (error) {
+    if (this.options.verbose) {
+      console.warn(`   ⚠️ Could not build chain to ${toStatus}: ${error.message}`);
+    }
+    return [];
+  }
+}
 
   // ═══════════════════════════════════════════════════════════
   // HELPER: Clear implication cache properly
@@ -847,6 +1326,80 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
       }
     });
   }
+
+  // ═══════════════════════════════════════════════════════════
+// CHECK IF PATH WOULD GO THROUGH A SPECIFIC STATE
+// ═══════════════════════════════════════════════════════════
+_wouldPathGoThrough(fromStatus, throughStatus, visited = new Set()) {
+  if (fromStatus === throughStatus) return true;
+  if (visited.has(fromStatus)) return false;
+  
+  visited.add(fromStatus);
+  
+  const implClassName = this.stateRegistry[fromStatus];
+  if (!implClassName) return false;
+  
+  const implPath = this.findImplicationFile(implClassName);
+  if (!implPath) return false;
+  
+  try {
+    this._clearImplicationCache(implPath);
+    const ImplClass = require(implPath);
+    const meta = ImplClass.xstateConfig?.meta || {};
+    
+    // Get all possible previousStatus values from setup entries
+    const setupEntries = meta.setup || [];
+    
+    for (const entry of setupEntries) {
+      const entryPreviousStatus = entry.previousStatus;
+      if (!entryPreviousStatus) continue;
+      
+      if (entryPreviousStatus === throughStatus) {
+        return true;
+      }
+      
+      // Recursively check
+      if (this._wouldPathGoThrough(entryPreviousStatus, throughStatus, visited)) {
+        return true;
+      }
+    }
+    
+    // Also check meta.requires.previousStatus
+    const metaPreviousStatus = meta.requires?.previousStatus;
+    if (metaPreviousStatus) {
+      if (metaPreviousStatus === throughStatus) return true;
+      if (this._wouldPathGoThrough(metaPreviousStatus, throughStatus, visited)) return true;
+    }
+    
+    return false;
+    
+  } catch (error) {
+    return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FIND ALTERNATIVE SETUP ENTRY THAT DOESN'T GO THROUGH TARGET
+// ═══════════════════════════════════════════════════════════
+_findAlternativeSetupEntry(meta, avoidStatus, testData, visited) {
+  const setupEntries = meta.setup || [];
+  
+  for (const entry of setupEntries) {
+    const entryPreviousStatus = entry.previousStatus;
+    if (!entryPreviousStatus) continue;
+    
+    // Check if this entry's path would avoid the target
+    const wouldGoThrough = this._wouldPathGoThrough(entryPreviousStatus, avoidStatus, new Set([...visited]));
+    
+    if (!wouldGoThrough) {
+      // This entry doesn't go through the target - use it!
+      return entry;
+    }
+  }
+  
+  // No alternative found
+  return null;
+}
 
   // ═══════════════════════════════════════════════════════════
   // HELPERS: Infer info when we can't load the file
@@ -1003,7 +1556,14 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
   // IS READY CHECK
   // ═══════════════════════════════════════════════════════════
   isReady(chain, currentStatus, isLoopTransition = false) {
-    const incompleteSteps = chain.filter(step => !step.complete);
+  // ✅ NEW: If any step is blocked, we're not ready
+  const hasBlockedSteps = chain.some(step => step.blocked);
+  if (hasBlockedSteps) {
+    return false;
+  }
+  
+  const incompleteSteps = chain.filter(step => !step.complete);
+  
     
     if (incompleteSteps.length === 0) {
       return true;
@@ -1229,6 +1789,26 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
         console.error('      ↓');
       }
     });
+
+    const blockedSteps = chain.filter(s => s.blocked);
+if (blockedSteps.length > 0) {
+  console.error(`\n🚫 BLOCKED TRANSITIONS:`);
+  blockedSteps.forEach(step => {
+    console.error(`\n   ${step.status}:`);
+    console.error(`   Reason: ${step.blockedReason}`);
+    if (step.blockedTransitions) {
+      step.blockedTransitions.forEach(t => {
+        console.error(`   Event ${t.event}:`);
+        t.blockedBy.forEach(b => {
+          console.error(`      ❌ ${b.field}: need ${JSON.stringify(b.expected)}, have ${JSON.stringify(b.actual)}`);
+        });
+      });
+    }
+  });
+  
+  console.error(`\n💡 FIX: Update your testData to match the required conditions,`);
+  console.error(`   or run a different test that matches your current testData.`);
+}
     
     if (nextStep) {
       console.error(`\n💡 NEXT STEP: ${nextStep.status}`);
@@ -1242,62 +1822,525 @@ if (meta.requires && testData) {  // ← REMOVED isOriginalTarget
   // ═══════════════════════════════════════════════════════════
   // GROUP CHAIN BY PLATFORM
   // ═══════════════════════════════════════════════════════════
-  _groupChainByPlatform(chain, testData = null, ImplicationClass = null) {
-    const segments = [];
-    let currentSegment = null;
+_groupChainByPlatform(chain, testData = null, ImplicationClass = null) {
+  const segments = [];
+  let currentSegment = null;
+  
+  const currentStatus = testData?.status;
+  
+  console.log('DEBUG: Raw chain:', chain.map(s => `${s.status}(${s.complete ? '✅' : '📍'})`).join(' → '));
+  
+  // ═══════════════════════════════════════════════════════════
+  // FIX: Determine if steps before currentStatus are already done
+  // Check if the step immediately before currentStatus leads TO currentStatus
+  // via a "normal" path (like cookies → landing_page) or a "loop" path
+  // ═══════════════════════════════════════════════════════════
+  if (currentStatus) {
+    const currentStatusIndex = chain.findIndex(s => s.status === currentStatus);
     
-    for (const step of chain) {
-      if (!currentSegment || currentSegment.platform !== step.platform) {
-        currentSegment = {
-          platform: step.platform,
-          steps: [],
-          complete: true
-        };
-        segments.push(currentSegment);
-      }
+    if (currentStatusIndex > 0) {
+      // Get the step immediately before currentStatus
+      const stepBeforeCurrent = chain[currentStatusIndex - 1];
       
-      currentSegment.steps.push(step);
+      // Check if this step is a "loop" step (agency flow) or "normal" step (init/cookies)
+      // Agency flow steps contain "agency" in their name
+      const isLoopPath = stepBeforeCurrent.status.includes('agency') || 
+                         stepBeforeCurrent.status.includes('preffered');
       
-      if (!step.complete) {
-        currentSegment.complete = false;
+      if (isLoopPath) {
+        // This is a loop path - steps before current need to execute
+        for (let i = 0; i < currentStatusIndex; i++) {
+          chain[i].complete = false;
+        }
       }
+      // If not a loop path, leave completion status as-is from raw chain
+    }
+  }
+  
+  for (const step of chain) {
+    if (!currentSegment || currentSegment.platform !== step.platform) {
+      currentSegment = {
+        platform: step.platform,
+        steps: [],
+        complete: true
+      };
+      segments.push(currentSegment);
     }
     
-    // Re-check segment completeness based on actual requirements
-    if (ImplicationClass && testData) {
-      const meta = ImplicationClass.xstateConfig?.meta || {};
-      
-      if (meta.requires) {
-        for (const segment of segments) {
-          if (!segment.complete) continue;
+    currentSegment.steps.push(step);
+    
+    if (!step.complete) {
+      currentSegment.complete = false;
+    }
+  }
+  
+  // Re-check segment completeness based on actual requirements
+  if (ImplicationClass && testData) {
+    const meta = ImplicationClass.xstateConfig?.meta || {};
+    
+    if (meta.requires) {
+      for (const segment of segments) {
+        if (!segment.complete) continue;
+        
+        for (const [field, requiredValue] of Object.entries(meta.requires)) {
+          if (field === 'previousStatus') continue;
+          if (field.startsWith('!')) continue;
           
-          for (const [field, requiredValue] of Object.entries(meta.requires)) {
-            if (field === 'previousStatus') continue;
-            if (field.startsWith('!')) continue;
+          if (field.includes('.')) {
+            const actualValue = field.split('.').reduce((obj, key) => obj?.[key], testData);
             
-            if (field.includes('.')) {
-              const actualValue = field.split('.').reduce((obj, key) => obj?.[key], testData);
+            if (actualValue !== requiredValue) {
+              const [entity] = field.split('.');
               
-              if (actualValue !== requiredValue) {
-                const [entity] = field.split('.');
-                
-                const hasEntitySteps = segment.steps.some(step => 
-                  step.status && (step.status.includes(entity) || step.entity === entity)
-                );
-                
-                if (hasEntitySteps) {
-                  segment.complete = false;
-                  break;
-                }
+              const hasEntitySteps = segment.steps.some(step => 
+                step.status && (step.status.includes(entity) || step.entity === entity)
+              );
+              
+              if (hasEntitySteps) {
+                segment.complete = false;
+                break;
               }
             }
           }
         }
       }
     }
-    
-    return segments;
   }
+  
+  return segments;
+}
+
+  // Add this new method to TestPlanner class (around line 580, after _selectTransition):
+// ═══════════════════════════════════════════════════════════
+// FIND ALTERNATIVE PATH TO TARGET (BFS with condition checking)
+// ═══════════════════════════════════════════════════════════
+_findAlternativePathToTarget(fromStatus, toStatus, testData, visited = new Set(), blockedVia = null) {
+  if (this.options.verbose) {
+    console.log(`   🔍 Searching alternative path: ${fromStatus} → ${toStatus} (avoiding direct path via ${blockedVia})`);
+  }
+  
+  // BFS to find valid path - but allow revisiting fromStatus if we've made progress
+  const queue = [{ status: fromStatus, path: [], visitedInPath: new Set([fromStatus]) }];
+  
+  let iterations = 0;
+  const maxIterations = 200;
+  
+  while (queue.length > 0 && iterations < maxIterations) {
+    iterations++;
+    const { status: currentStatus, path, visitedInPath } = queue.shift();
+    
+    // Get all valid outgoing transitions from current status
+    const validTransitions = this._getValidOutgoingTransitions(currentStatus, testData);
+    
+    if (this.options.verbose && validTransitions.length > 0) {
+      console.log(`      [${iterations}] At ${currentStatus}, valid transitions: ${validTransitions.map(t => `${t.event}→${t.target}`).join(', ')}`);
+    }
+    
+    for (const transition of validTransitions) {
+      const nextStatus = transition.target;
+      
+      // Skip if this is the blocked direct path (only on first step)
+      if (path.length === 0 && blockedVia && nextStatus === blockedVia) {
+        if (this.options.verbose) {
+          console.log(`      Skipping blocked direct path to ${nextStatus}`);
+        }
+        continue;
+      }
+      
+      // Allow revisiting the start node if we've made progress (for loop paths)
+      // But don't allow revisiting other nodes in our current path
+      if (nextStatus !== fromStatus && visitedInPath.has(nextStatus)) {
+        continue;
+      }
+      
+      // If we loop back to start, we need to then be able to reach the target
+      if (nextStatus === fromStatus && path.length > 0) {
+        if (this.options.verbose) {
+          console.log(`      🔄 Looped back to ${fromStatus} after ${path.length} steps`);
+        }
+        
+        const transitionsFromStart = this._getValidOutgoingTransitions(fromStatus, testData);
+        const toTargetTransition = transitionsFromStart.find(t => t.target === toStatus);
+        
+        if (toTargetTransition) {
+          // ✅ FIX: Get correct setup entry for each step
+          const fromSetupInfo = this._getSetupInfoForStatus(fromStatus, testData);
+          const toSetupInfo = this._getSetupInfoForStatus(toStatus, testData);
+          
+          const finalPath = [...path, {
+            status: fromStatus,
+            from: currentStatus,
+            event: transition.event,
+            className: this.stateRegistry[fromStatus] || 'Unknown',
+            actionName: fromSetupInfo.actionName || this._inferActionName(fromStatus),
+            testFile: fromSetupInfo.testFile || 'unknown',
+            platform: fromSetupInfo.platform || 'web',
+            complete: false,
+            isLoopBack: true
+          }, {
+            status: toStatus,
+            from: fromStatus,
+            event: toTargetTransition.event,
+            className: this.stateRegistry[toStatus] || 'Unknown',
+            actionName: toSetupInfo.actionName || this._inferActionName(toStatus),
+            testFile: toSetupInfo.testFile || 'unknown',
+            platform: toSetupInfo.platform || 'web',
+            complete: false,
+            isTarget: true
+          }];
+          
+          if (this.options.verbose) {
+            console.log(`   ✅ Found loop path (${finalPath.length} steps): ${fromStatus} → ${path.map(s => s.status).join(' → ')} → ${fromStatus} → ${toStatus}`);
+          }
+          return finalPath;
+        }
+      }
+      
+      const newVisited = new Set(visitedInPath);
+      newVisited.add(nextStatus);
+      
+      // ✅ FIX: Get correct setup entry for this step based on testData
+      const setupInfo = this._getSetupInfoForStatus(nextStatus, testData);
+      
+      const newPath = [...path, {
+        status: nextStatus,
+        from: currentStatus,
+        event: transition.event,
+        className: this.stateRegistry[nextStatus] || 'Unknown',
+        actionName: setupInfo.actionName || this._inferActionName(nextStatus),
+        testFile: setupInfo.testFile || this._inferTestFile(this.stateRegistry[nextStatus], nextStatus),
+        platform: setupInfo.platform || 'web',
+        complete: false,
+        isTarget: nextStatus === toStatus
+      }];
+      
+      // Found the target directly!
+      if (nextStatus === toStatus) {
+        if (this.options.verbose) {
+          console.log(`   ✅ Alternative path found (${newPath.length} steps): ${fromStatus} → ${newPath.map(s => s.status).join(' → ')}`);
+        }
+        return newPath;
+      }
+      
+      // Continue searching
+      queue.push({ status: nextStatus, path: newPath, visitedInPath: newVisited });
+    }
+  }
+  
+  if (this.options.verbose) {
+    console.log(`   ❌ No alternative path found after ${iterations} iterations`);
+  }
+  
+  return null;
+}
+
+// ✅ NEW HELPER: Get setup info for a status based on testData
+_getSetupInfoForStatus(status, testData) {
+  const implClassName = this.stateRegistry[status];
+  if (!implClassName) {
+    return { actionName: null, testFile: null, platform: 'web' };
+  }
+  
+  const implPath = this.findImplicationFile(implClassName);
+  if (!implPath) {
+    return { actionName: null, testFile: null, platform: 'web' };
+  }
+  
+  try {
+    this._clearImplicationCache(implPath);
+    const ImplClass = require(implPath);
+    const meta = ImplClass.xstateConfig?.meta || {};
+    
+    // Use _findSetupEntry to get the correct entry based on testData
+    const setupEntry = TestPlanner._findSetupEntry(meta, { testData });
+    
+    if (setupEntry) {
+      return {
+        actionName: setupEntry.actionName,
+        testFile: setupEntry.testFile,
+        platform: setupEntry.platform || meta.platform || 'web'
+      };
+    }
+    
+    // Fallback to first setup entry
+    const firstSetup = meta.setup?.[0];
+    return {
+      actionName: firstSetup?.actionName,
+      testFile: firstSetup?.testFile,
+      platform: firstSetup?.platform || meta.platform || 'web'
+    };
+    
+  } catch (error) {
+    return { actionName: null, testFile: null, platform: 'web' };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// GET ALL VALID OUTGOING TRANSITIONS FROM A STATUS
+// ═══════════════════════════════════════════════════════════
+_getValidOutgoingTransitions(fromStatus, testData) {
+  const transitions = [];
+  
+  const implClassName = this.stateRegistry[fromStatus];
+  if (!implClassName) return transitions;
+  
+  const implPath = this.findImplicationFile(implClassName);
+  if (!implPath) return transitions;
+  
+  try {
+    this._clearImplicationCache(implPath);
+    const ImplClass = require(implPath);
+    const xstateConfig = ImplClass.xstateConfig || {};
+    const on = xstateConfig.on || {};
+    
+    for (const [event, config] of Object.entries(on)) {
+      const configs = Array.isArray(config) ? config : [config];
+      
+      for (const singleConfig of configs) {
+        const target = typeof singleConfig === 'string' ? singleConfig : singleConfig?.target;
+        if (!target) continue;
+        
+        const configObj = typeof singleConfig === 'string' ? { target } : singleConfig;
+        
+        // Check conditions
+        let conditionsMet = true;
+        let hasConditions = false;
+        
+        if (configObj.conditions?.blocks?.length > 0) {
+          hasConditions = true;
+          const result = this._evaluateConditions(configObj.conditions, testData);
+          conditionsMet = result.met;
+        } else if (configObj.requires && Object.keys(configObj.requires).length > 0) {
+          // Only count as "has conditions" if requires has actual fields (not empty object)
+          const nonPreviousStatusKeys = Object.keys(configObj.requires).filter(k => k !== 'previousStatus');
+          if (nonPreviousStatusKeys.length > 0) {
+            hasConditions = true;
+            const result = this._checkTransitionRequires(configObj.requires, testData);
+            conditionsMet = result.met;
+          }
+        }
+        
+        // Get setup info for the target state
+        const targetImplClassName = this.stateRegistry[target];
+        let actionName = null;
+        let testFile = null;
+        let platform = configObj.platforms?.[0] || 'web';
+        
+        if (targetImplClassName) {
+          const targetImplPath = this.findImplicationFile(targetImplClassName);
+          if (targetImplPath) {
+            try {
+              this._clearImplicationCache(targetImplPath);
+              const TargetImplClass = require(targetImplPath);
+              const targetMeta = TargetImplClass.xstateConfig?.meta || {};
+              const setup = targetMeta.setup?.[0];
+              if (setup) {
+                actionName = setup.actionName;
+                testFile = setup.testFile;
+                platform = setup.platform || platform;
+              }
+            } catch (e) {
+              // Ignore
+            }
+          }
+        }
+        
+        transitions.push({
+          event,
+          target,
+          actionName,
+          testFile,
+          platform,
+          config: configObj,
+          hasConditions,
+          conditionsMet,
+          // ✅ Priority score for sorting
+          priority: hasConditions && conditionsMet ? 2    // Matching conditions = highest
+                  : !hasConditions ? 1                     // No conditions = middle  
+                  : 0                                      // Has conditions but NOT met = lowest (blocked)
+        });
+      }
+    }
+    
+    // ✅ Sort by priority (highest first)
+    transitions.sort((a, b) => b.priority - a.priority);
+    
+    // ✅ Filter out blocked transitions (priority 0)
+    const validTransitions = transitions.filter(t => t.priority > 0);
+    
+    if (this.options.verbose && transitions.length > validTransitions.length) {
+      const blocked = transitions.filter(t => t.priority === 0);
+      blocked.forEach(t => {
+        console.log(`      ⛔ ${t.event} → ${t.target} (conditions not met)`);
+      });
+    }
+    
+    return validTransitions;
+    
+  } catch (error) {
+    if (this.options.verbose) {
+      console.warn(`   ⚠️ Error getting transitions from ${fromStatus}: ${error.message}`);
+    }
+  }
+  
+  return transitions;
+}
+// ═══════════════════════════════════════════════════════════
+// CHECK IF TRANSITION CONDITIONS ARE MET
+// ═══════════════════════════════════════════════════════════
+_checkTransitionConditionsToTarget(sourceStatus, targetStatus, testData) {
+  // Find the source implication
+  const sourceImplClassName = this.stateRegistry[sourceStatus];
+  if (!sourceImplClassName) {
+    return { valid: true, reason: 'source not in registry' };
+  }
+  
+  const sourceImplPath = this.findImplicationFile(sourceImplClassName);
+  if (!sourceImplPath) {
+    return { valid: true, reason: 'source file not found' };
+  }
+  
+  try {
+    this._clearImplicationCache(sourceImplPath);
+    const SourceImplClass = require(sourceImplPath);
+    const transitions = SourceImplClass.xstateConfig?.on || {};
+    
+    // Find ALL transitions that lead to targetStatus
+    const matchingTransitions = [];
+    
+    for (const [event, config] of Object.entries(transitions)) {
+      const configs = Array.isArray(config) ? config : [config];
+      
+      for (const singleConfig of configs) {
+        const target = typeof singleConfig === 'string' ? singleConfig : singleConfig?.target;
+        
+        if (target === targetStatus) {
+          const configObj = typeof singleConfig === 'string' ? { target } : singleConfig;
+          
+          // Check conditions
+          let conditionsMet = true;
+          let blockedBy = [];
+          
+          if (configObj.conditions?.blocks?.length > 0) {
+            const result = this._evaluateConditions(configObj.conditions, testData);
+            conditionsMet = result.met;
+            if (!conditionsMet && result.results) {
+              for (const blockResult of result.results) {
+                if (!blockResult.met && blockResult.checks) {
+                  blockedBy.push(...blockResult.checks.filter(c => !c.met));
+                }
+              }
+            }
+          } else if (configObj.requires) {
+            const result = this._checkTransitionRequires(configObj.requires, testData);
+            conditionsMet = result.met;
+            if (!conditionsMet) {
+              blockedBy = result.checks.filter(c => !c.met);
+            }
+          }
+          
+          matchingTransitions.push({
+            event,
+            config: configObj,
+            conditionsMet,
+            blockedBy,
+            hasConditions: !!(configObj.conditions?.blocks?.length > 0 || configObj.requires)
+          });
+        }
+      }
+    }
+    
+    if (matchingTransitions.length === 0) {
+      // No direct transition exists - that's fine, might use different path
+      return { valid: true, noDirectTransition: true };
+    }
+    
+    // Check if ANY transition to target has conditions met
+    const validTransition = matchingTransitions.find(t => t.conditionsMet);
+    
+    if (validTransition) {
+      return { 
+        valid: true, 
+        event: validTransition.event,
+        transition: validTransition
+      };
+    }
+    
+    // All transitions blocked!
+    return {
+      valid: false,
+      blockedTransitions: matchingTransitions,
+      from: sourceStatus,
+      to: targetStatus
+    };
+    
+  } catch (error) {
+    if (this.options.verbose) {
+      console.warn(`   ⚠️ Error checking transition ${sourceStatus} → ${targetStatus}: ${error.message}`);
+    }
+    return { valid: true, reason: `error: ${error.message}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FIND ALTERNATIVE PATH WHEN DIRECT PATH IS BLOCKED
+// ═══════════════════════════════════════════════════════════
+_findAlternativePathFrom(fromStatus, testData, visited = new Set(), depth = 0) {
+  if (depth > 10) return []; // Prevent infinite recursion
+  if (visited.has(fromStatus)) return [];
+  
+  visited.add(fromStatus);
+  
+  const sourceImplClassName = this.stateRegistry[fromStatus];
+  if (!sourceImplClassName) return [];
+  
+  const sourceImplPath = this.findImplicationFile(sourceImplClassName);
+  if (!sourceImplPath) return [];
+  
+  try {
+    this._clearImplicationCache(sourceImplPath);
+    const SourceImplClass = require(sourceImplPath);
+    const transitions = SourceImplClass.xstateConfig?.on || {};
+    
+    const validNextStates = [];
+    
+    for (const [event, config] of Object.entries(transitions)) {
+      const configs = Array.isArray(config) ? config : [config];
+      
+      for (const singleConfig of configs) {
+        const target = typeof singleConfig === 'string' ? singleConfig : singleConfig?.target;
+        if (!target) continue;
+        if (visited.has(target)) continue;
+        
+        const configObj = typeof singleConfig === 'string' ? { target } : singleConfig;
+        
+        // Check if conditions are met
+        let conditionsMet = true;
+        
+        if (configObj.conditions?.blocks?.length > 0) {
+          const result = this._evaluateConditions(configObj.conditions, testData);
+          conditionsMet = result.met;
+        } else if (configObj.requires) {
+          const result = this._checkTransitionRequires(configObj.requires, testData);
+          conditionsMet = result.met;
+        }
+        
+        if (conditionsMet) {
+          validNextStates.push({
+            status: target,
+            event,
+            from: fromStatus
+          });
+        }
+      }
+    }
+    
+    return validNextStates;
+    
+  } catch (error) {
+    return [];
+  }
+}
 
   // ═══════════════════════════════════════════════════════════
   // SELECT TRANSITION (for multi-path)
@@ -1944,11 +2987,141 @@ static _getPlaywrightConfigPath() {
     return { hasMismatch: mismatches.length > 0, mismatches };
   }
 
+  // Add this helper method to TestPlanner class (around line 1900):
+
+/**
+ * Check if we can take a transition TO a target status from current state
+ * Looks at the source state's outgoing transitions and checks conditions
+ */
+static _canTakeTransitionTo(targetStatus, currentStatus, testData) {
+  const planner = new TestPlanner({ verbose: false });
+  
+  // Find what state leads to targetStatus
+  const targetImplClassName = planner.stateRegistry[targetStatus];
+  if (!targetImplClassName) {
+    return { valid: true, reason: 'target not in registry' };
+  }
+  
+  const targetImplPath = planner.findImplicationFile(targetImplClassName);
+  if (!targetImplPath) {
+    return { valid: true, reason: 'target file not found' };
+  }
+  
+  try {
+    delete require.cache[require.resolve(targetImplPath)];
+    const TargetImplClass = require(targetImplPath);
+    const meta = TargetImplClass.xstateConfig?.meta || {};
+    
+    // ✅ FIX: Use _findSetupEntry to get the correct entry based on testData
+    const setupEntry = TestPlanner._findSetupEntry(meta, { testData });
+    const previousStatus = setupEntry?.previousStatus || meta.requires?.previousStatus;
+    
+    if (!previousStatus) {
+      return { valid: true, reason: 'no previousStatus defined' };
+    }
+    
+    // Now check the SOURCE state's transition conditions
+    const sourceImplClassName = planner.stateRegistry[previousStatus];
+    if (!sourceImplClassName) {
+      return { valid: true, reason: 'source not in registry' };
+    }
+    
+    const sourceImplPath = planner.findImplicationFile(sourceImplClassName);
+    if (!sourceImplPath) {
+      return { valid: true, reason: 'source file not found' };
+    }
+    
+    delete require.cache[require.resolve(sourceImplPath)];
+    const SourceImplClass = require(sourceImplPath);
+    const transitions = SourceImplClass.xstateConfig?.on || {};
+    
+    // Find transition(s) that lead to targetStatus
+    // ✅ FIX: Collect all blocking reasons, but return valid if ANY path works
+    const allBlockedReasons = [];
+    
+    for (const [event, config] of Object.entries(transitions)) {
+      const configs = Array.isArray(config) ? config : [config];
+      
+      for (const singleConfig of configs) {
+        const target = typeof singleConfig === 'string' ? singleConfig : singleConfig?.target;
+        
+        if (target === targetStatus) {
+          const configObj = typeof singleConfig === 'string' ? { target } : singleConfig;
+          
+          // Check conditions
+          if (configObj.conditions?.blocks?.length > 0) {
+            const result = planner._evaluateConditions(configObj.conditions, testData);
+            if (!result.met) {
+              const blockedBy = [];
+              if (result.results) {
+                for (const blockResult of result.results) {
+                  if (!blockResult.met && blockResult.checks) {
+                    blockedBy.push(...blockResult.checks.filter(c => !c.met));
+                  }
+                }
+              }
+              // ✅ Don't return yet - save and continue checking other transitions
+              allBlockedReasons.push({ 
+                event,
+                blockedBy,
+                from: previousStatus,
+                to: targetStatus
+              });
+              continue; // Check next transition
+            }
+          } else if (configObj.requires) {
+            const result = planner._checkTransitionRequires(configObj.requires, testData);
+            if (!result.met) {
+              // ✅ Don't return yet - save and continue checking other transitions
+              allBlockedReasons.push({ 
+                event,
+                blockedBy: result.checks.filter(c => !c.met),
+                from: previousStatus,
+                to: targetStatus
+              });
+              continue; // Check next transition
+            }
+          }
+          
+          // ✅ Found a valid transition - return immediately
+          return { valid: true, event, from: previousStatus, to: targetStatus };
+        }
+      }
+    }
+    
+    // ✅ No valid transition found - return the blocked reasons
+    if (allBlockedReasons.length > 0) {
+      return { 
+        valid: false, 
+        blockedBy: allBlockedReasons[0].blockedBy,
+        event: allBlockedReasons[0].event,
+        from: previousStatus,
+        to: targetStatus,
+        allBlocked: allBlockedReasons
+      };
+    }
+    
+    // No transition found to target - might be ok if using different path
+    return { valid: true, reason: 'no direct transition found' };
+    
+  } catch (error) {
+    return { valid: true, reason: `error: ${error.message}` };
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // STATIC: CHECK OR THROW - With inline same-platform execution
 // ═══════════════════════════════════════════════════════════════════════════
 static async checkOrThrow(ImplicationClass, testData, options = {}) {
-  const { page, driver, testDataPath } = options;
+  
+const { page, driver, testDataPath, validateEachStep = false } = options;
+
+
+    console.log('🔍 DEBUG: Stack trace test file detection:');
+const stack = new Error().stack;
+const specMatch = stack.match(/([^\s(]+\.spec\.js)/);
+console.log('   Detected:', specMatch ? specMatch[1] : 'none');
+  
   
   // If preflight already ran AND we're in a spawned subprocess, skip everything
   if (process.env.PREFLIGHT_COMPLETED === 'true' && process.env.IS_PREREQUISITE_EXECUTION === 'true') {
@@ -1976,27 +3149,35 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
                               options.isPrerequisite === true ||
                               process.env.IS_PREREQUISITE_EXECUTION === 'true';
   
-  if (prereq && !skipPlatformPrereq && !prereq.check(testData)) {
-    console.log(`\n🔐 Platform prerequisite not met: ${platform} needs ${prereq.state}`);
-    console.log(`   Running: ${prereq.actionName}\n`);
+ if (prereq && !skipPlatformPrereq && !prereq.check(testData)) {
+  console.log(`\n🔐 Platform prerequisite not met: ${platform} needs ${prereq.name}`);
+  console.log(`   Running: ${prereq.setup?.actionName || prereq.actionName}\n`);
+  
+  try {
+    process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
+    process.env.IS_PREREQUISITE_EXECUTION = 'true';
     
-    try {
-      process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
-      process.env.IS_PREREQUISITE_EXECUTION = 'true';
-      
-      const testPath = path.join(process.cwd(), prereq.file);
+    // ✅ FIX: Access nested setup object
+    const prereqFile = prereq.setup?.file || prereq.file;
+    const prereqActionName = prereq.setup?.actionName || prereq.actionName;
+    
+    if (!prereqFile) {
+      console.warn(`   ⚠️  Platform prerequisite missing 'file' property`);
+      console.warn(`   ⚠️  Skipping platform init\n`);
+    } else {
+      const testPath = path.join(process.cwd(), prereqFile);
       
       if (!fs.existsSync(testPath)) {
-        console.warn(`   ⚠️  Platform prerequisite file not found: ${prereq.file}`);
+        console.warn(`   ⚠️  Platform prerequisite file not found: ${prereqFile}`);
         console.warn(`   ⚠️  Skipping platform init - make sure login runs first!\n`);
       } else {
         delete require.cache[require.resolve(testPath)];
         
         const testModule = require(testPath);
-        const actionFn = testModule[prereq.actionName];
+        const actionFn = testModule[prereqActionName];
         
         if (!actionFn) {
-          throw new Error(`Action ${prereq.actionName} not found in ${prereq.file}`);
+          throw new Error(`Action ${prereqActionName} not found in ${prereqFile}`);
         }
         
         const result = await actionFn(testDataPath, { page, driver, testDataPath });
@@ -2009,24 +3190,41 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
           Object.assign(testData, result.data);
         }
         
-        console.log(`✅ Platform prerequisite ${prereq.state} complete!\n`);
+        console.log(`✅ Platform prerequisite ${prereq.name} complete!\n`);
       }
-      
-      delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-      delete process.env.IS_PREREQUISITE_EXECUTION;
-      
-    } catch (error) {
-      delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-      delete process.env.IS_PREREQUISITE_EXECUTION;
-      console.error(`❌ Platform prerequisite failed: ${error.message}`);
-      throw error;
     }
+    
+    delete process.env.SKIP_UNIT_TEST_REGISTRATION;
+    delete process.env.IS_PREREQUISITE_EXECUTION;
+    
+  } catch (error) {
+    delete process.env.SKIP_UNIT_TEST_REGISTRATION;
+    delete process.env.IS_PREREQUISITE_EXECUTION;
+    console.error(`❌ Platform prerequisite failed: ${error.message}`);
+    throw error;
   }
+}
   
   const currentStatus = this._getCurrentStatus(testData, ImplicationClass);
 
-  const testFile = meta.setup?.[0]?.testFile;
-  const viaEvent = testFile ? TestPlanner._extractEventFromFilename(testFile) : null;
+// Get event from the CURRENT test file being executed, not from setup[0]
+const detectedTestFile = (() => {
+  try {
+    const stack = new Error().stack;
+    const specMatch = stack.match(/([^\s(]+\.spec\.js)/);
+    return specMatch ? specMatch[1] : null;
+  } catch (e) {
+    return null;
+  }
+})();
+
+const viaEvent = detectedTestFile 
+  ? TestPlanner._extractEventFromFilename(detectedTestFile)
+  : (meta.setup?.[0]?.testFile ? TestPlanner._extractEventFromFilename(meta.setup[0].testFile) : null);
+
+// Remove the debug log if you want, or keep for now
+console.log(`🔍 DEBUG: Detected test file: ${detectedTestFile ? path.basename(detectedTestFile) : 'none'}`);
+console.log(`🔍 DEBUG: Extracted event: ${viaEvent}`);
 
   console.log(`\n🔍 TestPlanner: Analyzing ${targetStatus} state`);
   console.log(`   Current: ${currentStatus}`);
@@ -2037,12 +3235,22 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
   
   const analysis = planner.analyze(ImplicationClass, testData, { explicitEvent: viaEvent });
 
-  // Already at target?
-  if (targetStatus && currentStatus === targetStatus) {
-    console.log(`✅ Already in target state (${targetStatus}), no action needed\n`);
-    return { ready: true, skipped: true, currentStatus, targetStatus };
-  }
+// Already at target?
+  // For loop transitions, we need to check previousStatus, not just target
+  const previousStatus = meta.requires?.previousStatus || meta.setup?.[0]?.previousStatus;
 
+  if (targetStatus && currentStatus === targetStatus) {
+    // If this transition has a previousStatus requirement, check if we came from there
+    // For loops like cookies_parameter → cookies, we can't skip just because we're at cookies
+    if (previousStatus && previousStatus !== currentStatus) {
+      console.log(`🔄 Loop detected: Currently at ${currentStatus}, but test expects to come FROM ${previousStatus}`);
+      console.log(`   Need to reach ${previousStatus} first, then transition to ${targetStatus}\n`);
+      // Don't return - let the analysis continue to build the path to previousStatus
+    } else {
+      console.log(`✅ Already in target state (${targetStatus}), no action needed\n`);
+      return { ready: true, skipped: true, currentStatus, targetStatus };
+    }
+  }
   // ═══════════════════════════════════════════════════════════════════════
   // INLINE SAME-PLATFORM EXECUTION (when page/driver available)
   // ═══════════════════════════════════════════════════════════════════════
@@ -2072,20 +3280,79 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
       const currentPlatform = page ? 'web' : platform;
       const isSamePlatform = this._isSamePlatform(incompleteSegment.platform, currentPlatform);
       
-      if (isSamePlatform) {
-        // ═══════════════════════════════════════════════════════════
-        // SAME PLATFORM - Execute inline with SAME page/driver!
-        // ═══════════════════════════════════════════════════════════
-        console.log(`⚡ Auto-executing ${incompleteSegment.platform} segment inline...\n`);
-        
-        let executedAnySteps = false;
-        
-        for (const step of incompleteSegment.steps) {
-          if (step.isTarget) continue;
-          if (step.complete) continue;
-          
+   if (isSamePlatform) {
+  // ═══════════════════════════════════════════════════════════
+  // SAME PLATFORM - Execute inline with SAME page/driver!
+  // ═══════════════════════════════════════════════════════════
+  console.log(`⚡ Auto-executing ${incompleteSegment.platform} segment inline...\n`);
+  
+  // ✅ ADD THIS DEBUG LOG
+  console.log('🔍 DEBUG: incompleteSegment.steps:', JSON.stringify(
+    incompleteSegment.steps.map(s => ({
+      status: s.status,
+      complete: s.complete,
+      isTarget: s.isTarget,
+      isLoopPrerequisite: s.isLoopPrerequisite,
+      actionName: s.actionName
+    })), null, 2
+  ));
+  
+  let executedAnySteps = false;
+  
+//       // ═══════════════════════════════════════════════════════════
+// // Find where we are in the chain and only execute steps AFTER current position
+// // ═══════════════════════════════════════════════════════════
+// const currentStatusIndex = incompleteSegment.steps.findIndex(s => s.complete || s.status === currentStatus);
+
+// for (let i = 0; i < incompleteSegment.steps.length; i++) {
+//   const step = incompleteSegment.steps[i];
+  
+//   if (step.isTarget) continue;
+//   if (step.complete) continue;
+  
+//   // Skip loop prerequisites that appear BEFORE current position
+//   // These are part of the loop that we need to reach via forward execution
+//   if (i < currentStatusIndex && step.isLoopPrerequisite) {
+//     continue;
+//   }
+  
+//   // Skip steps before our current position (they're part of the loop)
+//   if (currentStatusIndex !== -1 && i < currentStatusIndex) {
+//     continue;
+//   }
+
+       
+ // ═══════════════════════════════════════════════════════════
+// Find where we are in the chain and determine execution order
+// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// Find where we are in the chain and determine execution order
+// ═══════════════════════════════════════════════════════════
+
+for (let i = 0; i < incompleteSegment.steps.length; i++) {
+  const step = incompleteSegment.steps[i];
+  
+  if (step.isTarget) continue;
+  if (step.complete) continue;
+  if (step.isLoopPrerequisite) continue;  // ✅ ADD THIS!
+  
+  // ✅ Handle blocked steps
+  if (step.blocked) {
+    console.error(`\n🚫 Path is BLOCKED at ${step.status}`);
+    console.error(`   ${step.blockedReason}`);
+    if (step.blockedTransitions) {
+      step.blockedTransitions.forEach(t => {
+        t.blockedBy.forEach(b => {
+          console.error(`   ❌ ${b.field}: need ${JSON.stringify(b.expected)}, have ${JSON.stringify(b.actual)}`);
+        });
+      });
+    }
+    throw new Error(`Cannot reach ${targetStatus} - path blocked at ${step.status}`);
+  }
+
           let testFilePath = step.testFile;
           let actionName = step.actionName;
+
 
           if (!testFilePath || testFilePath === 'unknown') {
             const fullStep = analysis.chain.find(s => s.status === step.status);
@@ -2130,6 +3397,20 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
             const deltaPath = TestContext.getDeltaPath(originalPath);
             const pathToUse = fs.existsSync(deltaPath) ? deltaPath : originalPath;
             
+            // ✅ NEW: Check transition conditions before executing
+const transitionCheck = this._canTakeTransitionTo(step.status, currentStatus, testData);
+if (!transitionCheck.valid) {
+  console.error(`\n❌ Cannot execute ${step.status} - transition conditions not met!`);
+  console.error(`   Transition: ${transitionCheck.from} --(${transitionCheck.event})--> ${transitionCheck.to}`);
+  if (transitionCheck.blockedBy) {
+    transitionCheck.blockedBy.forEach(b => {
+      console.error(`   ❌ ${b.field}: expected ${JSON.stringify(b.expected)}, got ${JSON.stringify(b.actual)}`);
+    });
+  }
+  console.error(`\n💡 Your testData doesn't support this path. Check your test data or use a different test.\n`);
+  throw new Error(`Transition to ${step.status} blocked by conditions`);
+}
+
             // Execute with SAME PAGE/DRIVER - this is the key!
             const result = await triggerFn(pathToUse, {
               page: page,       // ← SAME PAGE!
@@ -2147,7 +3428,68 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
             const reloadedCtx = TestContext.load(ImplicationClass, finalDeltaPath);
             Object.assign(testData, reloadedCtx.data);
             
-            console.log(`   ✅ Completed: ${step.status}\n`);
+          console.log(`   ✅ Completed: ${step.status}\n`);
+
+// ═══════════════════════════════════════════════════════════
+// 🔍 OPTIONAL: Validate assertions at each step
+// ═══════════════════════════════════════════════════════════
+const validateEachStep = process.env.VALIDATE_EACH_STEP === 'true';
+
+if (validateEachStep && page) {
+  try {
+    const stepImplClassName = planner.stateRegistry[step.status];
+    if (stepImplClassName) {
+      const stepImplPath = planner.findImplicationFile(stepImplClassName);
+      if (stepImplPath) {
+        planner._clearImplicationCache(stepImplPath);
+        const StepImplClass = require(stepImplPath);
+        
+        const mirrorsOn = StepImplClass.mirrorsOn;
+        if (mirrorsOn?.UI?.web) {
+          console.log(`   🔍 Validating ${step.status} UI...`);
+          
+          const ExpectImplication = require('./ExpectImplication');
+          
+          // Reload current test data
+          const TestContext = require('./TestContext');
+          const currentData = TestContext.load(StepImplClass, testDataPath).data;
+          
+          for (const [screenKey, screenConfig] of Object.entries(mirrorsOn.UI.web)) {
+           const pomPathRaw = screenConfig.pom || screenConfig._pomSource?.path;
+if (pomPathRaw) {
+  try {
+    const pomPath = path.isAbsolute(pomPathRaw) 
+      ? pomPathRaw 
+      : path.join(process.cwd(), pomPathRaw);console.log(`   ⏭️  ${screenKey} has no POM defined, skipping validation`);
+
+                
+                const PomClass = require(pomPath);
+                const pomInstance = new PomClass(page, currentData.lang || 'en', currentData.device || 'desktop');
+                
+                await ExpectImplication.validateImplications(
+                  screenConfig,
+                  currentData,
+                  pomInstance
+                );
+                console.log(`   ✅ ${step.status}.${screenKey} validation passed`);
+              } catch (pomError) {
+                console.log(`   ⚠️  Could not load POM for ${screenKey}: ${pomError.message}`);
+              }
+            } else {
+              console.log(`   ⏭️  ${screenKey} has no POM defined, skipping validation`);
+            }
+          }
+        } else {
+          console.log(`   ⏭️  No UI.web validation defined for ${step.status}`);
+        }
+      }
+    }
+  } catch (validationError) {
+    console.error(`   ❌ Validation failed at ${step.status}: ${validationError.message}`);
+    throw validationError;
+  }
+}
+            
             
           } catch (error) {
             console.error(`❌ Failed to execute ${actionName}: ${error.message}\n`);
@@ -2156,42 +3498,47 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
           }
         }
         
-        if (executedAnySteps) {
-          console.log('🔄 Re-checking prerequisites after segment execution...\n');
+     if (executedAnySteps) {
+          // ═══════════════════════════════════════════════════════════
+          // DON'T re-analyze! Just check if we reached a good state
+          // ═══════════════════════════════════════════════════════════
+          const TestContext = require('./TestContext');
+          const originalPath = options.testDataPath || testData.__testDataPath || 'tests/data/shared.json';
+          const finalDeltaPath = TestContext.getDeltaPath(originalPath);
+          const reloadedCtx = TestContext.load(ImplicationClass, finalDeltaPath);
+          const newStatus = this._getCurrentStatus(reloadedCtx.data, ImplicationClass);
           
-          // CRITICAL: Skip platform prereq on recursive call!
-          return TestPlanner.checkOrThrow(ImplicationClass, testData, {
-            ...options,
-            skipPlatformPrereq: true  // ← KEY FIX!
-          });
-        } else {
-          console.log(`✅ Segment ${incompleteSegment.platform} has no executable steps\n`);
+          // Check: did we complete the LAST incomplete step before target?
+          const lastPrereqStep = incompleteSegment.steps.filter(s => !s.isTarget).pop();
+          const targetStep = incompleteSegment.steps.find(s => s.isTarget);
           
-          // Check if there's a next segment on a different platform
-          const currentSegmentIndex = segments.indexOf(incompleteSegment);
-          const nextIncomplete = segments.find((s, idx) => 
-            !s.complete && idx > currentSegmentIndex
-          );
+          // If current status is the previousStatus needed by target, we're ready
+          const targetPreviousStatus = targetStep?.previousStatus || 
+            planner._getPreviousStatus(ImplicationClass, testData, { explicitEvent: viaEvent });
           
-          if (nextIncomplete && !this._isSamePlatform(nextIncomplete.platform, currentPlatform)) {
-            console.log(`\n⚠️  Next segment requires ${nextIncomplete.platform} platform\n`);
-            
-            const isPrerequisiteExecution = options?.isPrerequisite === true || 
-                                            process.env.IS_PREREQUISITE_EXECUTION === 'true';
-            
-            if (isPrerequisiteExecution) {
-              console.log('✅ Prerequisite completed - parent test will handle remaining platforms\n');
-              return analysis;
-            }
-            
-            planner.printCrossPlatformMessage(analysis.chain, currentPlatform);
-            throw new Error('Prerequisites not met (cross-platform)');
+          if (newStatus === targetPreviousStatus) {
+            console.log(`✅ Reached required state: ${newStatus} (ready for ${targetStatus})\n`);
+            return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
           }
           
-          console.log('✅ All same-platform prerequisites satisfied!\n');
-          return analysis;
+          // Not ready yet - but DON'T rebuild the whole chain!
+          // Just check if there are remaining incomplete steps in THIS segment
+          const remainingSteps = incompleteSegment.steps.filter(s => 
+            !s.isTarget && !s.complete && s.status !== newStatus
+          );
+          
+          if (remainingSteps.length === 0) {
+            console.log(`✅ All prerequisites in segment complete!\n`);
+            return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
+          }
+          
+          // Still have steps - check if next segment is different platform
+          console.log(`   Remaining steps: ${remainingSteps.map(s => s.status).join(' → ')}\n`);
+          console.log(`   Current status: ${newStatus}\n`);
+          
+          // Continue with what we have
+          return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
         }
-        
       } else {
         // ═══════════════════════════════════════════════════════════
         // DIFFERENT PLATFORM - Cannot execute inline

@@ -478,6 +478,7 @@ if (!shouldSkipRegistration) {
     
     let page;
     let context;
+    let testPassed = false;
     
     // ═══════════════════════════════════════════════════════════
     // ✅ SETUP - BeforeAll Hook
@@ -516,11 +517,15 @@ if (!shouldSkipRegistration) {
 {{/if}}
     });
     
-    // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
     // ✅ TEARDOWN - AfterAll Hook
     // ═══════════════════════════════════════════════════════════
     test.afterAll(async () => {
       console.log('🧹 Cleaning up...');
+      
+      // Cleanup delta file based on test result
+      await TestContext.cleanup(testDataPath, { passed: testPassed });
+      
       if (context) {
         await context.close();
       }
@@ -681,8 +686,10 @@ if (!shouldSkipRegistration) {
 {{/if}}
 {{/each}}
       
-      console.log('✅ All UI validations passed');
+  result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
 {{/if}}
+      testPassed = true;
     });
   });
 {{else}}
@@ -832,8 +839,10 @@ if (!shouldSkipRegistration) {
 {{/if}}
 {{/each}}
       
-      console.log('✅ All UI validations passed');
+result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
 {{/if}}
+      testPassed = true;
     });
   });
 {{/if}}
