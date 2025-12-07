@@ -142,15 +142,16 @@ export default function PlatformSectionWithOrdering({
     return (
       <div className="space-y-3 pt-3">
         {/* POM Selector */}
-        <POMFieldSelector
-          projectPath={projectPath}
-          selectedPOM={pomName}
-          selectedInstance={instanceName}
-          onPOMChange={(newPom) => handleScreenUpdate(screenId, { screen: newPom })}
-          onInstanceChange={(newInstance) => handleScreenUpdate(screenId, { instance: newInstance })}
-          editable={editMode}
-          theme={theme}
-        />
+<POMFieldSelector
+  projectPath={projectPath}
+  selectedPOM={pomName}
+  selectedInstance={instanceName}
+  platform={platformName}  // ✅ ADD THIS
+  onPOMChange={(newPom) => handleScreenUpdate(screenId, { screen: newPom })}
+  onInstanceChange={(newInstance) => handleScreenUpdate(screenId, { instance: newInstance })}
+  editable={editMode}
+  theme={theme}
+/>
 
         {/* Navigation Editor */}
         {editMode && (

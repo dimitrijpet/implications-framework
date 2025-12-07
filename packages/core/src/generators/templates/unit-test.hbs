@@ -304,6 +304,10 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // 🔒 Step has conditions - check before executing
   if (TestPlanner.evaluateStepConditions({{{conditionsJson}}}, ctx.data, storedVars)) {
 {{/if}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{!-- STEP TYPE: pom-method (default) --}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{#if (or (not type) (eq type 'pom-method'))}}
 {{#if storeAs}}
 {{#if entity}}
   const {{storeAsKey}} = await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
@@ -331,6 +335,68 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   await {{instance}}.{{method}}({{{args}}});
 {{/if}}
 {{/if}}
+{{!-- STEP TYPE: click --}}
+{{else if (eq type 'click')}}
+  await {{instanceFromScreen screen}}.{{locator}}.click();
+{{!-- STEP TYPE: fill --}}
+{{else if (eq type 'fill')}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{!-- STEP TYPE: getText --}}
+{{else if (eq type 'getText')}}
+{{#if storeAs}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.getText();
+{{/if}}
+  // 💾 Store captured text
+  ExpectImplication.storeValue('{{storeAs}}', {{storeAs}});
+  storedVars.{{storeAs}} = {{storeAs}};
+  ctx.data.{{storeAs}} = {{storeAs}};
+  console.log('   💾 Stored {{storeAs}}:', {{storeAs}});
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.getText();
+{{/if}}
+{{/if}}
+{{!-- STEP TYPE: waitFor --}}
+{{else if (eq type 'waitFor')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed({ reverse: true });
+{{else if (eq waitState 'attached')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForExist();
+{{else if (eq waitState 'detached')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForExist({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed();
+{{/if}}
+{{/if}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{!-- STEP TYPE: custom --}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{else if (eq type 'custom')}}
+  // Custom code block
+{{{code}}}
+{{/if}}
 {{#if hasConditions}}
   } else {
     console.log('   ⏭️ Skipping step {{addOne @index}}: conditions not met');
@@ -338,7 +404,6 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{/if}}
 {{/each}}
 {{/if}}
-  
   console.log('✅ Action steps completed');
 {{else}}
   // TODO: Navigate to the screen where you perform this action
