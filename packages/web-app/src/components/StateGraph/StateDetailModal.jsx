@@ -20,6 +20,7 @@ import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWit
 import AddTransitionModal from '../AddTransitionModal/AddTransitionModal';
 import TestLockPanel from './TestLockPanel';
 
+
 function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
   
@@ -91,6 +92,7 @@ export default function StateDetailModal({
   // Update state to use arrays
 const [tagsData, setTagsData] = useState({ screen: [], group: [] });
 const [tagsChanges, setTagsChanges] = useState({});
+const [projectConfig, setProjectConfig] = useState(null);
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
@@ -204,6 +206,21 @@ const existingTags = useMemo(() => {
     group: Array.from(groupTags).sort()
   };
 }, [discoveryResult]);
+
+// Add useEffect to fetch config (after other useEffects, around line 180)
+useEffect(() => {
+  if (projectPath) {
+    fetch(`http://localhost:3000/api/discovery/config?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.config) {
+          setProjectConfig(data.config);
+          console.log('📋 Loaded config, platforms:', data.config.platforms);
+        }
+      })
+      .catch(err => console.warn('Failed to load config:', err));
+  }
+}, [projectPath]);
 
 
 const fetchStoredVariables = async () => {
@@ -1660,17 +1677,20 @@ const handleSave = async () => {
 
       {/* Transition Edit Modal */}
       {showTransitionModal && (
-        <AddTransitionModal
-          isOpen={showTransitionModal}
-          onClose={() => setShowTransitionModal(false)}
-          onSubmit={handleTransitionSubmit}
-          sourceState={state}
-          targetState={null}
-          projectPath={projectPath}
-          mode={transitionMode}
-          initialData={editingTransition}
-        />
-      )}
+  <AddTransitionModal
+    isOpen={showTransitionModal}
+    onClose={() => setShowTransitionModal(false)}
+    onSubmit={handleTransitionSubmit}
+    sourceState={state}
+    targetState={null}
+    projectPath={projectPath}
+    mode={transitionMode}
+    initialData={editingTransition}
+    availablePlatforms={projectConfig?.platforms || ["web"]}
+    storedVariables={storedVariables}
+  />
+)}
+
     </>
   );
 }

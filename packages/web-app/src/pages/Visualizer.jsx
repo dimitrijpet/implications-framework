@@ -73,6 +73,7 @@ const [isSavingLayout, setIsSavingLayout] = useState(false);
 const [tagsPanelCollapsed, setTagsPanelCollapsed] = useState(false);
   const { tagConfig, setTagConfig, activeFilters, setActiveFilters } = useTagConfig(projectPath);
   const [discoveredTags, setDiscoveredTags] = useState({});
+  const [projectConfig, setProjectConfig] = useState(null);
 
 // ✅ NEW: Compute existing tags for AddStateModal autocomplete
 // ✅ FIXED: Compute existing tags for AddStateModal autocomplete
@@ -130,6 +131,19 @@ const existingTags = useMemo(() => {
     setDiscoveredTags({});
   };
 
+  useEffect(() => {
+  if (projectPath) {
+   fetch(`${API_URL}/api/discovery/config?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.config) {
+          setProjectConfig(data.config);
+          console.log('📋 Loaded config, platforms:', data.config.platforms);
+        }
+      })
+      .catch(err => console.warn('Failed to load config:', err));
+  }
+}, [projectPath]);
   // ADD THIS FUNCTION after handleClearCache
 const checkInitialization = async (path) => {
   try {
@@ -1450,16 +1464,17 @@ projectPath={projectPath}
   />
 )}
 <AddTransitionModal
-        isOpen={showTransitionModal}
-        onClose={() => {
-          setShowTransitionModal(false);
-          setTransitionMode({ enabled: false, source: null });
-        }}
-        onSubmit={handleTransitionSubmit}
-        sourceState={transitionModalData.source}
-        targetState={transitionModalData.target}
-        projectPath={projectPath}
-      />
+  isOpen={showTransitionModal}
+  onClose={() => {
+    setShowTransitionModal(false);
+    setTransitionMode({ enabled: false, source: null });
+  }}
+  onSubmit={handleTransitionSubmit}
+  sourceState={transitionModalData.source}
+  targetState={transitionModalData.target}
+  projectPath={projectPath}
+  availablePlatforms={projectConfig?.platforms || ["web"]}
+/>
     
     </div>
   );

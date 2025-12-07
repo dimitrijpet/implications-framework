@@ -16,6 +16,8 @@
 
 {{#if isPlaywright}}
 const { test, expect, devices } = require('@playwright/test');
+{{else}}
+const { expect } = require('@wdio/globals');
 {{/if}}
 const TestContext = require('{{testContextPath}}');
 const TestPlanner = require('{{testPlannerPath}}');
@@ -693,11 +695,9 @@ if (!shouldSkipRegistration) {
     });
   });
 {{else}}
-  // ═══════════════════════════════════════════════════════════
-  // WEBDRIVERIO / APPIUM TEST
-  // ═══════════════════════════════════════════════════════════
   describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
     const testDataPath = process.env.TEST_DATA_PATH || "tests/data/shared.json";
+    let testPassed = false;
     
     {{#if setupConfig}}
     // ✅ Setup helper from project config
@@ -707,6 +707,13 @@ if (!shouldSkipRegistration) {
       // This is a hook for any additional setup needed
     });
     {{/if}}
+    
+    // ✅ TEARDOWN - After Hook
+    after(async () => {
+      console.log('🧹 Cleaning up...');
+      await TestContext.cleanup(testDataPath, { passed: testPassed });
+      console.log('✅ Cleanup complete');
+    });
     
     it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
@@ -751,14 +758,14 @@ if (!shouldSkipRegistration) {
 {{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
-      const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
+      const {{navigation.instanceName}} = new {{navigation.className}}(driver, result.data.lang || 'en');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
 {{/if}}
       
 {{#if hasPom}}
       // Initialize screen instance
-      const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
+      const {{pomInstance}} = new {{pomClassName}}(driver, result.data.lang || 'en');
 {{/if}}
       
 {{#if useExpectImplication}}
@@ -773,7 +780,7 @@ if (!shouldSkipRegistration) {
 {{#if hasExternalPoms}}
       // Initialize external POM instances for function calls
 {{#each externalPoms}}
-      const {{instanceName}} = new {{className}}(result.data.lang || 'en');
+      const {{instanceName}} = new {{className}}(driver, result.data.lang || 'en');
 {{/each}}
 {{/if}}
 {{#each blocks}}
@@ -819,13 +826,19 @@ if (!shouldSkipRegistration) {
 {{#if @first}}
       console.log('   🔍 Validating {{screenKey}}...');
       
-{{#if pomClassName}}
+{{#if pomPath}}
+      // ✅ Require screen using POM path from discovery
+      const {{pascalCase screenKey}}Screen = require('{{{pomPath}}}');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver, result.data.lang || 'en');
+{{else if pomClassName}}
       const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
-      const {{screenKey}} = new {{pascalCase screenKey}}Screen(ctx.data.lang || 'en');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver, result.data.lang || 'en');
+{{else if ../actionDetails.imports.[0]}}
+      const {{../actionDetails.imports.[0].className}} = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(driver, result.data.lang || 'en');
 {{else}}
-{{#if ../actionDetails.imports.[0]}}
-      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(ctx.data.lang || 'en');
-{{/if}}
+      // ⚠️ No POM path available - add _pomSource to your implication
+      throw new Error('Cannot validate {{screenKey}}: No POM path. Add _pomSource to mirrorsOn.UI.{{platformKey}}.{{screenKey}}');
 {{/if}}
       
       await ExpectImplication.validateImplications(

@@ -187,6 +187,58 @@ router.post('/scan', async (req, res) => {
   }
 });
 
+// Add this route to discovery.js (after the imports, before export)
+
+/**
+ * GET /api/config
+ * Get project configuration
+ */
+router.get('/config', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    
+    if (!projectPath) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'projectPath is required' 
+      });
+    }
+    
+    console.log(`📋 Loading config for: ${projectPath}`);
+    
+    const config = await loadConfig(projectPath);
+    
+    if (!config) {
+      return res.json({
+        success: true,
+        config: {
+          platforms: ['web'],
+          projectName: null
+        }
+      });
+    }
+    
+    console.log(`✅ Config loaded, platforms: ${config.platforms?.join(', ') || 'web'}`);
+    
+    res.json({
+      success: true,
+      config: {
+        platforms: config.platforms || ['web'],
+        projectName: config.projectName || null,
+        testDataMode: config.testDataMode || 'stateful',
+        graphColors: config.graphColors || null
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Config load error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
 /**
  * POST /api/discovery/parse-single-file
  * Re-parse a single implication file (for fast refresh)
