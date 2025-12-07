@@ -62,7 +62,8 @@ export default function StateDetailModal({
   onClose, 
   theme = defaultTheme, 
   projectPath,
-  discoveryResult
+  discoveryResult,
+  loadedTestData  // ← ADD THIS
 }) {
 
   // Edit mode state
@@ -1483,6 +1484,7 @@ const handleSave = async () => {
   allStates={allStatesMap}
   startState="initial"
   theme={theme}
+  loadedTestData={loadedTestData}  // ← ADD THIS
 />
             
             {/* UI SCREENS */}

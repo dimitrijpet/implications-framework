@@ -48,6 +48,10 @@ export default function Visualizer() {
   const [showAddStateModal, setShowAddStateModal] = useState(false);
 const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
 const transitionModeRef = useRef(transitionMode);
+const [testDataFiles, setTestDataFiles] = useState([]);
+const [loadedTestData, setLoadedTestData] = useState(null);
+const [selectedTestDataFile, setSelectedTestDataFile] = useState(null);
+const [loadingTestData, setLoadingTestData] = useState(false);
 
 useEffect(() => {
   if (discoveryResult) {
@@ -274,6 +278,74 @@ const handleReInitialize = async () => {
     setInitError(err.message);
   } finally {
     setInitLoading(false);
+  }
+};
+
+// ══════════════════════════════════════════════════════════════
+// TESTDATA LOADING
+// ══════════════════════════════════════════════════════════════
+
+const loadTestDataFiles = async () => {
+  if (!projectPath) return;
+  
+  try {
+    console.log('📂 Loading testData files...');
+    const response = await fetch(
+      `${API_URL}/api/test-data/files?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData files');
+      return;
+    }
+    
+    const data = await response.json();
+    if (data.success) {
+      setTestDataFiles(data.files);
+      console.log(`✅ Found ${data.files.length} testData files`);
+      
+      // Auto-load first master file if available
+      const masterFile = data.files.find(f => f.type === 'master');
+      if (masterFile) {
+        loadTestDataFile(masterFile.path);
+      } else if (data.files.length > 0) {
+        // Or just load the first file
+        loadTestDataFile(data.files[0].path);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData files:', error);
+  }
+};
+
+const loadTestDataFile = async (filePath) => {
+  if (!projectPath || !filePath) return;
+  
+  setLoadingTestData(true);
+  
+  try {
+    console.log(`📖 Loading testData: ${filePath}`);
+    const response = await fetch(
+      `${API_URL}/api/test-data/load?projectPath=${encodeURIComponent(projectPath)}&filePath=${encodeURIComponent(filePath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData file');
+      setLoadingTestData(false);
+      return;
+    }
+    
+    const result = await response.json();
+    if (result.success) {
+      setLoadedTestData(result);
+      setSelectedTestDataFile(filePath);
+      console.log(`✅ Loaded testData with ${result.keys.length} fields`);
+      console.log(`   Root keys: ${result.rootKeys.join(', ')}`);
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData:', error);
+  } finally {
+    setLoadingTestData(false);
   }
 };
 
@@ -1307,6 +1379,112 @@ const disableTransitionMode = () => {
             onToggleCollapse={() => setTagsPanelCollapsed(!tagsPanelCollapsed)}
           />
         )}
+
+        {/* TestData Context Selector */}
+{discoveryResult && (
+  <div 
+    className="glass rounded-xl p-4 mb-6"
+    style={{ border: `1px solid ${defaultTheme.colors.border}` }}
+  >
+    <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex items-center gap-3">
+        <span className="text-xl">📊</span>
+        <span 
+          className="font-semibold"
+          style={{ color: defaultTheme.colors.text.primary }}
+        >
+          TestData Context
+        </span>
+        
+        {testDataFiles.length > 0 ? (
+          <select
+            value={selectedTestDataFile || ''}
+            onChange={(e) => loadTestDataFile(e.target.value)}
+            disabled={loadingTestData}
+            className="px-3 py-1.5 rounded-lg text-sm"
+            style={{
+              background: defaultTheme.colors.background.secondary,
+              border: `1px solid ${defaultTheme.colors.border}`,
+              color: defaultTheme.colors.text.primary,
+              minWidth: '250px',
+              opacity: loadingTestData ? 0.6 : 1
+            }}
+          >
+            <option value="">-- Select testData file --</option>
+            {testDataFiles.map(file => (
+              <option key={file.path} value={file.path}>
+                {file.name} {file.type === 'master' ? '⭐' : file.type === 'current' ? '🔄' : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span 
+            className="text-sm px-3 py-1.5"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            No testData files found
+          </span>
+        )}
+        
+        <button
+          onClick={loadTestDataFiles}
+          className="px-2 py-1 rounded text-sm"
+          style={{
+            background: defaultTheme.colors.background.tertiary,
+            color: defaultTheme.colors.text.secondary,
+            border: `1px solid ${defaultTheme.colors.border}`
+          }}
+          title="Refresh testData files"
+        >
+          🔄
+        </button>
+      </div>
+      
+      {loadedTestData && (
+        <div className="flex items-center gap-4">
+          <span 
+            className="text-sm px-3 py-1 rounded-full font-semibold"
+            style={{ 
+              background: `${defaultTheme.colors.accents.green}20`,
+              color: defaultTheme.colors.accents.green 
+            }}
+          >
+            ✓ {loadedTestData.keys.length} fields
+          </span>
+          
+          <span 
+            className="text-sm px-3 py-1 rounded"
+            style={{ 
+              background: defaultTheme.colors.background.tertiary,
+              color: defaultTheme.colors.text.secondary 
+            }}
+          >
+            Status: <strong>{loadedTestData.data?.status || 'unknown'}</strong>
+          </span>
+          
+          {loadedTestData.rootKeys && (
+            <span 
+              className="text-xs"
+              style={{ color: defaultTheme.colors.text.tertiary }}
+              title={loadedTestData.rootKeys.join(', ')}
+            >
+              Entities: {loadedTestData.rootKeys.filter(k => 
+                typeof loadedTestData.data[k] === 'object'
+              ).slice(0, 5).join(', ')}
+              {loadedTestData.rootKeys.length > 5 ? '...' : ''}
+            </span>
+          )}
+        </div>
+      )}
+      
+      {loadingTestData && (
+        <span style={{ color: defaultTheme.colors.text.tertiary }}>
+          ⏳ Loading...
+        </span>
+      )}
+    </div>
+  </div>
+)}
         
         {/* Graph - NO changes needed inside here! */}
         <div 
@@ -1418,14 +1596,15 @@ projectPath={projectPath}
         )}
       </main>
       
-      {/* Detail Modal */}
+ {/* Detail Modal */}
 {selectedState && (
   <StateDetailModal 
     state={selectedState}
     onClose={closeDetail}
     theme={defaultTheme}
     projectPath={projectPath}
-    discoveryResult={discoveryResult}  // â† ADD THIS LINE
+    discoveryResult={discoveryResult}
+    loadedTestData={loadedTestData}  // ← ADD THIS LINE
   />
 )}
       
