@@ -626,6 +626,8 @@ const handleRemoveTag = (field, value) => {
   };
 
   const handleEditTransition = async (transition, index) => {
+  console.log('🔴 handleEditTransition START');
+  console.log('🔴 transition param:', JSON.stringify(transition, null, 2));
     console.log('✏️ Editing transition:', transition);
     
     try {

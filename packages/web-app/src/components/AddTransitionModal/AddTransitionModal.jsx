@@ -11,6 +11,7 @@ import StepConditions from './StepConditions';
 import { migrateRequiresToConditions, conditionsToRequires } from './conditionBlockUtils';
 import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVariablesFromUIValidations';
 import useProjectConfig from '../../hooks/useProjectConfig';
+import DataFlowSummary from './DataFlowSummary';
 import {
   DndContext,
   closestCenter,
@@ -418,6 +419,11 @@ const allStoredVariables = useMemo(() => {
 // EDIT MODE INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
+  console.log('🟢 AddTransitionModal useEffect triggered');
+  console.log('🟢 mode:', mode);
+  console.log('🟢 isOpen:', isOpen);
+  console.log('🟢 initialData:', initialData);
+  console.log('🟢 initialData?.actionDetails:', initialData?.actionDetails);
   if (mode === 'edit' && initialData && isOpen) {
     console.log('📝 Edit mode - initialData:', JSON.stringify(initialData, null, 2));  // ✅ ADD THIS
     console.log('📝 initialData.conditions:', initialData.conditions);  // ✅ ADD THIS
@@ -452,23 +458,25 @@ setFormData({
         selectedPOM: imp.className,
         functions: [],
       })),
-      steps: (initialData.actionDetails?.steps || []).map(step => {
-        let argsArray = [];
-        if (Array.isArray(step.argsArray)) {
-          argsArray = step.argsArray;
-        } else if (Array.isArray(step.args)) {
-          argsArray = step.args;
-        } else if (typeof step.args === 'string' && step.args) {
-          argsArray = step.args.split(',').map(s => s.trim());
-        }
-        
-        return {
-          ...step,
-          args: argsArray,
-          availableMethods: [],
-          signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
-        };
-      }),
+steps: (initialData.actionDetails?.steps || []).map(step => {
+  let argsArray = [];
+  if (Array.isArray(step.argsArray)) {
+    argsArray = step.argsArray;
+  } else if (Array.isArray(step.args)) {
+    argsArray = step.args;
+  } else if (typeof step.args === 'string' && step.args) {
+    argsArray = step.args.split(',').map(s => s.trim());
+  }
+  
+  return {
+    ...step,
+    id: step.id || `step-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,  // ✅ ADD unique ID
+    type: step.type || 'pom-method',  // ✅ ADD THIS - default to pom-method
+    args: argsArray,
+    availableMethods: [],
+    signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
+  };
+}),
     });
     
     if (initialData.actionDetails?.navigationFile) {
@@ -1352,6 +1360,15 @@ steps: formData.steps.map((step) => ({
               💡 This transition will only work on the selected platform
             </p>
           </div>
+
+          {/* Data Flow Summary */}
+<DataFlowSummary
+  formData={formData}
+  testDataSchema={testDataSchema}
+  availableFromPriorStates={allStoredVariables}
+  theme={defaultTheme}
+/>
+
  {/* ✅ NEW: Condition Blocks Section (replaces old Requires) */}
           <ConditionBlockList
             conditions={formData.conditions}
