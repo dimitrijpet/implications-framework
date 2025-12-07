@@ -1380,13 +1380,15 @@ const disableTransitionMode = () => {
           />
         )}
 
-        {/* TestData Context Selector */}
+{/* TestData Context Selector */}
 {discoveryResult && (
   <div 
     className="glass rounded-xl p-4 mb-6"
     style={{ border: `1px solid ${defaultTheme.colors.border}` }}
   >
+    {/* Main Row */}
     <div className="flex items-center justify-between flex-wrap gap-4">
+      {/* Left side - Selector */}
       <div className="flex items-center gap-3">
         <span className="text-xl">📊</span>
         <span 
@@ -1399,7 +1401,18 @@ const disableTransitionMode = () => {
         {testDataFiles.length > 0 ? (
           <select
             value={selectedTestDataFile || ''}
-            onChange={(e) => loadTestDataFile(e.target.value)}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                setLoadedTestData(null);
+                setSelectedTestDataFile(null);
+                // Clear highlights when deselecting
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              } else {
+                loadTestDataFile(e.target.value);
+              }
+            }}
             disabled={loadingTestData}
             className="px-3 py-1.5 rounded-lg text-sm"
             style={{
@@ -1410,7 +1423,7 @@ const disableTransitionMode = () => {
               opacity: loadingTestData ? 0.6 : 1
             }}
           >
-            <option value="">-- Select testData file --</option>
+            <option value="">-- No testData (show all) --</option>
             {testDataFiles.map(file => (
               <option key={file.path} value={file.path}>
                 {file.name} {file.type === 'master' ? '⭐' : file.type === 'current' ? '🔄' : ''}
@@ -1428,20 +1441,21 @@ const disableTransitionMode = () => {
         
         <button
           onClick={loadTestDataFiles}
-          className="px-2 py-1 rounded text-sm"
+          className="px-2 py-1.5 rounded text-sm transition hover:brightness-110"
           style={{
             background: defaultTheme.colors.background.tertiary,
             color: defaultTheme.colors.text.secondary,
             border: `1px solid ${defaultTheme.colors.border}`
           }}
-          title="Refresh testData files"
+          title="Refresh testData files list"
         >
           🔄
         </button>
       </div>
       
+      {/* Middle - Status info when testData loaded */}
       {loadedTestData && (
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <span 
             className="text-sm px-3 py-1 rounded-full font-semibold"
             style={{ 
@@ -1452,37 +1466,158 @@ const disableTransitionMode = () => {
             ✓ {loadedTestData.keys.length} fields
           </span>
           
-          <span 
-            className="text-sm px-3 py-1 rounded"
-            style={{ 
-              background: defaultTheme.colors.background.tertiary,
-              color: defaultTheme.colors.text.secondary 
-            }}
-          >
-            Status: <strong>{loadedTestData.data?.status || 'unknown'}</strong>
-          </span>
-          
-          {loadedTestData.rootKeys && (
+          {loadedTestData.data?.status && (
             <span 
-              className="text-xs"
-              style={{ color: defaultTheme.colors.text.tertiary }}
-              title={loadedTestData.rootKeys.join(', ')}
+              className="text-sm px-3 py-1 rounded font-semibold"
+              style={{ 
+                background: `${defaultTheme.colors.accents.purple}20`,
+                color: defaultTheme.colors.accents.purple 
+              }}
             >
-              Entities: {loadedTestData.rootKeys.filter(k => 
-                typeof loadedTestData.data[k] === 'object'
-              ).slice(0, 5).join(', ')}
-              {loadedTestData.rootKeys.length > 5 ? '...' : ''}
+              📍 Status: <strong>{loadedTestData.data.status}</strong>
             </span>
           )}
         </div>
       )}
       
-      {loadingTestData && (
-        <span style={{ color: defaultTheme.colors.text.tertiary }}>
-          ⏳ Loading...
-        </span>
-      )}
+      {/* Right side - Action buttons */}
+      <div className="flex items-center gap-2">
+        {loadedTestData && loadedTestData.data?.status && loadedTestData.data.status !== 'initial' && (
+          <>
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.highlightPathTo) {
+                  window.cytoscapeGraph.highlightPathTo(loadedTestData.data.status);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.accents.purple,
+                color: 'white'
+              }}
+              title="Highlight path from initial to current status"
+            >
+              🛤️ Show Path
+            </button>
+            
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.background.tertiary,
+                color: defaultTheme.colors.text.secondary,
+                border: `1px solid ${defaultTheme.colors.border}`
+              }}
+              title="Clear highlight, show all nodes"
+            >
+              👁️ Show All
+            </button>
+          </>
+        )}
+        
+        {loadedTestData && (
+          <button
+            onClick={() => {
+              setLoadedTestData(null);
+              setSelectedTestDataFile(null);
+              if (window.cytoscapeGraph?.clearPathHighlight) {
+                window.cytoscapeGraph.clearPathHighlight();
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+            style={{
+              background: `${defaultTheme.colors.accents.red}20`,
+              color: defaultTheme.colors.accents.red,
+              border: `1px solid ${defaultTheme.colors.accents.red}40`
+            }}
+            title="Clear testData selection"
+          >
+            ✕ Clear
+          </button>
+        )}
+        
+        {loadingTestData && (
+          <span style={{ color: defaultTheme.colors.text.tertiary }}>
+            ⏳ Loading...
+          </span>
+        )}
+      </div>
     </div>
+    
+    {/* Path Preview Row - shows when testData has non-initial status */}
+    {loadedTestData?.data?.status && loadedTestData.data.status !== 'initial' && (
+      <div 
+        className="mt-3 pt-3 flex items-center gap-2 flex-wrap"
+        style={{ borderTop: `1px solid ${defaultTheme.colors.border}` }}
+      >
+        <span 
+          className="text-sm"
+          style={{ color: defaultTheme.colors.text.tertiary }}
+        >
+          📍 TestData represents path:
+        </span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono"
+          style={{ 
+            background: `${defaultTheme.colors.accents.green}20`,
+            color: defaultTheme.colors.accents.green 
+          }}
+        >
+          initial
+        </span>
+        <span style={{ color: defaultTheme.colors.text.tertiary }}>→ ... →</span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono font-bold"
+          style={{ 
+            background: `${defaultTheme.colors.accents.purple}30`,
+            color: defaultTheme.colors.accents.purple,
+            border: `1px solid ${defaultTheme.colors.accents.purple}`
+          }}
+        >
+          {loadedTestData.data.status}
+        </span>
+        
+        {/* Show entities in testData */}
+        {loadedTestData.rootKeys && (
+          <span 
+            className="text-xs ml-4"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            Contains: {loadedTestData.rootKeys.filter(k => 
+              typeof loadedTestData.data[k] === 'object' && !k.startsWith('_')
+            ).map(k => (
+              <span 
+                key={k}
+                className="px-1.5 py-0.5 rounded mx-0.5"
+                style={{ 
+                  background: defaultTheme.colors.background.tertiary,
+                  color: defaultTheme.colors.text.secondary
+                }}
+              >
+                {k}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+    )}
+    
+    {/* No testData selected info */}
+    {!loadedTestData && !loadingTestData && testDataFiles.length > 0 && (
+      <div 
+        className="mt-3 pt-3 text-sm"
+        style={{ 
+          borderTop: `1px solid ${defaultTheme.colors.border}`,
+          color: defaultTheme.colors.text.tertiary 
+        }}
+      >
+        💡 Select a testData file to validate path requirements and highlight the current status on the graph
+      </div>
+    )}
   </div>
 )}
         
@@ -1548,7 +1683,7 @@ const disableTransitionMode = () => {
           
           {/* StateGraph - just add the two new props */}
           {graphData ? (
-            <StateGraph
+<StateGraph
   graphData={graphData}
   onNodeClick={(nodeData) => {
     const currentMode = transitionModeRef.current;
@@ -1566,8 +1701,10 @@ const disableTransitionMode = () => {
   savedLayout={savedLayout}
   onLayoutChange={(layout) => {}}
   tagConfig={tagConfig}
-activeFilters={activeFilters}
-projectPath={projectPath}
+  activeFilters={activeFilters}
+  projectPath={projectPath}
+  loadedTestData={loadedTestData}
+  transitionMode={transitionMode}  // ← ADD THIS
 />
           ) : (
             <div 

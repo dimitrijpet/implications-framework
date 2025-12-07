@@ -433,35 +433,79 @@ export default function PathDataFlowPanel({
             </div>
           </div>
 
-          {/* Issues */}
-          {selectedAnalysis.issues.length > 0 && (
-            <div 
-              className="p-3 rounded-lg"
-              style={{ 
-                background: `${theme.colors.accents.orange}10`,
-                border: `1px solid ${theme.colors.accents.orange}30`
-              }}
-            >
-              <h4 
-                className="font-semibold mb-2"
-                style={{ color: theme.colors.accents.orange }}
+{/* Issues - Only show when we have testData to properly validate */}
+{(() => {
+  // Without testData loaded, issues are misleading (they don't account for initial data)
+  if (!loadedTestData) return null;
+  
+  // Filter issues: remove "requires data not yet available: X, Y, Z" if ALL are in testData
+  const filteredIssues = selectedAnalysis.issues.filter(issue => {
+    const msg = issue.message || issue;
+    
+    // Check for "requires data not yet available: field1, field2, ..." pattern
+    const match = msg.match(/requires data not yet available:\s*(.+)$/i);
+    if (match) {
+      const fieldsStr = match[1];
+      const fields = fieldsStr.split(',').map(f => f.trim());
+      const missingFields = fields.filter(f => !isFieldAvailable(f));
+      
+      if (missingFields.length === 0) {
+        return false;
+      }
+      
+      issue._missingFields = missingFields;
+    }
+    return true;
+  });
+  
+  if (filteredIssues.length === 0) return null;
+  
+  return (
+    <div 
+      className="p-3 rounded-lg"
+      style={{ 
+        background: `${theme.colors.accents.orange}10`,
+        border: `1px solid ${theme.colors.accents.orange}30`
+      }}
+    >
+      <h4 
+        className="font-semibold mb-2"
+        style={{ color: theme.colors.accents.orange }}
+      >
+        ⚠️ Missing from testData ({filteredIssues.length})
+      </h4>
+      <ul className="space-y-1">
+        {filteredIssues.map((issue, idx) => {
+          const msg = issue.message || issue;
+          
+          if (issue._missingFields && issue._missingFields.length > 0) {
+            const match = msg.match(/Transition "([^"]+)" requires/);
+            const transitionName = match ? match[1] : 'Transition';
+            return (
+              <li 
+                key={idx}
+                className="text-sm"
+                style={{ color: theme.colors.text.secondary }}
               >
-                ⚠️ Issues ({selectedAnalysis.issues.length})
-              </h4>
-              <ul className="space-y-1">
-                {selectedAnalysis.issues.map((issue, idx) => (
-                  <li 
-                    key={idx}
-                    className="text-sm"
-                    style={{ color: theme.colors.text.secondary }}
-                  >
-                    • {issue.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
+                • <strong>{transitionName}</strong> needs: {issue._missingFields.join(', ')}
+              </li>
+            );
+          }
+          
+          return (
+            <li 
+              key={idx}
+              className="text-sm"
+              style={{ color: theme.colors.text.secondary }}
+            >
+              • {msg}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+})()}
           {/* Step-by-step Details Toggle */}
           <button
             onClick={() => setShowDetails(!showDetails)}
