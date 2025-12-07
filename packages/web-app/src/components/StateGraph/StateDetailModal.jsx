@@ -19,6 +19,7 @@ import TestDataLinker from '../TestDataLinker/TestDataLinker';
 import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWithEdit';
 import AddTransitionModal from '../AddTransitionModal/AddTransitionModal';
 import TestLockPanel from './TestLockPanel';
+import PathDataFlowPanel from './PathDataFlowPanel';
 
 
 function transformPlatformsData(platforms) {
@@ -1467,6 +1468,22 @@ const handleSave = async () => {
     </span>
   )}
 </div>
+
+{(() => {
+  console.log('🗺️ allStatesMap keys:', Object.keys(allStatesMap));
+  console.log('🗺️ allStatesMap["logged_in"]:', allStatesMap['logged_in']);
+  console.log('🗺️ allStatesMap["logged_in"]?.xstateConfig?.on:', allStatesMap['logged_in']?.xstateConfig?.on);
+  return null;
+})()}
+
+{/* PATH ANALYSIS */}
+<PathDataFlowPanel
+  currentState={currentState}
+  allTransitions={allTransitions}
+  allStates={allStatesMap}
+  startState="initial"
+  theme={theme}
+/>
             
             {/* UI SCREENS */}
             <div>
