@@ -6,6 +6,7 @@ import parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import { promisify } from 'util';
 import globCallback from 'glob';
+import { parseFileWithMethodsAndReturns } from '../../../api-server/src/services/astParser.js';
 
 const glob = promisify(globCallback);
 
@@ -42,13 +43,16 @@ class POMDiscovery {
       try {
         const structure = await this._extractPOMStructure(filePath);
         if (structure) {
-          poms.push(structure);
-          this.pomCache.set(structure.name, structure);
-          
-          // ✅ NEW: Also cache by class name for lookup
-          if (structure.classes?.[0]?.name) {
-            this.pomCache.set(structure.classes[0].name, structure);
-          }
+  poms.push(structure);
+  this.pomCache.set(structure.name, structure);
+  
+  // ✅ FIX: Cache ALL classes, not just first one
+  for (const cls of structure.classes) {
+    if (cls.name) {
+      this.pomCache.set(cls.name, structure);
+    }
+  }
+
           
           // ✅ NEW: Check if this is a navigation file
           if (this._isNavigationFile(filePath, structure)) {
@@ -60,8 +64,17 @@ class POMDiscovery {
       }
     }
     
-    console.log(`   ✅ Extracted ${poms.length} POM structures`);
-    console.log(`   🧭 Found ${this.navigationCache.size} navigation files`);
+console.log(`   ✅ Extracted ${poms.length} POM structures`);
+
+// ✅ ADD THIS DEBUG:
+console.log('\n🐛 DEBUG: POMs being returned:');
+for (const pom of poms) {
+  console.log(`   📄 ${pom.name}:`);
+  console.log(`      Classes: ${pom.classes.map(c => c.name).join(', ')}`);
+  console.log(`      Exports: ${pom.exports}`);
+}
+
+console.log(`   🧭 Found ${this.navigationCache.size} navigation files`);
     return poms;
   }
 
@@ -214,21 +227,13 @@ _detectPlatform(filePath) {
   }
 
 /**
- * ✅ IMPROVED: Find all POM files using glob patterns
- * Now includes actions folders at any depth
+ * ✅ GENERIC: Find all POM files using config patterns OR defaults
  */
 async _findPOMFiles() {
-  const patterns = [
-    '**/screenObjects/**/*.js',
-    '**/pages/**/*.js',
-    '**/pom/**/*.js',
-    '**/pageObjects/**/*.js',
-    // ✅ IMPROVED: Find navigation files in actions folders at ANY depth
-    '**/actions/*[Nn]avigation*.js',
-    '**/actions/**/*[Nn]avigation*.js',
-    // ✅ Also find navigation files inside screenObjects/actions
-    '**/screenObjects/actions/*[Nn]avigation*.js',
-  ];
+  // Try to load config from project
+  const patterns = await this._loadPOMPatterns();
+  
+  console.log(`   🔍 Using ${patterns.length} pattern(s) for POM discovery`);
 
   const pomFiles = [];
 
@@ -244,12 +249,13 @@ async _findPOMFiles() {
           '**/dist/**',
           '**/build/**',
           '**/.next/**',
-          '**/legacy/**',  // ✅ Optionally ignore legacy folders
         ]
       });
       
-      console.log(`      Found ${files.length} files`);
-      pomFiles.push(...files);
+      if (files.length > 0) {
+        console.log(`      ✅ Found ${files.length} files`);
+        pomFiles.push(...files);
+      }
     } catch (error) {
       console.error(`   ⚠️  Pattern ${pattern} failed: ${error.message}`);
     }
@@ -260,6 +266,41 @@ async _findPOMFiles() {
   console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
   
   return uniqueFiles;
+}
+
+/**
+ * ✅ NEW: Load POM patterns from ai-testing.config.js or use defaults
+ */
+async _loadPOMPatterns() {
+  const configPath = path.join(this.projectPath, 'ai-testing.config.js');
+  
+  try {
+    // Check if config exists
+    await fs.access(configPath);
+    
+    // Dynamic import for ESM compatibility
+    const configModule = await import(`file://${configPath}`);
+    const config = configModule.default || configModule;
+    
+    if (config.discovery?.poms && config.discovery.poms.length > 0) {
+      console.log(`   ✅ Loaded ${config.discovery.poms.length} POM pattern(s) from ai-testing.config.js`);
+      return config.discovery.poms;
+    }
+  } catch (error) {
+    // Config doesn't exist or can't be loaded
+    console.log(`   ℹ️  No ai-testing.config.js found, using default patterns`);
+  }
+  
+  // Default patterns (generic, should work for most projects)
+  return [
+    '**/screenObjects/**/*.js',
+    '**/pages/**/*.js',
+    '**/screens/**/*.js',
+    '**/pom/**/*.js',
+    '**/pageObjects/**/*.js',
+    '**/*.page.js',
+    '**/*.screen.js',
+  ];
 }
 
   /**
@@ -310,9 +351,9 @@ async _findPOMFiles() {
     return structure.classes.length > 0 ? structure : null;
   }
 
-  /**
-   * Extract class information (getters, properties, methods WITH PARAMETERS!)
-   * ✨ ENHANCED: Now extracts ALL methods, not just ones with params
+/**
+   * Extract class information (getters, properties, methods WITH PARAMETERS AND RETURNS!)
+   * ✨ ENHANCED: Now extracts return keys for storeAs autocomplete
    */
   _extractClassInfo(classNode) {
     const classInfo = {
@@ -320,7 +361,7 @@ async _findPOMFiles() {
       getters: [],
       properties: [],
       methods: [],
-      functions: [],  // ✨ ALL functions with full signatures
+      functions: [],  // ✨ ALL functions with full signatures AND return info
       constructor: null
     };
 
@@ -380,25 +421,31 @@ async _findPOMFiles() {
         // ✨ Extract parameters
         const params = this._extractParameters(member.params);
         
+        // ✨ NEW: Extract return keys from function body
+        const returns = this._extractReturnKeys(member.body);
+        
         // Add to methods array (legacy format)
         classInfo.methods.push({
           name: member.key.name,
           async: member.async || false
         });
         
-        // ✅ FIXED: Add ALL methods to functions array (not just ones with params)
+        // ✅ Add ALL methods to functions array with return info
         classInfo.functions.push({
           name: member.key.name,
           async: member.async || false,
           parameters: params,
           paramNames: params.map(p => p.name),
-          signature: this._buildSignature(member.key.name, params)
+          signature: this._buildSignature(member.key.name, params),
+          returns: returns  // ✨ NEW: { type: 'object', keys: ['index', 'price', ...] }
         });
       }
     }
 
     return classInfo;
   }
+
+  
 
   /**
    * ✨ Extract parameters from method
@@ -454,6 +501,80 @@ async _findPOMFiles() {
       default:
         return undefined;
     }
+  }
+
+  /**
+   * ✨ NEW: Extract return object keys from a function body
+   * Handles: return { key1, key2, key3: value }
+   */
+  _extractReturnKeys(functionBody) {
+    const returnInfo = {
+      type: 'unknown',
+      keys: []
+    };
+    
+    if (!functionBody || functionBody.type !== 'BlockStatement') {
+      return returnInfo;
+    }
+    
+    // Find return statements recursively
+    const findReturns = (node, results = []) => {
+      if (!node) return results;
+      
+      if (node.type === 'ReturnStatement' && node.argument) {
+        results.push(node);
+      }
+      
+      // Traverse children
+      if (Array.isArray(node.body)) {
+        node.body.forEach(child => findReturns(child, results));
+      } else if (node.body) {
+        findReturns(node.body, results);
+      }
+      
+      if (node.consequent) findReturns(node.consequent, results);
+      if (node.alternate) findReturns(node.alternate, results);
+      if (node.block) findReturns(node.block, results);
+      
+      return results;
+    };
+    
+    const returnStatements = findReturns(functionBody);
+    
+    // Process return statements - look for object returns
+    for (const returnStmt of returnStatements) {
+      const argument = returnStmt.argument;
+      
+      if (!argument) continue;
+      
+      if (argument.type === 'ObjectExpression') {
+        returnInfo.type = 'object';
+        
+        argument.properties.forEach(prop => {
+          // Handle shorthand: { index } and regular: { index: value }
+          if (prop.type === 'ObjectProperty' || prop.type === 'Property') {
+            const keyName = prop.key?.name || prop.key?.value;
+            if (keyName && !returnInfo.keys.includes(keyName)) {
+              returnInfo.keys.push(keyName);
+            }
+          } else if (prop.type === 'SpreadElement') {
+            returnInfo.keys.push('...<spread>');
+          }
+        });
+        
+        // If we found an object return with keys, use it
+        if (returnInfo.keys.length > 0) {
+          break;
+        }
+      } else if (argument.type === 'ArrayExpression') {
+        returnInfo.type = 'array';
+      } else if (argument.type === 'Identifier') {
+        returnInfo.type = 'variable';
+        returnInfo.variableName = argument.name;
+      }
+    }
+    
+    return returnInfo;
   }
 
   /**
@@ -568,6 +689,42 @@ async _findPOMFiles() {
 
     return instances;
   }
+  /**
+   * ✅ NEW: Get direct getters from main class (even if it has instances)
+   * This handles POMs like SearchBarWrapper that have BOTH:
+   * - Instance properties (roundTrip, oneWayTicket)
+   * - Direct getters (linkAgencyChange, agencyName, etc.)
+   */
+  getDirectGetters(pomName) {
+    const pom = this.pomCache.get(pomName);
+    if (!pom) return [];
+
+    const directGetters = [];
+    
+    // Get the main/exported class (usually first or the exported one)
+    const mainClass = pom.classes.find(c => c.name === pom.exports) || pom.classes[0];
+    
+    if (mainClass) {
+      // Add all getters from the main class
+      for (const getter of mainClass.getters || []) {
+        directGetters.push(getter.name);
+      }
+      
+      // Also add direct properties (not instances)
+      for (const prop of mainClass.properties || []) {
+        if (prop.type === 'property') {
+          directGetters.push(prop.name);
+        }
+      }
+    }
+    
+    console.log(`   📦 getDirectGetters(${pomName}): found ${directGetters.length} direct fields`);
+    return directGetters;
+  }
 }
+
+
+
+
 
 export default POMDiscovery;

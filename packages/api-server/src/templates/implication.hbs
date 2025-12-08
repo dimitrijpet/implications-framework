@@ -25,7 +25,7 @@ const ImplicationHelper = require('{{{helpers.implicationHelperPath}}}');
  * Status: {{meta.status}}
  * Platform: {{meta.platform}}
  */
-class {{className}} {
+class {{className}} {{#if baseClass}}extends {{baseClass.className}} {{/if}}{
   
   static xstateConfig = {
     id: '{{stateId}}',
@@ -47,30 +47,28 @@ class {{className}} {
       {{#if meta.requiredFields}}
       requiredFields: [{{#each meta.requiredFields}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
       {{/if}}
-      {{#if meta.requires}}
-      requires: {
-        {{#if meta.requires.previousStatus}}
-        previousStatus: '{{meta.requires.previousStatus}}'
-        {{/if}}
+      {{#if tags}}
+      tags: {
+        {{#each tags}}
+        {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
+        {{/each}}
       },
       {{/if}}
-      {{#if platforms}}
       setup: [
-        {{#each platforms}}
+        {{#if setupEntries}}
+        {{#each setupEntries}}
         {
           testFile: '{{testFile}}',
           actionName: '{{actionName}}',
-          platform: '{{platform}}'
+          platform: '{{platform}}'{{#if previousStatus}},
+          previousStatus: '{{previousStatus}}'{{/if}}{{#if requires}},
+          requires: {{{json requires}}}{{/if}}
         }{{#unless @last}},{{/unless}}
         {{/each}}
+        {{else}}
+        // Setup entries will be added when transitions are created
+        {{/if}}
       ]
-      {{else}}
-      setup: [{
-        testFile: 'tests/implications/bookings/status/{{className}}-{{capitalize meta.platform}}-UNIT.spec.js',
-        actionName: '{{#if meta.triggerAction}}{{meta.triggerAction}}{{else}}{{stateId}}{{/if}}',
-        platform: '{{meta.platform}}'
-      }]
-      {{/if}}
     },
     
     on: {
@@ -100,95 +98,110 @@ class {{className}} {
     description: '{{description}}',
     {{/if}}
     
-    triggeredBy: [{
-      description: 'Trigger {{meta.status}} state',
-      platform: '{{meta.platform}}',
-      action: async (testDataPath, options = {}) => {
-        const { {{#if meta.triggerAction}}{{meta.triggerAction}}{{else}}{{stateId}}{{/if}} } = require('./{{className}}-{{capitalize meta.platform}}-UNIT.spec.js');
-        return {{#if meta.triggerAction}}{{meta.triggerAction}}{{else}}{{stateId}}{{/if}}(testDataPath, options);
-      }
-    }],
-    
-  UI: {
-  {{#if meta.platform}}
-  {{meta.platform}}: {
-    {{#if screens}}
-    {{#each screens}}
-    {{@key}}: [{{#if this.[0].extendsBase}}ImplicationHelper.mergeWithBase(  {{!-- ✅ Add [ here --}} {{!-- ✅ FIXED --}}
-      BaseBookingImplications.{{../sourcePlatform}}.{{@key}},
+    triggeredBy: [
+      {{#if setupEntries}}
+      {{#each setupEntries}}
       {
-        {{#if this.[0].description}}
-        description: '{{this.[0].description}}',
-        {{/if}}
-        {{#if this.[0].visible}}
-        visible: [{{#each this.[0].visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
-        {{/if}}
-        {{#if this.[0].hidden}}
-        hidden: [{{#each this.[0].hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
-        {{/if}}
-          {{! ✅ ADD THIS: Functions block }}
-    {{#if this.[0].functions}}
-    functions: {
-      {{#each this.[0].functions}}
-      {{@key}}: {
-        {{#if this.signature}}
-        signature: '{{this.signature}}',
-        {{/if}}
-        {{#if this.parameters}}
-        parameters: {
-          {{#each this.parameters}}
-          {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
-          {{/each}}
+        description: 'Trigger {{../meta.status}} via {{previousStatus}}',
+        platform: '{{platform}}',
+        action: async (testDataPath, options = {}) => {
+          const { {{actionName}} } = require('./{{testFile}}');
+          return {{actionName}}(testDataPath, options);
         }
-        {{/if}}
       }{{#unless @last}},{{/unless}}
       {{/each}}
-    },
-    {{/if}}
-        {{#if this.[0].checks}}
-        checks: {
-          {{#if this.[0].checks.visible}}
-          visible: [{{#each this.[0].checks.visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.hidden}},{{/if}}
-          {{/if}}
-          {{#if this.[0].checks.hidden}}
-          hidden: [{{#each this.[0].checks.hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.text}},{{/if}}
-          {{/if}}
-          {{#if this.[0].checks.text}}
-          text: {
-            {{#each this.[0].checks.text}}
-            {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
-            {{/each}}
-          }
-          {{/if}}
-        }
-        {{/if}}
-      },
-      { parentClass: {{../className}} }
-    )]{{else}}[  {{!-- ✅ Add ] here --}}
+      {{else}}
       {
-        screen: (app) => app.{{@key}},  {{!-- ✅ Use @key here too --}}
-        
-        prerequisites: [{
-          description: 'Navigate to {{@key}}',
-          setup: async (testData, app) => {
-            // TODO: Add navigation logic
-          }
-        }],
-        
-        expect: async (testData, screen) => {
-          // TODO: Add custom validation logic
+        description: 'Trigger {{meta.status}} state',
+        platform: '{{meta.platform}}',
+        action: async (testDataPath, options = {}) => {
+          // TODO: Will be updated when transitions are added
+          throw new Error('No setup entries defined yet');
         }
       }
-    ]{{/if}}{{#unless @last}},{{/unless}}
+      {{/if}}
+    ],
     
-    {{/each}}
-    {{else}}
-    // TODO: Add screen definitions
-    {{/if}}
-  }
-  {{/if}}
-}
+    UI: {
+      {{#if meta.platform}}
+      {{meta.platform}}: {
+        {{#if screens}}
+        {{#each screens}}
+        {{@key}}: [{{#if this.[0].extendsBase}}ImplicationHelper.mergeWithBase(
+          {{#if ../baseClass}}{{../baseClass.className}}{{else}}BaseBookingImplications{{/if}}.{{../sourcePlatform}}.{{@key}},
+          {
+            {{#if this.[0].description}}
+            description: '{{this.[0].description}}',
+            {{/if}}
+            {{#if this.[0].visible}}
+            visible: [{{#each this.[0].visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
+            {{/if}}
+            {{#if this.[0].hidden}}
+            hidden: [{{#each this.[0].hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}],
+            {{/if}}
+            {{#if this.[0].functions}}
+            functions: {
+              {{#each this.[0].functions}}
+              {{@key}}: {
+                {{#if this.signature}}
+                signature: '{{this.signature}}',
+                {{/if}}
+                {{#if this.parameters}}
+                parameters: {
+                  {{#each this.parameters}}
+                  {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
+                  {{/each}}
+                }
+                {{/if}}
+              }{{#unless @last}},{{/unless}}
+              {{/each}}
+            },
+            {{/if}}
+            {{#if this.[0].checks}}
+            checks: {
+              {{#if this.[0].checks.visible}}
+              visible: [{{#each this.[0].checks.visible}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.hidden}},{{/if}}
+              {{/if}}
+              {{#if this.[0].checks.hidden}}
+              hidden: [{{#each this.[0].checks.hidden}}'{{this}}'{{#unless @last}}, {{/unless}}{{/each}}]{{#if this.[0].checks.text}},{{/if}}
+              {{/if}}
+              {{#if this.[0].checks.text}}
+              text: {
+                {{#each this.[0].checks.text}}
+                {{@key}}: '{{this}}'{{#unless @last}},{{/unless}}
+                {{/each}}
+              }
+              {{/if}}
+            }
+            {{/if}}
+          },
+          { parentClass: {{../className}} }
+        )]{{else}}[
+          {
+            screen: (app) => app.{{@key}},
+            
+            prerequisites: [{
+              description: 'Navigate to {{@key}}',
+              setup: async (testData, app) => {
+                // TODO: Add navigation logic
+              }
+            }],
+            
+            expect: async (testData, screen) => {
+              // TODO: Add custom validation logic
+            }
+          }
+        ]{{/if}}{{#unless @last}},{{/unless}}
+        
+        {{/each}}
+        {{else}}
+        // TODO: Add screen definitions
+        {{/if}}
+      }
+      {{/if}}
+    }
   };
+  
   static meta = {
     status: '{{meta.status}}',
     {{#if meta.platform}}

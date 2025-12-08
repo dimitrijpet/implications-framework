@@ -1,6 +1,5 @@
 // packages/api-server/src/routes/poms.js
-// ✨ FIXED: Route order corrected - specific routes BEFORE parameterized routes
-
+// ✨ FIXED: Config-driven platform filtering, no hardcoded values
 import express from 'express';
 import POMDiscovery from '../../../core/src/discovery/POMDiscovery.js';
 import path from 'path';
@@ -9,12 +8,122 @@ import fs from 'fs/promises';
 const router = express.Router();
 
 /**
+ * Simple glob pattern matcher (no external dependency)
+ * Supports: ** (any path), * (any segment), exact matches
+ */
+function matchGlob(filePath, pattern) {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const normalizedPattern = pattern.replace(/\\/g, '/');
+  
+  // Convert glob pattern to regex
+  const regexPattern = normalizedPattern
+    .replace(/\./g, '\\.')           // Escape dots
+    .replace(/\*\*/g, '<<<GLOBSTAR>>>')  // Temp placeholder for **
+    .replace(/\*/g, '[^/]*')         // * matches anything except /
+    .replace(/<<<GLOBSTAR>>>/g, '.*'); // ** matches anything including /
+  
+  const regex = new RegExp(`^${regexPattern}$`);
+  return regex.test(normalizedPath);
+}
+
+/**
+ * Check if path matches any pattern in the list
+ */
+function matchesAnyPattern(filePath, patterns) {
+  return patterns.some(pattern => matchGlob(filePath, pattern));
+}
+
+/**
+ * Load project config to get screenPaths
+ */
+async function loadProjectConfig(projectPath) {
+  const configPath = path.join(projectPath, 'ai-testing.config.js');
+  try {
+    const configUrl = `file://${configPath}?t=${Date.now()}`;
+    const config = await import(configUrl);
+    return config.default || config;
+  } catch (error) {
+    console.warn(`⚠️ Could not load config from ${configPath}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Check if a path should be ignored based on ignore patterns
+ */
+function shouldIgnore(filePath, ignorePatterns = []) {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  
+  for (const pattern of ignorePatterns) {
+    // Check glob pattern match
+    if (matchGlob(normalizedPath, pattern)) {
+      return true;
+    }
+    
+    // Also check simple substring for patterns like '**/legacy/**'
+    // Extract the key part between ** markers
+    const keyPart = pattern.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^\/|\/$/g, '');
+    if (keyPart && normalizedPath.includes(`/${keyPart}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Filter POMs by platform using config-driven screenPaths
+ */
+function filterPOMsByPlatformFromConfig(poms, platform, config) {
+  if (!config?.screenPaths) {
+    console.warn('⚠️ No screenPaths in config, returning all POMs');
+    return poms;
+  }
+  
+  const screenPaths = config.screenPaths;
+  const ignorePatterns = screenPaths.ignore || [];
+  const platformPatterns = screenPaths[platform];
+  
+  if (!platformPatterns) {
+    console.warn(`⚠️ No screenPaths defined for platform "${platform}", returning all POMs`);
+    return poms;
+  }
+  
+  console.log(`   🔍 Filtering with patterns:`, platformPatterns);
+  console.log(`   🚫 Ignore patterns:`, ignorePatterns);
+  
+  return poms.filter(pom => {
+    const pomPath = (pom.path || '').replace(/\\/g, '/');
+    
+    // First check if it should be ignored
+    if (shouldIgnore(pomPath, ignorePatterns)) {
+      return false;
+    }
+    
+    // Then check if it matches any of the platform patterns
+    for (const pattern of platformPatterns) {
+      if (matchGlob(pomPath, pattern)) {
+        return true;
+      }
+      
+      // Also do a simple path prefix check
+      const pathPrefix = pattern.split('**')[0].replace(/\/$/, '');
+      if (pathPrefix && pomPath.includes(pathPrefix)) {
+        return true;
+      }
+    }
+    
+    return false;
+  });
+}
+
+/**
  * GET /api/poms
- * Discover all POMs in guest project
+ * Discover all POMs in guest project with optional platform filtering
  */
 router.get('/', async (req, res) => {
   try {
     const projectPath = req.query.projectPath || process.env.GUEST_PROJECT_PATH;
+    const platform = req.query.platform || null;
     
     if (!projectPath) {
       return res.status(400).json({
@@ -22,7 +131,6 @@ router.get('/', async (req, res) => {
       });
     }
     
-    // Verify project exists
     try {
       await fs.access(projectPath);
     } catch (error) {
@@ -32,13 +140,29 @@ router.get('/', async (req, res) => {
     }
     
     console.log(`🔍 Discovering POMs in: ${projectPath}`);
+    if (platform) {
+      console.log(`   📱 Platform filter: ${platform}`);
+    }
     
     const discovery = new POMDiscovery(projectPath);
-    const poms = await discovery.discover();
+    let poms = await discovery.discover();
+    
+    // Filter by platform if specified (using config)
+    if (platform) {
+      const config = await loadProjectConfig(projectPath);
+      const beforeCount = poms.length;
+      
+      if (config?.screenPaths) {
+        poms = filterPOMsByPlatformFromConfig(poms, platform, config);
+      }
+      
+      console.log(`   🎯 Filtered: ${beforeCount} → ${poms.length} POMs for ${platform}`);
+    }
     
     res.json({
       success: true,
       projectPath,
+      platform: platform || 'all',
       count: poms.length,
       poms
     });
@@ -51,10 +175,6 @@ router.get('/', async (req, res) => {
     });
   }
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ✨ IMPORTANT: These specific routes MUST come BEFORE /:pomName route!
-// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * POST /api/poms/validate
@@ -92,7 +212,7 @@ router.post('/validate', async (req, res) => {
           valid: false,
           message: `Path "${pomPath}" not found in ${pomName}.${instanceName}`,
           hint: `Did you mean one of these?`,
-          availablePaths: availablePaths.slice(0, 20) // Show first 20
+          availablePaths: availablePaths.slice(0, 20)
         });
       }
     } else {
@@ -127,8 +247,6 @@ router.post('/validate', async (req, res) => {
 /**
  * GET /api/poms/navigation
  * Get navigation files filtered by platform
- * 
- * ✨ MUST be BEFORE /:pomName route!
  */
 router.get('/navigation', async (req, res) => {
   try {
@@ -149,11 +267,22 @@ router.get('/navigation', async (req, res) => {
     await discovery.discover();
     
     // Get navigation files (optionally filtered by platform)
-    const navigationFiles = discovery.getNavigationFiles(platform);
+    let navigationFiles = discovery.getNavigationFiles(platform);
+    
+    // Apply config-based filtering if platform specified
+    if (platform) {
+      const config = await loadProjectConfig(projectPath);
+      if (config?.screenPaths) {
+        const ignorePatterns = config.screenPaths.ignore || [];
+        navigationFiles = navigationFiles.filter(nav => {
+          const navPath = (nav.path || '').replace(/\\/g, '/');
+          return !shouldIgnore(navPath, ignorePatterns);
+        });
+      }
+    }
     
     console.log(`   ✅ Found ${navigationFiles.length} navigation files`);
     
-    // Log details for debugging
     navigationFiles.forEach(nav => {
       console.log(`      📍 ${nav.displayName}: ${nav.methods.length} methods`);
     });
@@ -178,8 +307,6 @@ router.get('/navigation', async (req, res) => {
 /**
  * GET /api/poms/navigation/:className
  * Get methods for a specific navigation class
- * 
- * ✨ MUST be BEFORE /:pomName route!
  */
 router.get('/navigation/:className', async (req, res) => {
   try {
@@ -222,6 +349,38 @@ router.get('/navigation/:className', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/poms/functions
+ * Get functions for a specific POM
+ */
+router.get('/functions', async (req, res) => {
+  try {
+    const { projectPath, pomName } = req.query;
+    
+    if (!projectPath || !pomName) {
+      return res.status(400).json({ error: 'projectPath and pomName required' });
+    }
+    
+    console.log(`📦 Getting functions for POM: ${pomName}`);
+    
+    const discovery = new POMDiscovery(projectPath);
+    await discovery.discover();
+    
+    const functions = discovery.getFunctions(pomName);
+    
+    console.log(`   ✅ Found ${functions.length} functions`);
+    
+    res.json({ 
+      success: true, 
+      functions: functions.map(f => f.name || f)
+    });
+    
+  } catch (error) {
+    console.error('Error getting POM functions:', error);
+    res.json({ success: true, functions: [] });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ✨ Parameterized routes MUST come LAST!
 // ═══════════════════════════════════════════════════════════════════════════
@@ -229,9 +388,6 @@ router.get('/navigation/:className', async (req, res) => {
 /**
  * GET /api/poms/:pomName
  * Get details for a specific POM
- * 
- * ⚠️ This route catches any path like /api/poms/ANYTHING
- * So specific routes like /navigation MUST be defined BEFORE this!
  */
 router.get('/:pomName', async (req, res) => {
   try {
@@ -247,26 +403,27 @@ router.get('/:pomName', async (req, res) => {
     const discovery = new POMDiscovery(projectPath);
     await discovery.discover();
 
-    // Get instances for this POM
     const instances = discovery.getInstances(pomName);
     const functions = discovery.getFunctions(pomName);
 
-    // Check if this is a flat POM (no instances)
     const isFlatPOM = instances.length === 0;
 
-    // Get available paths
     const instancePaths = {};
     
     if (isFlatPOM) {
-      // Flat POM - add direct getters to "default" instance
       const directPaths = discovery.getAvailablePaths(pomName);
       if (directPaths.length > 0) {
         instancePaths['default'] = directPaths;
       }
     } else {
-      // Has instances - get paths for each
       for (const instance of instances) {
         instancePaths[instance.name] = discovery.getAvailablePaths(pomName, instance.name); 
+      }
+      
+      const directGetters = discovery.getDirectGetters(pomName);
+      if (directGetters.length > 0) {
+        instancePaths['default'] = directGetters;
+        console.log(`   ✅ Added ${directGetters.length} direct getters to 'default' instance`);
       }
     }
 

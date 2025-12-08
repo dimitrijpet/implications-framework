@@ -140,6 +140,14 @@ export async function getCachedNavigation(projectPath, platform, forceRefresh = 
   return [];
 }
 
+export function clearCache() {
+  console.log('🗑️ Clearing POM cache');
+  POM_CACHE.poms = null;
+  POM_CACHE.navigation = {};
+  POM_CACHE.timestamp = null;
+  POM_CACHE.projectPath = null;
+}
+
 /**
  * Filter cached POMs by platform
  */

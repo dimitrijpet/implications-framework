@@ -1,15 +1,26 @@
 // packages/web-app/src/components/StateGraph/StateDetailModal.jsx
-// ✨ ENHANCED VERSION v2.0 - Full Transition Edit Support
-// Changes: Replaced simple prompts with full AddTransitionModal for editing
+// ✨ COMPLETE VERSION - All Features Restored + Full Transition Editing
+// Features:
+// - TestDataPanel, TestDataLinker, CompositionViewerWithEdit
+// - Full UIScreenEditor with smart diffing
+// - Full AddTransitionModal for editing transitions
+// - DynamicContextFields with add/delete
+// - GenerateTestsButton with discoveryResult
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { getStatusIcon, getStatusColor, getPlatformStyle, defaultTheme } from '../../config/visualizerTheme';
 import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import { useSuggestions } from '../../hooks/useSuggestions';
 import UIScreenEditor from '../UIScreenEditor/UIScreenEditor';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import GenerateTestsButton from '../GenerateTestsButton/GenerateTestsButton';
-import AddTransitionModal from '../AddTransitionModal/AddTransitionModal'; // ✅ NEW IMPORT
+import TestDataPanel from '../TestDataPanel/TestDataPanel';
+import TestDataLinker from '../TestDataLinker/TestDataLinker';
+import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWithEdit';
+import AddTransitionModal from '../AddTransitionModal/AddTransitionModal';
+import TestLockPanel from './TestLockPanel';
+import PathDataFlowPanel from './PathDataFlowPanel';
+
 
 function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -31,8 +42,32 @@ function transformPlatformsData(platforms) {
   return transformed;
 }
 
-export default function StateDetailModal({ state, onClose, theme = defaultTheme, projectPath, discoveryResult, }) {
+function transformMirrorsOnToUiCoverage(mirrorsOnUI) {
+  if (!mirrorsOnUI) return {};
+  
+  const platforms = {};
+  
+  Object.entries(mirrorsOnUI).forEach(([platformName, screens]) => {
+    platforms[platformName] = {
+      displayName: platformName.charAt(0).toUpperCase() + platformName.slice(1),
+      screens: screens  // { searchBar: {...}, RoundTrip: {...} }
+    };
+  });
+  
+  return platforms;
+}
+
+export default function StateDetailModal({ 
+  state, 
+  onClose, 
+  theme = defaultTheme, 
+  projectPath,
+  discoveryResult,
+  loadedTestData  // ← ADD THIS
+}) {
+
   // Edit mode state
+  const [editedScreens, setEditedScreens] = useState(new Set());
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedState, setEditedState] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -43,19 +78,211 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   const [loadingContext, setLoadingContext] = useState(false);
   const [contextChanges, setContextChanges] = useState({});
   
+  // Composition state
+  const [compositionData, setCompositionData] = useState(null);
+  const [isLoadingComposition, setIsLoadingComposition] = useState(false);
+  
   // Context field suggestions
   const [suggestedFields, setSuggestedFields] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   
-  // ✅ NEW: Transition modal state
+  // Transition editing state
   const [showTransitionModal, setShowTransitionModal] = useState(false);
-  const [transitionMode, setTransitionMode] = useState('create'); // 'create' | 'edit'
+  const [transitionMode, setTransitionMode] = useState('create');
   const [editingTransition, setEditingTransition] = useState(null);
   const [editingTransitionIndex, setEditingTransitionIndex] = useState(null);
+  // Update state to use arrays
+const [tagsData, setTagsData] = useState({ screen: [], group: [] });
+const [tagsChanges, setTagsChanges] = useState({});
+const [projectConfig, setProjectConfig] = useState(null);
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
+  // Add new state near the top with other useState calls
+const [storedVariables, setStoredVariables] = useState([]);
 
+ // ✅ PHASE 3.6: Build allStates map with FULL xstateConfig (including actionDetails)
+  const allStatesMap = useMemo(() => {
+    if (!discoveryResult?.files?.implications) return {};
+    
+    const map = {};
+    discoveryResult.files.implications.forEach(imp => {
+      const status = imp.metadata?.status;
+      if (status) {
+        map[status] = {
+          id: status,
+          className: imp.metadata.className,
+          mirrorsOn: imp.metadata.mirrorsOn || {},
+          // ✅ CRITICAL: Include the full xstateConfig with actionDetails!
+          xstateConfig: imp.metadata.xstateConfig || {},
+          meta: imp.metadata
+        };
+      }
+    });
+    console.log(`📦 Built allStatesMap with ${Object.keys(map).length} states`);
+    return map;
+  }, [discoveryResult?.files?.implications]);
+
+  // Get all transitions from discovery
+  const allTransitions = useMemo(() => {
+    return discoveryResult?.transitions || [];
+  }, [discoveryResult?.transitions]);
+
+  // ✅ PHASE 3.6: Compute incoming transitions WITH actionDetails
+  const incomingTransitions = useMemo(() => {
+    if (!allTransitions.length || !state?.meta?.status) return [];
+    
+    const currentStatus = state.meta.status;
+    console.log(`🔍 Finding incoming transitions for "${currentStatus}"...`);
+    
+    // Find all transitions that TARGET this state
+    const incoming = allTransitions.filter(t => {
+      const target = (t.to || t.target || '').toLowerCase();
+      return target === currentStatus.toLowerCase();
+    });
+    
+    console.log(`   Found ${incoming.length} incoming transitions`);
+    
+    // ✅ CRITICAL: Enrich with actionDetails from source state's xstateConfig!
+    const enriched = incoming.map(t => {
+      const sourceState = allStatesMap[t.from];
+      if (!sourceState?.xstateConfig?.on) {
+        console.log(`   ⚠️ No xstateConfig.on for source state "${t.from}"`);
+        return t;
+      }
+      
+      const transitionDef = sourceState.xstateConfig.on[t.event];
+      if (!transitionDef) {
+        console.log(`   ⚠️ Transition "${t.event}" not in ${t.from}.xstateConfig.on`);
+        return t;
+      }
+      
+      // Handle array format (multi-platform)
+      if (Array.isArray(transitionDef)) {
+        const variant = transitionDef.find(v => 
+          v.target?.toLowerCase() === t.to?.toLowerCase()
+        );
+        if (variant?.actionDetails) {
+          console.log(`   ✅ Found actionDetails for ${t.event} (${t.from} → ${t.to}) [array]`);
+          return { ...t, actionDetails: variant.actionDetails };
+        }
+      } else if (transitionDef.actionDetails) {
+        console.log(`   ✅ Found actionDetails for ${t.event} (${t.from} → ${t.to})`);
+        return { ...t, actionDetails: transitionDef.actionDetails };
+      }
+      
+      return t;
+    });
+    
+    // Log what variables we found
+    const varsFound = enriched.flatMap(t => 
+      t.actionDetails?.steps?.filter(s => s.storeAs).map(s => s.storeAs) || []
+    );
+    if (varsFound.length > 0) {
+      console.log(`   💾 Variables from incoming transitions:`, varsFound);
+    }
+    
+    return enriched;
+  }, [allTransitions, state?.meta?.status, allStatesMap]);
+
+const existingTags = useMemo(() => {
+  const screenTags = new Set();
+  const groupTags = new Set();
+  
+  discoveryResult?.files?.implications?.forEach(imp => {
+    const tags = imp.metadata?.xstateConfig?.meta?.tags;
+    
+    // Handle both string and array formats
+    if (tags?.screen) {
+      const screens = Array.isArray(tags.screen) ? tags.screen : [tags.screen];
+      screens.forEach(s => screenTags.add(s));
+    }
+    if (tags?.group) {
+      const groups = Array.isArray(tags.group) ? tags.group : [tags.group];
+      groups.forEach(g => groupTags.add(g));
+    }
+  });
+  
+  return {
+    screen: Array.from(screenTags).sort(),
+    group: Array.from(groupTags).sort()
+  };
+}, [discoveryResult]);
+
+// Add useEffect to fetch config (after other useEffects, around line 180)
+useEffect(() => {
+  if (projectPath) {
+    fetch(`http://localhost:3000/api/discovery/config?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.config) {
+          setProjectConfig(data.config);
+          console.log('📋 Loaded config, platforms:', data.config.platforms);
+        }
+      })
+      .catch(err => console.warn('Failed to load config:', err));
+  }
+}, [projectPath]);
+
+
+const fetchStoredVariables = async () => {
+  const variables = [];
+  
+  console.log('🔍 Collecting stored variables from allStatesMap...');
+  
+  // Use the already-computed allStatesMap instead of API calls
+  Object.entries(allStatesMap).forEach(([stateName, stateData]) => {
+    const xstateOn = stateData.xstateConfig?.on || {};
+    
+    Object.entries(xstateOn).forEach(([event, transData]) => {
+      // Handle array format
+      const transitions = Array.isArray(transData) ? transData : [transData];
+      
+      transitions.forEach(t => {
+        const steps = t.actionDetails?.steps || [];
+        steps.forEach(step => {
+          if (step.storeAs && !variables.find(v => v.path === step.storeAs)) {
+            console.log(`   💾 Found: ${step.storeAs} (${stateName} → ${event})`);
+            variables.push({
+              name: step.storeAs,
+              path: step.storeAs,
+              source: `${stateName}:${event}`,
+              fromState: stateName
+            });
+          }
+        });
+      });
+    });
+  });
+  
+  // Also get from functions with storeAs in current state's mirrorsOn
+  const platforms = state.uiCoverage?.platforms || state.meta?.uiCoverage?.platforms || {};
+  Object.values(platforms).forEach(platform => {
+    const screens = platform.screens || {};
+    Object.values(screens).forEach(screenDef => {
+      const defArray = Array.isArray(screenDef) ? screenDef : [screenDef];
+      defArray.forEach(def => {
+        if (def.functions) {
+          Object.entries(def.functions).forEach(([funcName, funcData]) => {
+            if (funcData.storeAs && !variables.find(v => v.path === funcData.storeAs)) {
+              variables.push({
+                name: funcData.storeAs,
+                path: funcData.storeAs,
+                source: `function:${funcName}`,
+                fromState: state.name
+              });
+            }
+          });
+        }
+      });
+    });
+  });
+  
+  console.log(`📦 Total stored variables found: ${variables.length}`);
+  setStoredVariables(variables);
+};
+
+   // Initialize edited state from props
   useEffect(() => {
     if (state) {
       setEditedState(JSON.parse(JSON.stringify(state)));
@@ -95,18 +322,59 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   }, [state?.files?.implication, isEditMode]);
 
+  // Load composition when modal opens
+  useEffect(() => {
+    if (state?.files?.implication) {
+      loadComposition();
+    }
+  }, [state?.files?.implication]);
+
+  // ✅ Load ALL stored variables from project when modal opens
+useEffect(() => {
+  console.log('🟡 storedVariables useEffect RUNNING:', {
+    hasImplication: !!state?.files?.implication,
+    hasProjectPath: !!projectPath,
+    implication: state?.files?.implication,
+    projectPath
+  });
+  
+  if (state?.files?.implication && projectPath) {
+    console.log('🟢 Conditions met, calling fetchStoredVariables NOW');
+    fetchStoredVariables();
+  } else {
+    console.log('🔴 Conditions NOT met');
+  }
+}, [state?.files?.implication, projectPath]);
+
+
   if (!state) return null;
   
   const currentState = isEditMode ? editedState : state;
   if (!currentState) return null;
+
+  console.log('🔍 currentState.transitions:', currentState.transitions);
+console.log('🔍 currentState.xstateConfig?.on:', currentState.xstateConfig?.on);
+console.log('🔍 currentState.metadata?.xstateConfig?.on:', currentState.metadata?.xstateConfig?.on);
   
   const statusColor = getStatusColor(currentState.name, theme);
   const statusIcon = getStatusIcon(currentState.name, theme);
   const platformStyle = getPlatformStyle(currentState.meta?.platform, theme);
 
+useEffect(() => {
+  const tags = state?.meta?.xstateConfig?.meta?.tags || {};
+  
+  setTagsData({
+    screen: Array.isArray(tags.screen) ? tags.screen : (tags.screen ? [tags.screen] : []),
+    group: Array.isArray(tags.group) ? tags.group : (tags.group ? [tags.group] : [])
+  });
+}, [state]);
+
+
+
   // ========================================
-  // CONTEXT HANDLERS
+  // DATA LOADING FUNCTIONS
   // ========================================
+
 
   const loadContextData = async () => {
     setLoadingContext(true);
@@ -154,8 +422,47 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     }
   };
 
+  const loadComposition = async () => {
+    if (!state?.files?.implication) {
+      console.warn('⚠️ No implication file path');
+      return;
+    }
+    
+    setIsLoadingComposition(true);
+    try {
+      console.log('🔍 Loading composition for:', state.files.implication);
+      
+      const response = await fetch(
+        `http://localhost:3000/api/implications/analyze-composition?filePath=${encodeURIComponent(state.files.implication)}`
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to analyze composition');
+      }
+      
+      console.log('✅ Composition loaded:', data.composition);
+      setCompositionData(data.composition);
+      
+    } catch (error) {
+      console.error('❌ Failed to load composition:', error);
+      setCompositionData(null);
+    } finally {
+      setIsLoadingComposition(false);
+    }
+  };
+
+  // ========================================
+  // CONTEXT HANDLERS
+  // ========================================
+
   const handleContextChange = (fieldName, newValue) => {
-    console.log('📝 handleContextChange:', fieldName, newValue);
+    console.log('🔄 handleContextChange:', fieldName, newValue);
     
     setContextData(prev => ({
       ...prev,
@@ -280,12 +587,40 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
     setHasChanges(true);
   };
 
+  // Update handler - add a tag
+const handleAddTag = (field, value) => {
+  if (!value.trim()) return;
+  if (tagsData[field].includes(value.trim())) return; // No duplicates
+  
+  setTagsData(prev => ({
+    ...prev,
+    [field]: [...prev[field], value.trim()]
+  }));
+  setTagsChanges(prev => ({
+    ...prev,
+    [field]: [...(tagsData[field]), value.trim()]
+  }));
+  setHasChanges(true);
+};
+
+// Remove a tag
+const handleRemoveTag = (field, value) => {
+  setTagsData(prev => ({
+    ...prev,
+    [field]: prev[field].filter(t => t !== value)
+  }));
+  setTagsChanges(prev => ({
+    ...prev,
+    [field]: tagsData[field].filter(t => t !== value)
+  }));
+  setHasChanges(true);
+};
+
   // ========================================
-  // ✅ ENHANCED TRANSITION HANDLERS
+  // TRANSITION HANDLERS
   // ========================================
 
   const handleAddTransition = () => {
-    // ✅ Open full modal in create mode
     setTransitionMode('create');
     setEditingTransition(null);
     setEditingTransitionIndex(null);
@@ -293,6 +628,8 @@ export default function StateDetailModal({ state, onClose, theme = defaultTheme,
   };
 
 const handleEditTransition = async (transition, index) => {
+  console.log('🔴 handleEditTransition START');
+  console.log('🔴 transition param:', JSON.stringify(transition, null, 2));
   console.log('✏️ Editing transition:', transition);
   
   try {
@@ -308,21 +645,23 @@ const handleEditTransition = async (transition, index) => {
       const data = await response.json();
       console.log('✅ Full transition data:', data.transition);
       
-      // ✅ FIX: Build COMPLETE data object BEFORE setting state
       const fullTransitionData = {
         event: transition.event,
         target: data.transition.target || transition.target,
-        platforms: data.transition.platforms,        // ← From API
-        actionDetails: data.transition.actionDetails // ← From API
+        platforms: data.transition.platforms,
+        actionDetails: data.transition.actionDetails,
+        requires: data.transition.requires || {},
+        conditions: data.transition.conditions || null,
+        isObserver: data.transition.isObserver || false,  // ← ADD THIS
+        mode: data.transition.mode || null                 // ← ADD THIS
       };
       
       console.log('📦 Setting editingTransition:', fullTransitionData);
       
-      // ✅ Set ALL state in correct order
       setTransitionMode('edit');
-      setEditingTransition(fullTransitionData);  // Full data!
+      setEditingTransition(fullTransitionData);
       setEditingTransitionIndex(index);
-      setShowTransitionModal(true);  // Open modal LAST
+      setShowTransitionModal(true);
       
     } else {
       console.warn('⚠️ Could not fetch full data, using basic transition');
@@ -340,122 +679,165 @@ const handleEditTransition = async (transition, index) => {
   }
 };
 
-  const handleRemoveTransition = async (index) => {
-    const transition = currentState.transitions[index];
+const handleRemoveTransition = async (index) => {
+  const transition = currentState.transitions[index];
+  
+  if (!window.confirm(`Delete transition "${transition.event}"?`)) {
+    return;
+  }
+
+  console.log('🗑️ Deleting transition:', transition);
+
+  try {
+    // ✅ Get the target file path
+    const targetStateName = transition.target;
+    let targetFile = null;
     
-    if (!window.confirm(`Delete transition "${transition.event}"?`)) {
-      return;
+    if (discoveryResult?.files?.implications) {
+      const targetImp = discoveryResult.files.implications.find(imp => {
+        const impStateName = imp.metadata?.xstateConfig?.id || 
+          imp.metadata?.className?.replace(/Implications$/, '')
+            .replace(/([A-Z])/g, '_$1')
+            .toLowerCase()
+            .replace(/^_/, '');
+        return impStateName === targetStateName;
+      });
+      if (targetImp) {
+        targetFile = projectPath + '/' + targetImp.path;
+      }
+    }
+    
+    console.log('🎯 Target file for setup removal:', targetFile);
+
+    const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceFile: state.files.implication,
+        targetFile: targetFile,  // ✅ ADD THIS
+        event: transition.event
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to delete transition');
     }
 
-    console.log('🗑️ Deleting transition:', transition);
+    console.log('✅ Transition deleted from file');
 
-    try {
-      const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
+    setEditedState(prev => ({
+      ...prev,
+      transitions: prev.transitions.filter((_, i) => i !== index)
+    }));
+    
+    setHasChanges(true);
+
+    if (window.refreshDiscovery) {
+      console.log('🔄 Refreshing discovery...');
+      await window.refreshDiscovery();
+    }
+
+    alert('✅ Transition deleted successfully!');
+
+  } catch (error) {
+    console.error('❌ Delete failed:', error);
+    alert(`❌ Failed to delete transition: ${error.message}`);
+  }
+};
+
+  const handleTagChange = (field, value) => {
+  setTagsData(prev => ({ ...prev, [field]: value }));
+  setTagsChanges(prev => ({ ...prev, [field]: value }));
+  setHasChanges(true);
+};
+
+const handleTransitionSubmit = async (transitionData) => {
+  console.log('💾 Saving transition:', transitionMode, transitionData);
+
+  try {
+    if (transitionMode === 'create') {
+      console.warn('⚠️ Create mode called from detail modal - should use visualizer');
+      alert('Please use the graph to create transitions');
+      return;
+      
+    } else {
+      // ✅ Get the target file path from the transition target
+      const targetStateName = transitionData.target || editingTransition.target;
+      
+      let targetFile = null;
+      if (discoveryResult?.files?.implications) {
+        const targetImp = discoveryResult.files.implications.find(imp => {
+          const impStateName = imp.metadata?.xstateConfig?.id || 
+            imp.metadata?.className?.replace(/Implications$/, '')
+              .replace(/([A-Z])/g, '_$1')
+              .toLowerCase()
+              .replace(/^_/, '');
+          return impStateName === targetStateName;
+        });
+        if (targetImp) {
+          targetFile = projectPath + '/' + targetImp.path;
+        }
+      }
+      
+      console.log('🎯 Target file for setup update:', targetFile);
+      
+      const response = await fetch('http://localhost:3000/api/implications/update-transition', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceFile: state.files.implication,
-          event: transition.event
+          targetFile: targetFile,
+          oldEvent: editingTransition.event,
+          newEvent: transitionData.event,
+          newTarget: transitionData.target || editingTransition.target,
+          platform: transitionData.platform,
+          actionDetails: transitionData.actionDetails,
+          requires: transitionData.requires,
+          conditions: transitionData.conditions
         })
       });
-
+      
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to delete transition');
+        throw new Error(error.error || 'Failed to update transition');
       }
 
-      console.log('✅ Transition deleted from file');
+      console.log('✅ Transition updated in file');
 
-      // Update local state
       setEditedState(prev => ({
         ...prev,
-        transitions: prev.transitions.filter((_, i) => i !== index)
+        transitions: prev.transitions.map((t, i) => 
+          i === editingTransitionIndex 
+            ? {
+                event: transitionData.event,
+                target: transitionData.target || editingTransition.target,
+                platform: transitionData.platform,
+                actionDetails: transitionData.actionDetails,
+                requires: transitionData.requires,
+                conditions: transitionData.conditions
+              }
+            : t
+        )
       }));
       
       setHasChanges(true);
 
-      // Refresh discovery
       if (window.refreshDiscovery) {
         console.log('🔄 Refreshing discovery...');
         await window.refreshDiscovery();
       }
 
-      alert('✅ Transition deleted successfully!');
-
-    } catch (error) {
-      console.error('❌ Delete failed:', error);
-      alert(`❌ Failed to delete transition: ${error.message}`);
+      alert('✅ Transition updated successfully!');
     }
-  };
 
-  // ✅ NEW: Handle transition modal submit
-  const handleTransitionSubmit = async (transitionData) => {
-    console.log('💾 Saving transition:', transitionMode, transitionData);
+    setShowTransitionModal(false);
 
-    try {
-      if (transitionMode === 'create') {
-        // ✅ CREATE MODE: Use add-transition endpoint
-        // Note: This is called from visualizer, not from detail modal
-        // So we shouldn't reach here. But keeping for safety.
-        console.warn('⚠️ Create mode called from detail modal - should use visualizer');
-        alert('Please use the graph to create transitions');
-        return;
-        
-      } else {
-        // ✅ EDIT MODE: Use update-transition endpoint
-        const response = await fetch('http://localhost:3000/api/implications/update-transition', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sourceFile: state.files.implication,
-            oldEvent: editingTransition.event,
-            newEvent: transitionData.event,
-            newTarget: transitionData.target || editingTransition.target,
-            platform: transitionData.platform,
-            actionDetails: transitionData.actionDetails
-          })
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to update transition');
-        }
-
-        console.log('✅ Transition updated in file');
-
-        // Update local state
-        setEditedState(prev => ({
-          ...prev,
-          transitions: prev.transitions.map((t, i) => 
-            i === editingTransitionIndex 
-              ? {
-                  event: transitionData.event,
-                  target: transitionData.target || editingTransition.target,
-                  platform: transitionData.platform,
-                  actionDetails: transitionData.actionDetails
-                }
-              : t
-          )
-        }));
-        
-        setHasChanges(true);
-
-        // Refresh discovery
-        if (window.refreshDiscovery) {
-          console.log('🔄 Refreshing discovery...');
-          await window.refreshDiscovery();
-        }
-
-        alert('✅ Transition updated successfully!');
-      }
-
-      setShowTransitionModal(false);
-
-    } catch (error) {
-      console.error('❌ Save failed:', error);
-      alert(`❌ Failed to save transition: ${error.message}`);
-    }
-  };
+  } catch (error) {
+    console.error('❌ Save failed:', error);
+    alert(`❌ Failed to save transition: ${error.message}`);
+  }
+};
 
   // ========================================
   // SUGGESTION HANDLERS
@@ -493,6 +875,10 @@ const handleEditTransition = async (transition, index) => {
     }
   };
 
+  // ========================================
+  // SAVE HANDLER
+  // ========================================
+
 const handleSave = async () => {
   setIsSaving(true);
   
@@ -500,14 +886,8 @@ const handleSave = async () => {
     console.log('💾 Starting save process...');
     console.log('📦 Context changes to save:', contextChanges);
     
-    // ✅ FIXED: Only check metadata changes, NOT transitions
-    // Transitions are handled separately via dedicated modals/endpoints
     const hasMetadataChanges = JSON.stringify(editedState.meta) !== JSON.stringify(state.meta);
     
-    // ✅ REMOVED: Don't compare transitions here anymore
-    // const hasTransitionChanges = JSON.stringify(editedState.transitions) !== JSON.stringify(state.transitions);
-    
-    // 1. Save metadata (ONLY if changed)
     if (hasMetadataChanges) {
       console.log('1️⃣ Saving metadata changes...');
       const metadataResponse = await fetch('http://localhost:3000/api/implications/update-metadata', {
@@ -516,9 +896,6 @@ const handleSave = async () => {
         body: JSON.stringify({
           filePath: state.files.implication,
           metadata: editedState.meta
-          // ✅ REMOVED: transitions: editedState.transitions
-          // Transitions should NEVER be sent to update-metadata!
-          // They are managed via /add-transition, /update-transition, /delete-transition
         })
       });
 
@@ -531,8 +908,28 @@ const handleSave = async () => {
     } else {
       console.log('⏭️ No metadata changes, skipping metadata save');
     }
+
+    // Save tags if changed
+    if (Object.keys(tagsChanges).length > 0) {
+      console.log('🏷️ Saving tags changes...');
+      
+      const tagsResponse = await fetch('http://localhost:3000/api/implications/update-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          tags: tagsData
+        })
+      });
+      
+      if (!tagsResponse.ok) {
+        const result = await tagsResponse.json();
+        throw new Error(result.error || 'Failed to save tags');
+      }
+      
+      console.log('✅ Tags saved');
+    }
     
-    // 2. Save context changes (if any)
     if (Object.keys(contextChanges).length > 0) {
       console.log('2️⃣ Saving context changes...');
       
@@ -555,25 +952,24 @@ const handleSave = async () => {
       console.log('⏭️ No context changes, skipping context save');
     }
     
-    // Check if anything was actually saved
-    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0) {
+    // ✅ FIX 1: Include tagsChanges in the check
+    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0 && Object.keys(tagsChanges).length === 0) {
       alert('ℹ️ No changes to save');
       setIsSaving(false);
       return;
     }
-      
-    // Success!
+    
     alert('✅ Changes saved successfully!');
     setHasChanges(false);
-    setIsEditMode(false);
     setContextChanges({});
+    setTagsChanges({});  // ✅ FIX 2: Reset tagsChanges
+    setIsEditMode(false);
     
-    // Reload to show updated data
-    window.location.reload();
+    await loadContextData();
     
   } catch (error) {
     console.error('❌ Save failed:', error);
-    alert(`❌ Save failed: ${error.message}`);
+    alert(`❌ Failed to save: ${error.message}`);
   } finally {
     setIsSaving(false);
   }
@@ -583,16 +979,46 @@ const handleSave = async () => {
   // UI EDITOR HANDLERS
   // ========================================
 
-  const handleUIUpdate = async (uiData) => {
-    console.log('💾 handleUIUpdate received:', uiData);
-    
-    try {
+ const handleUIUpdate = async (uiData, editedScreensSet) => {
+  console.log('💾 handleUIUpdate received:', uiData);
+  console.log('✏️ Edited screens:', editedScreensSet ? Array.from(editedScreensSet) : 'none');
+  
+  try {
+    const filteredUI = {};
+
+    // ✅ FIX 1: Use uiData (the parameter) not editedUI (undefined variable)
+    // ✅ FIX 2: Convert Set to Array or use .has() for Set
+    const editedScreensArray = Array.from(editedScreensSet || []);
+
+    Object.entries(uiData).forEach(([platform, platformData]) => {  // ← uiData not editedUI
+      const platformScreens = {};
+      let hasIncludedScreens = false;
+
+      Object.entries(platformData.screens || {}).forEach(([screenName, screenData]) => {
+        const fullScreenKey = `${platform}.${screenName}`;
+        if (editedScreensArray.includes(fullScreenKey)) {  // ← use array's .includes()
+          console.log(`✅ Including screen ${fullScreenKey}`);
+          platformScreens[screenName] = screenData;  // This part is correct
+          hasIncludedScreens = true;
+        }
+      });
+
+      if (hasIncludedScreens) {
+        filteredUI[platform] = {
+          ...platformData,
+          screens: platformScreens
+        };
+      }
+    });
+
+    console.log('✅ Filtered UI:', filteredUI);
+      
       const response = await fetch('http://localhost:3000/api/implications/update-ui', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           filePath: state.files.implication,
-          uiData: uiData
+          uiData: filteredUI
         })
       });
 
@@ -601,31 +1027,50 @@ const handleSave = async () => {
         throw new Error(error.error || 'Failed to update UI');
       }
 
-      console.log('✅ UI updated successfully');
-      alert('✅ UI screens updated!');
-      
-      if (window.refreshDiscovery) {
-        await window.refreshDiscovery();
-      }
-      
+      alert('✅ UI screens updated successfully!');
     } catch (error) {
       console.error('❌ UI update failed:', error);
       alert(`❌ Failed to update UI: ${error.message}`);
     }
   };
 
-  const handleCancel = () => {
-    if (hasChanges) {
-      if (window.confirm('Discard unsaved changes?')) {
-        setEditedState(JSON.parse(JSON.stringify(state)));
-        setContextChanges({});
-        setHasChanges(false);
-        setIsEditMode(false);
-      }
-    } else {
-      setIsEditMode(false);
+  const handleCompositionUpdated = async (saveResult) => {
+    console.log('✅ Composition updated:', saveResult);
+    
+    try {
+      await loadComposition();
+      await loadMirrorsOnSuggestions();
+      alert('✅ Composition updated and refreshed!');
+    } catch (error) {
+      console.error('Failed to refresh after composition update:', error);
+      alert('⚠️ Changes saved but failed to refresh display. Please reload.');
     }
   };
+
+  const handleFieldsSelected = async (fields) => {
+    console.log('✅ User selected fields:', fields);
+    
+    for (const field of fields) {
+      await fetch('http://localhost:3000/api/implications/add-context-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: state.files.implication,
+          fieldName: field.field,
+          initialValue: null,
+          fieldType: typeof field.value
+        })
+      });
+    }
+    
+    await loadContextData();
+    alert(`✅ Added ${fields.length} fields to context!`);
+  };
+
+  const handleAnalysisComplete = (analysis) => {
+    console.log('📊 Analysis complete:', analysis);
+  };
+
 
   // ========================================
   // RENDER
@@ -633,199 +1078,452 @@ const handleSave = async () => {
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-        style={{ backgroundColor: 'rgba(0, 0, 0, 0.85)' }}
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
         onClick={onClose}
       >
         <div
-          className="relative w-full max-w-6xl max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl"
-          style={{
-            backgroundColor: theme.colors.background.primary,
+          className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl"
+          style={{ 
+            background: theme.colors.background.primary,
             border: `2px solid ${statusColor}`
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div
-            className="sticky top-0 z-10 px-6 py-4 border-b backdrop-blur-sm"
-            style={{
-              backgroundColor: `${theme.colors.background.primary}f0`,
+          {/* HEADER */}
+          <div 
+            className="sticky top-0 z-10 p-6 border-b"
+            style={{ 
+              background: `${statusColor}15`,
               borderColor: statusColor
             }}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <span className="text-4xl">{statusIcon}</span>
-                <div>
-                  <h2
-                    className="text-2xl font-bold"
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-4xl">{statusIcon}</span>
+                  <h2 
+                    className="text-3xl font-bold"
                     style={{ color: statusColor }}
                   >
                     {currentState.name}
                   </h2>
-                  {currentState.meta?.status && (
-                    <p
+                  {platformStyle && (
+                    <span 
+                      className="px-3 py-1 rounded-full text-sm font-semibold"
+                      style={{ 
+                        background: `${platformStyle.color}20`,
+                        color: platformStyle.color,
+                        border: `2px solid ${platformStyle.color}`
+                      }}
+                    >
+                      {platformStyle.icon} {currentState.meta?.platform || 'web'}
+                    </span>
+                  )}
+                </div>
+                {currentState.meta?.status && (
+                  <div 
+                    className="text-lg font-semibold"
+                    style={{ color: theme.colors.text.secondary }}
+                  >
+                    Status: {currentState.meta.status}
+                  </div>
+                )}
+              </div>
+              
+              <button
+                onClick={onClose}
+                className="p-2 rounded-lg transition hover:brightness-110"
+                style={{ 
+                  background: theme.colors.background.tertiary,
+                  color: theme.colors.text.primary
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={handleEditToggle}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                style={{ 
+                  background: isEditMode ? theme.colors.accents.red : theme.colors.accents.blue,
+                  color: 'white'
+                }}
+              >
+                {isEditMode ? '❌ Cancel Edit' : '✏️ Edit State'}
+              </button>
+              
+              {isEditMode && (
+                <button
+                  onClick={handleSave}
+                  disabled={!hasChanges || isSaving}
+                  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                  style={{ 
+                    background: hasChanges ? theme.colors.accents.green : theme.colors.background.tertiary,
+                    color: hasChanges ? 'white' : theme.colors.text.tertiary,
+                    opacity: hasChanges ? 1 : 0.5,
+                    cursor: hasChanges ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  {isSaving ? '💾 Saving...' : '💾 Save Changes'}
+                </button>
+              )}
+              
+              {hasChanges && (
+                <span 
+                  className="px-3 py-2 rounded-lg text-sm font-semibold"
+                  style={{ 
+                    background: `${theme.colors.accents.orange}20`,
+                    color: theme.colors.accents.orange
+                  }}
+                >
+                  ⚠️ Unsaved Changes
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* CONTENT */}
+          <div className="p-6 space-y-8">
+
+            {/* INTELLIGENT FIELD SUGGESTIONS */}
+            <div>
+              <h3 
+                className="text-xl font-bold mb-3"
+                style={{ color: theme.colors.accents.blue }}
+              >
+                🧠 Intelligent Field Suggestions
+              </h3>
+              
+              <TestDataLinker
+                stateName={state.name}
+                projectPath={projectPath}
+                implicationPath={state.files.implication}
+                theme={theme}
+                existingContext={contextData}
+                onFieldsSelected={handleFieldsSelected}
+                onAnalysisComplete={handleAnalysisComplete}
+              />
+            </div>
+            
+            {/* CONTEXT FIELDS */}
+            {(contextData || loadingContext) && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 
+                      className="text-2xl font-bold mb-1"
+                      style={{ color: theme.colors.accents.blue }}
+                    >
+                      📦 Context Fields
+                      {contextData && Object.keys(contextData).length > 0 && (
+                        <span 
+                          className="text-base font-normal ml-3"
+                          style={{ color: theme.colors.text.tertiary }}
+                        >
+                          ({Object.keys(contextData).length} {Object.keys(contextData).length === 1 ? 'field' : 'fields'})
+                        </span>
+                      )}
+                    </h2>
+                    <div 
                       className="text-sm"
                       style={{ color: theme.colors.text.secondary }}
                     >
-                      Status: {currentState.meta.status}
-                    </p>
-                  )}
+                      Data accumulated through workflow (from xstateConfig.context)
+                    </div>
+                  </div>
                 </div>
+                
+                {loadingContext ? (
+                  <div 
+                    className="glass p-8 rounded-lg text-center"
+                    style={{ color: theme.colors.text.tertiary }}
+                  >
+                    <div className="text-4xl mb-2">⏳</div>
+                    <div>Loading context fields...</div>
+                  </div>
+                ) : contextData ? (
+                  <DynamicContextFields
+                    contextData={contextData}
+                    onFieldChange={handleContextChange}
+                    onFieldAdd={isEditMode ? handleAddContextField : null}
+                    onFieldDelete={isEditMode ? handleDeleteContextField : null}
+                    suggestedFields={isEditMode ? suggestedFields : []}
+                    theme={theme}
+                    editable={isEditMode}
+                    compact={false}
+                  />
+                ) : (
+                  <div 
+                    className="glass p-8 rounded-lg text-center"
+                    style={{ color: theme.colors.text.tertiary }}
+                  >
+                    <div className="text-4xl mb-2">📭</div>
+                    <div className="font-semibold mb-1">No Context Fields</div>
+                    <div className="text-sm">This state machine has no context defined</div>
+                  </div>
+                )}
               </div>
+            )}
+
+            {/* TEST DATA REQUIREMENTS */}
+            <div>
+              <h2 
+                className="text-2xl font-bold mb-4"
+                style={{ color: theme.colors.accents.purple }}
+              >
+                📊 Test Data Requirements
+              </h2>
               
-              <div className="flex items-center gap-2">
-                {!isEditMode ? (
+              <TestDataPanel
+                state={currentState}
+                projectPath={projectPath}
+                theme={theme}
+              />
+            </div>
+            
+            {/* COMPOSITION ARCHITECTURE */}
+            <div>
+              <h2 
+                className="text-2xl font-bold mb-4"
+                style={{ color: theme.colors.accents.purple }}
+              >
+                🧩 Composition Architecture
+              </h2>
+              
+              {!state?.files?.implication ? (
+                <div 
+                  className="p-8 rounded-lg text-center"
+                  style={{ 
+                    background: theme.colors.background.secondary,
+                    color: theme.colors.text.tertiary 
+                  }}
+                >
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>📂</div>
+                  <div>No implication file path available</div>
+                </div>
+              ) : isLoadingComposition ? (
+                <div 
+                  className="p-8 rounded-lg text-center"
+                  style={{ 
+                    background: theme.colors.background.secondary,
+                    color: theme.colors.text.tertiary 
+                  }}
+                >
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>⏳</div>
+                  <div>Loading composition...</div>
+                </div>
+              ) : compositionData ? (
+                <CompositionViewerWithEdit
+                  compositionData={compositionData}
+                  theme={theme}
+                  implicationPath={state.files.implication}
+                  onCompositionUpdated={handleCompositionUpdated}
+                />
+              ) : (
+                <div 
+                  className="p-8 rounded-lg text-center"
+                  style={{ 
+                    background: theme.colors.background.secondary,
+                    color: theme.colors.text.tertiary 
+                  }}
+                >
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>❌</div>
+                  <div className="font-semibold mb-2">Failed to load composition</div>
                   <button
-                    onClick={handleEditToggle}
-                    className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+                    onClick={loadComposition}
+                    className="mt-4 px-4 py-2 rounded-lg font-semibold hover:brightness-110 transition"
                     style={{
                       background: theme.colors.accents.blue,
                       color: 'white'
                     }}
                   >
-                    ✏️ Edit
+                    🔄 Retry
                   </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={handleSave}
-                      disabled={!hasChanges || isSaving}
-                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                      style={{
-                        background: hasChanges ? theme.colors.accents.green : theme.colors.background.tertiary,
-                        color: 'white',
-                        opacity: (!hasChanges || isSaving) ? 0.5 : 1
-                      }}
-                    >
-                      {isSaving ? '⏳ Saving...' : '💾 Save'}
-                    </button>
-                    <button
-                      onClick={handleCancel}
-                      disabled={isSaving}
-                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                      style={{
-                        background: theme.colors.accents.red,
-                        color: 'white',
-                        opacity: isSaving ? 0.5 : 1
-                      }}
-                    >
-                      ✕ Cancel
-                    </button>
-                  </>
-                )}
-                
-                <button
-                  onClick={onClose}
-                  className="text-3xl font-bold px-3 py-1 rounded-lg transition"
-                  style={{
-                    color: theme.colors.accents.red,
-                    backgroundColor: 'transparent'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = `${theme.colors.accents.red}20`}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                >
-                  ×
-                </button>
-              </div>
+                </div>
+              )}
             </div>
-          </div>
+{/* TAGS */}
+<div className="flex flex-wrap gap-4 mt-2">
+  {/* Screen Tags */}
+  <div className="flex flex-wrap items-center gap-2">
+    <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>🖥️ Screen:</span>
+    {tagsData.screen.map(tag => (
+      <span
+        key={tag}
+        className="px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1"
+        style={{
+          background: `${theme.colors.accents.purple}20`,
+          color: theme.colors.accents.purple,
+          border: `1px solid ${theme.colors.accents.purple}`
+        }}
+      >
+        {tag}
+        {isEditMode && (
+          <button
+            onClick={() => handleRemoveTag('screen', tag)}
+            className="ml-1 hover:opacity-70"
+          >
+            ×
+          </button>
+        )}
+      </span>
+    ))}
+    {isEditMode && (
+      <input
+        type="text"
+        list="screen-tags-list"
+        placeholder="+ Add screen"
+        className="px-2 py-1 rounded text-xs"
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${theme.colors.border}`,
+          color: theme.colors.text.primary,
+          width: '120px'
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleAddTag('screen', e.target.value);
+            e.target.value = '';
+          }
+        }}
+        onBlur={(e) => {
+          if (e.target.value) {
+            handleAddTag('screen', e.target.value);
+            e.target.value = '';
+          }
+        }}
+      />
+    )}
+    <datalist id="screen-tags-list">
+      {existingTags.screen.filter(t => !tagsData.screen.includes(t)).map(tag => (
+        <option key={tag} value={tag} />
+      ))}
+    </datalist>
+  </div>
 
-          {/* Content */}
-          <div className="p-6 space-y-6">
-            {/* Metadata Section */}
-            {currentState.meta && Object.keys(currentState.meta).length > 0 && (
-              <div>
-                <h2
-                  className="text-2xl font-bold mb-4"
-                  style={{ color: theme.colors.accents.purple }}
-                >
-                  📊 Metadata
-                </h2>
-                
-                {(() => {
-                  const groups = categorizeFields(currentState.meta);
-                  
-                  return Object.entries(groups).map(([groupName, fields]) => (
-                    <div key={groupName} className="mb-4">
-                      <h3
-                        className="text-lg font-semibold mb-2"
-                        style={{ color: theme.colors.text.secondary }}
-                      >
-                        {groupName}
-                      </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {fields.map(([key, value]) => (
-                          <MetadataField
-                            key={key}
-                            fieldName={key}
-                            value={value}
-                            theme={theme}
-                            platformStyle={platformStyle}
-                            canEdit={isEditMode}
-                            onSave={(newValue) => handleMetadataChange(key, newValue)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-            )}
+  {/* Group Tags */}
+  <div className="flex flex-wrap items-center gap-2">
+    <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>📁 Group:</span>
+    {tagsData.group.map(tag => (
+      <span
+        key={tag}
+        className="px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1"
+        style={{
+          background: `${theme.colors.accents.orange}20`,
+          color: theme.colors.accents.orange,
+          border: `1px solid ${theme.colors.accents.orange}`
+        }}
+      >
+        {tag}
+        {isEditMode && (
+          <button
+            onClick={() => handleRemoveTag('group', tag)}
+            className="ml-1 hover:opacity-70"
+          >
+            ×
+          </button>
+        )}
+      </span>
+    ))}
+    {isEditMode && (
+      <input
+        type="text"
+        list="group-tags-list"
+        placeholder="+ Add group"
+        className="px-2 py-1 rounded text-xs"
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${theme.colors.border}`,
+          color: theme.colors.text.primary,
+          width: '120px'
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleAddTag('group', e.target.value);
+            e.target.value = '';
+          }
+        }}
+        onBlur={(e) => {
+          if (e.target.value) {
+            handleAddTag('group', e.target.value);
+            e.target.value = '';
+          }
+        }}
+      />
+    )}
+    <datalist id="group-tags-list">
+      {existingTags.group.filter(t => !tagsData.group.includes(t)).map(tag => (
+        <option key={tag} value={tag} />
+      ))}
+    </datalist>
+  </div>
 
-            {/* Context Section */}
-            {contextData && (
-              <div>
-                <h2
-                  className="text-2xl font-bold mb-4"
-                  style={{ color: theme.colors.accents.yellow }}
-                >
-                  🔧 Context Data
-                </h2>
-                
-                {loadingContext ? (
-                  <p style={{ color: theme.colors.text.secondary }}>Loading...</p>
-                ) : Object.keys(contextData).length === 0 ? (
-                  <p style={{ color: theme.colors.text.secondary }}>No context fields defined</p>
-                ) : (
-                  <DynamicContextFields
-                    contextData={contextData}
-                    onChange={handleContextChange}
-                    onAddField={handleAddContextField}
-                    onDeleteField={handleDeleteContextField}
-                    suggestedFields={suggestedFields}
-                    isEditMode={isEditMode}
-                    theme={theme}
-                  />
-                )}
-              </div>
-            )}
+  {/* Empty state */}
+  {!isEditMode && tagsData.screen.length === 0 && tagsData.group.length === 0 && (
+    <span className="text-xs italic" style={{ color: theme.colors.text.tertiary }}>
+      No tags (click Edit to add)
+    </span>
+  )}
+</div>
 
-            {/* UI Coverage Section */}
-            {currentState.platforms && Object.keys(currentState.platforms).length > 0 && (
-              <div>
-                <h2
-                  className="text-2xl font-bold mb-4"
-                  style={{ color: theme.colors.accents.green }}
-                >
-                  🖥️ UI Coverage
-                </h2>
-                
-                <UIScreenEditor
-                  platforms={currentState.platforms}
-                  onUpdate={handleUIUpdate}
-                  isEditMode={isEditMode}
-                  theme={theme}
-                />
-              </div>
-            )}
+{(() => {
+  console.log('🗺️ allStatesMap keys:', Object.keys(allStatesMap));
+  console.log('🗺️ allStatesMap["logged_in"]:', allStatesMap['logged_in']);
+  console.log('🗺️ allStatesMap["logged_in"]?.xstateConfig?.on:', allStatesMap['logged_in']?.xstateConfig?.on);
+  return null;
+})()}
 
-            {/* Transitions Section */}
+{/* PATH ANALYSIS */}
+<PathDataFlowPanel
+  currentState={currentState}
+  allTransitions={allTransitions}
+  allStates={allStatesMap}
+  startState="initial"
+  theme={theme}
+  loadedTestData={loadedTestData}  // ← ADD THIS
+/>
+            
+            {/* UI SCREENS */}
+            <div>
+              <h2 
+                className="text-2xl font-bold mb-4"
+                style={{ color: theme.colors.accents.purple }}
+              >
+                📱 UI Screens
+              </h2>
+
+               {/* DEBUG - remove after */}
+{console.log('🔍 FULL currentState:', JSON.stringify(currentState, null, 2))}    
+<UIScreenEditor
+  state={{
+    ...currentState,
+    filePath: state.files.implication,
+    uiCoverage: currentState.meta?.uiCoverage || currentState.uiCoverage || {
+      platforms: transformMirrorsOnToUiCoverage(currentState.mirrorsOn?.UI)
+    }
+  }}
+  projectPath={projectPath}
+  theme={theme}
+  storedVariables={storedVariables}
+  incomingTransitions={incomingTransitions}
+  allStates={allStatesMap}
+  allTransitions={allTransitions}
+  onSave={handleUIUpdate}
+  onCancel={() => console.log('UI edit cancelled')}
+/>
+            </div>
+
+            {/* TRANSITIONS */}
             {currentState.transitions && currentState.transitions.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2
+                  <h2 
                     className="text-2xl font-bold"
                     style={{ color: theme.colors.accents.green }}
                   >
@@ -846,39 +1544,106 @@ const handleSave = async () => {
                   )}
                 </div>
                 
-                <div className="grid grid-cols-1 gap-3">
-                  {currentState.transitions.map((transition, index) => (
-                    <TransitionCard
-                      key={index}
-                      transition={transition}
-                      theme={theme}
-                      editable={isEditMode}
-                      onEdit={() => handleEditTransition(transition, index)}
-                      onRemove={() => handleRemoveTransition(index)}
-                    />
+                <div className="space-y-2">
+                  {currentState.transitions.map((transition, idx) => (
+                    <div 
+                      key={idx}
+                      className="p-3 rounded flex items-center justify-between group"
+                      style={{ 
+                        background: `${theme.colors.background.tertiary}80`,
+                        border: `1px solid ${theme.colors.border}`
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span 
+                          className="px-2 py-1 rounded text-xs font-mono"
+                          style={{ 
+                            background: theme.colors.accents.blue,
+                            color: 'white'
+                          }}
+                        >
+                          {transition.event}
+                        </span>
+                        <span style={{ color: theme.colors.text.secondary }}>→</span>
+                        <span style={{ color: theme.colors.text.primary }}>
+                          {transition.target}
+                        </span>
+                      </div>
+                      
+                      {isEditMode && (
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                          <button
+                            onClick={() => handleEditTransition(transition, idx)}
+                            className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+                            style={{
+                              background: theme.colors.accents.blue,
+                              color: 'white'
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button
+                            onClick={() => handleRemoveTransition(idx)}
+                            className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
+                            style={{
+                              background: theme.colors.accents.red,
+                              color: 'white'
+                            }}
+                          >
+                            🗑️ Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
             )}
-
-         {/* Test Generation Section */}
+{/* TEST LOCKS */}
 <div>
-  <h2
+  <h2 
     className="text-2xl font-bold mb-4"
-    style={{ color: theme.colors.accents.blue }}
+    style={{ color: theme.colors.accents.orange }}
   >
-    🧪 Test Generation
+    🔒 Test Locks
   </h2>
-  <GenerateTestsButton 
-    state={state} 
+  <p 
+    className="text-sm mb-4"
+    style={{ color: theme.colors.text.secondary }}
+  >
+    Lock tests to prevent them from being overwritten during regeneration.
+  </p>
+  
+  <TestLockPanel 
+    state={currentState}
     projectPath={projectPath}
-    discoveryResult={discoveryResult}  // ← ADD THIS
+    theme={theme}
+    incomingTransitions={incomingTransitions}  // ← ADD THIS
   />
 </div>
-            {/* Suggestions Panel */}
+
+
+            {/* TEST GENERATION */}
+            <div>
+              <h2 
+                className="text-2xl font-bold mb-4"
+                style={{ color: theme.colors.accents.green }}
+              >
+                🧪 Test Generation
+              </h2>
+              
+              <GenerateTestsButton 
+                state={state} 
+                projectPath={projectPath}
+                theme={theme}
+                discoveryResult={discoveryResult}
+              />
+            </div>
+            
+            {/* SUGGESTIONS PANEL */}
             {isEditMode && analysis && !suggestionsLoading && (
               <div>
-                <h2
+                <h2 
                   className="text-2xl font-bold mb-4"
                   style={{ color: theme.colors.accents.yellow }}
                 >
@@ -893,29 +1658,36 @@ const handleSave = async () => {
                 />
               </div>
             )}
-
-            {/* Files Section */}
+            
+            {/* FILES */}
             {currentState.files && (
               <div>
-                <h2
+                <h2 
                   className="text-2xl font-bold mb-4"
-                  style={{ color: theme.colors.text.secondary }}
+                  style={{ color: theme.colors.text.tertiary }}
                 >
                   📁 Files
                 </h2>
                 
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {currentState.files.implication && (
                     <FileCard
-                      label="Implication"
+                      label="Implication File"
                       path={currentState.files.implication}
                       theme={theme}
                     />
                   )}
-                  {currentState.files.test && (
+                  {currentState.files.screen && (
                     <FileCard
-                      label="Unit Test"
-                      path={currentState.files.test}
+                      label="Screen File"
+                      path={currentState.files.screen}
+                      theme={theme}
+                    />
+                  )}
+                  {currentState.files.section && (
+                    <FileCard
+                      label="Section File"
+                      path={currentState.files.section}
                       theme={theme}
                     />
                   )}
@@ -926,19 +1698,22 @@ const handleSave = async () => {
         </div>
       </div>
 
-      {/* ✅ NEW: Full Transition Edit Modal */}
+      {/* Transition Edit Modal */}
       {showTransitionModal && (
-        <AddTransitionModal
-          isOpen={showTransitionModal}
-          onClose={() => setShowTransitionModal(false)}
-          onSubmit={handleTransitionSubmit}
-          sourceState={state}
-          targetState={null}
-          projectPath={projectPath}
-          mode={transitionMode}
-          initialData={editingTransition}
-        />
-      )}
+  <AddTransitionModal
+    isOpen={showTransitionModal}
+    onClose={() => setShowTransitionModal(false)}
+    onSubmit={handleTransitionSubmit}
+    sourceState={state}
+    targetState={null}
+    projectPath={projectPath}
+    mode={transitionMode}
+    initialData={editingTransition}
+    availablePlatforms={projectConfig?.platforms || ["web"]}
+    storedVariables={storedVariables}
+  />
+)}
+
     </>
   );
 }
@@ -947,342 +1722,21 @@ const handleSave = async () => {
 // HELPER COMPONENTS
 // ========================================
 
-function MetadataField({ fieldName, value, theme, platformStyle, canEdit, onSave }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState(value);
-
-  const handleSave = () => {
-    onSave(editValue);
-    setIsEditing(false);
-  };
-
-  const handleCancel = () => {
-    setEditValue(value);
-    setIsEditing(false);
-  };
-
-  return (
-    <div
-      className="glass p-4 rounded-lg relative group"
-      style={{
-        border: `1px solid ${theme.colors.border}`
-      }}
-    >
-      <div
-        className="text-sm mb-2 font-semibold"
-        style={{ color: theme.colors.text.tertiary }}
-      >
-        {fieldName}
-      </div>
-      
-      {isEditing ? (
-        <div className="space-y-2">
-          <input
-            type="text"
-            value={JSON.stringify(editValue)}
-            onChange={(e) => {
-              try {
-                setEditValue(JSON.parse(e.target.value));
-              } catch {
-                setEditValue(e.target.value);
-              }
-            }}
-            className="w-full px-3 py-2 rounded"
-            style={{
-              backgroundColor: theme.colors.background.tertiary,
-              color: theme.colors.text.primary,
-              border: `1px solid ${theme.colors.border}`
-            }}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              className="px-2 py-1 rounded font-semibold transition hover:brightness-110"
-              style={{ background: theme.colors.accents.green, color: 'white' }}
-            >
-              ✓
-            </button>
-            <button
-              onClick={handleCancel}
-              className="px-2 py-1 rounded font-semibold transition hover:brightness-110"
-              style={{ background: theme.colors.accents.red, color: 'white' }}
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div
-            className="font-semibold"
-            style={{ color: theme.colors.text.primary }}
-          >
-            {renderValue(value, fieldName, theme, platformStyle)}
-          </div>
-          
-          {canEdit && (
-            <button
-              onClick={() => setIsEditing(true)}
-              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
-              style={{ background: theme.colors.accents.blue, color: 'white' }}
-            >
-              ✏️
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function categorizeFields(metadata) {
-  const groups = {
-    'Core': [],
-    'Buttons': [],
-    'Platform': [],
-    'Setup': [],
-    'Other': []
-  };
-  
-  const coreFields = ['status', 'triggerAction', 'statusCode', 'statusNumber'];
-  const buttonFields = ['triggerButton', 'afterButton', 'previousButton'];
-  const platformFields = ['platform', 'platforms', 'notificationKey'];
-  const setupFields = ['setup', 'allSetups', 'actionName', 'requires', 'requiredFields'];
-  
-  Object.entries(metadata).forEach(([key, value]) => {
-    if (key === 'uiCoverage' || key === 'xstateContext') return;
-    if (Array.isArray(value) && value.length === 0) return;
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0) return;
-    
-    if (coreFields.includes(key)) {
-      groups['Core'].push([key, value]);
-    } else if (buttonFields.includes(key)) {
-      groups['Buttons'].push([key, value]);
-    } else if (platformFields.includes(key)) {
-      groups['Platform'].push([key, value]);
-    } else if (setupFields.includes(key)) {
-      groups['Setup'].push([key, value]);
-    } else {
-      groups['Other'].push([key, value]);
-    }
-  });
-  
-  Object.keys(groups).forEach(key => {
-    if (groups[key].length === 0) delete groups[key];
-  });
-  
-  return groups;
-}
-
-function renderValue(value, fieldName, theme, platformStyle) {
-  if (value === null || value === undefined) {
-    return (
-      <span
-        className="px-2 py-1 rounded text-sm font-semibold"
-        style={{
-          background: `${theme.colors.accents.red}20`,
-          color: theme.colors.accents.red
-        }}
-      >
-        ⚠️ Not Set
-      </span>
-    );
-  }
-  
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return (
-        <span
-          className="px-2 py-1 rounded text-sm"
-          style={{
-            background: `${theme.colors.accents.red}15`,
-            color: theme.colors.accents.red
-          }}
-        >
-          Empty Array
-        </span>
-      );
-    }
-    
-    if (fieldName === 'requiredFields') {
-      return (
-        <div className="flex flex-wrap gap-2">
-          {value.map((field, i) => (
-            <span
-              key={i}
-              className="px-2 py-1 rounded text-xs font-mono"
-              style={{
-                background: `${theme.colors.accents.purple}40`,
-                color: theme.colors.accents.purple
-              }}
-            >
-              {field}
-            </span>
-          ))}
-        </div>
-      );
-    }
-    
-    return (
-      <div className="flex flex-wrap gap-2">
-        {value.map((item, i) => (
-          <span
-            key={i}
-            className="px-2 py-1 rounded text-xs font-mono"
-            style={{
-              background: `${theme.colors.background.tertiary}`,
-              color: theme.colors.text.primary
-            }}
-          >
-            {typeof item === 'object' ? JSON.stringify(item) : String(item)}
-          </span>
-        ))}
-      </div>
-    );
-  }
-  
-  if (typeof value === 'object') {
-    const entries = Object.entries(value);
-    if (entries.length === 0) {
-      return (
-        <span
-          className="px-2 py-1 rounded text-sm"
-          style={{
-            background: `${theme.colors.accents.red}15`,
-            color: theme.colors.accents.red
-          }}
-        >
-          Empty Object
-        </span>
-      );
-    }
-    
-    return (
-      <div
-        className="text-xs space-y-1 mt-1 p-3 rounded font-mono"
-        style={{
-          background: theme.colors.background.tertiary,
-          maxHeight: '200px',
-          overflowY: 'auto'
-        }}
-      >
-        {entries.map(([k, v], i) => (
-          <div key={i} className="flex gap-2">
-            <span
-              className="font-semibold"
-              style={{ color: theme.colors.accents.blue }}
-            >
-              {k}:
-            </span>
-            <span style={{ color: theme.colors.text.primary }}>
-              {typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  
-  if (value === '') {
-    return (
-      <span
-        className="px-2 py-1 rounded text-sm"
-        style={{
-          background: `${theme.colors.accents.red}15`,
-          color: theme.colors.accents.red
-        }}
-      >
-        Empty String
-      </span>
-    );
-  }
-  
-  if (fieldName === 'platform' && platformStyle) {
-    return (
-      <span style={{ color: platformStyle.color }}>
-        {platformStyle.icon} {value}
-      </span>
-    );
-  }
-  
-  if (fieldName.toLowerCase().includes('button')) {
-    return (
-      <span
-        className="font-mono px-2 py-1 rounded"
-        style={{
-          background: `${theme.colors.accents.blue}20`,
-          color: theme.colors.accents.blue
-        }}
-      >
-        {value}
-      </span>
-    );
-  }
-  
-  return String(value);
-}
-
 function FileCard({ label, path, theme }) {
   return (
     <div className="glass p-4 rounded-lg">
-      <div
+      <div 
         className="text-sm mb-1"
         style={{ color: theme.colors.text.tertiary }}
       >
         {label}
       </div>
-      <div
+      <div 
         className="font-mono text-sm break-all"
         style={{ color: theme.colors.text.secondary }}
       >
         {path}
       </div>
-    </div>
-  );
-}
-
-function TransitionCard({ transition, theme, editable, onEdit, onRemove }) {
-  return (
-    <div className="glass p-4 rounded-lg flex items-center gap-4 group relative">
-      <span
-        className="font-mono font-bold px-4 py-2 rounded-lg"
-        style={{ background: theme.colors.accents.blue }}
-      >
-        {transition.event}
-      </span>
-      <span
-        className="text-2xl"
-        style={{ color: theme.colors.text.tertiary }}
-      >
-        →
-      </span>
-      <span
-        className="font-bold text-lg cursor-pointer hover:underline"
-        style={{ color: theme.colors.accents.blue }}
-      >
-        {getStatusIcon(transition.target)} {transition.target}
-      </span>
-      
-      {/* ✅ NEW: Edit button */}
-      {editable && onEdit && (
-        <button
-          onClick={onEdit}
-          className="absolute top-2 right-12 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
-          style={{ background: theme.colors.accents.blue, color: 'white' }}
-        >
-          ✏️ Edit
-        </button>
-      )}
-      
-      {editable && onRemove && (
-        <button
-          onClick={onRemove}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded text-sm font-semibold"
-          style={{ background: theme.colors.accents.red, color: 'white' }}
-        >
-          🗑️ Remove
-        </button>
-      )}
     </div>
   );
 }
