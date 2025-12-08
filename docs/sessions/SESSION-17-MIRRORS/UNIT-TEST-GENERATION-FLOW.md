@@ -561,7 +561,7 @@ class AcceptedBookingImplications {
           testFile: 'AcceptBooking-Web-UNIT.spec.js'
         },
         {
-          platform: 'mobile-manager',
+          platform: 'manager',
           actionName: 'acceptBooking',
           testFile: 'AcceptBooking-Manager-UNIT.spec.js'
         }
@@ -607,7 +607,7 @@ class AcceptedBookingImplications {
 node cli.js AcceptedBookingImplications.js --platform web
 
 # Mobile test
-node cli.js AcceptedBookingImplications.js --platform mobile-manager
+node cli.js AcceptedBookingImplications.js --platform manager
 ```
 
 **Use in flow:**

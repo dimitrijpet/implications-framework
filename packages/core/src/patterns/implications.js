@@ -83,9 +83,17 @@ export async function extractImplicationMetadata(parsed, extractXStateMetadata =
     
     // Extract meta from content
     if (parsed.content && extractXStateMetadata) {
-      const xstateMetadata = extractXStateMetadata(parsed.content);
-      Object.assign(metadata, xstateMetadata);
-    }
+  const xstateMetadata = extractXStateMetadata(parsed.content);
+  console.log('📦 xstateMetadata received:', xstateMetadata);
+  console.log('📦 Has xstateConfig?', !!xstateMetadata.xstateConfig);
+  
+  // ✅ Merge ALL fields including xstateConfig
+  Object.assign(metadata, xstateMetadata);
+  
+  console.log('📦 Metadata after merge:', metadata);
+  console.log('📦 metadata.xstateConfig:', metadata.xstateConfig);
+}
+
     if (parsed.content && extractUIImplications) {
   try {
     const uiResult = await extractUIImplications(parsed.content);

@@ -1,0 +1,499 @@
+// ═══════════════════════════════════════════════════════════
+// AUTO-GENERATED UNIT TEST
+// ═══════════════════════════════════════════════════════════
+// Generated at: {{timestamp}}
+{{#if hasTransitionContext}}
+// Transition: {{transitionFrom}} → {{transitionTo}} ({{transitionEvent}})
+{{/if}}
+// From: {{implClassName}}
+// Platform: {{platform}}
+// Target Status: {{targetStatus}}
+{{#if isVerify}}
+// Test Mode: VERIFY (checks UI only, does not induce state)
+{{else}}
+// Test Mode: INDUCER (performs action + checks UI)
+{{/if}}
+// ═══════════════════════════════════════════════════════════
+
+{{#if isPlaywright}}
+const { test, expect } = require('@playwright/test');
+{{else}}
+const { expect } = require('@wdio/globals');
+{{/if}}
+const TestContext = require('{{testContextPath}}');
+const {{implClassName}} = require('./{{implClassName}}.js');
+{{#if hasUIValidation}}
+const ExpectImplication = require('{{expectImplicationPath}}');
+{{/if}}
+{{#unless isPlaywright}}
+const TestPlanner = require('{{testPlannerPath}}');
+{{/unless}}
+{{#if isVerify}}
+const NavigationActions = require('{{navigationActionsPath}}');
+{{/if}}
+
+// ═══════════════════════════════════════════════════════════
+// ✅ PRE-FLIGHT CHECK - Runs BEFORE app starts!
+// ═══════════════════════════════════════════════════════════
+const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+
+{{#unless isPlaywright}}
+if (!process.env.SKIP_PREFLIGHT_CHECK) {
+  console.log('🚀 Running pre-flight check...');
+  TestPlanner.preFlightCheck({{implClassName}}, testDataPath);
+}
+{{/unless}}
+
+// ════════════════════════════════════════════════════════════
+// 🔧 ENTITY FIELD REQUIREMENTS (Setup Concerns)
+// ════════════════════════════════════════════════════════════
+//
+{{#if meta.requires}}
+{{#each meta.requires}}
+{{#if (contains @key '.')}}
+// ⚠️  Required: {{@key}} = {{this}}
+{{/if}}
+{{/each}}
+//
+// These are NOT separate states - they're runtime requirements.
+// Handle them in your test setup or beforeEach() hook.
+//
+{{/if}}
+// ════════════════════════════════════════════════════════════
+
+/**
+ * ✅ EXPORTED FUNCTION - {{transitionDescription}}
+ * 
+ * {{#if isVerify}}
+ * This function VERIFIES the "{{targetStatus}}" state by:
+ * 1. Loading test data and checking state exists
+ * 2. Navigating to relevant screens
+ * 3. Validating UI implications on {{platform}} platform
+ * 
+ * ⚠️  NOTE: This is a VERIFY test - it does NOT induce the state.
+ * {{else}}
+ * This function INDUCES the "{{targetStatus}}" state by:
+ * 1. Loading test data
+ * 2. Smart navigation (only if needed)
+ * 3. Performing the state-inducing action
+ * 4. Validating UI implications on {{platform}} platform
+ * 5. Saving the state change with delta
+ * {{/if}}
+ * 
+ * @param {string} testDataPath - Path to testData JSON file
+ * @param {object} options - Options
+{{#if isPlaywright}}
+ * @param {Page} options.page - Playwright page object
+{{else}}
+ * @param {Driver} options.driver - WebdriverIO driver object
+{{/if}}
+{{#each optionParams}}
+ * @param {{type}} options.{{name}} - {{description}}
+{{/each}}
+ * @returns {Promise<TestContext>} Updated context
+ */
+const {{actionName}} = async (testDataPath, options = {}) => {
+  {{#if isPlaywright}}
+  const { page } = options;
+  {{else}}
+  const { driver } = options;
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 1: Load TestData
+  // ────────────────────────────────────────────────────────
+  const ctx = TestContext.load({{implClassName}}, testDataPath);
+  
+  console.log('\n🎯 Starting: {{transitionDescription}}');
+  console.log(`   Target Status: {{targetStatus}}`);
+  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
+{{#if hasTransitionContext}}
+  console.log(`   Transition: {{transitionFrom}} → {{transitionTo}}`);
+  console.log(`   Event: {{transitionEvent}}`);
+{{/if}}
+{{#if isVerify}}
+  console.log(`   Test Mode: VERIFY (checks only)`);
+{{else}}
+  console.log(`   Test Mode: INDUCER (action + checks)`);
+{{/if}}
+
+  // ────────────────────────────────────────────────────────
+  // STEP 2: Smart Navigation (only if needed)
+  // ────────────────────────────────────────────────────────
+{{#if isPlaywright}}
+  console.log('✅ Browser navigation (handled by Playwright)');
+{{else}}
+{{#if hasNavigation}}
+  const {{navigation.instance}} = new {{actionDetails.navigationFile}}(config);
+  await {{navigation.instance}}.{{navigation.method}};
+  console.log('✅ Navigated using {{navigation.method}}');
+{{else}}
+  console.log('✅ Mobile app ready (navigation handled by action)');
+{{/if}}
+{{/if}}
+
+{{#if isVerify}}
+  // ────────────────────────────────────────────────────────
+  // ⚠️  VERIFY MODE - State Must Already Exist
+  // ────────────────────────────────────────────────────────
+  if (ctx.data.status !== '{{targetStatus}}') {
+    throw new Error(
+      `❌ Verification test failed: State mismatch\n` +
+      `   Expected: {{targetStatus}}\n` +
+      `   Current: ${ctx.data.status}\n\n` +
+      `💡 Run the inducer test first to create this state.`
+    );
+  }
+  
+  console.log('✅ State verified: {{targetStatus}}');
+{{/if}}
+
+{{#unless isVerify}}
+  // ────────────────────────────────────────────────────────
+  // STEP 3: Determine Action Scope
+  // ────────────────────────────────────────────────────────
+{{#if hasEntityLogic}}
+  let targets = [];
+  let isGlobalAction = false;
+  
+  if (!ctx.data.{{entityName}}s || !Array.isArray(ctx.data.{{entityName}}s) || ctx.data.{{entityName}}s.length === 0) {
+    console.log('\n✅ Global state action');
+    isGlobalAction = true;
+    targets = [{ isGlobal: true }];
+  } else {
+    if (options.indices && Array.isArray(options.indices)) {
+      targets = options.indices.map(i => ctx.data.{{entityName}}s[i]);
+    } else if (options.index !== undefined) {
+      targets = [ctx.data.{{entityName}}s[options.index]];
+    } else {
+{{#if previousStatus}}
+      const matchingEntities = ctx.data.{{entityName}}s.filter(e => e.status === '{{previousStatus}}');
+      if (!matchingEntities || matchingEntities.length === 0) {
+        console.log('\n✅ No matching entities, treating as global action');
+        isGlobalAction = true;
+        targets = [{ isGlobal: true }];
+      } else {
+        targets = [matchingEntities[0]];
+        console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
+      }
+{{else}}
+      targets = [ctx.data.{{entityName}}s[0]];
+      console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
+{{/if}}
+    }
+  }
+{{else}}
+  console.log('\n✅ Global state action');
+  let isGlobalAction = true;
+{{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 4: Perform Action (INDUCER mode)
+  // ────────────────────────────────────────────────────────
+  
+{{#if hasNavigation}}
+  console.log('\n🧭 Navigating to action screen...');
+  await {{navigation.instance}}.{{navigation.method}}({{#each navigation.args}}{{this}}{{#unless @last}}, {{/unless}}{{/each}});
+  console.log('✅ Navigation complete');
+{{/if}}
+
+{{#if hasActionDetails}}
+  // ═══════════════════════════════════════════════════════════
+  // 🎬 ACTION LOGIC - Generated from actionDetails
+  // ═══════════════════════════════════════════════════════════
+  
+{{#if actionDetails.imports}}
+  // Initialize screen objects
+{{#each actionDetails.imports}}
+  const {{className}} = require('{{{relativePath}}}');
+{{#if ../isPlaywright}}
+  const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+  const {{varName}} = new {{className}}(ctx.data.lang || 'en');
+{{/if}}
+{{/each}}
+{{/if}}
+  
+  console.log('\n🎬 Executing action: {{actionDetails.description}}');
+  
+{{#if actionDetails.steps}}
+{{#each actionDetails.steps}}
+  // Step {{addOne @index}}: {{description}}
+{{#if entity}}
+  await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
+{{else}}
+  await {{instance}}.{{method}}({{{args}}});
+{{/if}}
+{{/each}}
+{{/if}}
+  
+  console.log('✅ Action steps completed');
+{{else}}
+  // TODO: Navigate to the screen where you perform this action
+{{#if navigationExample}}
+{{{navigationExample}}}
+{{else}}
+  // await navigateToScreen();
+{{/if}}
+  
+  // TODO: Perform the state-inducing action
+{{#if actionExample}}
+{{{actionExample}}}
+{{else}}
+{{#if triggerButton}}
+{{#if isPlaywright}}
+  // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
+{{else}}
+  // await driver.$('~btn{{triggerButton}}').click();
+{{/if}}
+{{/if}}
+{{/if}}
+  
+  console.log('   ⚠️  Action logic not implemented - see comments above');
+{{/if}}
+  
+  console.log('\n✅ Action completed');
+{{/unless}}
+  
+{{#if isVerify}}
+  // ────────────────────────────────────────────────────────
+  // STEP 3: Navigate to Screens (VERIFY mode)
+  // ────────────────────────────────────────────────────────
+{{#if isPlaywright}}
+  // await NavigationActions.navigateToBookingCalendar(page, ctx.data);
+{{else}}
+  // await NavigationActions.navigateToDashboard(driver, ctx.data);
+{{/if}}
+  
+  console.log('⏭️  Navigation to verification screens (implement as needed)');
+{{/if}}
+  
+{{#if hasUIValidation}}
+  // ────────────────────────────────────────────────────────
+  // STEP {{#if isVerify}}4{{else}}5{{/if}}: Validate UI Implications ({{platform}})
+  // ────────────────────────────────────────────────────────
+  
+  console.log('\n🔍 Validating {{targetStatus}} UI on {{platform}}...');
+  
+{{#each validationScreens}}
+{{#if @first}}
+  console.log('   🔍 Validating {{screenKey}}...');
+  
+{{#if pomClassName}}
+  const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
+{{#if ../isPlaywright}}
+  const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+  const {{screenKey}} = new {{pascalCase screenKey}}Screen(ctx.data.lang || 'en');
+{{/if}}
+{{else}}
+{{#if ../actionDetails.imports.[0]}}
+{{#if ../isPlaywright}}
+  const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+  const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(ctx.data.lang || 'en');
+{{/if}}
+{{/if}}
+{{/if}}
+  
+  await ExpectImplication.validateImplications(
+    {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+    ctx.data,
+    {{screenKey}}
+  );
+  console.log('   ✅ {{screenKey}} validation passed');
+{{else}}
+  // ⏭️ TODO: Uncomment and add navigation to {{screenKey}}
+  // console.log('   🔍 Validating {{screenKey}}...');
+{{#if ../isPlaywright}}
+  // await NavigationActions.navigateTo{{pascalCase screenKey}}(page, ctx.data);
+{{else}}
+  // await NavigationActions.navigateTo{{pascalCase screenKey}}(driver, ctx.data);
+{{/if}}
+{{#if pomClassName}}
+  // const {{pascalCase screenKey}}Screen = require('../../../path/to/{{screenKey}}.screen.js');
+{{#if ../isPlaywright}}
+  // const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+  // const {{screenKey}} = new {{pascalCase screenKey}}Screen(ctx.data.lang || 'en');
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  // const {{screenKey}} = new SomeScreen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{else}}
+  // const {{screenKey}} = new SomeScreen(ctx.data.lang || 'en');
+{{/if}}
+{{/if}}
+  // await ExpectImplication.validateImplications(
+  //   {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+  //   ctx.data,
+  //   {{screenKey}}
+  // );
+  // console.log('   ✅ {{screenKey}} validation passed');
+{{/if}}
+{{/each}}
+  
+  console.log('✅ All UI validations passed');
+{{/if}}
+  
+{{#if isVerify}}
+  // ────────────────────────────────────────────────────────
+  // STEP 5: Return Context (No State Change in VERIFY mode)
+  // ────────────────────────────────────────────────────────
+  
+  console.log('✅ Verification complete - no state change');
+  return ctx;
+{{else}}
+  // ────────────────────────────────────────────────────────
+  // STEP 6: Save Changes (Delta) - INDUCER mode only
+  // ────────────────────────────────────────────────────────
+  
+  return ctx.executeAndSave(
+    '{{deltaLabel}}',
+    '{{testFileName}}',
+    async () => {
+      const delta = {};
+      const now = new Date().toISOString();
+      
+{{#if hasDeltaLogic}}
+      // ✨ Generated delta from entry: assign
+{{#if meta.entity}}
+      // ✅ Entity-scoped state change ({{meta.entity}})
+{{#each deltaFields}}
+{{#if (isContextField value)}}
+      delta['{{../meta.entity}}.{{name}}'] = ctx.data.{{../meta.entity}}.{{removeCtxDataPrefix value}};
+{{else}}
+      delta['{{../meta.entity}}.{{name}}'] = {{{value}}};
+{{/if}}
+{{/each}}
+{{else}}
+{{#if hasEntityLogic}}
+      if (isGlobalAction) {
+        // Global state change
+{{#each deltaFields}}
+        delta.{{name}} = {{{value}}};
+{{/each}}
+      } else {
+        // Array-based entity change
+        for (const target of targets) {
+          const entityPath = `{{entityName}}s[${target.index || 0}]`;
+          delta[entityPath] = {
+{{#each deltaFields}}
+            {{name}}: {{{value}}},
+{{/each}}
+          };
+        }
+      }
+{{else}}
+      // Global state change
+{{#each deltaFields}}
+      delta.{{name}} = {{{value}}};
+{{/each}}
+{{/if}}
+{{/if}}
+{{else}}
+      // TODO: Customize delta based on what changed
+      // delta.status = '{{targetStatus}}';
+      // delta.{{targetStatus}}At = now;
+{{/if}}
+      
+      return { delta };
+    }
+  );
+{{/if}}
+};
+
+{{#if hasHelperFunctions}}
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+{{#each helperFunctions}}
+/**
+ * {{description}}
+ */
+async function {{name}}({{params}}) {
+{{#if code}}
+{{code}}
+{{else}}
+  // TODO: Implement {{name}}
+  throw new Error('Helper function not implemented: {{name}}');
+{{/if}}
+}
+
+{{/each}}
+{{/if}}
+
+// ═══════════════════════════════════════════════════════════
+// TEST REGISTRATION
+// ═══════════════════════════════════════════════════════════
+
+const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
+
+if (!shouldSkipRegistration) {
+{{#if isPlaywright}}
+  test.describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
+    test.setTimeout(120000);
+    
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async ({ page }) => {
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+{{#if isVerify}}
+      await TestPlanner.checkState({{implClassName}}, ctx.data, {
+        mode: 'verify'
+      });
+{{else}}
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+{{/if}}
+      
+      const result = await {{actionName}}(testDataPath, { page });
+      
+{{#if isInducer}}
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+{{else}}
+      console.log('   ✅ Verification complete - no file changes');
+{{/if}}
+    });
+  });
+{{else}}
+  describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
+    const testDataPath = process.env.TEST_DATA_PATH || "tests/data/shared.json";
+    
+    it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+{{#if isVerify}}
+      await TestPlanner.checkState({{implClassName}}, ctx.data, {
+        mode: 'verify'
+      });
+{{else}}
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        driver,
+        testDataPath 
+      });
+{{/if}}
+      
+      const result = await {{actionName}}(testDataPath, { driver });
+      
+{{#if isInducer}}
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+{{else}}
+      console.log('   ✅ Verification complete - no file changes');
+{{/if}}
+    });
+  });
+{{/if}}
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════
+
+module.exports = { {{actionName}} };

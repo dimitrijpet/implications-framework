@@ -196,7 +196,7 @@ Test if the system can GENERATE tests for YOUR project structure.
    ```bash
    node cli.js generate:unit \
      --impl /path/to/PendingBookingImplications.js \
-     --platform mobile-dancer \
+     --platform dancer \
      --state Pending
    ```
 
@@ -204,7 +204,7 @@ Test if the system can GENERATE tests for YOUR project structure.
    ```bash
    node cli.js generate:unit \
      --impl /path/to/PendingBookingImplications.js \
-     --platform mobile-dancer
+     --platform dancer
    ```
 
 #### Test 3C: Test Different Platforms (10 min)
@@ -882,8 +882,8 @@ pending
 data:
 {}
 Setup
-{"testFile":"tests/implications/bookings/status/AcceptBookings-Web-UNIT.spec.js","actionName":"acceptBooking","platform":"mobile-manager"}
-{"testFile":"tests/implications/bookings/status/AcceptBookings-Manager-UNIT.spec.js","actionName":"acceptBooking","platform":"mobile-manager"}
+{"testFile":"tests/implications/bookings/status/AcceptBookings-Web-UNIT.spec.js","actionName":"acceptBooking","platform":"manager"}
+{"testFile":"tests/implications/bookings/status/AcceptBookings-Manager-UNIT.spec.js","actionName":"acceptBooking","platform":"manager"}
 📱 UI Screens
 🖥️ UI Screen Editor
 3 platforms • 12 screens
