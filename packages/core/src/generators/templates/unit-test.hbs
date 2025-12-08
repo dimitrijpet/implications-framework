@@ -807,14 +807,14 @@ if (!shouldSkipRegistration) {
 {{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
-      const {{navigation.instanceName}} = new {{navigation.className}}(driver, result.data.lang || 'en');
+      const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
 {{/if}}
       
 {{#if hasPom}}
       // Initialize screen instance
-      const {{pomInstance}} = new {{pomClassName}}(driver, result.data.lang || 'en');
+      const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
 {{/if}}
       
 {{#if useExpectImplication}}
@@ -829,7 +829,7 @@ if (!shouldSkipRegistration) {
 {{#if hasExternalPoms}}
       // Initialize external POM instances for function calls
 {{#each externalPoms}}
-      const {{instanceName}} = new {{className}}(driver, result.data.lang || 'en');
+      const {{instanceName}} = new {{className}}(result.data.lang || 'en');
 {{/each}}
 {{/if}}
 {{#each blocks}}
