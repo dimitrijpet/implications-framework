@@ -1,84 +1,166 @@
 import { getPlatformStyle, getStatusColor, getStatusIcon, defaultTheme } from '../config/visualizerTheme';
+import { getRequiresObjectColor, formatRequiresLabel } from './requiresColors.js';
+
+/**
+ * Normalize hex color - remove alpha channel if present (Cytoscape doesn't support 8-char hex)
+ */
+function normalizeHexColor(color) {
+  if (!color) return '#8b5cf6';
+  // Remove alpha channel from 8-char hex (e.g., #c746abff -> #c746ab)
+  if (color.length === 9 && color.startsWith('#')) {
+    return color.substring(0, 7);
+  }
+  return color;
+}
+
+// Default color configs (used if not in discovery result)
+const DEFAULT_GRAPH_COLORS = {
+  colorNodesBy: 'platform',
+  platforms: {
+    'web': '#3b82f6',           // Blue
+    'mobile-dancer': '#a855f7', // Purple
+    'mobile-manager': '#06b6d4', // Cyan
+    'mobile': '#8b5cf6',        // Purple
+    '_default': '#3b82f6'       // Blue (was gray, now blue as fallback)
+  },
+  statuses: {
+    'pending': '#f59e0b',
+    'accepted': '#10b981',
+    'rejected': '#ef4444',
+    'cancelled': '#6b7280',
+    'completed': '#3b82f6',
+    'checked_in': '#8b5cf6',
+    '_default': '#8b5cf6'
+  },
+  patterns: {
+    'booking': '#3b82f6',
+    'cms': '#10b981',
+    '_default': '#8b5cf6'
+  }
+};
+
+/**
+ * Get node color based on config
+ */
+function getNodeColorFromConfig(metadata, graphColors) {
+  const config = graphColors || DEFAULT_GRAPH_COLORS;
+  const colorBy = config.colorNodesBy || 'platform';
+  
+  let value, colorMap;
+  
+  switch (colorBy) {
+    case 'platform':
+      value = metadata.platform || metadata.setup?.platform || 'web';
+      colorMap = config.platforms || DEFAULT_GRAPH_COLORS.platforms;
+      break;
+    case 'status':
+      value = metadata.status || '';
+      colorMap = config.statuses || DEFAULT_GRAPH_COLORS.statuses;
+      break;
+    case 'pattern':
+      value = metadata.pattern || '';
+      colorMap = config.patterns || DEFAULT_GRAPH_COLORS.patterns;
+      break;
+    default:
+      value = metadata.platform || 'web';
+      colorMap = config.platforms || DEFAULT_GRAPH_COLORS.platforms;
+  }
+  
+  const lookupValue = value ? value.toLowerCase() : '';
+  const rawColor = colorMap[lookupValue] || colorMap['_default'] || '#3b82f6';
+  const color = normalizeHexColor(rawColor);  // Strip alpha if present
+  
+  // Debug logging
+  console.log(`🎨 Node color: colorBy=${colorBy}, value="${value}", lookupValue="${lookupValue}", color=${color}`);
+  
+  return color;
+}
 
 /**
  * Build Cytoscape graph from discovery results
- * ✨ Enhanced with screen grouping support and platform-specific transitions
  */
 export function buildGraphFromDiscovery(discoveryResult) {
   const { files, transitions } = discoveryResult;
   const implications = files.implications || [];
   const projectPath = discoveryResult.projectPath;
   
+  // Get graph colors from config (passed from backend)
+  const graphColors = discoveryResult.config?.graphColors || DEFAULT_GRAPH_COLORS;
+  
   const nodes = [];
-  const edges = [];  // ✅ Initialize empty, build AFTER nodes
-  
-  // Create a map of state names to class names
+  const edges = [];
   const stateMap = new Map();
+  const allTags = {};
   
-  // ✨ NEW: Track screens for grouping
-  const screenGroups = {};
-  
-  // ✅ FILTER: Only use implications with xstateConfig
+  // Filter to stateful implications only
   const statefulImplications = implications.filter(imp => 
     imp.metadata?.hasXStateConfig === true
   );
 
   console.log(`✅ Filtered to ${statefulImplications.length} stateful implications (from ${implications.length} total)`);
-
-  // ✅ Check what metadata we have
+  
+  // Log metadata for debugging
   statefulImplications.forEach(imp => {
     console.log(`📋 ${imp.metadata.className}:`, {
       status: imp.metadata.status,
       triggerButton: imp.metadata.triggerButton,
       platform: imp.metadata.platform,
       setup: imp.metadata.setup,
-      screen: imp.metadata.screen,
     });
   });
   
-  // Create nodes from stateful implications only
+  // Create nodes
   statefulImplications.forEach(imp => {
     const metadata = imp.metadata || {};
     const stateName = extractStateName(metadata.className);
     
+    console.log(`📝 Creating node: className="${metadata.className}" → stateName="${stateName}"`);
+    
     stateMap.set(metadata.className, stateName.toLowerCase());
     stateMap.set(stateName.toLowerCase(), stateName.toLowerCase());
     
-    // Get platform styling
+    if (metadata.status) {
+      stateMap.set(metadata.status.toLowerCase(), stateName.toLowerCase());
+      console.log(`   ✅ Mapped status: "${metadata.status}" → "${stateName.toLowerCase()}"`);
+    }
+    
+    // Get platform for edge colors
     const platform = metadata.setup?.platform || metadata.platform || 'web';
     const platformStyle = getPlatformStyle(platform, defaultTheme);
-    const statusColor = getStatusColor(stateName, defaultTheme);
     const statusIcon = getStatusIcon(stateName, defaultTheme);
+    
+    // Get node color from config
+    const nodeColor = getNodeColorFromConfig(metadata, graphColors);
     
     // Determine if multi-platform
     const allPlatforms = metadata.platforms || [platform];
     const isMultiPlatform = allPlatforms.length > 1;
     
-    // ✨ NEW: Get screen from metadata
-    const screen = metadata.screen || null;
+    // Extract tags (don't auto-infer platform - let user control)
+    const tags = extractTags(metadata, false);
     
-    // ✨ NEW: Track screen grouping
-    if (screen) {
-      if (!screenGroups[screen]) {
-        screenGroups[screen] = [];
+    // Collect discovered tags
+    Object.entries(tags).forEach(([category, value]) => {
+      if (!allTags[category]) allTags[category] = new Set();
+      if (Array.isArray(value)) {
+        value.forEach(v => allTags[category].add(v));
+      } else if (value) {
+        allTags[category].add(value);
       }
-      screenGroups[screen].push(stateName.toLowerCase());
-    }
+    });
     
     nodes.push({
       data: {
-        id: stateName.toLowerCase(),
+        id: metadata.status ? metadata.status.toLowerCase() : stateName.toLowerCase(),
         label: stateName,
         type: 'state',
+        status: metadata.status,
         isStateful: metadata.isStateful,
         pattern: metadata.pattern,
         hasXState: metadata.hasXStateConfig,
         metadata: metadata,
+        tags: tags,
         
-        // ✨ NEW: Screen information
-        screen: screen,
-        
-        // File paths
         files: {
           implication: projectPath + '/' + imp.path,
           test: projectPath + '/' + (Array.isArray(metadata.setup) 
@@ -86,8 +168,8 @@ export function buildGraphFromDiscovery(discoveryResult) {
             : metadata.setup?.testFile)
         },
         
-        // Visual styling data
-        color: statusColor,
+        // Visual styling - use config color
+        color: nodeColor,
         icon: statusIcon,
         platform: platform,
         platformColor: platformStyle.color,
@@ -105,90 +187,143 @@ export function buildGraphFromDiscovery(discoveryResult) {
     });
   });
   
-  // ✅ NOW Build edges from transitions (AFTER nodes are built!)
+  // Create edges from transitions
   console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
   
-// ✅ NOW Build edges from transitions (AFTER nodes are built!)
-console.log(`🔗 Building edges from ${transitions?.length || 0} transitions...`);
-
-if (transitions && transitions.length > 0) {
-  transitions.forEach(transition => {
-    console.log(`\n🔍 Processing transition:`, {
-      from: transition.from,
-      to: transition.to,
-      event: transition.event,
-      platforms: transition.platforms  // ✅ Debug: See what we got!
-    });
-    
-    const fromState = extractStateName(transition.from).toLowerCase();
-    const toState = transition.to.toLowerCase();
-    
-    // Only add edge if both nodes exist
-    if (stateMap.has(fromState) && stateMap.has(toState)) {
-      // ✅ FIX: Define sourceNode OUTSIDE if/else
-      const sourceNode = nodes.find(n => n.data.id === fromState);
-      let edgeColor;
+  if (transitions && transitions.length > 0) {
+    transitions.forEach(transition => {
+      const fromState = extractStateName(transition.from).toLowerCase();
+      const toState = transition.to.toLowerCase();
       
-      // ✅ Use transition's platforms if specified
-      if (transition.platforms && transition.platforms.length > 0) {
-        // Use first platform's color
-        const platform = transition.platforms[0];
-        edgeColor = getPlatformStyle(platform, defaultTheme).color;
-        console.log(`   ✅ Using transition platform: ${platform} → ${edgeColor}`);
-      } else {
-        // Fallback: use source state's platform
-        edgeColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
-        console.log(`   ⚠️ No platforms on transition, using source: ${sourceNode?.data.platform} → ${edgeColor}`);
+      // Only add edge if both nodes exist
+      if (stateMap.has(fromState) && stateMap.has(toState)) {
+        // Determine platform color for edge
+        const sourceNode = nodes.find(n => n.data.id === fromState);
+        const platformColor = sourceNode?.data.platformColor || defaultTheme.colors.accents.blue;
+        
+        // Build unique edge ID including requires if present
+        const requiresKey = transition.requires 
+          ? `-req:${Object.entries(transition.requires).map(([k,v]) => `${k}=${v}`).join(',')}`
+          : '';
+        const edgeId = `${fromState}-${toState}-${transition.event}${requiresKey}`;
+        
+        // ✅ Get requires color if present
+        const requiresColor = transition.requires 
+          ? getRequiresObjectColor(transition.requires)
+          : null;
+        const requiresLabel = transition.requires
+          ? formatRequiresLabel(transition.requires)
+          : '';
+        
+        edges.push({
+          data: {
+            id: edgeId,
+            source: fromState,
+            target: toState,
+            label: transition.isObserver ? `👁️ ${transition.event}` : transition.event,  // ← MODIFIED
+            isObserver: transition.isObserver || false,  // ← ADD
+            mode: transition.mode,  // ← ADD
+            platformColor: platformColor,
+            platform: sourceNode?.data.platform || 'web',
+            platforms: transition.platforms || null,
+            
+            // ✅ Requires/conditions data
+            requires: transition.requires || null,
+            hasRequires: !!(transition.requires && Object.keys(transition.requires).length > 0),
+            requiresLabel: requiresLabel,
+            requiresColor: requiresColor
+          },
+        });
       }
-      
-      edges.push({
-        data: {
-          id: `${fromState}-${toState}-${transition.event}`,
-          source: fromState,
-          target: toState,
-          label: transition.event,
-          platformColor: edgeColor,
-          platforms: transition.platforms,  // ✅ Pass platforms for badges!
-          platform: sourceNode?.data.platform || 'web'
-        },
-      });
-      
-      console.log(`   ✅ Edge added: ${edgeColor}`);
-    } else {
-      console.warn(`   ⚠️ Skipping edge: ${fromState}→${toState} (nodes not found)`);
-    }
-  });
-}
+    });
+  }
   
   console.log(`✅ Built graph: ${nodes.length} nodes, ${edges.length} edges`);
-  console.log(`📺 Screen groups:`, Object.keys(screenGroups).length, screenGroups);
   
-  return { nodes, edges, screenGroups };
+  // Filter out edges that reference non-existent nodes
+  const nodeIds = new Set(nodes.map(n => n.data.id));
+  const validEdges = edges.filter(edge => {
+    const hasSource = nodeIds.has(edge.data.source);
+    const hasTarget = nodeIds.has(edge.data.target);
+    
+    if (!hasSource || !hasTarget) {
+      console.warn(`REMOVED invalid edge: ${edge.data.source} to ${edge.data.target}`);
+      return false;
+    }
+    return true;
+  });
+  
+  console.log(`Valid edges: ${validEdges.length} (removed ${edges.length - validEdges.length} invalid)`);
+  
+  // Convert tag Sets to sorted arrays
+  const discoveredTags = {};
+  Object.entries(allTags).forEach(([category, values]) => {
+    discoveredTags[category] = Array.from(values).sort();
+  });
+  
+  console.log(`🏷️ Discovered tags:`, discoveredTags);
+  
+  return { 
+    nodes, 
+    edges: validEdges,
+    discoveredTags,
+    graphColors,
+  };
+}
+
+/**
+ * Extract tags from implication metadata
+ */
+function extractTags(metadata, autoInfer = false) {
+  let tags = {};
+  
+  // 1. Direct tags object in metadata
+  if (metadata.tags && typeof metadata.tags === 'object') {
+    tags = { ...metadata.tags };
+  }
+  
+  // 2. Tags in xstateConfig.meta
+  if (metadata.xstateConfig?.meta?.tags) {
+    tags = { ...tags, ...metadata.xstateConfig.meta.tags };
+  }
+  
+  // 3. Only auto-infer if requested (disabled by default)
+  if (autoInfer) {
+    if (!tags.platform && metadata.platform) {
+      tags.platform = metadata.platform;
+    }
+    if (!tags.pattern && metadata.pattern) {
+      tags.pattern = metadata.pattern;
+    }
+  }
+  
+  return tags;
 }
 
 /**
  * Extract state name from class name
- * "AcceptedBookingImplications" -> "accepted"
  */
 function extractStateName(className) {
   if (!className) return 'Unknown';
   
-  // Remove "Implications" suffix
-  let name = className.replace(/Implications$/i, '');
+  // Don't process if already snake_case
+  if (className.includes('_')) {
+    return className.toLowerCase();
+  }
   
-  // Remove "Booking" prefix/suffix
-  // name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
-  
-  // Convert PascalCase to snake_case
+  // Only process PascalCase names
+  let name = className;
+  name = name.replace(/Implications$/i, '');
+  name = name.replace(/Booking$/i, '').replace(/^Booking/i, '');
   name = name.replace(/([A-Z])/g, (match, p1, offset) => {
     return offset > 0 ? '_' + p1.toLowerCase() : p1.toLowerCase();
   });
   
-  return name || className;  // ✅ Fallback to className
+  return name || className;
 }
 
 /**
- * Build graph with sample data (for testing)
+ * Build sample graph for testing
  */
 export function buildSampleGraph() {
   const sampleNodes = [
@@ -197,26 +332,8 @@ export function buildSampleGraph() {
         id: 'created', 
         label: 'Created',
         type: 'state',
-        isStateful: true,
-        pattern: 'booking',
         color: '#6b7280',
-        icon: '📝',
-        platform: 'web',
-        platformColor: '#f1f5f9',
-        allPlatforms: ['web'],
-        borderStyle: 'solid',
-        shadowBlur: 20,
-        shadowColor: '#f1f5f9',
-        shadowOpacity: 0.8,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-        metadata: {
-          className: 'CreatedBookingImplications',
-          isStateful: true,
-          hasXStateConfig: true,
-          hasMirrorsOn: true,
-          pattern: 'booking',
-        },
+        tags: { screen: 'BookingScreen', flow: 'creation' },
       },
       classes: 'booking',
     },
@@ -225,110 +342,8 @@ export function buildSampleGraph() {
         id: 'pending', 
         label: 'Pending',
         type: 'state',
-        isStateful: true,
-        pattern: 'booking',
         color: '#eab308',
-        icon: '⏳',
-        platform: 'dancer',
-        platformColor: '#a855f7',
-        allPlatforms: ['dancer'],
-        borderStyle: 'solid',
-        shadowBlur: 20,
-        shadowColor: '#a855f7',
-        shadowOpacity: 0.8,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-        metadata: {
-          className: 'PendingBookingImplications',
-          isStateful: true,
-          hasXStateConfig: true,
-          hasMirrorsOn: true,
-          pattern: 'booking',
-        },
-      },
-      classes: 'booking',
-    },
-    { 
-      data: { 
-        id: 'accepted', 
-        label: 'Accepted',
-        type: 'state',
-        isStateful: true,
-        pattern: 'booking',
-        color: '#10b981',
-        icon: '✅',
-        platform: 'manager',
-        platformColor: '#3b82f6',
-        allPlatforms: ['manager', 'web'],  // ✅ Multi-platform!
-        borderStyle: 'multi',
-        shadowBlur: 20,
-        shadowColor: '#3b82f6',
-        shadowOpacity: 0.8,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-        metadata: {
-          className: 'AcceptedBookingImplications',
-          isStateful: true,
-          hasXStateConfig: true,
-          hasMirrorsOn: true,
-          pattern: 'booking',
-        },
-      },
-      classes: 'booking',
-    },
-    { 
-      data: { 
-        id: 'rejected', 
-        label: 'Rejected',
-        type: 'state',
-        isStateful: true,
-        pattern: 'booking',
-        color: '#ef4444',
-        icon: '❌',
-        platform: 'manager',
-        platformColor: '#3b82f6',
-        allPlatforms: ['manager'],
-        borderStyle: 'solid',
-        shadowBlur: 20,
-        shadowColor: '#3b82f6',
-        shadowOpacity: 0.8,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-        metadata: {
-          className: 'RejectedBookingImplications',
-          isStateful: true,
-          hasXStateConfig: true,
-          hasMirrorsOn: true,
-          pattern: 'booking',
-        },
-      },
-      classes: 'booking',
-    },
-    { 
-      data: { 
-        id: 'checkedIn', 
-        label: 'Checked In',
-        type: 'state',
-        isStateful: true,
-        pattern: 'booking',
-        color: '#8b5cf6',
-        icon: '🎯',
-        platform: 'manager',
-        platformColor: '#3b82f6',
-        allPlatforms: ['manager'],
-        borderStyle: 'solid',
-        shadowBlur: 20,
-        shadowColor: '#3b82f6',
-        shadowOpacity: 0.8,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-        metadata: {
-          className: 'CheckedInBookingImplications',
-          isStateful: true,
-          hasXStateConfig: true,
-          hasMirrorsOn: true,
-          pattern: 'booking',
-        },
+        tags: { screen: 'BookingScreen', flow: 'review' },
       },
       classes: 'booking',
     },
@@ -341,46 +356,16 @@ export function buildSampleGraph() {
         target: 'pending', 
         label: 'REQUEST',
         platformColor: '#f1f5f9',
-        platform: 'web'
-      } 
-    },
-    { 
-      data: { 
-        source: 'pending', 
-        target: 'accepted', 
-        label: 'ACCEPT',
-        platformColor: '#3b82f6',
-        platform: 'manager'
-      } 
-    },
-    { 
-      data: { 
-        source: 'pending', 
-        target: 'rejected', 
-        label: 'REJECT',
-        platformColor: '#3b82f6',
-        platform: 'manager'
-      } 
-    },
-    { 
-      data: { 
-        source: 'accepted', 
-        target: 'checkedIn', 
-        label: 'CHECK_IN',
-        platformColor: '#3b82f6',
-        platform: 'manager'
-      } 
-    },
-    { 
-      data: { 
-        source: 'accepted', 
-        target: 'pending', 
-        label: 'UNDO',
-        platformColor: '#3b82f6',
-        platform: 'manager'
       } 
     },
   ];
   
-  return { nodes: sampleNodes, edges: sampleEdges };
+  return { 
+    nodes: sampleNodes, 
+    edges: sampleEdges,
+    discoveredTags: {
+      screen: ['BookingScreen'],
+      flow: ['creation', 'review'],
+    },
+  };
 }
