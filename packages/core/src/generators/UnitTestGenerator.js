@@ -2679,13 +2679,17 @@ _formatRequirementValue(key, value) {
     } else if (fieldName === 'status') {
       value = `'${targetStatus}'`;
     } else {
-      value = `undefined  // TODO: Set ${fieldName}`;
+      value = `null  // TODO: Set ${fieldName}`;
     }
   }
   
+} else if (fieldValue === null) {
+  // Explicit null value
+  value = 'null';
+  
 } else {
   // Unknown type
-  value = 'undefined  // TODO: Set value';
+  value = `null  // TODO: Set ${fieldName}`;
 }
       
       fields.push({

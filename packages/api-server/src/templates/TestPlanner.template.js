@@ -3113,118 +3113,130 @@ static _canTakeTransitionTo(targetStatus, currentStatus, testData) {
 // STATIC: CHECK OR THROW - With inline same-platform execution
 // ═══════════════════════════════════════════════════════════════════════════
 static async checkOrThrow(ImplicationClass, testData, options = {}) {
-  
-const { page, driver, testDataPath, validateEachStep = false } = options;
+  const { page, driver, testDataPath, validateEachStep = false } = options;
 
-
-    console.log('🔍 DEBUG: Stack trace test file detection:');
-const stack = new Error().stack;
-const specMatch = stack.match(/([^\s(]+\.spec\.js)/);
-console.log('   Detected:', specMatch ? specMatch[1] : 'none');
-  
-  
   // If preflight already ran AND we're in a spawned subprocess, skip everything
   if (process.env.PREFLIGHT_COMPLETED === 'true' && process.env.IS_PREREQUISITE_EXECUTION === 'true') {
     console.log('✅ Pre-flight already completed, skipping prerequisite check\n');
     return { ready: true, skipped: true };
   }
-  
+
   const planner = new TestPlanner({ verbose: true });
-  
+
   const meta = ImplicationClass.xstateConfig?.meta || ImplicationClass.meta;
   const targetStatus = meta.status;
-  const platform = meta.platform;
+
+  // ═══════════════════════════════════════════════════════════
+  // DETECT ACTUAL PLATFORM from test file name or page/driver presence
+  // ═══════════════════════════════════════════════════════════
+  const detectedTestFile = (() => {
+    try {
+      const stack = new Error().stack;
+      const specMatch = stack.match(/([^\s(]+\.spec\.js)/);
+      return specMatch ? specMatch[1] : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+
+  // Extract platform from test filename (e.g., "...-ClubApp-UNIT.spec.js" → "clubApp")
+  const platformFromFilename = (() => {
+    if (!detectedTestFile) return null;
+    const basename = path.basename(detectedTestFile);
+    if (basename.includes('-ClubApp-') || basename.includes('-Club-')) return 'clubApp';
+    if (basename.includes('-Dancer-')) return 'dancer';
+    if (basename.includes('-Web-') || basename.includes('-Playwright-') || basename.includes('-CMS-')) return 'web';
+    return null;
+  })();
+
+  // Priority: 1) page object means web, 2) driver + filename, 3) driver alone, 4) filename, 5) meta
+  const currentPlatform = page ? 'web'
+    : driver ? (platformFromFilename || 'mobile')
+    : (platformFromFilename || meta.platform || 'web');
+
+  console.log('🔍 DEBUG: Platform detection:');
+  console.log(`   Detected test file: ${detectedTestFile ? path.basename(detectedTestFile) : 'none'}`);
+  console.log(`   Platform from filename: ${platformFromFilename || 'none'}`);
+  console.log(`   page present: ${!!page}, driver present: ${!!driver}`);
+  console.log(`   Current platform: ${currentPlatform}`);
 
   // ═══════════════════════════════════════════════════════════
   // PLATFORM PREREQUISITES - Skip on recursive calls!
   // ═══════════════════════════════════════════════════════════
   const platformPrereqs = this._getPlatformPrerequisites();
-  const prereq = platformPrereqs[platform];
-  
+  const prereq = platformPrereqs[currentPlatform];
+
   // Skip platform prereq if:
   // 1. This is a recursive call (skipPlatformPrereq flag)
   // 2. Already executing as prerequisite
   // 3. Session already established in this browser context
-  const skipPlatformPrereq = options.skipPlatformPrereq === true || 
-                              options.isPrerequisite === true ||
-                              process.env.IS_PREREQUISITE_EXECUTION === 'true';
-  
- if (prereq && !skipPlatformPrereq && !prereq.check(testData)) {
-  console.log(`\n🔐 Platform prerequisite not met: ${platform} needs ${prereq.name}`);
-  console.log(`   Running: ${prereq.setup?.actionName || prereq.actionName}\n`);
-  
-  try {
-    process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
-    process.env.IS_PREREQUISITE_EXECUTION = 'true';
-    
-    // ✅ FIX: Access nested setup object
-    const prereqFile = prereq.setup?.file || prereq.file;
-    const prereqActionName = prereq.setup?.actionName || prereq.actionName;
-    
-    if (!prereqFile) {
-      console.warn(`   ⚠️  Platform prerequisite missing 'file' property`);
-      console.warn(`   ⚠️  Skipping platform init\n`);
-    } else {
-      const testPath = path.join(process.cwd(), prereqFile);
-      
-      if (!fs.existsSync(testPath)) {
-        console.warn(`   ⚠️  Platform prerequisite file not found: ${prereqFile}`);
-        console.warn(`   ⚠️  Skipping platform init - make sure login runs first!\n`);
+  const skipPlatformPrereq = options.skipPlatformPrereq === true ||
+    options.isPrerequisite === true ||
+    process.env.IS_PREREQUISITE_EXECUTION === 'true';
+
+  if (prereq && !skipPlatformPrereq && !prereq.check(testData)) {
+    console.log(`\n🔐 Platform prerequisite not met: ${currentPlatform} needs ${prereq.name}`);
+    console.log(`   Running: ${prereq.setup?.actionName || prereq.actionName}\n`);
+
+    try {
+      process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
+      process.env.IS_PREREQUISITE_EXECUTION = 'true';
+
+      const prereqFile = prereq.setup?.file || prereq.file;
+      const prereqActionName = prereq.setup?.actionName || prereq.actionName;
+
+      if (!prereqFile) {
+        console.warn(`   ⚠️  Platform prerequisite missing 'file' property`);
+        console.warn(`   ⚠️  Skipping platform init\n`);
       } else {
-        delete require.cache[require.resolve(testPath)];
-        
-        const testModule = require(testPath);
-        const actionFn = testModule[prereqActionName];
-        
-        if (!actionFn) {
-          throw new Error(`Action ${prereqActionName} not found in ${prereqFile}`);
+        const testPath = path.join(process.cwd(), prereqFile);
+
+        if (!fs.existsSync(testPath)) {
+          console.warn(`   ⚠️  Platform prerequisite file not found: ${prereqFile}`);
+          console.warn(`   ⚠️  Skipping platform init - make sure login runs first!\n`);
+        } else {
+          delete require.cache[require.resolve(testPath)];
+
+          const testModule = require(testPath);
+          const actionFn = testModule[prereqActionName];
+
+          if (!actionFn) {
+            throw new Error(`Action ${prereqActionName} not found in ${prereqFile}`);
+          }
+
+          const result = await actionFn(testDataPath, { page, driver, testDataPath });
+
+          if (result && result.save) {
+            result.save(testDataPath);
+          }
+
+          if (result && result.data) {
+            Object.assign(testData, result.data);
+          }
+
+          console.log(`✅ Platform prerequisite ${prereq.name} complete!\n`);
         }
-        
-        const result = await actionFn(testDataPath, { page, driver, testDataPath });
-        
-        if (result && result.save) {
-          result.save(testDataPath);
-        }
-        
-        if (result && result.data) {
-          Object.assign(testData, result.data);
-        }
-        
-        console.log(`✅ Platform prerequisite ${prereq.name} complete!\n`);
       }
+
+      delete process.env.SKIP_UNIT_TEST_REGISTRATION;
+      delete process.env.IS_PREREQUISITE_EXECUTION;
+
+    } catch (error) {
+      delete process.env.SKIP_UNIT_TEST_REGISTRATION;
+      delete process.env.IS_PREREQUISITE_EXECUTION;
+      console.error(`❌ Platform prerequisite failed: ${error.message}`);
+      throw error;
     }
-    
-    delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-    delete process.env.IS_PREREQUISITE_EXECUTION;
-    
-  } catch (error) {
-    delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-    delete process.env.IS_PREREQUISITE_EXECUTION;
-    console.error(`❌ Platform prerequisite failed: ${error.message}`);
-    throw error;
   }
-}
-  
+
   const currentStatus = this._getCurrentStatus(testData, ImplicationClass);
 
-// Get event from the CURRENT test file being executed, not from setup[0]
-const detectedTestFile = (() => {
-  try {
-    const stack = new Error().stack;
-    const specMatch = stack.match(/([^\s(]+\.spec\.js)/);
-    return specMatch ? specMatch[1] : null;
-  } catch (e) {
-    return null;
-  }
-})();
+  // Get event from the CURRENT test file being executed
+  const viaEvent = detectedTestFile
+    ? TestPlanner._extractEventFromFilename(detectedTestFile)
+    : (meta.setup?.[0]?.testFile ? TestPlanner._extractEventFromFilename(meta.setup[0].testFile) : null);
 
-const viaEvent = detectedTestFile 
-  ? TestPlanner._extractEventFromFilename(detectedTestFile)
-  : (meta.setup?.[0]?.testFile ? TestPlanner._extractEventFromFilename(meta.setup[0].testFile) : null);
-
-// Remove the debug log if you want, or keep for now
-console.log(`🔍 DEBUG: Detected test file: ${detectedTestFile ? path.basename(detectedTestFile) : 'none'}`);
-console.log(`🔍 DEBUG: Extracted event: ${viaEvent}`);
+  console.log(`🔍 DEBUG: Extracted event: ${viaEvent}`);
 
   console.log(`\n🔍 TestPlanner: Analyzing ${targetStatus} state`);
   console.log(`   Current: ${currentStatus}`);
@@ -3232,127 +3244,97 @@ console.log(`🔍 DEBUG: Extracted event: ${viaEvent}`);
   if (viaEvent) {
     console.log(`   Via Event: ${viaEvent}`);
   }
-  
+
   const analysis = planner.analyze(ImplicationClass, testData, { explicitEvent: viaEvent });
 
-// Already at target?
-  // For loop transitions, we need to check previousStatus, not just target
+  // Already at target?
   const previousStatus = meta.requires?.previousStatus || meta.setup?.[0]?.previousStatus;
 
   if (targetStatus && currentStatus === targetStatus) {
-    // If this transition has a previousStatus requirement, check if we came from there
-    // For loops like cookies_parameter → cookies, we can't skip just because we're at cookies
     if (previousStatus && previousStatus !== currentStatus) {
       console.log(`🔄 Loop detected: Currently at ${currentStatus}, but test expects to come FROM ${previousStatus}`);
       console.log(`   Need to reach ${previousStatus} first, then transition to ${targetStatus}\n`);
-      // Don't return - let the analysis continue to build the path to previousStatus
     } else {
       console.log(`✅ Already in target state (${targetStatus}), no action needed\n`);
       return { ready: true, skipped: true, currentStatus, targetStatus };
     }
   }
+
   // ═══════════════════════════════════════════════════════════════════════
   // INLINE SAME-PLATFORM EXECUTION (when page/driver available)
   // ═══════════════════════════════════════════════════════════════════════
   if (!analysis.ready && analysis.chain.length > 0 && (page || driver)) {
     const segments = planner._groupChainByPlatform(analysis.chain, testData, ImplicationClass);
-    
+
     console.log(`\n📊 Prerequisite Chain (${segments.length} segment${segments.length > 1 ? 's' : ''}):\n`);
-    
+
     segments.forEach((segment, index) => {
       const status = segment.complete ? '✅' : '❌';
-      const label = segment.steps.length === 1 && segment.steps[0].isTarget 
-        ? 'CURRENT TEST' 
+      const label = segment.steps.length === 1 && segment.steps[0].isTarget
+        ? 'CURRENT TEST'
         : segment.complete ? 'COMPLETE' : 'NOT COMPLETE';
-      
+
       console.log(`Segment ${index + 1} (${segment.platform}): ${status} ${label}`);
-      
+
       segment.steps.forEach(step => {
         const icon = step.complete ? '✅' : step.isTarget ? '🎯' : '📍';
         console.log(`  ${icon} ${step.status}`);
       });
       console.log('');
     });
-    
+
     const incompleteSegment = segments.find(s => !s.complete);
-    
+
     if (incompleteSegment) {
-      const currentPlatform = page ? 'web' : platform;
+      // ✅ FIX: Use currentPlatform (detected from filename/driver), NOT meta.platform
       const isSamePlatform = this._isSamePlatform(incompleteSegment.platform, currentPlatform);
-      
-   if (isSamePlatform) {
-  // ═══════════════════════════════════════════════════════════
-  // SAME PLATFORM - Execute inline with SAME page/driver!
-  // ═══════════════════════════════════════════════════════════
-  console.log(`⚡ Auto-executing ${incompleteSegment.platform} segment inline...\n`);
-  
-  // ✅ ADD THIS DEBUG LOG
-  console.log('🔍 DEBUG: incompleteSegment.steps:', JSON.stringify(
-    incompleteSegment.steps.map(s => ({
-      status: s.status,
-      complete: s.complete,
-      isTarget: s.isTarget,
-      isLoopPrerequisite: s.isLoopPrerequisite,
-      actionName: s.actionName
-    })), null, 2
-  ));
-  
-  let executedAnySteps = false;
-  
-//       // ═══════════════════════════════════════════════════════════
-// // Find where we are in the chain and only execute steps AFTER current position
-// // ═══════════════════════════════════════════════════════════
-// const currentStatusIndex = incompleteSegment.steps.findIndex(s => s.complete || s.status === currentStatus);
 
-// for (let i = 0; i < incompleteSegment.steps.length; i++) {
-//   const step = incompleteSegment.steps[i];
-  
-//   if (step.isTarget) continue;
-//   if (step.complete) continue;
-  
-//   // Skip loop prerequisites that appear BEFORE current position
-//   // These are part of the loop that we need to reach via forward execution
-//   if (i < currentStatusIndex && step.isLoopPrerequisite) {
-//     continue;
-//   }
-  
-//   // Skip steps before our current position (they're part of the loop)
-//   if (currentStatusIndex !== -1 && i < currentStatusIndex) {
-//     continue;
-//   }
+      console.log(`🔍 DEBUG: Platform comparison:`);
+      console.log(`   Incomplete segment platform: ${incompleteSegment.platform}`);
+      console.log(`   Current test platform: ${currentPlatform}`);
+      console.log(`   Same platform? ${isSamePlatform}`);
 
-       
- // ═══════════════════════════════════════════════════════════
-// Find where we are in the chain and determine execution order
-// ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-// Find where we are in the chain and determine execution order
-// ═══════════════════════════════════════════════════════════
+      if (isSamePlatform) {
+        // ═══════════════════════════════════════════════════════════
+        // SAME PLATFORM - Execute inline with SAME page/driver!
+        // ═══════════════════════════════════════════════════════════
+        console.log(`⚡ Auto-executing ${incompleteSegment.platform} segment inline...\n`);
 
-for (let i = 0; i < incompleteSegment.steps.length; i++) {
-  const step = incompleteSegment.steps[i];
-  
-  if (step.isTarget) continue;
-  if (step.complete) continue;
-  if (step.isLoopPrerequisite) continue;  // ✅ ADD THIS!
-  
-  // ✅ Handle blocked steps
-  if (step.blocked) {
-    console.error(`\n🚫 Path is BLOCKED at ${step.status}`);
-    console.error(`   ${step.blockedReason}`);
-    if (step.blockedTransitions) {
-      step.blockedTransitions.forEach(t => {
-        t.blockedBy.forEach(b => {
-          console.error(`   ❌ ${b.field}: need ${JSON.stringify(b.expected)}, have ${JSON.stringify(b.actual)}`);
-        });
-      });
-    }
-    throw new Error(`Cannot reach ${targetStatus} - path blocked at ${step.status}`);
-  }
+        console.log('🔍 DEBUG: incompleteSegment.steps:', JSON.stringify(
+          incompleteSegment.steps.map(s => ({
+            status: s.status,
+            complete: s.complete,
+            isTarget: s.isTarget,
+            isLoopPrerequisite: s.isLoopPrerequisite,
+            actionName: s.actionName
+          })), null, 2
+        ));
+
+        let executedAnySteps = false;
+
+        for (let i = 0; i < incompleteSegment.steps.length; i++) {
+          const step = incompleteSegment.steps[i];
+
+          if (step.isTarget) continue;
+          if (step.complete) continue;
+          if (step.isLoopPrerequisite) continue;
+
+          // Handle blocked steps
+          if (step.blocked) {
+            console.error(`\n🚫 Path is BLOCKED at ${step.status}`);
+            console.error(`   ${step.blockedReason}`);
+            if (step.blockedTransitions) {
+              step.blockedTransitions.forEach(t => {
+                t.blockedBy.forEach(b => {
+                  console.error(`   ❌ ${b.field}: need ${JSON.stringify(b.expected)}, have ${JSON.stringify(b.actual)}`);
+                });
+              });
+            }
+            throw new Error(`Cannot reach ${targetStatus} - path blocked at ${step.status}`);
+          }
 
           let testFilePath = step.testFile;
           let actionName = step.actionName;
-
 
           if (!testFilePath || testFilePath === 'unknown') {
             const fullStep = analysis.chain.find(s => s.status === step.status);
@@ -3372,237 +3354,278 @@ for (let i = 0; i < incompleteSegment.steps.length; i++) {
 
           try {
             process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
-            
+
             const fullTestPath = path.join(process.cwd(), testFilePath);
             delete require.cache[require.resolve(fullTestPath)];
             const testModule = require(fullTestPath);
-            
+
             delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-            
+
             // Find the action function
             let triggerFn = testModule[actionName];
-            
+
             if (!triggerFn) {
               const camelCaseActionName = actionName.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
               triggerFn = testModule[camelCaseActionName];
-              
+
               if (!triggerFn) {
                 throw new Error(`Function ${actionName} not exported from ${testFilePath}`);
               }
             }
-            
+
             // Get current data path (might have delta from previous step)
             const TestContext = require('./TestContext');
             const originalPath = options.testDataPath || testData.__testDataPath || 'tests/data/shared.json';
             const deltaPath = TestContext.getDeltaPath(originalPath);
             const pathToUse = fs.existsSync(deltaPath) ? deltaPath : originalPath;
-            
-            // ✅ NEW: Check transition conditions before executing
-const transitionCheck = this._canTakeTransitionTo(step.status, currentStatus, testData);
-if (!transitionCheck.valid) {
-  console.error(`\n❌ Cannot execute ${step.status} - transition conditions not met!`);
-  console.error(`   Transition: ${transitionCheck.from} --(${transitionCheck.event})--> ${transitionCheck.to}`);
-  if (transitionCheck.blockedBy) {
-    transitionCheck.blockedBy.forEach(b => {
-      console.error(`   ❌ ${b.field}: expected ${JSON.stringify(b.expected)}, got ${JSON.stringify(b.actual)}`);
-    });
-  }
-  console.error(`\n💡 Your testData doesn't support this path. Check your test data or use a different test.\n`);
-  throw new Error(`Transition to ${step.status} blocked by conditions`);
-}
+
+            // Check transition conditions before executing
+            const transitionCheck = this._canTakeTransitionTo(step.status, currentStatus, testData);
+            if (!transitionCheck.valid) {
+              console.error(`\n❌ Cannot execute ${step.status} - transition conditions not met!`);
+              console.error(`   Transition: ${transitionCheck.from} --(${transitionCheck.event})--> ${transitionCheck.to}`);
+              if (transitionCheck.blockedBy) {
+                transitionCheck.blockedBy.forEach(b => {
+                  console.error(`   ❌ ${b.field}: expected ${JSON.stringify(b.expected)}, got ${JSON.stringify(b.actual)}`);
+                });
+              }
+              console.error(`\n💡 Your testData doesn't support this path. Check your test data or use a different test.\n`);
+              throw new Error(`Transition to ${step.status} blocked by conditions`);
+            }
 
             // Execute with SAME PAGE/DRIVER - this is the key!
             const result = await triggerFn(pathToUse, {
-              page: page,       // ← SAME PAGE!
-              driver: driver,   // ← SAME DRIVER!
+              page: page,
+              driver: driver,
               testDataPath: pathToUse,
               isPrerequisite: true
             });
-            
+
             if (result && result.save) {
               result.save(pathToUse);
             }
-            
+
             // Reload data to get updated status
             const finalDeltaPath = TestContext.getDeltaPath(originalPath);
             const reloadedCtx = TestContext.load(ImplicationClass, finalDeltaPath);
             Object.assign(testData, reloadedCtx.data);
-            
-          console.log(`   ✅ Completed: ${step.status}\n`);
 
-// ═══════════════════════════════════════════════════════════
-// 🔍 OPTIONAL: Validate assertions at each step
-// ═══════════════════════════════════════════════════════════
-const validateEachStep = process.env.VALIDATE_EACH_STEP === 'true';
+            console.log(`   ✅ Completed: ${step.status}\n`);
 
-if (validateEachStep && page) {
-  try {
-    const stepImplClassName = planner.stateRegistry[step.status];
-    if (stepImplClassName) {
-      const stepImplPath = planner.findImplicationFile(stepImplClassName);
-      if (stepImplPath) {
-        planner._clearImplicationCache(stepImplPath);
-        const StepImplClass = require(stepImplPath);
-        
-        const mirrorsOn = StepImplClass.mirrorsOn;
-        if (mirrorsOn?.UI?.web) {
-          console.log(`   🔍 Validating ${step.status} UI...`);
-          
-          const ExpectImplication = require('./ExpectImplication');
-          
-          // Reload current test data
-          const TestContext = require('./TestContext');
-          const currentData = TestContext.load(StepImplClass, testDataPath).data;
-          
-          for (const [screenKey, screenConfig] of Object.entries(mirrorsOn.UI.web)) {
-           const pomPathRaw = screenConfig.pom || screenConfig._pomSource?.path;
-if (pomPathRaw) {
-  try {
-    const pomPath = path.isAbsolute(pomPathRaw) 
-      ? pomPathRaw 
-      : path.join(process.cwd(), pomPathRaw);console.log(`   ⏭️  ${screenKey} has no POM defined, skipping validation`);
+            // Optional: Validate assertions at each step
+            const shouldValidateEachStep = process.env.VALIDATE_EACH_STEP === 'true';
 
-                
-                const PomClass = require(pomPath);
-                const pomInstance = new PomClass(page, currentData.lang || 'en', currentData.device || 'desktop');
-                
-                await ExpectImplication.validateImplications(
-                  screenConfig,
-                  currentData,
-                  pomInstance
-                );
-                console.log(`   ✅ ${step.status}.${screenKey} validation passed`);
-              } catch (pomError) {
-                console.log(`   ⚠️  Could not load POM for ${screenKey}: ${pomError.message}`);
+            if (shouldValidateEachStep && page) {
+              try {
+                const stepImplClassName = planner.stateRegistry[step.status];
+                if (stepImplClassName) {
+                  const stepImplPath = planner.findImplicationFile(stepImplClassName);
+                  if (stepImplPath) {
+                    planner._clearImplicationCache(stepImplPath);
+                    const StepImplClass = require(stepImplPath);
+
+                    const mirrorsOn = StepImplClass.mirrorsOn;
+                    if (mirrorsOn?.UI?.web) {
+                      console.log(`   🔍 Validating ${step.status} UI...`);
+
+                      const ExpectImplication = require('./ExpectImplication');
+                      const currentData = TestContext.load(StepImplClass, testDataPath).data;
+
+                      for (const [screenKey, screenConfig] of Object.entries(mirrorsOn.UI.web)) {
+                        const pomPathRaw = screenConfig.pom || screenConfig._pomSource?.path;
+                        if (pomPathRaw) {
+                          try {
+                            const pomPath = path.isAbsolute(pomPathRaw)
+                              ? pomPathRaw
+                              : path.join(process.cwd(), pomPathRaw);
+
+                            const PomClass = require(pomPath);
+                            const pomInstance = new PomClass(page, currentData.lang || 'en', currentData.device || 'desktop');
+
+                            await ExpectImplication.validateImplications(
+                              screenConfig,
+                              currentData,
+                              pomInstance
+                            );
+                            console.log(`   ✅ ${step.status}.${screenKey} validation passed`);
+                          } catch (pomError) {
+                            console.log(`   ⚠️  Could not load POM for ${screenKey}: ${pomError.message}`);
+                          }
+                        } else {
+                          console.log(`   ⏭️  ${screenKey} has no POM defined, skipping validation`);
+                        }
+                      }
+                    } else {
+                      console.log(`   ⏭️  No UI.web validation defined for ${step.status}`);
+                    }
+                  }
+                }
+              } catch (validationError) {
+                console.error(`   ❌ Validation failed at ${step.status}: ${validationError.message}`);
+                throw validationError;
               }
-            } else {
-              console.log(`   ⏭️  ${screenKey} has no POM defined, skipping validation`);
             }
-          }
-        } else {
-          console.log(`   ⏭️  No UI.web validation defined for ${step.status}`);
-        }
-      }
-    }
-  } catch (validationError) {
-    console.error(`   ❌ Validation failed at ${step.status}: ${validationError.message}`);
-    throw validationError;
-  }
-}
-            
-            
+
           } catch (error) {
             console.error(`❌ Failed to execute ${actionName}: ${error.message}\n`);
             delete process.env.SKIP_UNIT_TEST_REGISTRATION;
             throw error;
           }
         }
-        
-     if (executedAnySteps) {
-          // ═══════════════════════════════════════════════════════════
-          // DON'T re-analyze! Just check if we reached a good state
-          // ═══════════════════════════════════════════════════════════
+
+        if (executedAnySteps) {
           const TestContext = require('./TestContext');
           const originalPath = options.testDataPath || testData.__testDataPath || 'tests/data/shared.json';
           const finalDeltaPath = TestContext.getDeltaPath(originalPath);
           const reloadedCtx = TestContext.load(ImplicationClass, finalDeltaPath);
           const newStatus = this._getCurrentStatus(reloadedCtx.data, ImplicationClass);
-          
-          // Check: did we complete the LAST incomplete step before target?
+
           const lastPrereqStep = incompleteSegment.steps.filter(s => !s.isTarget).pop();
           const targetStep = incompleteSegment.steps.find(s => s.isTarget);
-          
-          // If current status is the previousStatus needed by target, we're ready
-          const targetPreviousStatus = targetStep?.previousStatus || 
+
+          const targetPreviousStatus = targetStep?.previousStatus ||
             planner._getPreviousStatus(ImplicationClass, testData, { explicitEvent: viaEvent });
-          
+
           if (newStatus === targetPreviousStatus) {
             console.log(`✅ Reached required state: ${newStatus} (ready for ${targetStatus})\n`);
             return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
           }
-          
-          // Not ready yet - but DON'T rebuild the whole chain!
-          // Just check if there are remaining incomplete steps in THIS segment
-          const remainingSteps = incompleteSegment.steps.filter(s => 
+
+          const remainingSteps = incompleteSegment.steps.filter(s =>
             !s.isTarget && !s.complete && s.status !== newStatus
           );
-          
+
           if (remainingSteps.length === 0) {
             console.log(`✅ All prerequisites in segment complete!\n`);
             return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
           }
-          
-          // Still have steps - check if next segment is different platform
+
           console.log(`   Remaining steps: ${remainingSteps.map(s => s.status).join(' → ')}\n`);
           console.log(`   Current status: ${newStatus}\n`);
-          
-          // Continue with what we have
+
           return { ready: true, chain: analysis.chain, currentStatus: newStatus, targetStatus };
         }
       } else {
         // ═══════════════════════════════════════════════════════════
-        // DIFFERENT PLATFORM - Cannot execute inline
+        // DIFFERENT PLATFORM - Cannot execute inline, spawn subprocess
         // ═══════════════════════════════════════════════════════════
-        const isPrerequisiteExecution = options?.isPrerequisite === true || 
-                                        process.env.IS_PREREQUISITE_EXECUTION === 'true';
-        
+        console.log(`\n🌐 Cross-platform prerequisite detected!`);
+        console.log(`   Current test: ${currentPlatform}`);
+        console.log(`   Prerequisites need: ${incompleteSegment.platform}\n`);
+
+        const isPrerequisiteExecution = options?.isPrerequisite === true ||
+          process.env.IS_PREREQUISITE_EXECUTION === 'true';
+
         if (isPrerequisiteExecution) {
           console.log(`\n✅ Platform ${currentPlatform} prerequisites complete\n`);
           console.log(`   (Remaining ${incompleteSegment.platform} prerequisites will be handled by parent test)\n`);
           return analysis;
         }
-        
-        console.log(`\n⚠️  Next segment requires ${incompleteSegment.platform} platform\n`);
+
+        // Get steps that need to be executed on the other platform
+        const stepsToExecute = incompleteSegment.steps.filter(s => !s.complete && !s.isTarget);
+
+        if (stepsToExecute.length > 0) {
+          console.log(`⚡ Auto-executing ${incompleteSegment.platform} prerequisites via subprocess...\n`);
+
+          try {
+            if (incompleteSegment.platform === 'web' || incompleteSegment.platform === 'playwright') {
+              // Web prerequisites - use batch execution
+              await this.executeWebSegmentInline(stepsToExecute, testDataPath || 'tests/data/shared.json');
+            } else {
+              // Mobile prerequisites - execute one by one
+              for (const step of stepsToExecute) {
+                this.executeTestInSubprocess(step.testFile, incompleteSegment.platform);
+              }
+            }
+
+            console.log(`✅ ${incompleteSegment.platform} prerequisites complete!\n`);
+
+            // Reload data and re-check
+            await new Promise(resolve => setTimeout(resolve, 500));
+            this._clearDataCaches();
+
+            const TestContext = require('./TestContext');
+            const deltaPath = TestContext.getDeltaPath(testDataPath || 'tests/data/shared.json');
+            const actualPath = fs.existsSync(deltaPath) ? deltaPath : (testDataPath || 'tests/data/shared.json');
+            const rawData = JSON.parse(fs.readFileSync(actualPath, 'utf8'));
+            const mergedData = this._mergeChangeLog(rawData);
+
+            Object.assign(testData, mergedData);
+
+            const newAnalysis = planner.analyze(ImplicationClass, mergedData);
+
+            if (newAnalysis.ready) {
+              console.log('✅ All prerequisites satisfied!\n');
+              return newAnalysis;
+            }
+
+            // Check if remaining prerequisites are now same-platform
+            const newSegments = planner._groupChainByPlatform(newAnalysis.chain, mergedData, ImplicationClass);
+            const newIncomplete = newSegments.find(s => !s.complete);
+
+            if (newIncomplete && this._isSamePlatform(newIncomplete.platform, currentPlatform)) {
+              console.log(`✅ Remaining prerequisites are now ${currentPlatform}, continuing...\n`);
+              return newAnalysis;
+            }
+
+          } catch (error) {
+            console.error(`\n❌ Cross-platform prerequisite failed: ${error.message}\n`);
+            planner.printCrossPlatformMessage(analysis.chain, currentPlatform);
+            throw new Error('Prerequisites not met (cross-platform execution failed)');
+          }
+        }
+
         planner.printCrossPlatformMessage(analysis.chain, currentPlatform);
         throw new Error('Prerequisites not met (cross-platform)');
       }
     }
   }
-  
+
   // ═══════════════════════════════════════════════════════════════════════
   // FALLBACK: Single step auto-execution (legacy path)
   // ═══════════════════════════════════════════════════════════════════════
   if (!analysis.ready && analysis.nextStep && (page || driver)) {
     const { testFile: stepTestFile, actionName } = analysis.nextStep;
-    
+
     console.log(`\n⚡ Auto-executing prerequisite: ${actionName}\n`);
-    
+
     try {
       process.env.SKIP_UNIT_TEST_REGISTRATION = 'true';
-      
+
       const testPath = path.join(process.cwd(), stepTestFile);
       delete require.cache[require.resolve(testPath)];
       const testModule = require(testPath);
-      
+
       delete process.env.SKIP_UNIT_TEST_REGISTRATION;
-      
+
       let triggerFn = testModule[actionName];
-      
+
       if (!triggerFn) {
         const camelCaseActionName = actionName.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
         triggerFn = testModule[camelCaseActionName];
-        
+
         if (!triggerFn) {
           throw new Error(`Function ${actionName} (or ${camelCaseActionName}) not exported from ${stepTestFile}`);
         }
       }
-      
+
       const TestContext = require('./TestContext');
-      const originalPath = options.testDataPath 
-        || testData.__testDataPath 
-        || process.env.TEST_DATA_PATH 
+      const originalPath = options.testDataPath
+        || testData.__testDataPath
+        || process.env.TEST_DATA_PATH
         || 'tests/data/shared.json';
-      
+
       const deltaPath = TestContext.getDeltaPath(originalPath);
       const pathToUse = fs.existsSync(deltaPath) ? deltaPath : originalPath;
-      
+
       const result = await triggerFn(pathToUse, {
         page: page,
         driver: driver,
         testDataPath: pathToUse,
         isPrerequisite: true
       });
-      
+
       if (result && result.save) {
         result.save(pathToUse);
       }
@@ -3610,32 +3633,32 @@ if (pomPathRaw) {
       const finalDeltaPath = TestContext.getDeltaPath(originalPath);
       const reloadedCtx = TestContext.load(ImplicationClass, finalDeltaPath);
       Object.assign(testData, reloadedCtx.data);
-      
+
       const newCurrentStatus = this._getCurrentStatus(reloadedCtx.data, ImplicationClass);
-      
+
       if (newCurrentStatus === analysis.nextStep.status) {
         console.log(`✅ Completed prerequisite: ${analysis.nextStep.status}\n`);
       }
-      
+
       const newAnalysis = planner.analyze(ImplicationClass, reloadedCtx.data);
-      
+
       if (!newAnalysis.ready && newAnalysis.nextStep) {
         console.log(`   ⭐ Moving to next prerequisite: ${newAnalysis.nextStep.actionName}\n`);
         return TestPlanner.checkOrThrow(ImplicationClass, reloadedCtx.data, {
           ...options,
           testDataPath: finalDeltaPath,
-          skipPlatformPrereq: true  // ← KEY FIX!
+          skipPlatformPrereq: true
         });
       }
-      
+
       if (!newAnalysis.ready) {
         planner.printNotReadyError(newAnalysis);
         throw new Error('Prerequisite chain stuck');
       }
-      
+
       console.log('✅ Prerequisites satisfied!\n');
       return newAnalysis;
-      
+
     } catch (error) {
       console.error(`❌ Failed to auto-execute prerequisite: ${error.message}\n`);
       delete process.env.SKIP_UNIT_TEST_REGISTRATION;
@@ -3643,18 +3666,18 @@ if (pomPathRaw) {
       throw error;
     }
   }
-  
+
   // No page/driver but have nextStep - shouldn't happen in normal flow
   if (!analysis.ready && analysis.nextStep && !page && !driver) {
     planner.printNotReadyError(analysis);
     throw new Error('Prerequisites not met - run with preflight enabled');
   }
-  
+
   if (!analysis.ready) {
     planner.printNotReadyError(analysis);
     throw new Error('Prerequisites not met');
   }
-  
+
   return analysis;
 }
 
@@ -3767,17 +3790,35 @@ test('Batch: Execute ${stepsToExecute.length} web prerequisites', async ({ page 
   // ═══════════════════════════════════════════════════════════════════════════
   // STATIC: PRE-FLIGHT CHECK
   // ═══════════════════════════════════════════════════════════════════════════
-  static async preFlightCheck(ImplicationClass, testDataPath) {
-    try {
-      const TestContext = require('./TestContext');
-      const ctx = TestContext.load(ImplicationClass, testDataPath);
-      
-      const planner = new TestPlanner({ verbose: true });
-      const meta = ImplicationClass.xstateConfig?.meta || {};
-      const currentPlatform = meta.platform || 'web';
-      const targetStatus = meta.status;
-      const currentTestFile = meta.setup?.[0]?.testFile;
-      
+ static async preFlightCheck(ImplicationClass, testDataPath, testFile = null) {
+  try {
+    const TestContext = require('./TestContext');
+    const ctx = TestContext.load(ImplicationClass, testDataPath);
+    
+    const planner = new TestPlanner({ verbose: true });
+    const meta = ImplicationClass.xstateConfig?.meta || {};
+    const targetStatus = meta.status;
+    const currentTestFile = testFile || meta.setup?.[0]?.testFile;
+    
+    // ═══════════════════════════════════════════════════════════
+    // DETECT ACTUAL PLATFORM from test file name (not implication meta!)
+    // ═══════════════════════════════════════════════════════════
+    const platformFromFilename = (() => {
+      if (!currentTestFile) return null;
+      const basename = path.basename(currentTestFile);
+      if (basename.includes('-ClubApp-') || basename.includes('-Club-')) return 'clubApp';
+      if (basename.includes('-Dancer-')) return 'dancer';
+      if (basename.includes('-Web-') || basename.includes('-Playwright-') || basename.includes('-CMS-')) return 'web';
+      return null;
+    })();
+    
+    // Priority: filename detection, then meta.platform, then default
+    const currentPlatform = platformFromFilename || meta.platform || 'web';
+    
+    console.log(`🔍 Pre-flight platform detection:`);
+    console.log(`   Test file: ${currentTestFile ? path.basename(currentTestFile) : 'unknown'}`);
+    console.log(`   Platform from filename: ${platformFromFilename || 'none'}`);
+    console.log(`   Current platform: ${currentPlatform}`);
       // ═══════════════════════════════════════════════════════════
       // CHECK REQUIRES MISMATCH - Interactive!
       // ═══════════════════════════════════════════════════════════
