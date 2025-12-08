@@ -288,30 +288,53 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
   const isPlaywright = platform === 'web' || platform === 'cms';
   const screens = [];
   
+ // ═══════════════════════════════════════════════════════════
+// PASS 1: Process all screens
+// ═══════════════════════════════════════════════════════════
+for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
+  let screen;
+  
+  // Handle array or object format
+  if (Array.isArray(screenDef)) {
+    if (screenDef.length === 0) continue;
+    screen = screenDef[0];
+  } else if (typeof screenDef === 'object' && screenDef !== null) {
+    screen = screenDef;
+  } else {
+    continue;
+  }
+  
+  if (!screen || typeof screen !== 'object') continue;
+  
+  const order = typeof screen.order === 'number' ? screen.order : 999;
+  const hasBlocks = Array.isArray(screen.blocks) && screen.blocks.length > 0;
+  const hasNavigation = screen.navigation && 
+                        (screen.navigation.pomName || screen.navigation.method);
+  
   // ═══════════════════════════════════════════════════════════
-  // PASS 1: Process all screens
+  // ✅ FIX #1: Check if screen has ANY enabled blocks
   // ═══════════════════════════════════════════════════════════
-  for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
-    let screen;
-    
-    // Handle array or object format
-    if (Array.isArray(screenDef)) {
-      if (screenDef.length === 0) continue;
-      screen = screenDef[0];
-    } else if (typeof screenDef === 'object' && screenDef !== null) {
-      screen = screenDef;
-    } else {
-      continue;
-    }
-    
-    if (!screen || typeof screen !== 'object') continue;
-    
-    const order = typeof screen.order === 'number' ? screen.order : 999;
-    const hasBlocks = Array.isArray(screen.blocks) && screen.blocks.length > 0;
-    const hasNavigation = screen.navigation && 
-                          (screen.navigation.pomName || screen.navigation.method);
-    
-    console.log(`   📺 ${screenKey}: order=${order}, blocks=${hasBlocks}, nav=${hasNavigation}`);
+  let hasEnabledBlocks = false;
+  if (hasBlocks) {
+    hasEnabledBlocks = screen.blocks.some(block => block.enabled !== false);
+  }
+  
+  // Skip screens where ALL blocks are disabled
+  if (hasBlocks && !hasEnabledBlocks) {
+    console.log(`   ⏭️  Skipping ${screenKey}: all blocks disabled`);
+    continue;
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ FIX #2: Warn if order > 0 and no navigation
+  // ═══════════════════════════════════════════════════════════
+  if (order > 0 && !hasNavigation && hasEnabledBlocks) {
+    console.warn(`   ⚠️  WARNING: ${screenKey} has order=${order} but NO navigation defined!`);
+    console.warn(`      Add a navigation block to ensure the test can reach this screen.`);
+    console.warn(`      Example: navigation: { pomName: 'SomeScreen', method: 'navigateTo', args: [] }`);
+  }
+  
+  console.log(`   📺 ${screenKey}: order=${order}, blocks=${hasBlocks}, enabled=${hasEnabledBlocks}, nav=${hasNavigation}`);
     
     if (hasBlocks) result.usesBlocks = true;
     else result.usesLegacy = true;
