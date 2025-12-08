@@ -4,6 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import Handlebars from 'handlebars';
 import { fileURLToPath } from 'url';
+import {
+  pascalCaseHelper,
+  camelCaseHelper,
+  snakeCaseHelper,
+  containsHelper,
+  replaceHelper
+} from '../generators/templateHelpers.js';
 
 // Create __dirname equivalent for ES6 modules
 const __filename = fileURLToPath(import.meta.url);
@@ -24,7 +31,7 @@ class TemplateEngine {
   
   constructor(options = {}) {
     this.options = {
-      templatesDir: options.templatesDir || path.join(__dirname, 'templates'),
+      templatesDir: options.templatesDir || path.join(__dirname, '../generators/templates'),
       cache: options.cache !== false,  // Cache by default
       ...options
     };
@@ -44,9 +51,13 @@ class TemplateEngine {
    * @returns {string} Rendered output
    */
   render(templateName, context) {
-    console.log(`\nðŸ“ TemplateEngine.render()`);
+    console.log(`\n🔍 TemplateEngine.render()`);
     console.log(`   Template: ${templateName}`);
     console.log(`   Context keys: ${Object.keys(context).length}`);
+    
+    // ✅ CLEAR CACHE BEFORE RENDERING (temporary debug)
+    this.templateCache.clear();
+    console.log('   🗑️  Cache cleared');
     
     // Get compiled template
     const template = this._getTemplate(templateName);
@@ -54,7 +65,7 @@ class TemplateEngine {
     // Render
     const output = template(context);
     
-    console.log(`   âœ… Rendered: ${output.length} characters`);
+    console.log(`   ✅ Rendered: ${output.length} characters`);
     
     return output;
   }
@@ -96,13 +107,18 @@ class TemplateEngine {
   _registerHelpers() {
     const hbs = this.handlebars;
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // STRING HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STRING TRANSFORMATION HELPERS
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    hbs.registerHelper('pascalCase', pascalCaseHelper);
+    hbs.registerHelper('camelCase', camelCaseHelper);
+    hbs.registerHelper('snakeCase', snakeCaseHelper);
+    hbs.registerHelper('contains', containsHelper);
+    hbs.registerHelper('replace', replaceHelper);
     
     /**
      * Uppercase string
-     * Usage: {{upper "hello"}} â†’ "HELLO"
      */
     hbs.registerHelper('upper', (str) => {
       return str ? str.toUpperCase() : '';
@@ -110,7 +126,6 @@ class TemplateEngine {
     
     /**
      * Lowercase string
-     * Usage: {{lower "HELLO"}} â†’ "hello"
      */
     hbs.registerHelper('lower', (str) => {
       return str ? str.toLowerCase() : '';
@@ -118,83 +133,122 @@ class TemplateEngine {
     
     /**
      * Capitalize first letter
-     * Usage: {{capitalize "hello"}} â†’ "Hello"
      */
     hbs.registerHelper('capitalize', (str) => {
       if (!str) return '';
       return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
     });
-    hbs.registerHelper('snakeCase', (str) => {
-  if (!str) return '';
-  return str.replace(/([A-Z])/g, '_$1').toLowerCase();
-});
-
-/**
- * Convert to PascalCase
- * Usage: {{pascalCase "btn_calendar_day"}} → "BtnCalendarDay"
- */
-hbs.registerHelper('pascalCase', (str) => {
-  if (!str) return '';
-  return str
-    .split(/[-_.\s]/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
-});
-
-/**
- * Join array with separator
- * Usage: {{join array ", "}}
- */
-hbs.registerHelper('join', (array, separator) => {
-  if (!Array.isArray(array)) return '';
-  return array.join(separator || ', ');
-});
+    
+    /**
+     * Join array with separator
+     */
+    hbs.registerHelper('join', (array, separator) => {
+      if (!Array.isArray(array)) return '';
+      return array.join(separator || ', ');
+    });
     
     /**
      * Split string by separator
-     * Usage: {{split string "\n"}}
      */
     hbs.registerHelper('split', (str, separator) => {
       if (!str) return [];
       return str.split(separator || ',');
     });
-    
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // COMPARISON HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Simple equality (for subexpressions)
+     */
+    hbs.registerHelper('eq', (a, b) => {
+      return a === b;
+    });
+
+    /**
+     * Simple not-equal (for subexpressions)
+     */
+    hbs.registerHelper('neq', (a, b) => a !== b);
     
     /**
-     * Equals comparison
-     * Usage: {{#ifEquals value "test"}}...{{/ifEquals}}
+     * Equals comparison (block helper)
      */
     hbs.registerHelper('ifEquals', function(arg1, arg2, options) {
       return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
     });
     
     /**
-     * Not equals comparison
-     * Usage: {{#ifNotEquals value "test"}}...{{/ifNotEquals}}
+     * Not equals comparison (block helper)
      */
     hbs.registerHelper('ifNotEquals', function(arg1, arg2, options) {
       return (arg1 != arg2) ? options.fn(this) : options.inverse(this);
     });
     
     /**
-     * Contains check
-     * Usage: {{#ifContains array value}}...{{/ifContains}}
+     * Contains check (block helper)
      */
     hbs.registerHelper('ifContains', function(array, value, options) {
       if (!Array.isArray(array)) return options.inverse(this);
       return array.includes(value) ? options.fn(this) : options.inverse(this);
     });
+
+    /**
+     * Format requirement for display
+     */
+    hbs.registerHelper('formatRequirement', function(key, value) {
+      // Handle boolean
+      if (typeof value === 'boolean') {
+        return `must be ${value}`;
+      }
+      
+      // Handle string
+      if (typeof value === 'string') {
+        return `must equal "${value}"`;
+      }
+      
+      // Handle object
+      if (typeof value === 'object' && value !== null) {
+        // Contains pattern: { contains: 'ctx.data.x' }
+        if (value.contains) {
+          const isNegated = key.startsWith('!');
+          return isNegated 
+            ? `must NOT contain ${value.contains}`
+            : `must contain ${value.contains}`;
+        }
+        
+        // Equals pattern: { equals: 'value' }
+        if (value.equals !== undefined) {
+          return `must equal ${value.equals}`;
+        }
+        
+        // OneOf pattern: { oneOf: ['a', 'b'] }
+        if (value.oneOf && Array.isArray(value.oneOf)) {
+          return `must be one of: ${value.oneOf.join(', ')}`;
+        }
+        
+        // Min/Max patterns
+        if (value.min !== undefined || value.max !== undefined) {
+          const parts = [];
+          if (value.min !== undefined) parts.push(`>= ${value.min}`);
+          if (value.max !== undefined) parts.push(`<= ${value.max}`);
+          return `must be ${parts.join(' and ')}`;
+        }
+        
+        // Fallback
+        return `must match ${JSON.stringify(value)}`;
+      }
+      
+      // Fallback
+      return `= ${value}`;
+    });
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     // DATE HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     
     /**
      * Format date
-     * Usage: {{formatDate date "YYYY-MM-DD"}}
      */
     hbs.registerHelper('formatDate', (date, format) => {
       if (!date) return '';
@@ -204,25 +258,22 @@ hbs.registerHelper('join', (array, separator) => {
         return new Date(date).toISOString();
       }
       
-      // Could add moment.js for more complex formatting
       return new Date(date).toISOString();
     });
     
     /**
      * Current timestamp
-     * Usage: {{now}}
      */
     hbs.registerHelper('now', () => {
       return new Date().toISOString();
     });
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     // LOGIC HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     
     /**
      * OR operation
-     * Usage: {{#if (or value1 value2)}}...{{/if}}
      */
     hbs.registerHelper('or', function() {
       const args = Array.prototype.slice.call(arguments, 0, -1);
@@ -231,7 +282,6 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * AND operation
-     * Usage: {{#if (and value1 value2)}}...{{/if}}
      */
     hbs.registerHelper('and', function() {
       const args = Array.prototype.slice.call(arguments, 0, -1);
@@ -240,19 +290,17 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * NOT operation
-     * Usage: {{#if (not value)}}...{{/if}}
      */
     hbs.registerHelper('not', (value) => {
       return !value;
     });
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     // ARRAY HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     
     /**
      * Get array length
-     * Usage: {{length array}}
      */
     hbs.registerHelper('length', (array) => {
       if (!array) return 0;
@@ -261,7 +309,6 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * Check if array is empty
-     * Usage: {{#if (isEmpty array)}}...{{/if}}
      */
     hbs.registerHelper('isEmpty', (array) => {
       if (!array) return true;
@@ -270,20 +317,18 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * Check if array is not empty
-     * Usage: {{#if (isNotEmpty array)}}...{{/if}}
      */
     hbs.registerHelper('isNotEmpty', (array) => {
       if (!array) return false;
       return Array.isArray(array) ? array.length > 0 : Object.keys(array).length > 0;
     });
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     // MATH HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     
     /**
      * Add numbers
-     * Usage: {{add 5 3}} â†’ 8
      */
     hbs.registerHelper('add', (a, b) => {
       return (a || 0) + (b || 0);
@@ -291,7 +336,6 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * Subtract numbers
-     * Usage: {{subtract 5 3}} â†’ 2
      */
     hbs.registerHelper('subtract', (a, b) => {
       return (a || 0) - (b || 0);
@@ -299,50 +343,229 @@ hbs.registerHelper('join', (array, separator) => {
     
     /**
      * Increment
-     * Usage: {{inc value}} â†’ value + 1
      */
     hbs.registerHelper('inc', (value) => {
       return (value || 0) + 1;
     });
 
     /**
- * Add one (for 1-indexed lists)
- * Usage: {{addOne @index}} → index + 1
- */
-hbs.registerHelper('addOne', (value) => {
-  return parseInt(value || 0) + 1;
-});
+     * Add one (for 1-indexed lists)
+     */
+    hbs.registerHelper('addOne', (value) => {
+      return parseInt(value || 0) + 1;
+    });
     
     /**
      * Decrement
-     * Usage: {{dec value}} â†’ value - 1
      */
     hbs.registerHelper('dec', (value) => {
       return (value || 0) - 1;
     });
     
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     // DEBUG HELPERS
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
     
     /**
      * Debug log
-     * Usage: {{debug value}}
      */
     hbs.registerHelper('debug', function(value) {
-      console.log('\nðŸ› DEBUG:', value);
+      console.log('\n🐛 DEBUG:', value);
       return '';
     });
     
     /**
      * JSON stringify
-     * Usage: {{json object}}
      */
     hbs.registerHelper('json', (obj) => {
       return JSON.stringify(obj, null, 2);
     });
-    
-    console.log('âœ… Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers');
+
+    /**
+     * JSON stringify inline (no newlines, for comments)
+     */
+    hbs.registerHelper('jsonInline', (obj) => {
+      return JSON.stringify(obj).replace(/\n/g, ' ');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIELD VALIDATION HELPERS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if field is negated (starts with !)
+     */
+    hbs.registerHelper('isNegatedField', (field) => {
+      return typeof field === 'string' && field.startsWith('!');
+    });
+
+    /**
+     * Remove negation prefix from field
+     */
+    hbs.registerHelper('removeNegation', (field) => {
+      if (typeof field === 'string' && field.startsWith('!')) {
+        return field.slice(1);
+      }
+      return field;
+    });
+
+    /**
+     * Check if value is a "contains" object pattern like { contains: "..." }
+     */
+    hbs.registerHelper('isContainsObject', (value) => {
+      return typeof value === 'object' && value !== null && value.contains !== undefined;
+    });
+
+    /**
+     * Get the contains value from object
+     */
+    hbs.registerHelper('getContainsValue', (value) => {
+      if (typeof value === 'object' && value !== null && value.contains) {
+        return value.contains;
+      }
+      return '';
+    });
+
+    /**
+     * Check if value is boolean
+     */
+    hbs.registerHelper('isBoolean', (value) => {
+      return typeof value === 'boolean';
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ENTITY-SCOPED HELPERS (for nested paths like dancer.email)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if value is a ctx.data reference
+     */
+    hbs.registerHelper('isContextField', (value) => {
+      const result = typeof value === 'string' && value.includes('ctx.data.');
+      return result;
+    });
+
+    /**
+     * Remove ctx.data. prefix and extract field name
+     * Usage: ctx.data.email → email
+     *        ctx.data.dancer.email → dancer.email
+     */
+    hbs.registerHelper('removeCtxDataPrefix', (value) => {
+      if (typeof value === 'string') {
+        return value.replace('ctx.data.', '');
+      }
+      return value;
+    });
+
+    /**
+     * Convert field path to entity-scoped path
+     * Usage: email → dancer.email (if entity is 'dancer')
+     *        status → dancer.status
+     */
+    hbs.registerHelper('entityScopePath', function(fieldPath, entity) {
+      if (!entity) return fieldPath;
+      
+      // If already has entity prefix, return as-is
+      if (fieldPath.startsWith(entity + '.')) {
+        return fieldPath;
+      }
+      
+      return `${entity}.${fieldPath}`;
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP TYPE HELPERS (for inline actions: click, fill, getText, waitFor, custom)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Check if step is a POM method call (default type)
+     */
+    hbs.registerHelper('isPomMethod', (step) => {
+      return !step.type || step.type === 'pom-method';
+    });
+
+    /**
+     * Check if step is an inline action (click, fill, getText, waitFor)
+     */
+    hbs.registerHelper('isInlineAction', (step) => {
+      return ['click', 'fill', 'getText', 'waitFor'].includes(step.type);
+    });
+
+    /**
+     * Check if step is custom code
+     */
+    hbs.registerHelper('isCustomCode', (step) => {
+      return step.type === 'custom';
+    });
+
+    /**
+     * Check step type equality
+     */
+    hbs.registerHelper('isStepType', (step, type) => {
+      return step?.type === type;
+    });
+
+    /**
+     * Get step type with fallback to pom-method
+     */
+    hbs.registerHelper('getStepType', (step) => {
+      return step?.type || 'pom-method';
+    });
+
+    /**
+     * Generate instance name from screen class name
+     * SearchBar → searchBar
+     */
+    hbs.registerHelper('instanceFromScreen', (screenName) => {
+      if (!screenName) return 'screen';
+      return screenName.charAt(0).toLowerCase() + screenName.slice(1);
+    });
+
+    /**
+     * Render the code for an inline action step
+     * Returns the Playwright/WebdriverIO code for click, fill, getText, waitFor
+     */
+    hbs.registerHelper('renderInlineAction', function(step, options) {
+      if (!step || !step.type) return '';
+      
+      const instance = step.screen 
+        ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) 
+        : 'screen';
+      const locator = step.locator || 'element';
+      
+      switch (step.type) {
+        case 'click':
+          return `await ${instance}.${locator}.click();`;
+          
+        case 'fill': {
+          // Handle ctx.data references in value
+          let value = step.value || "''";
+          if (value.startsWith('ctx.data.')) {
+            value = value; // Keep as-is for template to handle
+          } else if (!value.startsWith("'") && !value.startsWith('"') && !value.startsWith('`')) {
+            value = `'${value}'`; // Wrap string literals
+          }
+          return `await ${instance}.${locator}.fill(${value});`;
+        }
+          
+        case 'getText':
+          if (step.storeAs) {
+            return `const ${step.storeAs} = await ${instance}.${locator}.textContent();`;
+          }
+          return `await ${instance}.${locator}.textContent();`;
+          
+        case 'waitFor': {
+          const state = step.waitState || 'visible';
+          return `await ${instance}.${locator}.waitFor({ state: '${state}' });`;
+        }
+          
+        default:
+          return `// Unknown inline action type: ${step.type}`;
+      }
+    });
+
+    // ✅ Final count AFTER all helpers registered
+    console.log('✅ Registered', Object.keys(hbs.helpers).length, 'Handlebars helpers');
   }
   
   /**
@@ -350,7 +573,7 @@ hbs.registerHelper('addOne', (value) => {
    */
   clearCache() {
     this.templateCache.clear();
-    console.log('ðŸ—‘ï¸  Template cache cleared');
+    console.log('🗑️  Template cache cleared');
   }
   
   /**
@@ -365,7 +588,7 @@ hbs.registerHelper('addOne', (value) => {
    */
   loadPartials(partialsDir) {
     if (!fs.existsSync(partialsDir)) {
-      console.warn(`âš ï¸  Partials directory not found: ${partialsDir}`);
+      console.warn(`⚠️  Partials directory not found: ${partialsDir}`);
       return;
     }
     
@@ -376,7 +599,7 @@ hbs.registerHelper('addOne', (value) => {
         const name = path.basename(file, '.hbs');
         const source = fs.readFileSync(path.join(partialsDir, file), 'utf8');
         this.registerPartial(name, source);
-        console.log(`  âœ… Registered partial: ${name}`);
+        console.log(`  ✅ Registered partial: ${name}`);
       }
     });
   }
