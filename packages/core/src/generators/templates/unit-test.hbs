@@ -11,25 +11,26 @@
 {{#if isVerify}}
 // Test Mode: VERIFY (checks UI only, does not induce state)
 {{else}}
-// Test Mode: INDUCER (performs action + checks UI)
+// Test Mode: INDUCER (performs action + saves state)
 {{/if}}
-// ═══════════════════════════════════════════════════════════
 
 {{#if isPlaywright}}
-const { test, expect } = require('@playwright/test');
+const { test, expect, devices } = require('@playwright/test');
 {{else}}
 const { expect } = require('@wdio/globals');
 {{/if}}
 const TestContext = require('{{testContextPath}}');
+const TestPlanner = require('{{testPlannerPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
-{{#if hasUIValidation}}
+{{#if (or hasUIValidation hasStoreAs hasAnyValidation useOrderedScreens)}}
 const ExpectImplication = require('{{expectImplicationPath}}');
 {{/if}}
-{{#unless isPlaywright}}
-const TestPlanner = require('{{testPlannerPath}}');
-{{/unless}}
 {{#if isVerify}}
 const NavigationActions = require('{{navigationActionsPath}}');
+{{/if}}
+{{#if setupConfig}}
+// ✅ Setup helper from project config
+const { {{setupConfig.function}} } = require('{{{setupConfig.relativePath}}}');
 {{/if}}
 
 // ═══════════════════════════════════════════════════════════
@@ -51,13 +52,9 @@ if (!process.env.SKIP_PREFLIGHT_CHECK) {
 {{#if meta.requires}}
 {{#each meta.requires}}
 {{#if (contains @key '.')}}
-// ⚠️  Required: {{@key}} = {{this}}
+// ⚠️  Required: {{@key}} {{formatRequirement @key this}}
 {{/if}}
 {{/each}}
-//
-// These are NOT separate states - they're runtime requirements.
-// Handle them in your test setup or beforeEach() hook.
-//
 {{/if}}
 // ════════════════════════════════════════════════════════════
 
@@ -65,19 +62,15 @@ if (!process.env.SKIP_PREFLIGHT_CHECK) {
  * ✅ EXPORTED FUNCTION - {{transitionDescription}}
  * 
  * {{#if isVerify}}
- * This function VERIFIES the "{{targetStatus}}" state by:
- * 1. Loading test data and checking state exists
- * 2. Navigating to relevant screens
- * 3. Validating UI implications on {{platform}} platform
- * 
- * ⚠️  NOTE: This is a VERIFY test - it does NOT induce the state.
+ * This function VERIFIES the "{{targetStatus}}" state.
+ * ⚠️  NOTE: Does NOT induce state, only validates it exists.
  * {{else}}
  * This function INDUCES the "{{targetStatus}}" state by:
  * 1. Loading test data
- * 2. Smart navigation (only if needed)
- * 3. Performing the state-inducing action
- * 4. Validating UI implications on {{platform}} platform
- * 5. Saving the state change with delta
+ * 2. Performing the state-inducing action
+ * 3. Saving the state change
+ * 
+ * ⚠️  NOTE: Does NOT validate UI - validation happens in the test.
  * {{/if}}
  * 
  * @param {string} testDataPath - Path to testData JSON file
@@ -104,7 +97,30 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   const ctx = TestContext.load({{implClassName}}, testDataPath);
   
-  console.log('\n🎯 Starting: {{transitionDescription}}');
+  {{#if hasTransitionConditions}}
+  // ────────────────────────────────────────────────────────
+  // 🔒 TRANSITION CONDITIONS CHECK
+  // ────────────────────────────────────────────────────────
+  const transitionConditions = {{{transitionConditionsJson}}};
+  const conditionsResult = TestPlanner.evaluateConditions(transitionConditions, ctx.data);
+  
+  if (!conditionsResult.met) {
+    console.log('\n⏭️ Transition conditions not met - skipping action');
+    if (conditionsResult.results) {
+      for (const blockResult of conditionsResult.results) {
+        if (!blockResult.met && blockResult.checks) {
+          for (const check of blockResult.checks) {
+            if (!check.met) {
+              console.log(`   ❌ ${check.field} ${check.operator} ${JSON.stringify(check.expected)} (actual: ${JSON.stringify(check.actual)})`);
+            }
+          }
+        }
+      }
+    }
+    return ctx; // Return without executing action
+  }
+  console.log('✅ Transition conditions passed');
+{{/if}}
   console.log(`   Target Status: {{targetStatus}}`);
   console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
 {{#if hasTransitionContext}}
@@ -114,22 +130,81 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{#if isVerify}}
   console.log(`   Test Mode: VERIFY (checks only)`);
 {{else}}
-  console.log(`   Test Mode: INDUCER (action + checks)`);
+  console.log(`   Test Mode: INDUCER (action only)`);
 {{/if}}
 
+{{#if actionDetails.requires}}
   // ────────────────────────────────────────────────────────
-  // STEP 2: Smart Navigation (only if needed)
+  // ⚠️  TRANSITION REQUIREMENTS CHECK
   // ────────────────────────────────────────────────────────
-{{#if isPlaywright}}
-  console.log('✅ Browser navigation (handled by Playwright)');
+  console.log('\n🔒 Checking transition requirements...');
+  const transitionMissing = [];
+  
+{{#each actionDetails.requires}}
+{{#if (isNegatedField @key)}}
+{{#if (isContainsObject this)}}
+  // Check: {{removeNegation @key}} must NOT contain {{getContainsValue this}}
+  {
+    const fieldPath = '{{removeNegation @key}}';
+    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
+    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
+      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
+      : '{{getContainsValue this}}';
+    if (Array.isArray(actualValue) && actualValue.includes(valueToCheck)) {
+      transitionMissing.push(`${fieldPath} must NOT contain "${valueToCheck}" (actual: [${actualValue.join(', ')}])`);
+    }
+  }
 {{else}}
-{{#if hasNavigation}}
-  const {{navigation.instance}} = new {{actionDetails.navigationFile}}(config);
-  await {{navigation.instance}}.{{navigation.method}};
-  console.log('✅ Navigated using {{navigation.method}}');
-{{else}}
-  console.log('✅ Mobile app ready (navigation handled by action)');
+  // Check: {{removeNegation @key}} must NOT be {{jsonInline this}}
+  {
+    const fieldPath = '{{removeNegation @key}}';
+    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
+    if (actualValue === {{json this}}) {
+      transitionMissing.push(`${fieldPath} must NOT be {{jsonInline this}} (actual: ${actualValue})`);
+    }
+  }
 {{/if}}
+{{else}}
+{{#if (isContainsObject this)}}
+  // Check: {{@key}} must contain {{getContainsValue this}}
+  {
+    const fieldPath = '{{@key}}';
+    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
+    const valueToCheck = '{{getContainsValue this}}'.startsWith('ctx.data.') 
+      ? '{{getContainsValue this}}'.replace('ctx.data.', '').split('.').reduce((obj, key) => obj?.[key], ctx.data)
+      : '{{getContainsValue this}}';
+    if (!Array.isArray(actualValue) || !actualValue.includes(valueToCheck)) {
+      transitionMissing.push(`${fieldPath} must contain "${valueToCheck}" (actual: ${JSON.stringify(actualValue)})`);
+    }
+  }
+{{else if (isBoolean this)}}
+  // Check: {{@key}} must be {{this}}
+  {
+    const fieldPath = '{{@key}}';
+    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
+    if (actualValue !== {{this}}) {
+      transitionMissing.push(`${fieldPath} must be {{this}} (actual: ${actualValue})`);
+    }
+  }
+{{else}}
+  // Check: {{@key}} must be "{{this}}"
+  {
+    const fieldPath = '{{@key}}';
+    const actualValue = fieldPath.split('.').reduce((obj, key) => obj?.[key], ctx.data);
+    if (actualValue !== '{{this}}') {
+      transitionMissing.push(`${fieldPath} must be "{{this}}" (actual: ${actualValue})`);
+    }
+  }
+{{/if}}
+{{/if}}
+{{/each}}
+  
+  if (transitionMissing.length > 0) {
+    console.error('\n❌ Transition requirements not met:');
+    transitionMissing.forEach(msg => console.error(`   - ${msg}`));
+    throw new Error(`Cannot execute {{transitionEvent}}: ${transitionMissing.join('; ')}`);
+  }
+  console.log('   ✅ All transition requirements satisfied');
 {{/if}}
 
 {{#if isVerify}}
@@ -138,7 +213,7 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   // ────────────────────────────────────────────────────────
   if (ctx.data.status !== '{{targetStatus}}') {
     throw new Error(
-      `❌ Verification test failed: State mismatch\n` +
+      `❌ Verification failed: State mismatch\n` +
       `   Expected: {{targetStatus}}\n` +
       `   Current: ${ctx.data.status}\n\n` +
       `💡 Run the inducer test first to create this state.`
@@ -146,11 +221,10 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   }
   
   console.log('✅ State verified: {{targetStatus}}');
-{{/if}}
-
-{{#unless isVerify}}
+  return ctx;
+{{else}}
   // ────────────────────────────────────────────────────────
-  // STEP 3: Determine Action Scope
+  // STEP 2: Determine Action Scope
   // ────────────────────────────────────────────────────────
 {{#if hasEntityLogic}}
   let targets = [];
@@ -188,10 +262,14 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{/if}}
   
   // ────────────────────────────────────────────────────────
-  // STEP 4: Perform Action (INDUCER mode)
+  // STEP 3: Perform Action (NO validation here!)
   // ────────────────────────────────────────────────────────
   
 {{#if hasNavigation}}
+  // Initialize navigation helper
+  const {{navigation.className}} = require('{{{navigation.path}}}');
+  const {{navigation.instance}} = new {{navigation.className}}(ctx.data);
+  
   console.log('\n🧭 Navigating to action screen...');
   await {{navigation.instance}}.{{navigation.method}}({{#each navigation.args}}{{this}}{{#unless @last}}, {{/unless}}{{/each}});
   console.log('✅ Navigation complete');
@@ -217,16 +295,109 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log('\n🎬 Executing action: {{actionDetails.description}}');
   
 {{#if actionDetails.steps}}
+  // Initialize storedVars for step conditions
+  const storedVars = {};
+  
 {{#each actionDetails.steps}}
   // Step {{addOne @index}}: {{description}}
-{{#if entity}}
-  await {{instance}}.{{method}}({{#each argsArray}}{{#if (isContextField this)}}ctx.data.{{../entity}}.{{removeCtxDataPrefix this}}{{else}}{{{this}}}{{/if}}{{#unless @last}}, {{/unless}}{{/each}});
+{{#if hasConditions}}
+  // 🔒 Step has conditions - check before executing
+  if (TestPlanner.evaluateStepConditions({{{conditionsJson}}}, ctx.data, storedVars)) {
+{{/if}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{!-- STEP TYPE: pom-method (default) --}}
+{{!-- NOTE: Args are used EXACTLY as defined in actionDetails - no entity prefixing! --}}
+{{!-- If you need ctx.data.booking.x, write it that way in actionDetails.steps[].args --}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{#if (or (not type) (eq type 'pom-method'))}}
+{{#if storeAs}}
+  const {{storeAsKey}} = await {{instance}}.{{method}}({{{args}}});
+  // 💾 Store captured value
+  ExpectImplication.storeValue('{{storeAsKey}}', {{storeAsKey}});
+  storedVars.{{storeAsKey}} = {{storeAsKey}};
+{{#if storeAsGlobal}}
+  ctx.data.{{storeAsKey}} = {{storeAsKey}};
+  console.log('   💾 Stored {{storeAsKey}}:', typeof {{storeAsKey}} === 'object' ? JSON.stringify({{storeAsKey}}).slice(0, 100) + '...' : {{storeAsKey}});
+{{else if entity}}
+  if (!ctx.data.{{entity}}) ctx.data.{{entity}} = {};
+  ctx.data.{{entity}}.{{storeAsKey}} = {{storeAsKey}};
+  console.log('   💾 Stored {{entity}}.{{storeAsKey}}:', typeof {{storeAsKey}} === 'object' ? JSON.stringify({{storeAsKey}}).slice(0, 100) + '...' : {{storeAsKey}});
+{{else}}
+  ctx.data.{{storeAsKey}} = {{storeAsKey}};
+  console.log('   💾 Stored {{storeAsKey}}:', typeof {{storeAsKey}} === 'object' ? JSON.stringify({{storeAsKey}}).slice(0, 100) + '...' : {{storeAsKey}});
+{{/if}}
 {{else}}
   await {{instance}}.{{method}}({{{args}}});
 {{/if}}
+{{!-- STEP TYPE: click --}}
+{{else if (eq type 'click')}}
+  await {{instanceFromScreen screen}}.{{locator}}.click();
+{{!-- STEP TYPE: fill --}}
+{{else if (eq type 'fill')}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{!-- STEP TYPE: getText --}}
+{{else if (eq type 'getText')}}
+{{#if storeAs}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.getText();
+{{/if}}
+  // 💾 Store captured text
+  ExpectImplication.storeValue('{{storeAs}}', {{storeAs}});
+  storedVars.{{storeAs}} = {{storeAs}};
+  ctx.data.{{storeAs}} = {{storeAs}};
+  console.log('   💾 Stored {{storeAs}}:', {{storeAs}});
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.getText();
+{{/if}}
+{{/if}}
+{{!-- STEP TYPE: waitFor --}}
+{{else if (eq type 'waitFor')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed({ reverse: true });
+{{else if (eq waitState 'attached')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForExist();
+{{else if (eq waitState 'detached')}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForExist({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed();
+{{/if}}
+{{/if}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{!-- STEP TYPE: custom --}}
+{{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
+{{else if (eq type 'custom')}}
+  // Custom code block
+{{{code}}}
+{{/if}}
+{{#if hasConditions}}
+  } else {
+    console.log('   ⏭️ Skipping step {{addOne @index}}: conditions not met');
+  }
+{{/if}}
 {{/each}}
 {{/if}}
-  
   console.log('✅ Action steps completed');
 {{else}}
   // TODO: Navigate to the screen where you perform this action
@@ -252,101 +423,10 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   console.log('   ⚠️  Action logic not implemented - see comments above');
 {{/if}}
   
-  console.log('\n✅ Action completed');
-{{/unless}}
+  console.log('\n✅ Action completed (no validation)');
   
-{{#if isVerify}}
   // ────────────────────────────────────────────────────────
-  // STEP 3: Navigate to Screens (VERIFY mode)
-  // ────────────────────────────────────────────────────────
-{{#if isPlaywright}}
-  // await NavigationActions.navigateToBookingCalendar(page, ctx.data);
-{{else}}
-  // await NavigationActions.navigateToDashboard(driver, ctx.data);
-{{/if}}
-  
-  console.log('⏭️  Navigation to verification screens (implement as needed)');
-{{/if}}
-  
-{{#if hasUIValidation}}
-  // ────────────────────────────────────────────────────────
-  // STEP {{#if isVerify}}4{{else}}5{{/if}}: Validate UI Implications ({{platform}})
-  // ────────────────────────────────────────────────────────
-  
-  console.log('\n🔍 Validating {{targetStatus}} UI on {{platform}}...');
-  
-{{#each validationScreens}}
-{{#if @first}}
-  console.log('   🔍 Validating {{screenKey}}...');
-  
-{{#if pomClassName}}
-  const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
-
-{{#if ../isPlaywright}}
-  const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
-{{else}}
-  const {{screenKey}} = new {{pascalCase screenKey}}Screen(ctx.data.lang || 'en');
-{{/if}}
-{{else}}
-{{#if ../actionDetails.imports.[0]}}
-{{#if ../isPlaywright}}
-  const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
-{{else}}
-  const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(ctx.data.lang || 'en');
-{{/if}}
-{{/if}}
-{{/if}}
-  
-  await ExpectImplication.validateImplications(
-    {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-    ctx.data,
-    {{screenKey}}
-  );
-  console.log('   ✅ {{screenKey}} validation passed');
-{{else}}
-  // ⏭️ TODO: Uncomment and add navigation to {{screenKey}}
-  // console.log('   🔍 Validating {{screenKey}}...');
-{{#if ../isPlaywright}}
-  // await NavigationActions.navigateTo{{pascalCase screenKey}}(page, ctx.data);
-{{else}}
-  // await NavigationActions.navigateTo{{pascalCase screenKey}}(driver, ctx.data);
-{{/if}}
-{{#if pomClassName}}
-  // const {{pascalCase screenKey}}Screen = require('../../../path/to/{{screenKey}}.screen.js');
-{{#if ../isPlaywright}}
-  // const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
-{{else}}
-  // const {{screenKey}} = new {{pascalCase screenKey}}Screen(ctx.data.lang || 'en');
-{{/if}}
-{{else}}
-{{#if ../isPlaywright}}
-  // const {{screenKey}} = new SomeScreen(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
-{{else}}
-  // const {{screenKey}} = new SomeScreen(ctx.data.lang || 'en');
-{{/if}}
-{{/if}}
-  // await ExpectImplication.validateImplications(
-  //   {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-  //   ctx.data,
-  //   {{screenKey}}
-  // );
-  // console.log('   ✅ {{screenKey}} validation passed');
-{{/if}}
-{{/each}}
-  
-  console.log('✅ All UI validations passed');
-{{/if}}
-  
-{{#if isVerify}}
-  // ────────────────────────────────────────────────────────
-  // STEP 5: Return Context (No State Change in VERIFY mode)
-  // ────────────────────────────────────────────────────────
-  
-  console.log('✅ Verification complete - no state change');
-  return ctx;
-{{else}}
-  // ────────────────────────────────────────────────────────
-  // STEP 6: Save Changes (Delta) - INDUCER mode only
+  // STEP 4: Save Changes (Delta)
   // ────────────────────────────────────────────────────────
   
   return ctx.executeAndSave(
@@ -361,11 +441,7 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{#if meta.entity}}
       // ✅ Entity-scoped state change ({{meta.entity}})
 {{#each deltaFields}}
-{{#if (isContextField value)}}
-      delta['{{../meta.entity}}.{{name}}'] = ctx.data.{{../meta.entity}}.{{removeCtxDataPrefix value}};
-{{else}}
-      delta['{{../meta.entity}}.{{name}}'] = {{{value}}};
-{{/if}}
+  delta['{{../meta.entity}}.{{name}}'] = {{{value}}};
 {{/each}}
 {{else}}
 {{#if hasEntityLogic}}
@@ -397,6 +473,26 @@ const {{actionName}} = async (testDataPath, options = {}) => {
       // delta.status = '{{targetStatus}}';
       // delta.{{targetStatus}}At = now;
 {{/if}}
+{{#if storeAsFields}}
+      // 💾 Auto-include storeAs values in delta
+{{#each storeAsFields}}
+{{#unless skipPersist}}
+{{#if global}}
+      if (ctx.data.{{key}} !== undefined) {
+        delta.{{key}} = ctx.data.{{key}};
+      }
+{{else if ../meta.entity}}
+      if (ctx.data.{{../meta.entity}}?.{{key}} !== undefined) {
+        delta['{{../meta.entity}}.{{key}}'] = ctx.data.{{../meta.entity}}.{{key}};
+      }
+{{else}}
+      if (ctx.data.{{key}} !== undefined) {
+        delta.{{key}} = ctx.data.{{key}};
+      }
+{{/if}}
+{{/unless}}
+{{/each}}
+{{/if}}
       
       return { delta };
     }
@@ -426,9 +522,8 @@ async function {{name}}({{params}}) {
 {{/if}}
 
 // ═══════════════════════════════════════════════════════════
-// TEST REGISTRATION
+// TEST REGISTRATION - Validation happens HERE!
 // ═══════════════════════════════════════════════════════════
-
 const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
 
 if (!shouldSkipRegistration) {
@@ -438,33 +533,239 @@ if (!shouldSkipRegistration) {
     
     const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
     
-    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async ({ page }) => {
+    let page;
+    let context;
+    let testPassed = false;
+    
+    // ═══════════════════════════════════════════════════════════
+    // ✅ SETUP - BeforeAll Hook
+    // ═══════════════════════════════════════════════════════════
+    test.beforeAll(async ({ browser }) => {
+{{#if setupConfig}}
+      // Using project setup helper: {{setupConfig.function}}
+      console.log('🚀 Running setup: {{setupConfig.function}}');
+      page = await {{setupConfig.function}}(browser);
+      context = page.context();
+      console.log('✅ Setup complete');
+{{else}}
+      // Default setup (no project-specific helper configured)
+      console.log('🚀 Running default setup...');
+      {{#if deviceConfig}}
+      {{#if deviceConfig.isMobile}}
+      // Mobile device setup
+      const {{deviceConfig.deviceName}} = devices['{{deviceConfig.deviceName}}'];
+      context = await browser.newContext({
+        ...{{deviceConfig.deviceName}},
+      });
+      {{else}}
+      // Desktop setup
+      context = await browser.newContext();
+      {{/if}}
+      {{else}}
+      context = await browser.newContext();
+      {{/if}}
+      page = await context.newPage();
+      {{#if baseURL}}
+      await page.goto('{{baseURL}}');
+      {{else}}
+      await page.goto('/');
+      {{/if}}
+      console.log('✅ Default setup complete');
+{{/if}}
+    });
+    
+// ═══════════════════════════════════════════════════════════
+    // ✅ TEARDOWN - AfterAll Hook
+    // ═══════════════════════════════════════════════════════════
+    test.afterAll(async () => {
+      console.log('🧹 Cleaning up...');
+      
+      // Cleanup delta file based on test result
+      await TestContext.cleanup(testDataPath, { passed: testPassed });
+      
+      if (context) {
+        await context.close();
+      }
+      console.log('✅ Cleanup complete');
+    });
+
+    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
 {{#if isVerify}}
       await TestPlanner.checkState({{implClassName}}, ctx.data, {
         mode: 'verify'
       });
+      
+      const result = await {{actionName}}(testDataPath, { page });
 {{else}}
       await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         page, 
         testDataPath 
       });
-{{/if}}
       
       const result = await {{actionName}}(testDataPath, { page });
-      
-{{#if isInducer}}
-      result.save(testDataPath);
-      console.log('   💾 State saved to:', testDataPath);
-{{else}}
-      console.log('   ✅ Verification complete - no file changes');
 {{/if}}
+
+{{#if useOrderedScreens}}
+      // ═══════════════════════════════════════════════════════════
+      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION
+      // ═══════════════════════════════════════════════════════════
+      console.log('\n🔍 Validating {{targetStatus}} UI ({{orderedScreenCount}} screen(s) in order)...');
+      
+      // ───────────────────────────────────────────────────────
+      // 📦 REQUIRE ALL POMs ONCE (deduplicated)
+      // ───────────────────────────────────────────────────────
+{{#each uniquePomRequires}}
+      const {{className}} = require('{{{path}}}');
+{{/each}}
+      
+{{#each orderedScreens}}
+      // ─────────────────────────────────────────────────────────
+      // 📺 Screen {{position}}/{{totalScreens}}: {{screenKey}} (order: {{order}})
+      // ─────────────────────────────────────────────────────────
+      console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
+      
+{{#if hasNavigation}}
+      // 🧭 Navigate to screen
+      console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
+      const {{navigation.instanceName}} = new {{navigation.className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+      await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
+      console.log('   ✅ Navigation complete');
+{{/if}}
+      
+{{#if hasPom}}
+      // Initialize screen instance
+      const {{pomInstance}} = new {{pomClassName}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{/if}}
+      
+{{#if useExpectImplication}}
+      // ✅ ExpectImplication handles blocks internally
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{else if useRawValidation}}
+      // 🔧 Raw validation ({{rawValidationReason}})
+{{#if hasExternalPoms}}
+      // Initialize external POM instances for function calls
+{{#each externalPoms}}
+      const {{instanceName}} = new {{className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{/each}}
+{{/if}}
+{{#each blocks}}
+{{#if (eq blockType 'function-call')}}
+      // Block {{position}}: {{description}}
+      {{{callCode}}}
+{{else if (eq blockType 'custom-code')}}
+      // Block {{position}}: {{description}}
+{{#if wrapInTestStep}}
+      await test.step('{{testStepName}}', async () => {
+{{{formattedCode}}}
+      });
+{{else}}
+{{{formattedCode}}}
+{{/if}}
+{{else if (eq blockType 'ui-assertion')}}
+      // Block {{position}}: {{description}}
+{{#each assertions}}
+      {{{expectCode}}}
+{{/each}}
+{{/if}}
+{{/each}}
+{{else if hasLegacyAssertions}}
+      // 📋 Legacy validation (visible/hidden arrays)
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{else if hasPom}}
+      // 📋 Default validation via ExpectImplication
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{/if}}
+      console.log('   ✅ {{screenKey}} validation passed');
+{{/each}}
+      
+      console.log('\n✅ All ordered screen validations passed');
+{{else if hasUIValidation}}
+      // ═══════════════════════════════════════════════════════════
+      // ✅ LEGACY VALIDATION (single screen, backward compatible)
+      // ═══════════════════════════════════════════════════════════
+      console.log('\n🔍 Validating {{targetStatus}} UI on {{platform}}...');
+      
+{{#each validationScreens}}
+{{#if @first}}
+      console.log('   🔍 Validating {{screenKey}}...');
+      
+{{#if pomClassName}}
+      // ✅ Require and instantiate screen
+      const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{else}}
+{{#if ../actionDetails.imports.[0]}}
+      // ✅ Require and instantiate screen
+      const {{../actionDetails.imports.[0].className}} = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{/if}}
+{{/if}}
+      
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{screenKey}}
+      );
+      console.log('   ✅ {{screenKey}} validation passed');
+{{else}}
+      // ⏭️ TODO: Uncomment and add navigation to {{screenKey}}
+      // console.log('   🔍 Validating {{screenKey}}...');
+      // await NavigationActions.navigateTo{{pascalCase screenKey}}(page, result.data);
+{{#if pomClassName}}
+      // const {{pascalCase screenKey}}Screen = require('../../../path/to/{{screenKey}}.screen.js');
+      // const {{screenKey}} = new {{pascalCase screenKey}}Screen(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{else}}
+      // const {{screenKey}} = new SomeScreen(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{/if}}
+      // await ExpectImplication.validateImplications(
+      //   {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+      //   result.data,
+      //   {{screenKey}}
+      // );
+      // console.log('   ✅ {{screenKey}} validation passed');
+{{/if}}
+{{/each}}
+      
+  result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+{{/if}}
+      testPassed = true;
     });
   });
 {{else}}
   describe("UNIT: {{transitionDescription}} ({{platform}} - {{#if isVerify}}VERIFY{{else}}INDUCER{{/if}})", () => {
     const testDataPath = process.env.TEST_DATA_PATH || "tests/data/shared.json";
+    let testPassed = false;
+    
+    {{#if setupConfig}}
+    // ✅ Setup helper from project config
+    before(async () => {
+      console.log('🚀 Running setup: {{setupConfig.function}}');
+      // Note: WebdriverIO setup is typically handled by wdio.conf.js
+      // This is a hook for any additional setup needed
+    });
+    {{/if}}
+    
+    // ✅ TEARDOWN - After Hook
+    after(async () => {
+      console.log('🧹 Cleaning up...');
+      await TestContext.cleanup(testDataPath, { passed: testPassed });
+      console.log('✅ Cleanup complete');
+    });
     
     it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
@@ -473,21 +774,137 @@ if (!shouldSkipRegistration) {
       await TestPlanner.checkState({{implClassName}}, ctx.data, {
         mode: 'verify'
       });
+      
+      const result = await {{actionName}}(testDataPath, { driver });
 {{else}}
-      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+    await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         driver,
         testDataPath 
       });
-{{/if}}
       
       const result = await {{actionName}}(testDataPath, { driver });
-      
-{{#if isInducer}}
-      result.save(testDataPath);
-      console.log('   💾 State saved to:', testDataPath);
-{{else}}
-      console.log('   ✅ Verification complete - no file changes');
 {{/if}}
+      
+{{#if useOrderedScreens}}
+      // ═══════════════════════════════════════════════════════════
+      // ✅ PHASE 3.7: ORDERED SCREEN VALIDATION (APPIUM)
+      // ═══════════════════════════════════════════════════════════
+      console.log('\n🔍 Validating {{targetStatus}} UI ({{orderedScreenCount}} screen(s) in order)...');
+      
+      // ───────────────────────────────────────────────────────
+      // 📦 REQUIRE ALL POMs ONCE (deduplicated)
+      // ───────────────────────────────────────────────────────
+{{#each uniquePomRequires}}
+      const {{className}} = require('{{{path}}}');
+{{/each}}
+      
+{{#each orderedScreens}}
+      // ─────────────────────────────────────────────────────────
+      // 📺 Screen {{position}}/{{totalScreens}}: {{screenKey}} (order: {{order}})
+      // ─────────────────────────────────────────────────────────
+      console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
+      
+{{#if hasNavigation}}
+      // 🧭 Navigate to screen
+      console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
+      const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
+      await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
+      console.log('   ✅ Navigation complete');
+{{/if}}
+      
+{{#if hasPom}}
+      // Initialize screen instance
+      const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
+{{/if}}
+      
+{{#if useExpectImplication}}
+      // ✅ ExpectImplication handles blocks internally
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{else if useRawValidation}}
+      // 🔧 Raw validation ({{rawValidationReason}})
+{{#if hasExternalPoms}}
+      // Initialize external POM instances for function calls
+{{#each externalPoms}}
+      const {{instanceName}} = new {{className}}(result.data.lang || 'en');
+{{/each}}
+{{/if}}
+{{#each blocks}}
+{{#if (eq blockType 'function-call')}}
+      // Block {{position}}: {{description}}
+      {{{callCode}}}
+{{else if (eq blockType 'custom-code')}}
+      // Block {{position}}: {{description}}
+{{{formattedCode}}}
+{{else if (eq blockType 'ui-assertion')}}
+      // Block {{position}}: {{description}}
+{{#each assertions}}
+      {{{expectCode}}}
+{{/each}}
+{{/if}}
+{{/each}}
+{{else if hasLegacyAssertions}}
+      // 📋 Legacy validation (visible/hidden arrays)
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{else if hasPom}}
+      // 📋 Default validation via ExpectImplication
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{pomInstance}}
+      );
+{{/if}}
+      console.log('   ✅ {{screenKey}} validation passed');
+{{/each}}
+      
+      console.log('\n✅ All ordered screen validations passed');
+{{else if hasUIValidation}}
+      // ═══════════════════════════════════════════════════════════
+      // ✅ LEGACY VALIDATION
+      // ═══════════════════════════════════════════════════════════
+      console.log('\n🔍 Validating {{targetStatus}} UI on {{platform}}...');
+      
+{{#each validationScreens}}
+{{#if @first}}
+      console.log('   🔍 Validating {{screenKey}}...');
+      
+{{#if pomPath}}
+      // ✅ Require screen using POM path from discovery
+      const {{pascalCase screenKey}}Screen = require('{{{pomPath}}}');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver, result.data.lang || 'en');
+{{else if pomClassName}}
+      const {{pascalCase screenKey}}Screen = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{pascalCase screenKey}}Screen(driver, result.data.lang || 'en');
+{{else if ../actionDetails.imports.[0]}}
+      const {{../actionDetails.imports.[0].className}} = require('{{{../actionDetails.imports.[0].relativePath}}}');
+      const {{screenKey}} = new {{../actionDetails.imports.[0].className}}(driver, result.data.lang || 'en');
+{{else}}
+      // ⚠️ No POM path available - add _pomSource to your implication
+      throw new Error('Cannot validate {{screenKey}}: No POM path. Add _pomSource to mirrorsOn.UI.{{platformKey}}.{{screenKey}}');
+{{/if}}
+      
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{screenKey}}
+      );
+      console.log('   ✅ {{screenKey}} validation passed');
+{{else}}
+      // ⏭️ TODO: Add validation for {{screenKey}}
+{{/if}}
+{{/each}}
+      
+result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+{{/if}}
+      testPassed = true;
     });
   });
 {{/if}}
