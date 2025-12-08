@@ -82,8 +82,8 @@ Maps generator platform names to mirrorsOn keys.
 {
   'web': 'Web',
   'cms': 'CMS',
-  'mobile-dancer': 'dancer',
-  'mobile-manager': 'clubApp'
+  'dancer': 'dancer',
+  'manager': 'clubApp'
 }
 ```
 

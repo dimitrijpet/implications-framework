@@ -325,7 +325,7 @@ export const defaultTheme = {
     },
     accents: {
       blue: '#3b82f6',       // Primary actions
-      purple: '#8b5cf6',     // Mobile-dancer
+      purple: '#8b5cf6',     // dancer
       green: '#10b981',      // Success
       red: '#ef4444',        // Errors
       yellow: '#f59e0b',     // Warnings
@@ -336,13 +336,13 @@ export const defaultTheme = {
   },
   
   platforms: {
-    'mobile-dancer': {
+    'dancer': {
       color: '#8b5cf6',
       icon: '📱',
       name: 'Dancer App',
       description: 'Mobile app for dancers'
     },
-    'mobile-manager': {
+    'manager': {
       color: '#3b82f6',
       icon: '📲',
       name: 'Manager App',
