@@ -627,55 +627,57 @@ const handleRemoveTag = (field, value) => {
     setShowTransitionModal(true);
   };
 
-  const handleEditTransition = async (transition, index) => {
+const handleEditTransition = async (transition, index) => {
   console.log('🔴 handleEditTransition START');
   console.log('🔴 transition param:', JSON.stringify(transition, null, 2));
-    console.log('✏️ Editing transition:', transition);
+  console.log('✏️ Editing transition:', transition);
+  
+  try {
+    console.log('📡 Fetching full transition data...');
     
-    try {
-      console.log('📡 Fetching full transition data...');
+    const response = await fetch(
+      `http://localhost:3000/api/implications/get-transition?` + 
+      `filePath=${encodeURIComponent(state.files.implication)}&` +
+      `event=${encodeURIComponent(transition.event)}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ Full transition data:', data.transition);
       
-      const response = await fetch(
-    `http://localhost:3000/api/implications/get-transition?` + 
-    `filePath=${encodeURIComponent(state.files.implication)}&` +
-    `event=${encodeURIComponent(transition.event)}`
-  );
+      const fullTransitionData = {
+        event: transition.event,
+        target: data.transition.target || transition.target,
+        platforms: data.transition.platforms,
+        actionDetails: data.transition.actionDetails,
+        requires: data.transition.requires || {},
+        conditions: data.transition.conditions || null,
+        isObserver: data.transition.isObserver || false,  // ← ADD THIS
+        mode: data.transition.mode || null                 // ← ADD THIS
+      };
       
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Full transition data:', data.transition);
-        
-const fullTransitionData = {
-          event: transition.event,
-          target: data.transition.target || transition.target,
-          platforms: data.transition.platforms,
-          actionDetails: data.transition.actionDetails,
-          requires: data.transition.requires || {},
-          conditions: data.transition.conditions || null  // ✅ ADD THIS
-        };
-        
-        console.log('📦 Setting editingTransition:', fullTransitionData);
-        
-        setTransitionMode('edit');
-        setEditingTransition(fullTransitionData);
-        setEditingTransitionIndex(index);
-        setShowTransitionModal(true);
-        
-      } else {
-        console.warn('⚠️ Could not fetch full data, using basic transition');
-        setTransitionMode('edit');
-        setEditingTransition(transition);
-        setEditingTransitionIndex(index);
-        setShowTransitionModal(true);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching transition:', error);
+      console.log('📦 Setting editingTransition:', fullTransitionData);
+      
+      setTransitionMode('edit');
+      setEditingTransition(fullTransitionData);
+      setEditingTransitionIndex(index);
+      setShowTransitionModal(true);
+      
+    } else {
+      console.warn('⚠️ Could not fetch full data, using basic transition');
       setTransitionMode('edit');
       setEditingTransition(transition);
       setEditingTransitionIndex(index);
       setShowTransitionModal(true);
     }
-  };
+  } catch (error) {
+    console.error('❌ Error fetching transition:', error);
+    setTransitionMode('edit');
+    setEditingTransition(transition);
+    setEditingTransitionIndex(index);
+    setShowTransitionModal(true);
+  }
+};
 
 const handleRemoveTransition = async (index) => {
   const transition = currentState.transitions[index];

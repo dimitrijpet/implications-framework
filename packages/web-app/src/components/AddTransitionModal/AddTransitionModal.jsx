@@ -243,7 +243,7 @@ export default function AddTransitionModal({
   const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
   const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
 
- const [formData, setFormData] = useState({
+const [formData, setFormData] = useState({
   event: "",
   description: "",
   platform: "web",
@@ -254,6 +254,7 @@ export default function AddTransitionModal({
   steps: [],
   requires: {},
   conditions: null,
+  isObserver: false,  // ← ADD THIS
 });
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
 
@@ -445,19 +446,20 @@ useEffect(() => {
     console.log('   📍 Steps:', initialData.actionDetails?.steps?.length || 0);
     
 setFormData({
-      event: initialData.event || "",
-      description: initialData.actionDetails?.description || "",
-      platform: platform,
-      hasActionDetails: !!initialData.actionDetails,
-      navigationMethod: initialData.actionDetails?.navigationMethod || "",
-      navigationFile: initialData.actionDetails?.navigationFile || "",
-      requires: initialData.requires || {},
-      conditions: initialData.conditions || null,
-      imports: (initialData.actionDetails?.imports || []).map(imp => ({
-        ...imp,
-        selectedPOM: imp.className,
-        functions: [],
-      })),
+  event: initialData.event || "",
+  description: initialData.actionDetails?.description || "",
+  platform: platform,
+  hasActionDetails: !!initialData.actionDetails,
+  navigationMethod: initialData.actionDetails?.navigationMethod || "",
+  navigationFile: initialData.actionDetails?.navigationFile || "",
+  requires: initialData.requires || {},
+  conditions: initialData.conditions || null,
+  isObserver: initialData.isObserver || initialData.mode === 'observer' || initialData.mode === 'verify' || false,  // ← ADD
+  imports: (initialData.actionDetails?.imports || []).map(imp => ({
+    ...imp,
+    selectedPOM: imp.className,
+    functions: [],
+  })),
 steps: (initialData.actionDetails?.steps || []).map(step => {
   let argsArray = [];
   if (Array.isArray(step.argsArray)) {
@@ -1141,51 +1143,52 @@ const handleSubmit = async (e) => {
 
   try {
 const submitData = {
-      event: formData.event.trim(),
-      platform: formData.platform,
-      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
-      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
-      actionDetails: formData.hasActionDetails
-        ? {
-            description: formData.description.trim(),
-            platform: formData.platform,
-            navigationMethod: formData.navigationMethod || null,
-            navigationFile: formData.navigationFile || null,
-            imports: formData.imports.map((imp) => ({
-              className: imp.className,
-              varName: imp.varName,
-              path: imp.path,
-              constructor: imp.constructor,
-            })),
-           // In handleSubmit, update the steps mapping:
-steps: formData.steps.map((step) => ({
-  type: step.type || 'pom-method',
-  description: step.description,
-  // POM method fields
-  ...(step.type === 'pom-method' && {
-    instance: step.instance,
-    method: step.method,
-    args: step.args?.join(', ') || '',
-    argsArray: step.args || [],
-  }),
-  // Inline action fields
-  ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
-    screen: step.screen,
-    locator: step.locator,
-    ...(step.type === 'fill' && { value: step.value }),
-    ...(step.type === 'waitFor' && { waitState: step.waitState }),
-  }),
-  // Custom code
-  ...(step.type === 'custom' && {
-    code: step.code,
-  }),
-  // Common fields
-  storeAs: step.storeAs || undefined,
-  conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
-})),
-          }
-        : null,
-    };
+  event: formData.event.trim(),
+  platform: formData.platform,
+  isObserver: formData.isObserver || undefined,
+  mode: formData.isObserver ? 'observer' : undefined,
+  requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+  conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
+  actionDetails: formData.hasActionDetails
+    ? {
+        description: formData.description.trim(),
+        platform: formData.platform,
+        navigationMethod: formData.navigationMethod || null,
+        navigationFile: formData.navigationFile || null,
+        imports: formData.imports.map((imp) => ({
+          className: imp.className,
+          varName: imp.varName,
+          path: imp.path,
+          constructor: imp.constructor,
+        })),
+        steps: formData.steps.map((step) => ({
+          type: step.type || 'pom-method',
+          description: step.description,
+          // POM method fields
+          ...((step.type === 'pom-method' || !step.type) && {
+            instance: step.instance,
+            method: step.method,
+            args: step.args?.join(', ') || '',
+            argsArray: step.args || [],
+          }),
+          // Inline action fields
+          ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
+            screen: step.screen,
+            locator: step.locator,
+            ...(step.type === 'fill' && { value: step.value }),
+            ...(step.type === 'waitFor' && { waitState: step.waitState }),
+          }),
+          // Custom code
+          ...(step.type === 'custom' && {
+            code: step.code,
+          }),
+          // Common fields
+          storeAs: step.storeAs || undefined,
+          conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+        })),
+      }
+    : null,
+};
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
@@ -1361,6 +1364,69 @@ steps: formData.steps.map((step) => ({
             </p>
           </div>
 
+   {/* 👁️ Observer Mode Toggle */}
+          <div 
+            className="flex items-center gap-3 p-3 rounded-lg"
+            style={{
+              backgroundColor: formData.isObserver 
+                ? `${defaultTheme.colors.accents.cyan}15`
+                : defaultTheme.colors.background.tertiary,
+              border: `1px solid ${formData.isObserver 
+                ? defaultTheme.colors.accents.cyan 
+                : defaultTheme.colors.border}`,
+            }}
+          >
+            <input
+              type="checkbox"
+              id="isObserver"
+              checked={formData.isObserver}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  isObserver: e.target.checked,
+                }))
+              }
+              className="w-4 h-4 cursor-pointer"
+            />
+            <label 
+              htmlFor="isObserver" 
+              className="cursor-pointer flex-1"
+              style={{ color: defaultTheme.colors.text.primary }}
+            >
+              <span className="font-semibold">👁️ Observer Mode</span>
+              <p 
+                className="text-xs mt-1"
+                style={{ color: defaultTheme.colors.text.secondary }}
+              >
+                This transition <strong>validates</strong> that a state exists, but doesn't <strong>create</strong> it.
+                Use for cross-platform viewing (e.g., dancer viewing a booking created on web).
+              </p>
+            </label>
+          </div>
+
+          {/* Observer mode info box */}
+          {formData.isObserver && (
+            <div
+              className="p-3 rounded-lg text-sm"
+              style={{
+                backgroundColor: `${defaultTheme.colors.accents.cyan}10`,
+                border: `1px solid ${defaultTheme.colors.accents.cyan}40`,
+                color: defaultTheme.colors.text.secondary,
+              }}
+            >
+              <div className="flex items-start gap-2">
+                <span>💡</span>
+                <div>
+                  <strong style={{ color: defaultTheme.colors.accents.cyan }}>Observer tests:</strong>
+                  <ul className="mt-1 ml-4 list-disc">
+                    <li>Won't trigger loop detection when state already exists</li>
+                    <li>Require the target state to be created by an <em>inducer</em> test first</li>
+                    <li>Only validate UI, no state changes saved</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Data Flow Summary */}
 <DataFlowSummary
   formData={formData}

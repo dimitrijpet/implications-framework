@@ -310,6 +310,9 @@ static _getPreviousStatus(meta, options = {}) {
   // ═══════════════════════════════════════════════════════════
   // ANALYZE - Main entry point for prerequisite analysis
   // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// ANALYZE - Main entry point for prerequisite analysis
+// ═══════════════════════════════════════════════════════════
 analyze(ImplicationClass, testData, options = {}) {
   const xstateConfig = ImplicationClass.xstateConfig || {};
   const meta = xstateConfig.meta || {};
@@ -319,6 +322,13 @@ analyze(ImplicationClass, testData, options = {}) {
   
   const previousStatus = TestPlanner._getPreviousStatus(meta, { ...options, testData });
   
+  // ═══════════════════════════════════════════════════════════
+  // NEW: Check if this is an OBSERVER/VERIFY test
+  // Observer tests just validate existing state, they don't create it
+  // ═══════════════════════════════════════════════════════════
+  const setupEntry = TestPlanner._findSetupEntry(meta, { ...options, testData });
+  const isObserverMode = setupEntry?.mode === 'verify' || setupEntry?.mode === 'observer';
+  
   if (this.options.verbose) {
     console.log(`\n🔍 TestPlanner: Analyzing ${targetStatus} state`);
     console.log(`   Current: ${currentStatus}`);
@@ -326,13 +336,56 @@ analyze(ImplicationClass, testData, options = {}) {
     if (previousStatus) {
       console.log(`   Required previous: ${previousStatus}`);
     }
+    if (isObserverMode) {
+      console.log(`   Mode: OBSERVER (verify only, does not induce state)`);
+    }
   }
 
-  const isLoopTransition = targetStatus === currentStatus && 
+  // ═══════════════════════════════════════════════════════════
+  // OBSERVER MODE: If we're just observing and state exists, we're ready!
+  // ═══════════════════════════════════════════════════════════
+  if (isObserverMode && currentStatus === targetStatus) {
+    if (this.options.verbose) {
+      console.log(`   ✅ Observer mode: ${targetStatus} state already exists, ready to validate`);
+    }
+    
+    return {
+      ready: true,
+      currentStatus,
+      targetStatus,
+      previousStatus,
+      isLoopTransition: false,
+      isObserverMode: true,
+      missingFields: [],
+      entityFields: [],
+      regularFields: [],
+      chain: [{
+        status: targetStatus,
+        className: ImplicationClass.name,
+        actionName: setupEntry?.actionName || 'observe',
+        testFile: setupEntry?.testFile || 'unknown',
+        platform: setupEntry?.platform || meta.platform || 'unknown',
+        complete: true,
+        isCurrent: true,
+        isTarget: true,
+        isObserver: true
+      }],
+      nextStep: null,
+      stepsRemaining: 0
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // OBSERVER MODE: State doesn't exist yet - need prerequisites
+  // But DON'T treat as loop - just build chain to target
+  // ═══════════════════════════════════════════════════════════
+  const isLoopTransition = !isObserverMode && 
+                           targetStatus === currentStatus && 
                            previousStatus && 
                            previousStatus !== currentStatus;
   
   // For loop transitions, we need to build chain to previousStatus first
+  // For observer mode, we build chain to targetStatus (the state must exist)
   const effectiveTarget = isLoopTransition ? previousStatus : targetStatus;
 
   let chain = this.buildPrerequisiteChain(
@@ -345,6 +398,7 @@ analyze(ImplicationClass, testData, options = {}) {
     { 
       ...options, 
       isLoopTransition,
+      isObserverMode,
       loopFinalTarget: isLoopTransition ? targetStatus : null
     }
   );
@@ -356,7 +410,7 @@ analyze(ImplicationClass, testData, options = {}) {
 
   // For loop transitions, add the final step back to target
   if (isLoopTransition && chain.length > 0) {
-    const setupEntry = TestPlanner._findSetupEntry(meta, { ...options, testData });
+    const loopSetupEntry = TestPlanner._findSetupEntry(meta, { ...options, testData });
     
     // Only add if chain doesn't already end at targetStatus
     const lastStep = chain[chain.length - 1];
@@ -364,9 +418,9 @@ analyze(ImplicationClass, testData, options = {}) {
       chain.push({
         status: targetStatus,
         className: ImplicationClass.name,
-        actionName: setupEntry?.actionName || meta.setup?.[0]?.actionName || 'unknown',
-        testFile: setupEntry?.testFile || meta.setup?.[0]?.testFile || 'unknown',
-        platform: setupEntry?.platform || meta.platform || 'unknown',
+        actionName: loopSetupEntry?.actionName || meta.setup?.[0]?.actionName || 'unknown',
+        testFile: loopSetupEntry?.testFile || meta.setup?.[0]?.testFile || 'unknown',
+        platform: loopSetupEntry?.platform || meta.platform || 'unknown',
         complete: false,
         isCurrent: false,
         isTarget: true,
@@ -398,6 +452,7 @@ analyze(ImplicationClass, testData, options = {}) {
     targetStatus,
     previousStatus,
     isLoopTransition,
+    isObserverMode,
     missingFields,
     entityFields,
     regularFields,
@@ -410,6 +465,9 @@ analyze(ImplicationClass, testData, options = {}) {
     console.log(`   Ready: ${analysis.ready ? '✅' : '❌'}`);
     if (isLoopTransition) {
       console.log(`   🔄 Loop transition: ${currentStatus} → ... → ${previousStatus} → ${targetStatus}`);
+    }
+    if (isObserverMode && !analysis.ready) {
+      console.log(`   👁️ Observer mode: waiting for ${targetStatus} to be created by inducer`);
     }
     if (!analysis.ready) {
       console.log(`   Missing steps: ${stepsRemaining}`);
@@ -3174,7 +3232,7 @@ static async checkOrThrow(ImplicationClass, testData, options = {}) {
     options.isPrerequisite === true ||
     process.env.IS_PREREQUISITE_EXECUTION === 'true';
 
-  if (prereq && !skipPlatformPrereq && !prereq.check(testData)) {
+  if (prereq && !skipPlatformPrereq && prereq.check && !prereq.check(testData)) {
     console.log(`\n🔐 Platform prerequisite not met: ${currentPlatform} needs ${prereq.name}`);
     console.log(`   Running: ${prereq.setup?.actionName || prereq.actionName}\n`);
 
@@ -3949,7 +4007,22 @@ test('Batch: Execute ${stepsToExecute.length} web prerequisites', async ({ page 
         console.log('⚡ Cross-platform execution detected!\n');
         console.log('💡 AUTO-EXECUTION PLAN:\n');
         
-        const stepsToExecute = incompleteSegment.steps.filter(s => !s.complete && !s.isTarget);
+       const stepsToExecute = incompleteSegment.steps.filter(s => {
+  if (s.complete) return false;
+  
+  // If this is the target step, check if it needs to run on a different platform
+  if (s.isTarget) {
+    // Get the setup platform for this state
+    const setupPlatform = s.platform || 'web';
+    
+    // If target's setup platform differs from current test platform, 
+    // we NEED to run it as a prerequisite!
+    // e.g., booking_created setup is 'web', current test is 'dancer'
+    return setupPlatform !== currentPlatform;
+  }
+  
+  return true;
+});
         
         if (stepsToExecute.length === 0) {
           console.log(`   Segment ${incompleteSegment.platform} has no executable steps`);
