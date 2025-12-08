@@ -165,7 +165,7 @@ npx playwright test apps/cms/tests/implications/pages/PublishPage-CMS-UNIT.spec.
 node tools/test-generator/cli.js <implication-file> [options]
 
 # Options
---platform <name>    Platform: web, cms, mobile-dancer, mobile-manager (default: web)
+--platform <name>    Platform: web, cms, dancer, manager (default: web)
 --state <name>       Generate specific state (omit to generate all states)
 --output <dir>       Output directory (default: same as implication file)
 --utils <path>       Custom utils path (default: auto-detected)

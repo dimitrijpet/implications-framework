@@ -311,8 +311,8 @@ class TestPlanner {
     const mapping = {
       'web': 'Web',
       'cms': 'CMS',
-      'mobile-dancer': 'Dancer',
-      'mobile-manager': 'Manager'
+      'dancer': 'Dancer',
+      'manager': 'Manager'
     };
     
     return mapping[platform] || 'Web';

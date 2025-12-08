@@ -1,0 +1,111 @@
+// Auto-generated navigation actions for {{platform}} platform
+// Generated: {{timestamp}}
+
+/**
+ * Navigation Actions
+ * 
+ * Helper functions to navigate to specific screens within the app.
+ * Used by VERIFY tests to navigate before checking UI implications.
+ * 
+ * Usage:
+ *   const NavigationActions = require('./navigation.{{platform}}.js');
+ *   await NavigationActions.navigateToScreenName({{#if isPlaywright}}page{{else}}driver{{/if}}, testData);
+ */
+
+{{#if isPlaywright}}
+/**
+ * Navigate to booking calendar
+ */
+async function navigateToBookingCalendar(page, testData) {
+  console.log('📍 Navigating to booking calendar...');
+  
+  // TODO: Implement navigation logic
+  // Example:
+  // await page.goto('/bookings/calendar');
+  // await page.waitForLoadState('networkidle');
+  
+  throw new Error('NavigationActions.navigateToBookingCalendar not implemented');
+}
+
+/**
+ * Navigate to manage bookings
+ */
+async function navigateToManageBookings(page, testData) {
+  console.log('📍 Navigating to manage bookings...');
+  
+  // TODO: Implement navigation logic
+  // Example:
+  // 1. Ensure correct club is selected
+  // const currentClub = await page.textContent('[data-club-name]');
+  // if (!currentClub.includes(testData.clubName)) {
+  //   await page.click('[data-change-club]');
+  //   await page.click(`text=${testData.clubName}`);
+  // }
+  // 
+  // 2. Navigate to manage bookings
+  // await page.goto('/manage/bookings');
+  // await page.waitForLoadState('networkidle');
+  
+  throw new Error('NavigationActions.navigateToManageBookings not implemented');
+}
+
+/**
+ * Navigate to club selection
+ */
+async function navigateToClubs(page, testData) {
+  console.log('📍 Navigating to clubs...');
+  
+  // TODO: Implement navigation logic
+  throw new Error('NavigationActions.navigateToClubs not implemented');
+}
+
+module.exports = {
+  navigateToBookingCalendar,
+  navigateToManageBookings,
+  navigateToClubs
+};
+{{else}}
+/**
+ * Navigate to dashboard screen
+ */
+async function navigateToDashboard(driver, testData) {
+  console.log('📍 Navigating to dashboard...');
+  
+  // TODO: Implement navigation logic
+  // Example:
+  // await driver.$('~tab-dashboard').click();
+  // await driver.$('~screen-dashboard').waitForDisplayed();
+  
+  throw new Error('NavigationActions.navigateToDashboard not implemented');
+}
+
+/**
+ * Navigate to my bookings screen
+ */
+async function navigateToMyBookings(driver, testData) {
+  console.log('📍 Navigating to my bookings...');
+  
+  // TODO: Implement navigation logic
+  // Example:
+  // await driver.$('~tab-bookings').click();
+  // await driver.$('~screen-my-bookings').waitForDisplayed();
+  
+  throw new Error('NavigationActions.navigateToMyBookings not implemented');
+}
+
+/**
+ * Navigate to request booking screen
+ */
+async function navigateToRequestBooking(driver, testData) {
+  console.log('📍 Navigating to request booking...');
+  
+  // TODO: Implement navigation logic
+  throw new Error('NavigationActions.navigateToRequestBooking not implemented');
+}
+
+module.exports = {
+  navigateToDashboard,
+  navigateToMyBookings,
+  navigateToRequestBooking
+};
+{{/if}}

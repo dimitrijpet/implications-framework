@@ -27,7 +27,7 @@
 1. Click "➕ Add State" button
 2. Select "Custom Build" mode
 3. Enter state name (lowercase with underscores)
-4. Choose platform (web/mobile-dancer/mobile-manager)
+4. Choose platform (web/dancer/manager)
 5. Fill trigger button (UPPERCASE)
 6. (Optional) Expand advanced options
 7. Click "Create State"
@@ -277,7 +277,7 @@ pnpm build
         metadata: {
           className: "AcceptedBookingImplications",
           status: "Accepted",
-          platform: "mobile-manager",
+          platform: "manager",
           hasXStateConfig: true,
           uiCoverage: {
             total: 12,
@@ -304,7 +304,7 @@ pnpm build
   displayName: "Accepted",
   meta: {
     status: "Accepted",
-    platform: "mobile-manager",
+    platform: "manager",
     triggerButton: "ACCEPT",
     requiredFields: ["bookingId", "userId"],
     setupActions: ["navigateToBooking"]

@@ -31,13 +31,13 @@ export const defaultTheme = {
   
   // Platform styling (customize per project)
   platforms: {
-    'mobile-dancer': {
+    'dancer': {
       color: '#a855f7',
       shadow: '0 0 20px rgba(168, 85, 247, 0.8)',
       name: 'Dancer',
       icon: '📱'
     },
-    'mobile-manager': {
+    'manager': {
       color: '#3b82f6',
       shadow: '0 0 20px rgba(59, 130, 246, 0.8)',
       name: 'Manager',

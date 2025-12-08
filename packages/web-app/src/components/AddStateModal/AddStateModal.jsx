@@ -7,11 +7,13 @@ import SuggestionsPanel from '../SuggestionsPanel/SuggestionsPanel';
 import DynamicContextFields from '../DynamicContextFields/DynamicContextFields';
 import { useSuggestions } from '../../hooks/useSuggestions';
 
+
 export default function AddStateModal({ 
   isOpen, 
   onClose, 
   onCreate, 
-  existingStates, 
+  existingStates,
+  existingTags = { screen: [], group: [] },  // ✅ ADD THIS with default
   theme, 
   projectPath 
 }) {
@@ -20,21 +22,25 @@ export default function AddStateModal({
   // ========================================
   
   const [mode, setMode] = useState('quick'); // 'quick' or 'custom'
-  const [formData, setFormData] = useState({
-    stateName: '',
-    displayName: '',
-    platform: 'web',
-    copyFrom: '',
-    triggerButton: '',
-    afterButton: '',
-    previousButton: '',
-    statusCode: '',
-    statusNumber: '',
-    notificationKey: '',
-    setupActions: [],
-    requiredFields: [],
-    contextFields: {}  // NEW: Context fields for the state
-  });
+const [formData, setFormData] = useState({
+  stateName: '',
+  displayName: '',
+  platform: 'web',
+  copyFrom: '',
+  triggerButton: '',
+  afterButton: '',
+  previousButton: '',
+  statusCode: '',
+  statusNumber: '',
+  notificationKey: '',
+  setupActions: [],
+  requiredFields: [],
+  contextFields: {},
+  tags: {           // ✅ NEW
+    screen: '',
+    group: ''
+  }
+});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [showContextHelp, setShowContextHelp] = useState(false);
@@ -46,6 +52,13 @@ export default function AddStateModal({
 
   // Get pattern analysis for suggestions
   const { analysis, loading: analysisLoading } = useSuggestions(projectPath);
+
+  useEffect(() => {
+  if (existingStates && existingStates.length > 0) {
+    console.log('🔍 DEBUG: existingStates sample:', existingStates[0]);
+    console.log('🔍 Available fields:', Object.keys(existingStates[0]));
+  }
+}, [existingStates]);
 
   // ========================================
   // EFFECTS
@@ -210,28 +223,33 @@ export default function AddStateModal({
     }
   };
 
-  const handleCreate = () => {
-    if (!validateForm()) {
-      console.log('❌ Validation failed:', errors);
-      return;
-    }
-    
-    // Generate display name if not provided
-    const displayName = formData.displayName || formData.stateName
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
+const handleCreate = () => {
+  if (!validateForm()) {
+    console.log('❌ Validation failed:', errors);
+    return;
+  }
+  
+  const displayName = formData.displayName || formData.stateName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 
-    // Include context in the create payload
-    const stateData = {
-      ...formData,
-      displayName,
-      context: formData.contextFields  // Pass context to backend
-    };
+  // ✅ Clean up empty tags
+  const cleanTags = {};
+  if (formData.tags?.screen?.trim()) cleanTags.screen = formData.tags.screen.trim();
+  if (formData.tags?.group?.trim()) cleanTags.group = formData.tags.group.trim();
 
-    console.log('✅ Creating state with context:', stateData);
-    onCreate(stateData);
+  const stateData = {
+    ...formData,
+    displayName,
+    context: formData.contextFields,
+    tags: Object.keys(cleanTags).length > 0 ? cleanTags : null  // ✅ Only include if non-empty
   };
+
+  console.log('✅ Creating state with data:', stateData);
+  onCreate(stateData);
+};
+
 
   const updateField = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -461,15 +479,16 @@ export default function AddStateModal({
               onRemoveSetup={removeSetupAction}
               theme={theme}
             />
-          ) : (
-            <CustomBuildMode
-              formData={formData}
-              updateField={updateField}
-              showAdvanced={showAdvanced}
-              setShowAdvanced={setShowAdvanced}
-              theme={theme}
-            />
-          )}
+) : (
+  <CustomBuildMode
+    formData={formData}
+    updateField={updateField}
+    showAdvanced={showAdvanced}
+    setShowAdvanced={setShowAdvanced}
+    theme={theme}
+    existingTags={existingTags}  // ✅ ADD THIS
+  />
+)}
 
           {/* ========================================
               NEW: CONTEXT FIELDS SECTION
@@ -741,12 +760,21 @@ function QuickCopyMode({
             cursor: 'pointer'
           }}
         >
-          <option value="">-- Select a state --</option>
-          {existingStates?.map(state => (
-            <option key={state.id} value={state.id}>
-              {state.name} ({state.meta?.platform || 'web'})
-            </option>
-          ))}
+         <option value="">-- Select a state --</option>
+{existingStates?.map((state, index) => {
+  const platform = state.meta?.setup?.[0]?.platform || 
+                   state.meta?.platform || 
+                   'web';
+  
+  return (
+    <option 
+      key={`${state.className || state.id}-${index}`}
+      value={state.id}
+    >
+      {state.className || state.name} ({platform})
+    </option>
+  );
+})}
         </select>
       </FormGroup>
 
@@ -958,14 +986,15 @@ function CustomBuildMode({
   updateField, 
   showAdvanced, 
   setShowAdvanced, 
-  theme 
+  theme,
+  existingTags  // ✅ ADD THIS
 }) {
   return (
     <>
       {/* Platform Selection */}
       <FormGroup label="Platform" required theme={theme}>
         <div style={{ display: 'flex', gap: '12px' }}>
-          {['web', 'mobile-dancer', 'mobile-manager'].map(platform => (
+          {['web', 'dancer', 'manager'].map(platform => (
             <label 
               key={platform} 
               style={{ 
@@ -1028,7 +1057,7 @@ function CustomBuildMode({
         />
       </FormGroup>
 
-      {/* Trigger Button */}
+      {/* Trigger Button
       <FormGroup label="Trigger Button" helper="Button text in UPPERCASE" theme={theme}>
         <input
           type="text"
@@ -1044,9 +1073,74 @@ function CustomBuildMode({
             width: '100%'
           }}
         />
-      </FormGroup>
+      </FormGroup> */}
 
-      {/* Advanced Options Toggle */}
+      {/* Tags Section */}
+<div style={{ 
+  marginTop: '16px',
+  marginBottom: '16px',
+  padding: '16px',
+  background: `${theme.colors.background.tertiary}60`,
+  borderRadius: '8px',
+  border: `1px solid ${theme.colors.border}`
+}}>
+  <h4 style={{ 
+    fontSize: '14px', 
+    fontWeight: 600, 
+    marginBottom: '12px',
+    color: theme.colors.accents.purple
+  }}>
+    🏷️ Tags / Groups
+  </h4>
+  
+  <FormGroup label="Screen Tag" helper="Which screen this state belongs to" theme={theme}>
+    <input
+      type="text"
+      value={formData.tags?.screen || ''}
+      onChange={(e) => updateField('tags', { ...formData.tags, screen: e.target.value })}
+      placeholder="e.g., Landing Page, Flight Search, Checkout"
+      list="screen-tags"
+      style={{
+        background: theme.colors.background.tertiary,
+        color: theme.colors.text.primary,
+        border: `1px solid ${theme.colors.border}`,
+        padding: '10px',
+        borderRadius: '6px',
+        width: '100%'
+      }}
+    />
+    <datalist id="screen-tags">
+      {existingTags?.screen?.map((tag, idx) => (
+        <option key={idx} value={tag} />
+      ))}
+    </datalist>
+  </FormGroup>
+  
+  <FormGroup label="Group Tag" helper="Logical grouping (e.g., booking-flow, agency-flow)" theme={theme}>
+    <input
+      type="text"
+      value={formData.tags?.group || ''}
+      onChange={(e) => updateField('tags', { ...formData.tags, group: e.target.value })}
+      placeholder="e.g., booking-flow, agency-selection"
+      list="group-tags"
+      style={{
+        background: theme.colors.background.tertiary,
+        color: theme.colors.text.primary,
+        border: `1px solid ${theme.colors.border}`,
+        padding: '10px',
+        borderRadius: '6px',
+        width: '100%'
+      }}
+    />
+    <datalist id="group-tags">
+      {existingTags?.group?.map((tag, idx) => (
+        <option key={idx} value={tag} />
+      ))}
+    </datalist>
+  </FormGroup>
+</div>
+
+{/* Advanced Options Toggle */}
       <button
         type="button"
         onClick={() => setShowAdvanced(!showAdvanced)}
