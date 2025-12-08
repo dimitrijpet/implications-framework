@@ -18,6 +18,7 @@ import contextRouter from './routes/context.js';
 import TestDataRouter from './routes/testData.js';  // ✅ Add this
 import screensRouter from './routes/screens.js';
 import navigationRoutes from './routes/navigation.js';
+import locksRouter from './routes/locks.js';
 
 
 
@@ -48,6 +49,8 @@ app.use('/api/poms', pomsRouter);
 app.use('/api/test-data', TestDataRouter);
 app.use('/api/screens', screensRouter);
 app.use('/api/navigation', navigationRoutes);
+
+app.use('/api/locks', locksRouter);
 
 // Error handling
 app.use(errorHandler);

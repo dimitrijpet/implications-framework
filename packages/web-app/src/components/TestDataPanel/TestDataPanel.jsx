@@ -150,6 +150,43 @@ export default function TestDataPanel({ state, projectPath, contextData, theme }
         )}
       </div>
 
+      {loadedTestData && loadedTestData.data?.status && (
+  <>
+    <button
+      onClick={() => {
+        if (window.cytoscapeGraph?.highlightPathTo) {
+          window.cytoscapeGraph.highlightPathTo(loadedTestData.data.status);
+        }
+      }}
+      className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+      style={{
+        background: defaultTheme.colors.accents.purple,
+        color: 'white'
+      }}
+      title="Show path from initial to current testData status"
+    >
+      🛤️ Show Path
+    </button>
+    
+    <button
+      onClick={() => {
+        if (window.cytoscapeGraph?.clearPathHighlight) {
+          window.cytoscapeGraph.clearPathHighlight();
+        }
+      }}
+      className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+      style={{
+        background: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.secondary,
+        border: `1px solid ${defaultTheme.colors.border}`
+      }}
+      title="Clear path highlight"
+    >
+      👁️ Show All
+    </button>
+  </>
+)}
+
       {/* Entry Data (Outputs) */}
 <div className="border rounded-lg p-5" style={{ 
   background: theme.colors.background.secondary 
@@ -167,7 +204,10 @@ export default function TestDataPanel({ state, projectPath, contextData, theme }
   </div>
 </div>
     </div>
+    
   );
+
+  
 }
 
 /**

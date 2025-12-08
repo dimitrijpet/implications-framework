@@ -100,36 +100,38 @@ for (const searchPath of searchPaths) {
         const parsed = await parseFileWithMethods(filePath);  // ✅ NOW IT'S DEFINED
         
         if (parsed.classes.length > 0) {
-          const mainClass = parsed.classes[0];
-          const methods = mainClass.functions || [];
+  // Loop through ALL classes in the file
+  for (const classData of parsed.classes) {
+    const methods = classData.functions || [];
 
-          console.log(`         Found ${methods.length} total methods`);
+    console.log(`         Checking class ${classData.name}: ${methods.length} total methods`);
 
-          // Filter for navigation methods
-          const navMethods = methods.filter(m => {
-            const lower = m.name.toLowerCase();
-            return lower.includes('navigate') ||
-                   lower.includes('goto') ||
-                   lower.includes('open') ||
-                   lower.includes('go') ||
-                   lower.startsWith('to');
-          });
+    // Filter for navigation methods
+    const navMethods = methods.filter(m => {
+      const lower = m.name.toLowerCase();
+      return lower.includes('navigate') ||
+             lower.includes('goto') ||
+             lower.includes('open') ||
+             lower.includes('go') ||
+             lower.startsWith('to');
+    });
 
-          console.log(`         Found ${navMethods.length} navigation methods: ${navMethods.map(m => m.name).join(', ')}`);
+    console.log(`         Found ${navMethods.length} navigation methods in ${classData.name}`);
 
-          if (navMethods.length > 0) {
-            navFiles.push({
-              file: file,
-              path: filePath,
-              className: mainClass.name,
-              methods: navMethods,
-              allMethods: methods,
-              relativePath: path.relative(projectPath, filePath)
-            });
+    if (navMethods.length > 0) {
+      navFiles.push({
+        file: file,
+        path: filePath,
+        className: classData.name,  // ✅ Use actual class name
+        methods: navMethods,
+        allMethods: methods,
+        relativePath: path.relative(projectPath, filePath)
+      });
 
-            console.log(`         ✅ Added ${file} with ${navMethods.length} methods`);
-          }
-        }
+      console.log(`         ✅ Added ${classData.name} with ${navMethods.length} methods`);
+    }
+  }
+}
       } catch (parseError) {
         console.error(`         ❌ Parse error: ${parseError.message}`);
       }
