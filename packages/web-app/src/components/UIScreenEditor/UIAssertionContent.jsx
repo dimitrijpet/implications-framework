@@ -1,11 +1,12 @@
 // packages/web-app/src/components/UIScreenEditor/UIAssertionContent.jsx
-// ✅ COMPREHENSIVE UPDATE: Index selector support for ALL assertion types
+// ✅ ENHANCED: AssertionsSection now supports function arguments
 //
 // Features:
 // - Visible/Hidden: Index selector (first, last, all, any, nth)
 // - Text/Contains checks: Index selector for field
 // - Truthy/Falsy: Index selector (for array-returning functions)
 // - Custom assertions: Index selector for function/locator
+// - ✅ NEW: Function arguments support with variable suggestions
 // - Timeout configuration
 
 import { useState, useEffect, useMemo } from 'react';
@@ -135,7 +136,10 @@ export default function UIAssertionContent({
       value: fn.name,
       label: fn.name,
       description: fn.signature,
-      async: fn.async
+      async: fn.async,
+      parameters: fn.parameters || [],  // ✅ Include parameters
+      paramNames: fn.paramNames || [],  // ✅ Include param names
+      returns: fn.returns               // ✅ Include return info
     })));
   }, [pomName, getPOMFunctions]);
 
@@ -236,18 +240,19 @@ export default function UIAssertionContent({
           />
         </div>
       )}
-{/* Assertions Section */}
-{(editMode || summary.assertions > 0) && (
-  <AssertionsSection
-    assertions={data.assertions || []}
-    editMode={editMode}
-    theme={theme}
-    functionOptions={functionOptions}
-    locatorOptions={locatorOptions}
-    storedVariables={storedVariables}  // ✅ ADD THIS
-    onChange={(vals) => updateData('assertions', vals)}
-  />
-)}
+
+      {/* Assertions Section - ✅ NOW WITH ARGS SUPPORT */}
+      {(editMode || summary.assertions > 0) && (
+        <AssertionsSection
+          assertions={data.assertions || []}
+          editMode={editMode}
+          theme={theme}
+          functionOptions={functionOptions}
+          locatorOptions={locatorOptions}
+          storedVariables={storedVariables}
+          onChange={(vals) => updateData('assertions', vals)}
+        />
+      )}
 
       {/* Timeout */}
       <div className="flex items-center gap-3">
@@ -326,9 +331,7 @@ function MultiSelectWithIndex({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [pendingItem, setPendingItem] = useState(null); // { value, indexType, customIndex, isEdit }
-  const inputRef = useState(null);
-  const dropdownRef = useState(null);
+  const [pendingItem, setPendingItem] = useState(null);
 
   const accentColor = theme.colors.accents[color] || theme.colors.accents.blue;
 
@@ -355,7 +358,6 @@ function MultiSelectWithIndex({
   // Add value with index
   const handleAdd = (baseValue, indexType = '', customIndex = '') => {
     const finalValue = buildFieldWithIndex(baseValue, indexType, customIndex);
-    // Remove any existing entry for this base field
     const newValues = values.filter(v => {
       const parsed = parseFieldWithIndex(v);
       return parsed.field !== baseValue;
@@ -425,7 +427,6 @@ function MultiSelectWithIndex({
           >
             <span>{pv.field}</span>
             
-            {/* Index badge */}
             {pv.indexType ? (
               <button
                 onClick={(e) => {
@@ -470,7 +471,6 @@ function MultiSelectWithIndex({
               </button>
             )}
             
-            {/* Remove button */}
             {!disabled && (
               <button
                 onClick={(e) => {
@@ -564,7 +564,6 @@ function MultiSelectWithIndex({
 
 // ═══════════════════════════════════════════════════════════
 // INDEX SELECTOR POPUP
-// Shared component for selecting index type
 // ═══════════════════════════════════════════════════════════
 
 function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
@@ -595,13 +594,12 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         <span className="font-mono ml-1" style={{ color: accentColor }}>{baseField}</span>
       </div>
       
-      {/* Index type buttons */}
       <div className="flex flex-wrap gap-1 mb-2">
         {INDEX_OPTIONS.map(opt => (
           <button
             key={opt.value}
             onClick={() => handleSelect(opt.value)}
-            className={`px-2 py-1 rounded text-xs font-semibold transition`}
+            className="px-2 py-1 rounded text-xs font-semibold transition"
             style={{ 
               background: indexType === opt.value ? accentColor : `${accentColor}30`,
               color: indexType === opt.value ? theme.colors.background.primary : accentColor
@@ -612,7 +610,6 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         ))}
       </div>
       
-      {/* Custom index input */}
       {indexType === 'custom' && (
         <div className="flex gap-2 mb-2">
           <input
@@ -639,7 +636,6 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         </div>
       )}
       
-      {/* Preview */}
       <div 
         className="p-2 rounded text-xs font-mono mb-2"
         style={{ background: theme.colors.background.primary, color: theme.colors.text.secondary }}
@@ -647,16 +643,6 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         Result: <span style={{ color: accentColor }}>
           {buildFieldWithIndex(baseField, indexType, customIndex) || baseField}
         </span>
-      </div>
-      
-      {/* Help text */}
-      <div className="text-[10px] space-y-0.5 mb-2" style={{ color: theme.colors.text.tertiary }}>
-        <div><strong>(none):</strong> Single element, no index</div>
-        <div><strong>first:</strong> First element .first() or [0]</div>
-        <div><strong>last:</strong> Last element .last()</div>
-        <div><strong>any:</strong> At least one must match</div>
-        <div><strong>all:</strong> All elements must match (loop)</div>
-        <div><strong>nth:</strong> Specific index .nth(n)</div>
       </div>
       
       <button
@@ -672,7 +658,6 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
 
 // ═══════════════════════════════════════════════════════════
 // TEXT CHECKS SECTION
-// With index selector support
 // ═══════════════════════════════════════════════════════════
 
 function TextChecksSection({ 
@@ -692,7 +677,6 @@ function TextChecksSection({
   const [newIndexType, setNewIndexType] = useState('');
   const [newCustomIndex, setNewCustomIndex] = useState('');
 
-  // Parse all checks
   const allChecks = useMemo(() => [
     ...Object.entries(textChecks).map(([k, v]) => ({ 
       key: k, value: v, type: 'text', ...parseFieldWithIndex(k)
@@ -765,7 +749,6 @@ function TextChecksSection({
 
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold" style={{ color }}>
           📝 Text Checks ({allChecks.length})
@@ -781,7 +764,6 @@ function TextChecksSection({
         )}
       </div>
 
-      {/* Existing Checks */}
       {allChecks.length > 0 && (
         <div className="space-y-1 mb-2">
           {allChecks.map(({ key, value, type, field, indexType, customIndex }) => (
@@ -828,13 +810,11 @@ function TextChecksSection({
         </div>
       )}
 
-      {/* Add Form */}
       {isAdding && (
         <div 
           className="p-3 rounded space-y-3"
           style={{ background: theme.colors.background.tertiary, border: `1px solid ${color}40` }}
         >
-          {/* Field selector */}
           <div className="flex gap-2">
             <select
               value={newKey}
@@ -865,7 +845,6 @@ function TextChecksSection({
             />
           </div>
 
-          {/* Index selector */}
           <div>
             <label className="text-xs mb-1 block" style={{ color: theme.colors.text.tertiary }}>
               Array Index (optional)
@@ -905,7 +884,6 @@ function TextChecksSection({
             </div>
           </div>
 
-          {/* Check type + value */}
           <div className="flex gap-2">
             <select
               value={newType}
@@ -935,7 +913,6 @@ function TextChecksSection({
             />
           </div>
 
-          {/* Preview */}
           {newKey && (
             <div 
               className="p-2 rounded text-xs font-mono"
@@ -947,7 +924,6 @@ function TextChecksSection({
             </div>
           )}
 
-          {/* Variable suggestions */}
           {storedVariables && storedVariables.length > 0 && (
             <div className="space-y-1">
               <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>💾 Variables:</span>
@@ -966,7 +942,6 @@ function TextChecksSection({
             </div>
           )}
 
-          {/* Actions */}
           <div className="flex justify-end gap-2">
             <button onClick={resetForm} className="px-3 py-1 rounded text-sm" style={{ color: theme.colors.text.tertiary }}>
               Cancel
@@ -987,8 +962,7 @@ function TextChecksSection({
 }
 
 // ═══════════════════════════════════════════════════════════
-// ASSERTIONS SECTION
-// With index selector support
+// ✅ ENHANCED ASSERTIONS SECTION WITH FUNCTION ARGUMENTS
 // ═══════════════════════════════════════════════════════════
 
 function AssertionsSection({ 
@@ -997,7 +971,7 @@ function AssertionsSection({
   theme, 
   functionOptions = [],
   locatorOptions = [],
-  storedVariables = [],  // ✅ ADD THIS PROP
+  storedVariables = [],
   onChange 
 }) {
   const [isAdding, setIsAdding] = useState(false);
@@ -1006,8 +980,32 @@ function AssertionsSection({
   const [newCustomIndex, setNewCustomIndex] = useState('');
   const [newExpect, setNewExpect] = useState('toBe');
   const [newValue, setNewValue] = useState('');
-  const [newStoreAs, setNewStoreAs] = useState('');  // ✅ NEW
-  const [useVariable, setUseVariable] = useState(false);  // ✅ NEW
+  const [newStoreAs, setNewStoreAs] = useState('');
+  const [useVariable, setUseVariable] = useState(false);
+  
+  // ✅ NEW: State for function arguments
+  const [newArgs, setNewArgs] = useState([]);  // Array of { value, useVar }
+
+  // Get selected function's parameter info
+  const selectedFunctionInfo = useMemo(() => {
+    if (!newFn) return null;
+    return functionOptions.find(f => f.value === newFn);
+  }, [newFn, functionOptions]);
+
+  // ✅ NEW: Initialize args when function is selected
+  useEffect(() => {
+    if (selectedFunctionInfo?.parameters?.length > 0) {
+      setNewArgs(selectedFunctionInfo.parameters.map(p => ({
+        name: p.name,
+        value: p.hasDefault ? String(p.defaultValue || '') : '',
+        useVar: false,
+        hasDefault: p.hasDefault,
+        defaultValue: p.defaultValue
+      })));
+    } else {
+      setNewArgs([]);
+    }
+  }, [selectedFunctionInfo]);
 
   const allOptions = useMemo(() => {
     const combined = [
@@ -1022,8 +1020,20 @@ function AssertionsSection({
     });
   }, [functionOptions, locatorOptions]);
 
-  // ✅ ENHANCED: Categorized expectation types
+  // Categorized expectation types
   const EXPECTATION_TYPES = {
+    getter: [
+      { value: 'getValue', label: '📥 get input value', needsValue: false, returnsValue: true },
+      { value: 'getText', label: '📥 get text content', needsValue: false, returnsValue: true },
+      { value: 'getCount', label: '📥 get element count', needsValue: false, returnsValue: true },
+      { value: 'getAttribute', label: '📥 get attribute', needsValue: true, returnsValue: true },
+    ],
+    check: [
+      { value: 'isVisible', label: '❓ is visible?', needsValue: false, returnsBoolean: true },
+      { value: 'isEnabled', label: '❓ is enabled?', needsValue: false, returnsBoolean: true },
+      { value: 'isChecked', label: '❓ is checked?', needsValue: false, returnsBoolean: true },
+      { value: 'hasText', label: '❓ has text?', needsValue: true, returnsBoolean: true },
+    ],
     value: [
       { value: 'toBe', label: 'toBe (===)', needsValue: true },
       { value: 'toEqual', label: 'toEqual (deep)', needsValue: true },
@@ -1050,35 +1060,43 @@ function AssertionsSection({
       { value: 'toBeVisible', label: 'toBeVisible', needsValue: false },
       { value: 'toBeHidden', label: 'toBeHidden', needsValue: false },
     ],
-    // ✅ NEW: Getters (for storeAs - return actual values)
-    getter: [
-      { value: 'getValue', label: '📥 get input value', needsValue: false, returnsValue: true },
-      { value: 'getText', label: '📥 get text content', needsValue: false, returnsValue: true },
-      { value: 'getCount', label: '📥 get element count', needsValue: false, returnsValue: true },
-      { value: 'getAttribute', label: '📥 get attribute', needsValue: true, returnsValue: true },
-    ],
-    // ✅ NEW: Boolean checks (for storeAs - return true/false)
-    check: [
-      { value: 'isVisible', label: '❓ is visible?', needsValue: false, returnsBoolean: true },
-      { value: 'isEnabled', label: '❓ is enabled?', needsValue: false, returnsBoolean: true },
-      { value: 'isChecked', label: '❓ is checked?', needsValue: false, returnsBoolean: true },
-      { value: 'hasText', label: '❓ has text?', needsValue: true, returnsBoolean: true },
-    ],
   };
 
-  // Flatten for lookup
   const allExpectTypes = Object.values(EXPECTATION_TYPES).flat();
   const getExpectType = (value) => allExpectTypes.find(t => t.value === value) || { needsValue: true };
   
   const selectedExpectType = getExpectType(newExpect);
   const noValueExpectations = allExpectTypes.filter(t => !t.needsValue).map(t => t.value);
 
+  // ✅ NEW: Update argument value
+  const handleArgChange = (index, value) => {
+    const updated = [...newArgs];
+    updated[index] = { ...updated[index], value };
+    setNewArgs(updated);
+  };
+
+  // ✅ NEW: Toggle variable mode for argument
+  const handleArgVarToggle = (index, useVar) => {
+    const updated = [...newArgs];
+    updated[index] = { ...updated[index], useVar, value: '' };
+    setNewArgs(updated);
+  };
+
+  // ✅ NEW: Insert variable into argument
+  const handleInsertVarIntoArg = (index, varTemplate) => {
+    const updated = [...newArgs];
+    // Extract variable name from template like "{{varName}}"
+    const varName = varTemplate.replace(/[{}]/g, '');
+    updated[index] = { ...updated[index], value: varName, useVar: true };
+    setNewArgs(updated);
+  };
+
   const handleAdd = () => {
     if (!newFn.trim()) return;
     
     const finalFn = buildFieldWithIndex(newFn.trim(), newIndexType, newCustomIndex);
     
-    // Handle value - wrap in {{}} if using variable
+    // Handle expectation value
     let finalValue = newValue;
     if (useVariable && newValue) {
       finalValue = `{{${newValue}}}`;
@@ -1086,11 +1104,20 @@ function AssertionsSection({
       finalValue = Number(newValue);
     }
     
+    // ✅ NEW: Build args array from form state
+    const argsArray = newArgs.map(arg => {
+      if (arg.useVar && arg.value) {
+        return `{{${arg.value}}}`;
+      }
+      return arg.value;
+    }).filter(v => v !== '');  // Remove empty args
+    
     const newAssertion = {
       fn: finalFn,
       expect: newExpect,
       ...(!noValueExpectations.includes(newExpect) && finalValue !== '' && { value: finalValue }),
-      ...(newStoreAs.trim() && { storeAs: newStoreAs.trim() })  // ✅ NEW
+      ...(newStoreAs.trim() && { storeAs: newStoreAs.trim() }),
+      ...(argsArray.length > 0 && { args: argsArray })  // ✅ NEW: Include args
     };
     
     onChange([...assertions, newAssertion]);
@@ -1105,6 +1132,7 @@ function AssertionsSection({
     setNewValue('');
     setNewStoreAs('');
     setUseVariable(false);
+    setNewArgs([]);
     setIsAdding(false);
   };
 
@@ -1112,7 +1140,6 @@ function AssertionsSection({
     onChange(assertions.filter((_, i) => i !== idx));
   };
 
-  // ✅ NEW: Update storeAs for existing assertion
   const handleUpdateStoreAs = (idx, newStoreAsValue) => {
     const updated = [...assertions];
     if (newStoreAsValue.trim()) {
@@ -1159,7 +1186,6 @@ function AssertionsSection({
               >
                 {/* Main assertion line */}
                 <div className="flex items-center gap-1 font-mono flex-wrap">
-                  {/* Getter/Check badge */}
                   {(expectType.returnsValue || expectType.returnsBoolean) && (
                     <span 
                       className="px-1.5 py-0.5 rounded text-[10px] font-bold mr-1"
@@ -1184,26 +1210,53 @@ function AssertionsSection({
                       {getIndexLabel(parsed.indexType, parsed.customIndex)}
                     </span>
                   )}
-                  <span style={{ color: theme.colors.text.tertiary }}>
-                    {expectType.returnsValue || expectType.returnsBoolean ? '()' : ').'}
-                  </span>
-                  <span style={{ color: theme.colors.accents.blue }}>{assertion.expect}</span>
                   <span style={{ color: theme.colors.text.tertiary }}>(</span>
-                  {assertion.value !== undefined && (
-                    <span style={{ color: theme.colors.accents.green }}>
-                      {typeof assertion.value === 'string' && assertion.value.includes('{{') ? (
-                        <span 
-                          className="px-1 py-0.5 rounded"
-                          style={{ background: `${theme.colors.accents.yellow}30` }}
-                        >
-                          {assertion.value}
+                  
+                  {/* ✅ NEW: Show args */}
+                  {assertion.args && assertion.args.length > 0 && (
+                    <span style={{ color: theme.colors.accents.cyan }}>
+                      {assertion.args.map((arg, i) => (
+                        <span key={i}>
+                          {i > 0 && ', '}
+                          {typeof arg === 'string' && arg.includes('{{') ? (
+                            <span 
+                              className="px-1 py-0.5 rounded"
+                              style={{ background: `${theme.colors.accents.yellow}30` }}
+                            >
+                              {arg}
+                            </span>
+                          ) : (
+                            typeof arg === 'string' ? `"${arg}"` : String(arg)
+                          )}
                         </span>
-                      ) : (
-                        typeof assertion.value === 'string' ? `"${assertion.value}"` : String(assertion.value)
-                      )}
+                      ))}
                     </span>
                   )}
-                  <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                  
+                  <span style={{ color: theme.colors.text.tertiary }}>
+                    {expectType.returnsValue || expectType.returnsBoolean ? ')' : ').'}
+                  </span>
+                  {!(expectType.returnsValue || expectType.returnsBoolean) && (
+                    <>
+                      <span style={{ color: theme.colors.accents.blue }}>{assertion.expect}</span>
+                      <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                      {assertion.value !== undefined && (
+                        <span style={{ color: theme.colors.accents.green }}>
+                          {typeof assertion.value === 'string' && assertion.value.includes('{{') ? (
+                            <span 
+                              className="px-1 py-0.5 rounded"
+                              style={{ background: `${theme.colors.accents.yellow}30` }}
+                            >
+                              {assertion.value}
+                            </span>
+                          ) : (
+                            typeof assertion.value === 'string' ? `"${assertion.value}"` : String(assertion.value)
+                          )}
+                        </span>
+                      )}
+                      <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                    </>
+                  )}
                   
                   {editMode && (
                     <button 
@@ -1215,7 +1268,7 @@ function AssertionsSection({
                   )}
                 </div>
                 
-                {/* ✅ NEW: StoreAs line */}
+                {/* StoreAs line */}
                 {assertion.storeAs ? (
                   <div className="flex items-center gap-2 mt-1 ml-4">
                     <span className="text-xs" style={{ color: theme.colors.accents.green }}>💾</span>
@@ -1290,7 +1343,7 @@ function AssertionsSection({
                 <optgroup label="Functions">
                   {functionOptions.map(opt => (
                     <option key={`fn-${opt.value}`} value={opt.value}>
-                      {opt.label}{opt.async ? ' (async)' : ''}
+                      {opt.description || opt.label}{opt.async ? ' (async)' : ''}
                     </option>
                   ))}
                 </optgroup>
@@ -1316,6 +1369,190 @@ function AssertionsSection({
               }}
             />
           </div>
+
+          {/* ═══════════════════════════════════════════════════════════
+              ✅ NEW: FUNCTION ARGUMENTS SECTION
+              ═══════════════════════════════════════════════════════════ */}
+          {selectedFunctionInfo?.parameters?.length > 0 && (
+            <div 
+              className="p-3 rounded space-y-2"
+              style={{ 
+                background: `${theme.colors.accents.cyan}10`,
+                border: `1px solid ${theme.colors.accents.cyan}40`
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-semibold" style={{ color: theme.colors.accents.cyan }}>
+                  📝 Function Arguments ({selectedFunctionInfo.parameters.length})
+                </span>
+                <span className="text-xs font-mono" style={{ color: theme.colors.text.tertiary }}>
+                  {selectedFunctionInfo.signature}
+                </span>
+              </div>
+
+              {newArgs.map((arg, idx) => (
+                <div 
+                  key={idx} 
+                  className="p-2 rounded space-y-2"
+                  style={{ background: theme.colors.background.secondary }}
+                >
+                  {/* Parameter name & badges */}
+                  <div className="flex items-center gap-2">
+                    <span 
+                      className="font-mono text-sm font-bold"
+                      style={{ color: theme.colors.accents.cyan }}
+                    >
+                      {arg.name}
+                    </span>
+                    {arg.hasDefault && (
+                      <span 
+                        className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{ 
+                          background: `${theme.colors.accents.blue}20`,
+                          color: theme.colors.accents.blue
+                        }}
+                      >
+                        optional
+                      </span>
+                    )}
+                    {!arg.hasDefault && (
+                      <span 
+                        className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                        style={{ 
+                          background: `${theme.colors.accents.red}20`,
+                          color: theme.colors.accents.red
+                        }}
+                      >
+                        required
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Default value hint */}
+                  {arg.hasDefault && arg.defaultValue !== undefined && (
+                    <div className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                      Default: <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>
+                        {JSON.stringify(arg.defaultValue)}
+                      </code>
+                    </div>
+                  )}
+
+                  {/* Mode toggle */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleArgVarToggle(idx, false)}
+                      className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+                      style={{
+                        background: !arg.useVar 
+                          ? theme.colors.accents.cyan 
+                          : theme.colors.background.tertiary,
+                        color: !arg.useVar 
+                          ? 'white' 
+                          : theme.colors.text.tertiary
+                      }}
+                    >
+                      ✏️ Custom Value
+                    </button>
+                    <button
+                      onClick={() => handleArgVarToggle(idx, true)}
+                      className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+                      style={{
+                        background: arg.useVar 
+                          ? theme.colors.accents.yellow 
+                          : theme.colors.background.tertiary,
+                        color: arg.useVar 
+                          ? 'black' 
+                          : theme.colors.text.tertiary
+                      }}
+                    >
+                      {'{{ }} Variable'}
+                    </button>
+                  </div>
+
+                  {/* Input */}
+                  {arg.useVar ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'{{'}</span>
+                        <input
+                          type="text"
+                          value={arg.value}
+                          onChange={(e) => handleArgChange(idx, e.target.value)}
+                          placeholder="ctx.data.field or variableName"
+                          className="flex-1 px-2 py-1 rounded text-sm font-mono"
+                          style={{
+                            background: theme.colors.background.primary,
+                            border: `1px solid ${theme.colors.accents.yellow}`,
+                            color: theme.colors.accents.yellow
+                          }}
+                        />
+                        <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'}}'}</span>
+                      </div>
+                      
+                      {/* Variable suggestions */}
+                      {storedVariables.length > 0 && (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                            Available:
+                          </span>
+                          {storedVariables.map(v => (
+                            <button
+                              key={v.name || v.path}
+                              onClick={() => handleInsertVarIntoArg(idx, `{{${v.path || v.name}}}`)}
+                              className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                              style={{ 
+                                background: `${theme.colors.accents.yellow}30`,
+                                color: theme.colors.accents.yellow
+                              }}
+                            >
+                              {v.path || v.name}
+                            </button>
+                          ))}
+                          {/* Common ctx.data fields */}
+                          {['booking', 'dancerName', 'clubName', 'lang'].map(field => (
+                            <button
+                              key={field}
+                              onClick={() => handleInsertVarIntoArg(idx, `{{ctx.data.${field}}}`)}
+                              className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                              style={{ 
+                                background: `${theme.colors.accents.blue}20`,
+                                color: theme.colors.accents.blue
+                              }}
+                            >
+                              ctx.data.{field}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={arg.value}
+                      onChange={(e) => handleArgChange(idx, e.target.value)}
+                      placeholder={arg.hasDefault ? `Leave empty for default` : `Enter ${arg.name}...`}
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: theme.colors.background.primary,
+                        border: `1px solid ${theme.colors.border}`,
+                        color: theme.colors.text.primary
+                      }}
+                    />
+                  )}
+
+                  {/* Preview */}
+                  {arg.value && (
+                    <div 
+                      className="text-[10px] p-1 rounded font-mono"
+                      style={{ background: theme.colors.background.tertiary, color: theme.colors.accents.green }}
+                    >
+                      → {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Index selector */}
           <div>
@@ -1357,13 +1594,12 @@ function AssertionsSection({
             </div>
           </div>
 
-          {/* Expectation type - ✅ ENHANCED with categories */}
+          {/* Expectation type */}
           <div className="flex gap-2 flex-wrap">
             <select
               value={newExpect}
               onChange={(e) => {
                 setNewExpect(e.target.value);
-                // Auto-suggest storeAs for getters
                 const type = getExpectType(e.target.value);
                 if (type.returnsValue || type.returnsBoolean) {
                   setNewStoreAs(newFn ? `${newFn}Result` : '');
@@ -1452,7 +1688,6 @@ function AssertionsSection({
                   />
                 )}
                 
-                {/* Toggle variable mode */}
                 <label className="text-xs flex items-center gap-1 cursor-pointer whitespace-nowrap" style={{ color: theme.colors.text.tertiary }}>
                   <input
                     type="checkbox"
@@ -1469,7 +1704,7 @@ function AssertionsSection({
             )}
           </div>
 
-          {/* ✅ NEW: StoreAs input */}
+          {/* StoreAs input */}
           <div 
             className="p-2 rounded space-y-2"
             style={{ 
@@ -1498,18 +1733,6 @@ function AssertionsSection({
                 }}
               />
             </div>
-            
-            {newStoreAs && (
-              <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                {selectedExpectType.returnsValue ? (
-                  <>📝 Will store the actual value from <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>{newFn || 'function'}()</code></>
-                ) : selectedExpectType.returnsBoolean ? (
-                  <>✓/✗ Will store <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>true</code> or <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>false</code></>
-                ) : (
-                  <>✓/✗ Will store <code className="px-1 rounded" style={{ background: theme.colors.background.primary }}>true</code> if passes</>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Preview */}
@@ -1521,14 +1744,16 @@ function AssertionsSection({
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>const result = await </span>
                 <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
-                <span style={{ color: theme.colors.text.tertiary }}>.</span>
-                <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
                 <span style={{ color: theme.colors.text.tertiary }}>(</span>
-                {newValue && selectedExpectType.needsValue && (
-                  <span style={{ color: theme.colors.accents.green }}>
-                    {useVariable ? `{{${newValue}}}` : (isNaN(newValue) ? `"${newValue}"` : newValue)}
+                {/* ✅ NEW: Show args in preview */}
+                {newArgs.filter(a => a.value).map((arg, i) => (
+                  <span key={i}>
+                    {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                    <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
+                      {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
+                    </span>
                   </span>
-                )}
+                ))}
                 <span style={{ color: theme.colors.text.tertiary }}>)</span>
                 {newStoreAs && (
                   <>
@@ -1540,8 +1765,18 @@ function AssertionsSection({
             ) : (
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
-                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}()</span>
-                <span style={{ color: theme.colors.text.tertiary }}>).</span>
+                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
+                <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                {/* ✅ NEW: Show args in preview */}
+                {newArgs.filter(a => a.value).map((arg, i) => (
+                  <span key={i}>
+                    {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                    <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
+                      {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
+                    </span>
+                  </span>
+                ))}
+                <span style={{ color: theme.colors.text.tertiary }}>)).</span>
                 <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
                 <span style={{ color: theme.colors.text.tertiary }}>(</span>
                 {newValue && !noValueExpectations.includes(newExpect) && (

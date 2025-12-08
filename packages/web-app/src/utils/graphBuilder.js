@@ -220,7 +220,9 @@ export function buildGraphFromDiscovery(discoveryResult) {
             id: edgeId,
             source: fromState,
             target: toState,
-            label: transition.event,
+            label: transition.isObserver ? `👁️ ${transition.event}` : transition.event,  // ← MODIFIED
+            isObserver: transition.isObserver || false,  // ← ADD
+            mode: transition.mode,  // ← ADD
             platformColor: platformColor,
             platform: sourceNode?.data.platform || 'web',
             platforms: transition.platforms || null,

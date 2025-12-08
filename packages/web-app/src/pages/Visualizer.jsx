@@ -48,6 +48,10 @@ export default function Visualizer() {
   const [showAddStateModal, setShowAddStateModal] = useState(false);
 const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
 const transitionModeRef = useRef(transitionMode);
+const [testDataFiles, setTestDataFiles] = useState([]);
+const [loadedTestData, setLoadedTestData] = useState(null);
+const [selectedTestDataFile, setSelectedTestDataFile] = useState(null);
+const [loadingTestData, setLoadingTestData] = useState(false);
 
 useEffect(() => {
   if (discoveryResult) {
@@ -73,6 +77,7 @@ const [isSavingLayout, setIsSavingLayout] = useState(false);
 const [tagsPanelCollapsed, setTagsPanelCollapsed] = useState(false);
   const { tagConfig, setTagConfig, activeFilters, setActiveFilters } = useTagConfig(projectPath);
   const [discoveredTags, setDiscoveredTags] = useState({});
+  const [projectConfig, setProjectConfig] = useState(null);
 
 // ✅ NEW: Compute existing tags for AddStateModal autocomplete
 // ✅ FIXED: Compute existing tags for AddStateModal autocomplete
@@ -130,6 +135,19 @@ const existingTags = useMemo(() => {
     setDiscoveredTags({});
   };
 
+  useEffect(() => {
+  if (projectPath) {
+   fetch(`${API_URL}/api/discovery/config?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.config) {
+          setProjectConfig(data.config);
+          console.log('📋 Loaded config, platforms:', data.config.platforms);
+        }
+      })
+      .catch(err => console.warn('Failed to load config:', err));
+  }
+}, [projectPath]);
   // ADD THIS FUNCTION after handleClearCache
 const checkInitialization = async (path) => {
   try {
@@ -260,6 +278,74 @@ const handleReInitialize = async () => {
     setInitError(err.message);
   } finally {
     setInitLoading(false);
+  }
+};
+
+// ══════════════════════════════════════════════════════════════
+// TESTDATA LOADING
+// ══════════════════════════════════════════════════════════════
+
+const loadTestDataFiles = async () => {
+  if (!projectPath) return;
+  
+  try {
+    console.log('📂 Loading testData files...');
+    const response = await fetch(
+      `${API_URL}/api/test-data/files?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData files');
+      return;
+    }
+    
+    const data = await response.json();
+    if (data.success) {
+      setTestDataFiles(data.files);
+      console.log(`✅ Found ${data.files.length} testData files`);
+      
+      // Auto-load first master file if available
+      const masterFile = data.files.find(f => f.type === 'master');
+      if (masterFile) {
+        loadTestDataFile(masterFile.path);
+      } else if (data.files.length > 0) {
+        // Or just load the first file
+        loadTestDataFile(data.files[0].path);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData files:', error);
+  }
+};
+
+const loadTestDataFile = async (filePath) => {
+  if (!projectPath || !filePath) return;
+  
+  setLoadingTestData(true);
+  
+  try {
+    console.log(`📖 Loading testData: ${filePath}`);
+    const response = await fetch(
+      `${API_URL}/api/test-data/load?projectPath=${encodeURIComponent(projectPath)}&filePath=${encodeURIComponent(filePath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData file');
+      setLoadingTestData(false);
+      return;
+    }
+    
+    const result = await response.json();
+    if (result.success) {
+      setLoadedTestData(result);
+      setSelectedTestDataFile(filePath);
+      console.log(`✅ Loaded testData with ${result.keys.length} fields`);
+      console.log(`   Root keys: ${result.rootKeys.join(', ')}`);
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData:', error);
+  } finally {
+    setLoadingTestData(false);
   }
 };
 
@@ -1293,6 +1379,247 @@ const disableTransitionMode = () => {
             onToggleCollapse={() => setTagsPanelCollapsed(!tagsPanelCollapsed)}
           />
         )}
+
+{/* TestData Context Selector */}
+{discoveryResult && (
+  <div 
+    className="glass rounded-xl p-4 mb-6"
+    style={{ border: `1px solid ${defaultTheme.colors.border}` }}
+  >
+    {/* Main Row */}
+    <div className="flex items-center justify-between flex-wrap gap-4">
+      {/* Left side - Selector */}
+      <div className="flex items-center gap-3">
+        <span className="text-xl">📊</span>
+        <span 
+          className="font-semibold"
+          style={{ color: defaultTheme.colors.text.primary }}
+        >
+          TestData Context
+        </span>
+        
+        {testDataFiles.length > 0 ? (
+          <select
+            value={selectedTestDataFile || ''}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                setLoadedTestData(null);
+                setSelectedTestDataFile(null);
+                // Clear highlights when deselecting
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              } else {
+                loadTestDataFile(e.target.value);
+              }
+            }}
+            disabled={loadingTestData}
+            className="px-3 py-1.5 rounded-lg text-sm"
+            style={{
+              background: defaultTheme.colors.background.secondary,
+              border: `1px solid ${defaultTheme.colors.border}`,
+              color: defaultTheme.colors.text.primary,
+              minWidth: '250px',
+              opacity: loadingTestData ? 0.6 : 1
+            }}
+          >
+            <option value="">-- No testData (show all) --</option>
+            {testDataFiles.map(file => (
+              <option key={file.path} value={file.path}>
+                {file.name} {file.type === 'master' ? '⭐' : file.type === 'current' ? '🔄' : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span 
+            className="text-sm px-3 py-1.5"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            No testData files found
+          </span>
+        )}
+        
+        <button
+          onClick={loadTestDataFiles}
+          className="px-2 py-1.5 rounded text-sm transition hover:brightness-110"
+          style={{
+            background: defaultTheme.colors.background.tertiary,
+            color: defaultTheme.colors.text.secondary,
+            border: `1px solid ${defaultTheme.colors.border}`
+          }}
+          title="Refresh testData files list"
+        >
+          🔄
+        </button>
+      </div>
+      
+      {/* Middle - Status info when testData loaded */}
+      {loadedTestData && (
+        <div className="flex items-center gap-3">
+          <span 
+            className="text-sm px-3 py-1 rounded-full font-semibold"
+            style={{ 
+              background: `${defaultTheme.colors.accents.green}20`,
+              color: defaultTheme.colors.accents.green 
+            }}
+          >
+            ✓ {loadedTestData.keys.length} fields
+          </span>
+          
+          {loadedTestData.data?.status && (
+            <span 
+              className="text-sm px-3 py-1 rounded font-semibold"
+              style={{ 
+                background: `${defaultTheme.colors.accents.purple}20`,
+                color: defaultTheme.colors.accents.purple 
+              }}
+            >
+              📍 Status: <strong>{loadedTestData.data.status}</strong>
+            </span>
+          )}
+        </div>
+      )}
+      
+      {/* Right side - Action buttons */}
+      <div className="flex items-center gap-2">
+        {loadedTestData && loadedTestData.data?.status && loadedTestData.data.status !== 'initial' && (
+          <>
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.highlightPathTo) {
+                  window.cytoscapeGraph.highlightPathTo(loadedTestData.data.status);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.accents.purple,
+                color: 'white'
+              }}
+              title="Highlight path from initial to current status"
+            >
+              🛤️ Show Path
+            </button>
+            
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.background.tertiary,
+                color: defaultTheme.colors.text.secondary,
+                border: `1px solid ${defaultTheme.colors.border}`
+              }}
+              title="Clear highlight, show all nodes"
+            >
+              👁️ Show All
+            </button>
+          </>
+        )}
+        
+        {loadedTestData && (
+          <button
+            onClick={() => {
+              setLoadedTestData(null);
+              setSelectedTestDataFile(null);
+              if (window.cytoscapeGraph?.clearPathHighlight) {
+                window.cytoscapeGraph.clearPathHighlight();
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+            style={{
+              background: `${defaultTheme.colors.accents.red}20`,
+              color: defaultTheme.colors.accents.red,
+              border: `1px solid ${defaultTheme.colors.accents.red}40`
+            }}
+            title="Clear testData selection"
+          >
+            ✕ Clear
+          </button>
+        )}
+        
+        {loadingTestData && (
+          <span style={{ color: defaultTheme.colors.text.tertiary }}>
+            ⏳ Loading...
+          </span>
+        )}
+      </div>
+    </div>
+    
+    {/* Path Preview Row - shows when testData has non-initial status */}
+    {loadedTestData?.data?.status && loadedTestData.data.status !== 'initial' && (
+      <div 
+        className="mt-3 pt-3 flex items-center gap-2 flex-wrap"
+        style={{ borderTop: `1px solid ${defaultTheme.colors.border}` }}
+      >
+        <span 
+          className="text-sm"
+          style={{ color: defaultTheme.colors.text.tertiary }}
+        >
+          📍 TestData represents path:
+        </span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono"
+          style={{ 
+            background: `${defaultTheme.colors.accents.green}20`,
+            color: defaultTheme.colors.accents.green 
+          }}
+        >
+          initial
+        </span>
+        <span style={{ color: defaultTheme.colors.text.tertiary }}>→ ... →</span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono font-bold"
+          style={{ 
+            background: `${defaultTheme.colors.accents.purple}30`,
+            color: defaultTheme.colors.accents.purple,
+            border: `1px solid ${defaultTheme.colors.accents.purple}`
+          }}
+        >
+          {loadedTestData.data.status}
+        </span>
+        
+        {/* Show entities in testData */}
+        {loadedTestData.rootKeys && (
+          <span 
+            className="text-xs ml-4"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            Contains: {loadedTestData.rootKeys.filter(k => 
+              typeof loadedTestData.data[k] === 'object' && !k.startsWith('_')
+            ).map(k => (
+              <span 
+                key={k}
+                className="px-1.5 py-0.5 rounded mx-0.5"
+                style={{ 
+                  background: defaultTheme.colors.background.tertiary,
+                  color: defaultTheme.colors.text.secondary
+                }}
+              >
+                {k}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+    )}
+    
+    {/* No testData selected info */}
+    {!loadedTestData && !loadingTestData && testDataFiles.length > 0 && (
+      <div 
+        className="mt-3 pt-3 text-sm"
+        style={{ 
+          borderTop: `1px solid ${defaultTheme.colors.border}`,
+          color: defaultTheme.colors.text.tertiary 
+        }}
+      >
+        💡 Select a testData file to validate path requirements and highlight the current status on the graph
+      </div>
+    )}
+  </div>
+)}
         
         {/* Graph - NO changes needed inside here! */}
         <div 
@@ -1356,7 +1683,7 @@ const disableTransitionMode = () => {
           
           {/* StateGraph - just add the two new props */}
           {graphData ? (
-            <StateGraph
+<StateGraph
   graphData={graphData}
   onNodeClick={(nodeData) => {
     const currentMode = transitionModeRef.current;
@@ -1374,8 +1701,10 @@ const disableTransitionMode = () => {
   savedLayout={savedLayout}
   onLayoutChange={(layout) => {}}
   tagConfig={tagConfig}
-activeFilters={activeFilters}
-projectPath={projectPath}
+  activeFilters={activeFilters}
+  projectPath={projectPath}
+  loadedTestData={loadedTestData}
+  transitionMode={transitionMode}  // ← ADD THIS
 />
           ) : (
             <div 
@@ -1404,14 +1733,15 @@ projectPath={projectPath}
         )}
       </main>
       
-      {/* Detail Modal */}
+ {/* Detail Modal */}
 {selectedState && (
   <StateDetailModal 
     state={selectedState}
     onClose={closeDetail}
     theme={defaultTheme}
     projectPath={projectPath}
-    discoveryResult={discoveryResult}  // â† ADD THIS LINE
+    discoveryResult={discoveryResult}
+    loadedTestData={loadedTestData}  // ← ADD THIS LINE
   />
 )}
       
@@ -1450,16 +1780,17 @@ projectPath={projectPath}
   />
 )}
 <AddTransitionModal
-        isOpen={showTransitionModal}
-        onClose={() => {
-          setShowTransitionModal(false);
-          setTransitionMode({ enabled: false, source: null });
-        }}
-        onSubmit={handleTransitionSubmit}
-        sourceState={transitionModalData.source}
-        targetState={transitionModalData.target}
-        projectPath={projectPath}
-      />
+  isOpen={showTransitionModal}
+  onClose={() => {
+    setShowTransitionModal(false);
+    setTransitionMode({ enabled: false, source: null });
+  }}
+  onSubmit={handleTransitionSubmit}
+  sourceState={transitionModalData.source}
+  targetState={transitionModalData.target}
+  projectPath={projectPath}
+  availablePlatforms={projectConfig?.platforms || ["web"]}
+/>
     
     </div>
   );

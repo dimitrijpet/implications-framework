@@ -13,6 +13,7 @@ import SourceLegend from '../SourceAttribution/SourceLegend';
 import BlockList from './BlockList';
 import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
 import { collectVariablesFromUIValidations } from './collectVariablesFromUIValidations';
+import useProjectConfig from '../../hooks/useProjectConfig';
 // ✅ ADD these imports
 import PlatformSectionWithOrdering from './PlatformSectionWithOrdering';
 import { screensObjectToArray, screensArrayToObject } from './screenOrderingUtils';
@@ -73,10 +74,13 @@ function getPlatformIcon(platformName) {
     web: '🌐',
     cms: '📝',
     dancer: '💃',
-    clubApp: '🎯',
-    mobile: '📱'
+    manager: '👔',
+    mobile: '📱',
+    ios: '🍎',
+    android: '🤖'
   };
-  return icons[platformName] || '📱';
+  // Return matching icon or default
+  return icons[platformName?.toLowerCase()] || '📱';
 }
 
 function getContextFields(screen) {
@@ -114,11 +118,13 @@ export default function UIScreenEditor({
   theme, 
   onSave, 
   onCancel,
-  // ✅ NEW: Optional props for cross-state variables
-  incomingTransitions = [],  // Transitions that lead TO this state
-  allStates = {},            // Map of all states (for chain tracing)
-  allTransitions = []        // All transitions in the system
+  incomingTransitions = [],
+  allStates = {},
+  allTransitions = []
 }) {
+   // ✅ ADD: Load platforms from config
+  const { platforms: configPlatforms, loading: platformsLoading } = useProjectConfig(projectPath);
+  
   const [editMode, setEditMode] = useState(false);
   const [editedUI, setEditedUI] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
@@ -560,18 +566,11 @@ const handleAddScreen = (platformName, screenName, screenData) => {
     }
   };
 const getAvailablePlatforms = () => {
-  // ✅ Define ALL possible platforms
-  const allPlatforms = [
-    { name: 'web', displayName: 'Web' },
-    { name: 'dancer', displayName: 'Dancer' },
-    { name: 'cms', displayName: 'CMS' },
-    { name: 'clubApp', displayName: 'Club App' },
-    { name: 'mobile', displayName: 'Mobile' }
-  ];
-  
-  // ✅ Return all platforms, even if they don't exist yet
-  // (We'll create them on the fly when user adds a screen)
-  return allPlatforms;
+  if (configPlatforms && configPlatforms.length > 0) {
+    return configPlatforms;
+  }
+  // Fallback while loading
+  return [{ name: 'web', displayName: 'Web' }];
 };
 
   // Get platforms data
@@ -776,17 +775,16 @@ const getAvailablePlatforms = () => {
         theme={theme}
       />
 
-      <DeleteConfirmDialog
-        isOpen={deleteConfirmDialog.isOpen}
-        screen={deleteConfirmDialog.screen}
-        platformDisplayName={deleteConfirmDialog.platformDisplayName}
-        onConfirm={() => {
-          handleDeleteScreen(deleteConfirmDialog.platformName, deleteConfirmDialog.screenName);
-          setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenName: '' });
-        }}
-        onClose={() => setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenName: '' })}
-        theme={theme}
-      />
+<DeleteConfirmDialog
+  isOpen={deleteConfirmDialog.isOpen}
+  screenName={deleteConfirmDialog.screenName}  // ✅ Use screenName, not screen
+  platformDisplayName={deleteConfirmDialog.platformDisplayName}
+  onConfirm={() => {
+    handleDeleteScreen(deleteConfirmDialog.platformName, deleteConfirmDialog.screenName);
+    setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenName: '' });
+  }}
+  onClose={() => setDeleteConfirmDialog({ isOpen: false, screen: null, platformName: '', platformDisplayName: '', screenName: '' })}
+/>
     </div>
   );
 }

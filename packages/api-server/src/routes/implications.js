@@ -3490,18 +3490,7 @@ function extractValueFromNode(node) {
 // Replace lines 1547-1676 in implications.js with this
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event, platform, actionDetails, requires } = req.body;
-    
-    // ✅ UPDATED DEBUG LOGS
-    console.log('═══════════════════════════════════════');
-    console.log('🔍 ADD-TRANSITION DEBUG');
-    console.log('═══════════════════════════════════════');
-    console.log('📦 Raw req.body:', JSON.stringify(req.body, null, 2));
-    console.log('🎯 Extracted platform:', platform);
-    console.log('📊 Platform type:', typeof platform);
-    console.log('═══════════════════════════════════════');
-    
-    console.log('➕ Adding transition:', { sourceFile, targetFile, event, platform });
+    const { sourceFile, targetFile, event, platform, actionDetails, requires, conditions, isObserver, mode } = req.body;  // ← ADD isObserver, mode
     
     // Validate inputs
     if (!sourceFile || !targetFile || !event) {
@@ -3546,7 +3535,7 @@ router.post('/add-transition', async (req, res) => {
     
     // Add transition to source file
     // Add transition to source file
-const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires, req.body.conditions);
+const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires, conditions, isObserver, mode);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
@@ -3577,14 +3566,15 @@ const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, pl
     // Extract requires from transition conditions if present
 const transitionRequires = requires || {};
 
-const targetUpdated = addSetupEntryToAST(
-  targetAst, 
-  sourceStateName,      // from
-  targetStateName,      // to  
-  event,                // event name
-  platform || 'web',    // platform
-  transitionRequires    // conditions
-);
+ const targetUpdated = addSetupEntryToAST(
+      targetAst, 
+      sourceStateName,
+      targetStateName,
+      event,
+      platform || 'web',
+      transitionRequires,
+      isObserver ? 'observer' : undefined  // ← ADD mode parameter
+    );
     
     // Write updated target file if modified
     if (targetUpdated) {
@@ -3647,7 +3637,7 @@ function extractStateName(ast) {
   return stateName;
 }
 
-function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires, conditions) {
+function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires, conditions, isObserver, mode) {
   let transitionAdded = false;
   
   // ✅ BUILD transitionObj OUTSIDE traverse!
@@ -3702,6 +3692,28 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       t.objectProperty(
         t.identifier('conditions'),
         createValueNode(conditions)
+      )
+    );
+  }
+  
+  // ✅ NEW: Add isObserver if true
+  if (isObserver) {
+    console.log('✅ Adding isObserver to transition');
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('isObserver'),
+        t.booleanLiteral(true)
+      )
+    );
+  }
+  
+  // ✅ NEW: Add mode if provided
+  if (mode) {
+    console.log('✅ Adding mode to transition:', mode);
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('mode'),
+        t.stringLiteral(mode)
       )
     );
   }
@@ -3960,7 +3972,7 @@ function findOrCreateOnProperty(configValue) {
  * @param {object} requires - Conditions from transition (optional)
  * @returns {boolean} Whether the file was modified
  */
-function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires) {
+function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires, mode) {
   let targetUpdated = false;
   
   traverse(ast, {
@@ -4013,7 +4025,7 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
         const targetPascal = toPascalCase(targetStateName);
         const sourcePascal = toPascalCase(sourceStateName);
         const platformCapitalized = platform.charAt(0).toUpperCase() + platform.slice(1);
-        const eventClean = event.toUpperCase().replace(/_/g, '');
+        const eventClean = event;
         
         const testFileName = `${targetPascal}Via${sourcePascal}-${eventClean}-${platformCapitalized}-UNIT.spec.js`;
         const actionName = `${targetStateName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${sourcePascal}`;
@@ -4037,6 +4049,17 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
             t.stringLiteral(sourceStateName)
           )
         ];
+        
+        // ✅ NEW: Add mode if provided (for observer transitions)
+        if (mode) {
+          console.log(`✅ Adding mode "${mode}" to setup entry`);
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            )
+          );
+        }
         
         // Add requires if provided
         if (requires && Object.keys(requires).length > 0) {
@@ -4065,7 +4088,7 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           t.objectExpression(setupEntryProps)
         );
         
-        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform})`);
+        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform}${mode ? ', mode: ' + mode : ''})`);
         targetUpdated = true;
       }
     }
@@ -4803,6 +4826,187 @@ function createValueNode(value) {
 }
 
 /**
+ * Remove a setup entry from meta.setup array by previousStatus
+ */
+function removeSetupEntryFromAST(ast, sourceStateName) {
+  let removed = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        // Find meta property
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        // Find setup array
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find and remove entry with matching previousStatus
+        const setupArray = setupProperty.value.elements;
+        const entryIndex = setupArray.findIndex(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entryIndex !== -1) {
+          setupArray.splice(entryIndex, 1);
+          console.log(`✅ Removed setup entry for previousStatus="${sourceStateName}"`);
+          removed = true;
+        }
+      }
+    }
+  });
+  
+  return removed;
+}
+
+/**
+ * Update requires in a setup entry
+ */
+function updateSetupEntryRequiresInAST(ast, sourceStateName, requires, mode) {
+  let updated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find entry with matching previousStatus
+        const entry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entry) {
+          // ═══════════════════════════════════════════════════════════
+          // Handle requires
+          // ═══════════════════════════════════════════════════════════
+          const requiresIndex = entry.properties.findIndex(p => p.key?.name === 'requires');
+          
+          if (requires && Object.keys(requires).length > 0) {
+            const requiresProps = Object.entries(requires).map(([key, value]) => {
+              let valueNode;
+              if (typeof value === 'boolean') {
+                valueNode = t.booleanLiteral(value);
+              } else if (typeof value === 'number') {
+                valueNode = t.numericLiteral(value);
+              } else {
+                valueNode = t.stringLiteral(String(value));
+              }
+              return t.objectProperty(t.identifier(key), valueNode);
+            });
+            
+            const requiresNode = t.objectProperty(
+              t.identifier('requires'),
+              t.objectExpression(requiresProps)
+            );
+            
+            if (requiresIndex !== -1) {
+              entry.properties[requiresIndex] = requiresNode;
+              console.log(`✅ Updated requires in setup entry`);
+            } else {
+              entry.properties.push(requiresNode);
+              console.log(`✅ Added requires to setup entry`);
+            }
+            updated = true;
+          } else if (requiresIndex !== -1) {
+            entry.properties.splice(requiresIndex, 1);
+            console.log(`✅ Removed requires from setup entry`);
+            updated = true;
+          }
+          
+          // ═══════════════════════════════════════════════════════════
+          // ✅ NEW: Handle mode
+          // ═══════════════════════════════════════════════════════════
+          const modeIndex = entry.properties.findIndex(p => p.key?.name === 'mode');
+          
+          if (mode) {
+            const modeNode = t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            );
+            
+            if (modeIndex !== -1) {
+              entry.properties[modeIndex] = modeNode;
+              console.log(`✅ Updated mode in setup entry: ${mode}`);
+            } else {
+              entry.properties.push(modeNode);
+              console.log(`✅ Added mode to setup entry: ${mode}`);
+            }
+            updated = true;
+          } else if (modeIndex !== -1) {
+            // Remove mode if not provided (transition is no longer observer)
+            entry.properties.splice(modeIndex, 1);
+            console.log(`✅ Removed mode from setup entry`);
+            updated = true;
+          }
+        }
+      }
+    }
+  });
+  
+  return updated;
+}
+
+/**
+ * Update event name in a setup entry's testFile path
+ */
+function updateSetupEntryEventInAST(ast, sourceStateName, oldEvent, newEvent) {
+  let updated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find entry with matching previousStatus
+        const entry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entry) {
+          // Update testFile path
+          const testFileProp = entry.properties.find(p => p.key?.name === 'testFile');
+          if (testFileProp?.value?.value) {
+            const newPath = testFileProp.value.value.replace(oldEvent, newEvent);
+            testFileProp.value.value = newPath;
+            console.log(`✅ Updated testFile: ${oldEvent} → ${newEvent}`);
+            updated = true;
+          }
+        }
+      }
+    }
+  });
+  
+  return updated;
+}
+
+/**
  * Extract JavaScript value from AST node
  */
 function extractValueFromAST(node) {
@@ -4980,15 +5184,17 @@ router.delete('/graph/layout', async (req, res) => {
 
 router.post('/update-transition', async (req, res) => {
   try {
-   const { 
-      sourceFile, 
-      oldEvent,
-      newEvent,
-      newTarget,
-      platform,         // ✅ NEW: single platform support
-      actionDetails,    // ✅ ENHANCED: full actionDetails object
-      conditions        // ✅ NEW: block-based conditions
-    } = req.body;
+const { 
+  sourceFile, 
+  oldEvent,
+  newEvent,
+  newTarget,
+  platform,
+  actionDetails,
+  conditions,
+  isObserver,  // ← ADD
+  mode         // ← ADD
+} = req.body;
 
 console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
     
@@ -5161,6 +5367,28 @@ console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
               }
             }
 
+            // 5. isObserver (if true)
+if (isObserver) {
+  console.log('✅ Adding isObserver to transition');
+  transitionProperties.push(
+    t.objectProperty(
+      t.identifier('isObserver'),
+      t.booleanLiteral(true)
+    )
+  );
+}
+
+// 6. mode (if provided)
+if (mode) {
+  console.log('✅ Adding mode to transition:', mode);
+  transitionProperties.push(
+    t.objectProperty(
+      t.identifier('mode'),
+      t.stringLiteral(mode)
+    )
+  );
+}
+
             // // 5. Conditions (if provided - new block-based system)
             // if (conditions && conditions.blocks && conditions.blocks.length > 0) {
             //   console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
@@ -5200,15 +5428,75 @@ console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
         error: 'Could not update transition' 
       });
     }
+
+      // ✅ MOVE THIS UP - before using it
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    // ✅ NEW: Update setup entry in target file if event name changed
+// ✅ NEW: Update setup entry in target file if event name changed
+// ✅ UPDATE: Sync setup entry in target file (event name AND requires)
+const requires = req.body.requires;
+const hasRequiresChange = requires !== undefined; // User sent requires (even if empty)
+const hasEventChange = oldEvent !== newEvent;
+
+if (req.body.targetFile && (hasEventChange || hasRequiresChange)) {
+  try {
+    const targetContent = await fs.readFile(req.body.targetFile, 'utf-8');
+    const targetAst = parse(targetContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
     
-    // Generate updated code
+    const sourceStateName = nodePath.basename(sourceFile, '.js')
+      .replace(/Implications$/, '')
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '');
+    
+    console.log('🔍 DEBUG updateSetupEntry:');
+    console.log('   sourceStateName:', sourceStateName);
+    console.log('   hasEventChange:', hasEventChange, `(${oldEvent} → ${newEvent})`);
+    console.log('   hasRequiresChange:', hasRequiresChange, requires);
+    
+    let targetUpdated = false;
+    
+    // Update event name in testFile path if changed
+    if (hasEventChange) {
+      targetUpdated = updateSetupEntryEventInAST(targetAst, sourceStateName, oldEvent, newEvent) || targetUpdated;
+    }
+    
+    // Update requires in setup entry
+
+    if (hasRequiresChange || isObserver) {
+  targetUpdated = updateSetupEntryRequiresInAST(targetAst, sourceStateName, requires, isObserver ? 'observer' : undefined) || targetUpdated;
+}
+    
+    console.log('   targetUpdated:', targetUpdated);
+        
+    if (targetUpdated) {
+      const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+        retainLines: true,
+        comments: true
+      });
+      
+      const targetBackupPath = `${req.body.targetFile}.backup-${timestamp}`;
+      await fs.copy(req.body.targetFile, targetBackupPath);
+      await fs.writeFile(req.body.targetFile, newTargetCode, 'utf-8');
+      
+      console.log('✅ Target file updated - setup entry synced');
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not update target file setup entry:', err.message);
+  }
+}
+    
+  // Generate updated code
     const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
       retainLines: true,
       comments: true
     });
     
-    // Create backup
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    // Create backup (timestamp already defined above)
     const backupPath = `${sourceFile}.backup-${timestamp}`;
     await fs.copy(sourceFile, backupPath);
     
@@ -5244,9 +5532,9 @@ console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
  */
 router.post('/delete-transition', async (req, res) => {
   try {
-    const { sourceFile, event } = req.body;
+    const { sourceFile, targetFile, event } = req.body;  // ✅ Added targetFile
     
-    console.log('🗑️ Deleting transition:', { sourceFile, event });
+    console.log('🗑️ Deleting transition:', { sourceFile, targetFile, event });
     
     if (!sourceFile || !event) {
       return res.status(400).json({ 
@@ -5261,6 +5549,7 @@ router.post('/delete-transition', async (req, res) => {
     });
     
     let transitionDeleted = false;
+    let deletedTargetState = null;  // ✅ Track what we're deleting
     
     traverse(ast, {
       ClassProperty(path) {
@@ -5287,27 +5576,34 @@ router.post('/delete-transition', async (req, res) => {
             }
             
             if (!onProperty || !onProperty.value?.properties) {
-              return res.status(400).json({ 
-                error: 'Could not find transitions in xstateConfig' 
-              });
+              return;
             }
             
-            // Find and remove the transition
+            // Find the transition (to get target info before deleting)
             const transitionIndex = onProperty.value.properties.findIndex(
               p => (p.key?.name === event || p.key?.value === event)
             );
             
             if (transitionIndex === -1) {
-              return res.status(404).json({ 
-                error: `Transition "${event}" not found` 
-              });
+              return;
+            }
+            
+            // ✅ Extract target state name before deleting
+            const transition = onProperty.value.properties[transitionIndex];
+            if (transition.value?.type === 'ObjectExpression') {
+              const targetProp = transition.value.properties.find(p => p.key?.name === 'target');
+              if (targetProp?.value?.value) {
+                deletedTargetState = targetProp.value.value;
+              }
+            } else if (transition.value?.type === 'StringLiteral') {
+              deletedTargetState = transition.value.value;
             }
             
             // Remove the transition
             onProperty.value.properties.splice(transitionIndex, 1);
             transitionDeleted = true;
             
-            console.log(`✅ Deleted transition: ${event}`);
+            console.log(`✅ Deleted transition: ${event} → ${deletedTargetState}`);
           }
         }
       }
@@ -5333,11 +5629,51 @@ router.post('/delete-transition', async (req, res) => {
     // Write updated file
     await fs.writeFile(sourceFile, newCode, 'utf-8');
     
+    console.log('✅ Source file updated');
+    
+    // ✅ NEW: Remove setup entry from target file
+    let targetUpdated = false;
+    if (targetFile) {
+      const sourceStateName = nodePath.basename(sourceFile, '.js')
+        .replace(/Implications$/, '')
+        .replace(/([A-Z])/g, '_$1')
+        .toLowerCase()
+        .replace(/^_/, '');
+      
+      try {
+        const targetContent = await fs.readFile(targetFile, 'utf-8');
+        const targetAst = parse(targetContent, {
+          sourceType: 'module',
+          plugins: ['classProperties', 'objectRestSpread']
+        });
+        
+        targetUpdated = removeSetupEntryFromAST(targetAst, sourceStateName);
+        
+        if (targetUpdated) {
+          const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+            retainLines: true,
+            comments: true
+          });
+          
+          const targetBackupPath = `${targetFile}.backup-${timestamp}`;
+          await fs.copy(targetFile, targetBackupPath);
+          await fs.writeFile(targetFile, newTargetCode, 'utf-8');
+          
+          console.log('✅ Target file updated - setup entry removed');
+          console.log('📦 Target backup:', targetBackupPath);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not update target file:', err.message);
+      }
+    }
+    
     console.log('✅ Transition deleted successfully');
     
     res.json({
       success: true,
       deletedEvent: event,
+      deletedTarget: deletedTargetState,
+      targetUpdated,
       backup: backupPath
     });
     

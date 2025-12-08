@@ -6,6 +6,60 @@ import fs from 'fs-extra';
 
 const router = express.Router();
 
+router.get('/platforms/:projectPath(*)', async (req, res) => {
+  try {
+    const projectPath = req.params.projectPath;
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    
+    console.log('📋 Loading platforms from:', configPath);
+    
+    const exists = await fs.pathExists(configPath);
+    
+    if (!exists) {
+      return res.json({
+        success: true,
+        platforms: [],
+        platformNames: [],
+        message: 'No ai-testing.config.js found'
+      });
+    }
+    
+    const configModule = await import(`file://${configPath}?t=${Date.now()}`);
+    const config = configModule.default || configModule;
+    
+    // Extract platform names from screenPaths (excluding 'ignore')
+    const screenPaths = config.screenPaths || {};
+    const platformNames = Object.keys(screenPaths).filter(key => key !== 'ignore');
+    
+    // Build platform objects with display names
+    const platforms = platformNames.map(name => ({
+      name,
+      displayName: name
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, str => str.toUpperCase())
+        .trim(),
+      paths: screenPaths[name]
+    }));
+    
+    console.log(`✅ Loaded ${platforms.length} platforms:`, platformNames);
+    
+    res.json({
+      success: true,
+      platforms,
+      platformNames
+    });
+    
+  } catch (error) {
+    console.error('❌ Error loading platforms:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      platforms: [],
+      platformNames: []
+    });
+  }
+});
+
 /**
  * GET /api/config/test-data-schema
  * Get test data schema from project config

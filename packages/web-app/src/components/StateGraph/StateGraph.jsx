@@ -216,20 +216,20 @@ cytoscape.use(dagre);
 // MAIN COMPONENT
 // ============================================
 
-export default function StateGraph({ 
-  graphData, 
-  onNodeClick, 
-  selectedNode, 
-  theme, 
-  transitionMode = false, 
-  transitionSource = null,
-  showScreenGroups = false,
-  screenGroups = {},
-  savedLayout = null,
-  onLayoutChange = null,
-  tagConfig = {},
-  activeFilters = {},
-  projectPath = '',
+export default function StateGraph({
+  graphData,
+  onNodeClick,
+  selectedNodeId,  // This is passed but you're using "selectedNode"
+  theme,
+  showScreenGroups,
+  screenGroups,
+  savedLayout,
+  onLayoutChange,
+  tagConfig,
+  activeFilters,
+  projectPath,
+  loadedTestData,
+  transitionMode = { enabled: false, source: null }  // ← ADD DEFAULT
 }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
@@ -331,36 +331,29 @@ if (Object.keys(tagGroups).length > 0) {
       elements: [...elements.nodes, ...elements.edges],
       
       style: [
-        // ============================================
-        // STATE NODES
-        // ============================================
-        {
-          selector: 'node[type="state"]',
-          style: {
-            'background-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
-            'label': 'data(label)',
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'color': '#ffffff',
-            'font-size': '14px',
-            'font-weight': 'bold',
-            'text-outline-width': 2,
-            'text-outline-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
-            'width': 80,
-            'height': 80,
-            'z-index': 10,
-            'border-width': (ele) => {
-              if (transitionMode && ele.id() === transitionSource) return 6;
-              return ele.id() === selectedNode ? 4 : 2;
-            },
-            'border-color': (ele) => {
-              if (transitionMode && ele.id() === transitionSource) return theme.colors.accents.orange;
-              if (ele.id() === selectedNode) return theme.colors.accents.blue;
-              return ele.data('color') || getNodeColorFallback(ele);
-            },
-            'border-opacity': 1
-          }
-        },
+       // ============================================
+// STATE NODES
+// ============================================
+{
+  selector: 'node[type="state"]',
+  style: {
+    'background-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
+    'label': 'data(label)',
+    'text-valign': 'center',
+    'text-halign': 'center',
+    'color': '#ffffff',
+    'font-size': '14px',
+    'font-weight': 'bold',
+    'text-outline-width': 2,
+    'text-outline-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
+    'width': 80,
+    'height': 80,
+    'z-index': 10,
+    'border-width': 2,
+    'border-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
+    'border-opacity': 1
+  }
+},
         
         // Fallback for nodes without type
         {
@@ -520,7 +513,40 @@ if (Object.keys(tagGroups).length > 0) {
             'target-arrow-color': (ele) => ele.data('requiresColor') || '#A855F7',
             'color': (ele) => ele.data('requiresColor') || '#A855F7',
           }
-        }
+        },
+        {
+  selector: '.dimmed',
+  style: {
+    'opacity': 0.2
+  }
+},
+{
+  selector: '.path-highlighted',
+  style: {
+    'opacity': 1
+  }
+},
+{
+  selector: '.path-node',
+  style: {
+    'border-width': 4,
+    'border-color': '#a855f7', // purple
+    'border-style': 'solid',
+    'background-opacity': 1,
+    'z-index': 999
+  }
+},
+{
+  selector: '.path-edge',
+  style: {
+    'line-color': '#a855f7',
+    'target-arrow-color': '#a855f7',
+    'width': 4,
+    'z-index': 998
+  }
+}
+
+        
       ],
       
       layout: { name: 'preset' }, // Start with preset, run dagre after
@@ -562,41 +588,37 @@ if (Object.keys(tagGroups).length > 0) {
     // EVENT HANDLERS
     // ========================================
     
-    // Node click
-    cy.on('tap', 'node', (event) => {
-      const node = event.target;
-      const nodeData = node.data();
-      
-      // Ignore group boxes
-      if (nodeData.type === 'group_box' || nodeData.type === 'screen_group') {
-        return;
-      }
-      
-      if (transitionMode) {
-        console.log(transitionSource ? '👉 Select target state' : '👆 Source state selected');
-      }
-      
-      onNodeClick(nodeData);
-    });
-    
-    // Cursor changes
-    cy.on('mouseover', 'node', (event) => {
-      const nodeData = event.target.data();
-      if (cyRef.current) {
-        const container = cyRef.current.container();
-        if (nodeData.type === 'group_box' || nodeData.type === 'screen_group') {
-          container.style.cursor = 'default';
-        } else {
-          container.style.cursor = transitionMode ? 'crosshair' : 'pointer';
-        }
-      }
-    });
-    
-    cy.on('mouseout', 'node', () => {
-      if (cyRef.current) {
-        cyRef.current.container().style.cursor = transitionMode ? 'crosshair' : 'default';
-      }
-    });
+   // Node click
+cy.on('tap', 'node', (event) => {
+  const node = event.target;
+  const nodeData = node.data();
+  
+  // Ignore group boxes
+  if (nodeData.type === 'group_box' || nodeData.type === 'screen_group') {
+    return;
+  }
+  
+  onNodeClick(nodeData);
+});
+
+// Cursor changes
+cy.on('mouseover', 'node', (event) => {
+  const nodeData = event.target.data();
+  if (cyRef.current) {
+    const container = cyRef.current.container();
+    if (nodeData.type === 'group_box' || nodeData.type === 'screen_group') {
+      container.style.cursor = 'default';
+    } else {
+      container.style.cursor = transitionMode?.enabled ? 'crosshair' : 'pointer';
+    }
+  }
+});
+
+cy.on('mouseout', 'node', () => {
+  if (cyRef.current) {
+    cyRef.current.container().style.cursor = transitionMode?.enabled ? 'crosshair' : 'default';
+  }
+});
     
     // ========================================
     // DRAG HANDLING - Update group boxes & save positions
@@ -622,16 +644,16 @@ if (Object.keys(tagGroups).length > 0) {
         cyRef.current.destroy();
       }
     };
-  }, [graphData, onNodeClick, theme, showScreenGroups, screenGroups, transitionMode, transitionSource, selectedNode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced]);
+  }, [graphData, onNodeClick, theme, showScreenGroups, screenGroups, transitionMode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced]);
   
   // ========================================
   // UPDATE SELECTED NODE STYLING
   // ========================================
-  useEffect(() => {
-    if (!cyRef.current || !selectedNode) return;
+useEffect(() => {
+    if (!cyRef.current || !selectedNodeId) return;
     cyRef.current.nodes().removeClass('highlighted');
-    cyRef.current.getElementById(selectedNode).addClass('highlighted');
-  }, [selectedNode]);
+    cyRef.current.getElementById(selectedNodeId).addClass('highlighted');
+  }, [selectedNodeId]);
   
   // ========================================
   // EXPOSE GRAPH CONTROLS
@@ -658,11 +680,13 @@ if (Object.keys(tagGroups).length > 0) {
         
         // Update group boxes after layout, then auto-fit
         setTimeout(() => {
-          if (Object.keys(tagGroupsRef.current).length > 0) {
-            createOrUpdateGroupBoxes(cyRef.current, tagGroupsRef.current, theme);
-          }
-          cyRef.current.fit(null, 50);
-        }, 700);
+  if (cyRef.current && containerRef.current) {  // ✅ Add this check
+    if (Object.keys(tagGroups).length > 0) {
+      createOrUpdateGroupBoxes(cyRef.current, tagGroups, theme);
+    }
+    cyRef.current.fit(null, 50);
+  }
+}, 100);
       },
       saveLayout: () => saveLayoutToStorage(cyRef.current, projectPath),
       clearLayout: () => {
@@ -682,6 +706,153 @@ if (Object.keys(tagGroups).length > 0) {
       edges: () => cyRef.current.edges(),
     };
   }, [projectPath, theme]);
+
+  // Highlight path to a target state
+useEffect(() => {
+  if (!cyRef.current) return;
+  
+  const cy = cyRef.current;
+  
+  // Define the highlight function
+  const highlightPathTo = (targetStatus) => {
+    console.log('🎯 Highlighting path to:', targetStatus);
+    
+    // Reset all styles first
+    cy.elements().removeClass('path-highlighted path-node path-edge dimmed');
+    
+    // Find the target node
+    const targetNode = cy.nodes().filter(node => {
+      const nodeId = node.id().toLowerCase();
+      const target = targetStatus.toLowerCase();
+      return nodeId === target || nodeId.includes(target);
+    }).first();
+    
+    if (!targetNode || targetNode.length === 0) {
+      console.warn('Target node not found:', targetStatus);
+      return;
+    }
+    
+    // Find initial node
+    const initialNode = cy.nodes().filter(node => {
+      const nodeId = node.id().toLowerCase();
+      return nodeId === 'initial' || nodeId.includes('initial');
+    }).first();
+    
+    if (!initialNode || initialNode.length === 0) {
+      console.warn('Initial node not found');
+      return;
+    }
+    
+    // Use Dijkstra to find shortest path
+    const dijkstra = cy.elements().dijkstra({
+      root: initialNode,
+      directed: true
+    });
+    
+    const pathToTarget = dijkstra.pathTo(targetNode);
+    
+    if (pathToTarget && pathToTarget.length > 0) {
+      console.log(`✅ Found path with ${pathToTarget.length} elements`);
+      
+      // Dim all elements
+      cy.elements().addClass('dimmed');
+      
+      // Highlight path elements
+      pathToTarget.removeClass('dimmed').addClass('path-highlighted');
+      pathToTarget.nodes().addClass('path-node');
+      pathToTarget.edges().addClass('path-edge');
+      
+      // Fit view to path
+      cy.fit(pathToTarget, 50);
+    } else {
+      console.warn('No path found to target');
+    }
+  };
+  
+  // Clear highlights
+  const clearPathHighlight = () => {
+    cy.elements().removeClass('path-highlighted path-node path-edge dimmed');
+  };
+  
+  // Expose globally
+  window.cytoscapeGraph = window.cytoscapeGraph || {};
+  window.cytoscapeGraph.highlightPathTo = highlightPathTo;
+  window.cytoscapeGraph.clearPathHighlight = clearPathHighlight;
+  
+  return () => {
+    if (window.cytoscapeGraph) {
+      delete window.cytoscapeGraph.highlightPathTo;
+      delete window.cytoscapeGraph.clearPathHighlight;
+    }
+  };
+}, [cyRef.current]);
+
+// Auto-highlight when testData status changes
+useEffect(() => {
+  if (!loadedTestData?.data?.status || !cyRef.current) return;
+  
+  const status = loadedTestData.data.status;
+  
+  // Don't highlight if status is 'initial'
+  if (status === 'initial') {
+    if (window.cytoscapeGraph?.clearPathHighlight) {
+      window.cytoscapeGraph.clearPathHighlight();
+    }
+    return;
+  }
+  
+  // Small delay to ensure graph is ready
+  const timer = setTimeout(() => {
+    if (window.cytoscapeGraph?.highlightPathTo) {
+      window.cytoscapeGraph.highlightPathTo(status);
+    }
+  }, 300);
+  
+  return () => clearTimeout(timer);
+}, [loadedTestData?.data?.status]);
+
+// Clear highlights when testData is cleared
+useEffect(() => {
+  if (!loadedTestData && window.cytoscapeGraph?.clearPathHighlight) {
+    window.cytoscapeGraph.clearPathHighlight();
+  }
+}, [loadedTestData]);
+// Update node styling for selection and transition mode
+useEffect(() => {
+  if (!cyRef.current) return;
+  const cy = cyRef.current;
+  
+  // Reset all borders first
+  cy.nodes('[type="state"]').forEach(node => {
+    const baseColor = node.data('color') || getNodeColorFallback(node);
+    node.style({
+      'border-width': 2,
+      'border-color': baseColor
+    });
+  });
+  
+  // Highlight selected node
+  if (selectedNodeId) {
+    const selectedNode = cy.getElementById(selectedNodeId);
+    if (selectedNode.length) {
+      selectedNode.style({
+        'border-width': 4,
+        'border-color': theme.colors.accents.blue
+      });
+    }
+  }
+  
+  // Highlight transition source
+  if (transitionMode?.enabled && transitionMode?.source?.id) {
+    const sourceNode = cy.getElementById(transitionMode.source.id);
+    if (sourceNode.length) {
+      sourceNode.style({
+        'border-width': 6,
+        'border-color': theme.colors.accents.orange
+      });
+    }
+  }
+}, [selectedNodeId, transitionMode, theme]);
   
   // ========================================
   // RENDER

@@ -10,8 +10,157 @@ import ConditionBlockList from './ConditionBlockList';
 import StepConditions from './StepConditions';
 import { migrateRequiresToConditions, conditionsToRequires } from './conditionBlockUtils';
 import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVariablesFromUIValidations';
+import useProjectConfig from '../../hooks/useProjectConfig';
+import DataFlowSummary from './DataFlowSummary';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
 
 const API_URL = "http://localhost:3000";
+const STEP_TYPES = [
+  { value: 'pom-method', label: '⚡ POM Method', description: 'Call a method from imported screen object' },
+  { value: 'click', label: '👆 Click', description: 'Click an element' },
+  { value: 'fill', label: '✏️ Fill', description: 'Fill an input field' },
+  { value: 'getText', label: '📝 Get Text', description: 'Get text content and optionally store it' },
+  { value: 'waitFor', label: '⏳ Wait For', description: 'Wait for element to be visible/hidden' },
+  { value: 'custom', label: '💻 Custom Code', description: 'Write custom Playwright code' },
+];
+
+
+/**
+ * SortableStep - Wrapper that makes a step draggable
+ */
+function SortableStep({ step, stepIndex, children, editMode = true, theme }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ 
+    id: step.id || `step-${stepIndex}`,
+    disabled: !editMode 
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : 'auto',
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div
+        className="p-3 rounded mb-3"
+        style={{
+          backgroundColor: theme.colors.background.secondary,
+          border: `1px solid ${isDragging ? theme.colors.accents.blue : theme.colors.border}`,
+          overflow: 'visible',
+        }}
+      >
+        {/* Step Header with Drag Handle */}
+        <div className="flex items-center gap-2 mb-3">
+          {/* Drag Handle */}
+          <div
+            {...attributes}
+            {...listeners}
+            className="cursor-grab active:cursor-grabbing p-1 rounded hover:bg-white/10 transition"
+            title="Drag to reorder"
+          >
+            <span style={{ color: theme.colors.text.tertiary, fontSize: '16px' }}>⋮⋮</span>
+          </div>
+          
+          {/* Step Number */}
+          <span
+            className="text-sm font-semibold"
+            style={{ color: theme.colors.text.secondary }}
+          >
+            Step #{stepIndex + 1}
+          </span>
+          
+          {/* Step Type Badge */}
+          <span
+            className="px-2 py-0.5 rounded text-xs font-semibold"
+            style={{
+              backgroundColor: `${theme.colors.accents.blue}20`,
+              color: theme.colors.accents.blue,
+            }}
+          >
+            {STEP_TYPES.find(t => t.value === step.type)?.label || step.type}
+          </span>
+          
+          {/* Spacer */}
+          <div className="flex-1" />
+          
+          {/* Remove Button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              step.onRemove?.();
+            }}
+            className="px-2 py-1 rounded text-xs transition hover:brightness-110"
+            style={{
+              backgroundColor: theme.colors.accents.red + "20",
+              color: theme.colors.accents.red,
+            }}
+          >
+            Remove
+          </button>
+        </div>
+        
+        {/* Step Content */}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Drag overlay preview for steps
+ */
+function StepDragOverlay({ step, theme }) {
+  const stepType = STEP_TYPES.find(t => t.value === step?.type);
+  
+  return (
+    <div
+      className="p-3 rounded shadow-2xl"
+      style={{
+        backgroundColor: theme.colors.background.secondary,
+        border: `2px solid ${theme.colors.accents.blue}`,
+        opacity: 0.9,
+        width: '400px',
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span style={{ color: theme.colors.text.tertiary }}>⋮⋮</span>
+        <span style={{ color: theme.colors.accents.blue, fontWeight: 600 }}>
+          {stepType?.label || 'Step'}
+        </span>
+        <span style={{ color: theme.colors.text.secondary }}>
+          {step?.description || 'No description'}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 const AvailableVariablesHint = ({ availableVars, onInsert }) => {
   if (!availableVars || availableVars.length === 0) return null;
@@ -86,13 +235,15 @@ export default function AddTransitionModal({
   sourceState,
   targetState,
   projectPath,
-  mode = 'create',
+  mode = 'add',
   initialData = null,
-  availablePlatforms = ["web"],
-  storedVariables = [],
+  // ❌ REMOVE: availablePlatforms = ["web"],
 }) {
+  // ✅ ADD: Load platforms from config
+  const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
+  const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
 
- const [formData, setFormData] = useState({
+const [formData, setFormData] = useState({
   event: "",
   description: "",
   platform: "web",
@@ -103,10 +254,60 @@ export default function AddTransitionModal({
   steps: [],
   requires: {},
   conditions: null,
+  isObserver: false,  // ← ADD THIS
 });
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
 
 const [testDataSchema, setTestDataSchema] = useState([]);
+
+const [activeStepId, setActiveStepId] = useState(null);
+
+// Add sensors configuration
+const sensors = useSensors(
+  useSensor(PointerSensor, {
+    activationConstraint: {
+      distance: 8,
+    },
+  }),
+  useSensor(KeyboardSensor, {
+    coordinateGetter: sortableKeyboardCoordinates,
+  })
+);
+
+// Add drag handlers
+const handleStepDragStart = (event) => {
+  setActiveStepId(event.active.id);
+};
+
+const handleStepDragEnd = (event) => {
+  const { active, over } = event;
+  setActiveStepId(null);
+
+  if (!over || active.id === over.id) return;
+
+  setFormData((prev) => {
+    const oldIndex = prev.steps.findIndex((s, i) => (s.id || `step-${i}`) === active.id);
+    const newIndex = prev.steps.findIndex((s, i) => (s.id || `step-${i}`) === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const reordered = arrayMove(prev.steps, oldIndex, newIndex);
+      return { ...prev, steps: reordered };
+    }
+    return prev;
+  });
+};
+
+const handleStepDragCancel = () => {
+  setActiveStepId(null);
+};
+
+// Get active step for drag overlay
+const activeStep = useMemo(() => {
+  if (!activeStepId) return null;
+  const index = formData.steps.findIndex((s, i) => (s.id || `step-${i}`) === activeStepId);
+  return index !== -1 ? formData.steps[index] : null;
+}, [activeStepId, formData.steps]);
+
 
 // Load suggestions and test data schema when modal opens
 useEffect(() => {
@@ -181,35 +382,34 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
 // ✅ NEW: Combine ALL available variables for conditions
  // ✅ Combine ALL available variables for conditions
   // Includes: props, form steps, and source state's UI validations
-  const allStoredVariables = useMemo(() => {
-    const vars = [];
-    const seen = new Set();
-    
-    const addVar = (v) => {
-      if (!seen.has(v.name)) {
-        seen.add(v.name);
-        vars.push(v);
-      }
-    };
-    
-    // 1. Variables from props (passed from parent/previous states)
-    (storedVariables || []).forEach(addVar);
-    
-    // 2. Variables from current form steps (storeAs)
-    availableStoreAsVars.forEach(addVar);
-    
-    // 3. Variables from source state's UI validations (storeAs)
-    if (sourceState) {
-      const uiVars = collectVariablesFromUIValidations(sourceState);
-      uiVars.forEach(v => {
-        v.source = 'ui-storeAs';
-        v.fromState = sourceState.id || sourceState.meta?.status || 'source';
-        addVar(v);
-      });
+// ✅ Combine ALL available variables for conditions
+// Includes: form steps and source state's UI validations
+const allStoredVariables = useMemo(() => {
+  const vars = [];
+  const seen = new Set();
+  
+  const addVar = (v) => {
+    if (!seen.has(v.name)) {
+      seen.add(v.name);
+      vars.push(v);
     }
-    
-    return vars;
-  }, [storedVariables, availableStoreAsVars, sourceState]);
+  };
+  
+  // 1. Variables from current form steps (storeAs)
+  availableStoreAsVars.forEach(addVar);
+  
+  // 2. Variables from source state's UI validations (storeAs)
+  if (sourceState) {
+    const uiVars = collectVariablesFromUIValidations(sourceState);
+    uiVars.forEach(v => {
+      v.source = 'ui-storeAs';
+      v.fromState = sourceState.id || sourceState.meta?.status || 'source';
+      addVar(v);
+    });
+  }
+  
+  return vars;
+}, [availableStoreAsVars, sourceState]);  // ✅ Remove storedVariables from deps
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
@@ -220,6 +420,11 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
 // EDIT MODE INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 useEffect(() => {
+  console.log('🟢 AddTransitionModal useEffect triggered');
+  console.log('🟢 mode:', mode);
+  console.log('🟢 isOpen:', isOpen);
+  console.log('🟢 initialData:', initialData);
+  console.log('🟢 initialData?.actionDetails:', initialData?.actionDetails);
   if (mode === 'edit' && initialData && isOpen) {
     console.log('📝 Edit mode - initialData:', JSON.stringify(initialData, null, 2));  // ✅ ADD THIS
     console.log('📝 initialData.conditions:', initialData.conditions);  // ✅ ADD THIS
@@ -241,36 +446,39 @@ useEffect(() => {
     console.log('   📍 Steps:', initialData.actionDetails?.steps?.length || 0);
     
 setFormData({
-      event: initialData.event || "",
-      description: initialData.actionDetails?.description || "",
-      platform: platform,
-      hasActionDetails: !!initialData.actionDetails,
-      navigationMethod: initialData.actionDetails?.navigationMethod || "",
-      navigationFile: initialData.actionDetails?.navigationFile || "",
-      requires: initialData.requires || {},
-      conditions: initialData.conditions || null,
-      imports: (initialData.actionDetails?.imports || []).map(imp => ({
-        ...imp,
-        selectedPOM: imp.className,
-        functions: [],
-      })),
-      steps: (initialData.actionDetails?.steps || []).map(step => {
-        let argsArray = [];
-        if (Array.isArray(step.argsArray)) {
-          argsArray = step.argsArray;
-        } else if (Array.isArray(step.args)) {
-          argsArray = step.args;
-        } else if (typeof step.args === 'string' && step.args) {
-          argsArray = step.args.split(',').map(s => s.trim());
-        }
-        
-        return {
-          ...step,
-          args: argsArray,
-          availableMethods: [],
-          signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
-        };
-      }),
+  event: initialData.event || "",
+  description: initialData.actionDetails?.description || "",
+  platform: platform,
+  hasActionDetails: !!initialData.actionDetails,
+  navigationMethod: initialData.actionDetails?.navigationMethod || "",
+  navigationFile: initialData.actionDetails?.navigationFile || "",
+  requires: initialData.requires || {},
+  conditions: initialData.conditions || null,
+  isObserver: initialData.isObserver || initialData.mode === 'observer' || initialData.mode === 'verify' || false,  // ← ADD
+  imports: (initialData.actionDetails?.imports || []).map(imp => ({
+    ...imp,
+    selectedPOM: imp.className,
+    functions: [],
+  })),
+steps: (initialData.actionDetails?.steps || []).map(step => {
+  let argsArray = [];
+  if (Array.isArray(step.argsArray)) {
+    argsArray = step.argsArray;
+  } else if (Array.isArray(step.args)) {
+    argsArray = step.args;
+  } else if (typeof step.args === 'string' && step.args) {
+    argsArray = step.args.split(',').map(s => s.trim());
+  }
+  
+  return {
+    ...step,
+    id: step.id || `step-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,  // ✅ ADD unique ID
+    type: step.type || 'pom-method',  // ✅ ADD THIS - default to pom-method
+    args: argsArray,
+    availableMethods: [],
+    signature: step.method ? `${step.method}(${argsArray.join(', ')})` : "",
+  };
+}),
     });
     
     if (initialData.actionDetails?.navigationFile) {
@@ -425,50 +633,47 @@ useEffect(() => {
 }, [isOpen, mode]);
 
   // Fetch POMs from API
-const fetchAvailablePOMs = async () => {
-  console.log('🔍 fetchAvailablePOMs called, platform:', formData.platform);
+const fetchAvailablePOMs = async (platform) => {
+  console.log('🔍 fetchAvailablePOMs called, platform:', platform || formData.platform);
   setLoadingPOMs(true);
   try {
-    const response = await fetch(
-      `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
-    );
+    // ✅ Pass platform to API - let backend handle filtering via config
+    const targetPlatform = platform || formData.platform;
+    let url = `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`;
+    if (targetPlatform) {
+      url += `&platform=${encodeURIComponent(targetPlatform)}`;
+    }
+    
+    const response = await fetch(url);
     if (response.ok) {
       const data = await response.json();
-      console.log('📦 Raw POMs from API:', data.poms?.length);
+      console.log('📦 POMs from API:', data.poms?.length, 'for platform:', data.platform);
 
-      // ✅ FIXED: Extract ALL classes from each POM file
+      // ✅ Extract ALL classes from each POM file
       const transformedPOMs = [];
       
       for (const pom of data.poms) {
         if (pom.classes && pom.classes.length > 0) {
-          // ✅ Loop through ALL classes in the file
           for (const classData of pom.classes) {
             transformedPOMs.push({
               name: classData.name,
               className: classData.name,
               path: pom.path,
               filePath: pom.path,
-              classes: [classData],  // ✅ Include just this class
+              classes: [classData],
               functions: classData.functions || []
             });
           }
         }
       }
 
-      console.log('📦 Total classes extracted:', transformedPOMs.length);
-
-      const filteredPOMs = filterPOMsByPlatform(transformedPOMs, formData.platform);
-console.log('✅ Filtered POMs:', filteredPOMs.length);
-console.log('🎯 First 5 POMs:', filteredPOMs.slice(0, 5).map(p => ({
-  name: p.className,
-  path: p.path
-})));
-      console.log('✅ Filtered POMs:', filteredPOMs.length);
+      console.log('✅ Total classes extracted:', transformedPOMs.length);
       
-      setAvailablePOMs(filteredPOMs);
+      // ✅ No frontend filtering needed - API already filtered!
+      setAvailablePOMs(transformedPOMs);
     }
   } catch (error) {
-    console.error("Failed to fetch POMs:", error);
+    console.error('Error fetching POMs:', error);
     setAvailablePOMs([]);
   } finally {
     setLoadingPOMs(false);
@@ -598,45 +803,6 @@ const fetchNavigationFiles_Fallback = async () => {
   }
 };
 
-const filterPOMsByPlatform = (poms, platform) => {
-  console.log(`🔍 Filtering ${poms.length} POMs for platform: ${platform}`);
-  
-  if (!platform || platform === 'web') {
-    // For web: include POMs that are NOT in mobile-specific folders
-    const filtered = poms.filter(pom => {
-      const path = (pom.filePath || pom.path || '').toLowerCase();
-      
-      // Exclude mobile-specific paths
-      const isMobile = path.includes('/dancer/') || 
-                       path.includes('/manager/') ||
-                       path.includes('/android/') ||
-                       path.includes('/ios/') ||
-                       path.includes('/mobile/');
-      
-      return !isMobile;  // Include everything that's NOT mobile
-    });
-    
-    console.log(`   ✅ Found ${filtered.length} POMs for web (non-mobile)`);
-    return filtered;
-  }
-  
-  // For specific mobile platforms
-  const filtered = poms.filter(pom => {
-    const path = (pom.filePath || pom.path || '').toLowerCase();
-    
-    if (platform === 'dancer') {
-      return path.includes('/dancer/');
-    } else if (platform === 'manager') {
-      return path.includes('/manager/');
-    }
-    
-    return false;
-  });
-  
-  console.log(`   ✅ Found ${filtered.length} POMs for ${platform}`);
-  return filtered;
-};
-
   // Fetch POM details
   const fetchPOMDetails = async (pomName) => {
     if (pomDetails[pomName]) {
@@ -754,22 +920,30 @@ const filterPOMsByPlatform = (poms, platform) => {
   };
 
   // Add new step
-  const handleAddStep = () => {
-    setFormData((prev) => ({
-      ...prev,
-      steps: [
-        ...prev.steps,
-        {
-          description: "",
-          instance: "",
-          method: "",
-          args: [],
-          availableMethods: [],
-           conditions: null,  // ✅ NEW: Step-level conditions
-        },
-      ],
-    }));
-  };
+const handleAddStep = () => {
+  setFormData((prev) => ({
+    ...prev,
+    steps: [
+      ...prev.steps,
+      {
+        id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,  // ✅ Unique ID
+        type: 'pom-method',
+        description: "",
+        instance: "",
+        method: "",
+        args: [],
+        availableMethods: [],
+        screen: "",
+        locator: "",
+        value: "",
+        waitState: "visible",
+        code: "",
+        storeAs: "",
+        conditions: null,
+      },
+    ],
+  }));
+};
 
   // Handle instance selection for step
   const handleStepInstanceSelect = (stepIndex, instanceVarName) => {
@@ -969,34 +1143,52 @@ const handleSubmit = async (e) => {
 
   try {
 const submitData = {
-      event: formData.event.trim(),
-      platform: formData.platform,
-      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
-      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
-      actionDetails: formData.hasActionDetails
-        ? {
-            description: formData.description.trim(),
-            platform: formData.platform,
-            navigationMethod: formData.navigationMethod || null,
-            navigationFile: formData.navigationFile || null,
-            imports: formData.imports.map((imp) => ({
-              className: imp.className,
-              varName: imp.varName,
-              path: imp.path,
-              constructor: imp.constructor,
-            })),
-            steps: formData.steps.map((step) => ({
-              description: step.description,
-              instance: step.instance,
-              method: step.method,
-              args: step.args.join(', '),
-              argsArray: step.args,
-              storeAs: step.storeAs || undefined,
-              conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
-            })),
-          }
-        : null,
-    };
+  event: formData.event.trim(),
+  platform: formData.platform,
+  isObserver: formData.isObserver || undefined,
+  mode: formData.isObserver ? 'observer' : undefined,
+  requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+  conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
+  actionDetails: formData.hasActionDetails
+    ? {
+        description: formData.description.trim(),
+        platform: formData.platform,
+        navigationMethod: formData.navigationMethod || null,
+        navigationFile: formData.navigationFile || null,
+        imports: formData.imports.map((imp) => ({
+          className: imp.className,
+          varName: imp.varName,
+          path: imp.path,
+          constructor: imp.constructor,
+        })),
+        steps: formData.steps.map((step) => ({
+          type: step.type || 'pom-method',
+          description: step.description,
+          // POM method fields
+          ...((step.type === 'pom-method' || !step.type) && {
+            instance: step.instance,
+            method: step.method,
+            args: step.args?.join(', ') || '',
+            argsArray: step.args || [],
+          }),
+          // Inline action fields
+          ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
+            screen: step.screen,
+            locator: step.locator,
+            ...(step.type === 'fill' && { value: step.value }),
+            ...(step.type === 'waitFor' && { waitState: step.waitState }),
+          }),
+          // Custom code
+          ...(step.type === 'custom' && {
+            code: step.code,
+          }),
+          // Common fields
+          storeAs: step.storeAs || undefined,
+          conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+        })),
+      }
+    : null,
+};
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
@@ -1171,6 +1363,78 @@ const submitData = {
               💡 This transition will only work on the selected platform
             </p>
           </div>
+
+   {/* 👁️ Observer Mode Toggle */}
+          <div 
+            className="flex items-center gap-3 p-3 rounded-lg"
+            style={{
+              backgroundColor: formData.isObserver 
+                ? `${defaultTheme.colors.accents.cyan}15`
+                : defaultTheme.colors.background.tertiary,
+              border: `1px solid ${formData.isObserver 
+                ? defaultTheme.colors.accents.cyan 
+                : defaultTheme.colors.border}`,
+            }}
+          >
+            <input
+              type="checkbox"
+              id="isObserver"
+              checked={formData.isObserver}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  isObserver: e.target.checked,
+                }))
+              }
+              className="w-4 h-4 cursor-pointer"
+            />
+            <label 
+              htmlFor="isObserver" 
+              className="cursor-pointer flex-1"
+              style={{ color: defaultTheme.colors.text.primary }}
+            >
+              <span className="font-semibold">👁️ Observer Mode</span>
+              <p 
+                className="text-xs mt-1"
+                style={{ color: defaultTheme.colors.text.secondary }}
+              >
+                This transition <strong>validates</strong> that a state exists, but doesn't <strong>create</strong> it.
+                Use for cross-platform viewing (e.g., dancer viewing a booking created on web).
+              </p>
+            </label>
+          </div>
+
+          {/* Observer mode info box */}
+          {formData.isObserver && (
+            <div
+              className="p-3 rounded-lg text-sm"
+              style={{
+                backgroundColor: `${defaultTheme.colors.accents.cyan}10`,
+                border: `1px solid ${defaultTheme.colors.accents.cyan}40`,
+                color: defaultTheme.colors.text.secondary,
+              }}
+            >
+              <div className="flex items-start gap-2">
+                <span>💡</span>
+                <div>
+                  <strong style={{ color: defaultTheme.colors.accents.cyan }}>Observer tests:</strong>
+                  <ul className="mt-1 ml-4 list-disc">
+                    <li>Won't trigger loop detection when state already exists</li>
+                    <li>Require the target state to be created by an <em>inducer</em> test first</li>
+                    <li>Only validate UI, no state changes saved</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Data Flow Summary */}
+<DataFlowSummary
+  formData={formData}
+  testDataSchema={testDataSchema}
+  availableFromPriorStates={allStoredVariables}
+  theme={defaultTheme}
+/>
+
  {/* ✅ NEW: Condition Blocks Section (replaces old Requires) */}
           <ConditionBlockList
             conditions={formData.conditions}
@@ -1553,312 +1817,418 @@ const submitData = {
                 )}
               </div>
 
-              {/* Action Steps */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <label
-                    className="text-sm font-semibold"
-                    style={{ color: defaultTheme.colors.text.primary }}
-                  >
-                    🎬 Action Steps
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAddStep}
-                    className="px-3 py-1 rounded text-sm font-semibold transition"
-                    style={{
-                      backgroundColor: defaultTheme.colors.accents.blue,
-                      color: "white",
-                    }}
-                  >
-                    + Add Step
-                  </button>
-                </div>
-
-                {/* Steps List */}
-                {formData.steps.map((step, index) => (
-                  <div
-                    key={index}
-                    className="p-3 rounded mb-3"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.secondary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                      overflow: 'visible',
-                    }}
-                  >
-                    {/* Step Header */}
-                    <div className="flex items-center justify-between mb-2">
-                      <span
-                        className="text-sm font-semibold"
-                        style={{ color: defaultTheme.colors.text.secondary }}
-                      >
-                        Step #{index + 1}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveStep(index)}
-                        className="px-2 py-1 rounded text-xs"
-                        style={{
-                          backgroundColor:
-                            defaultTheme.colors.accents.red + "20",
-                          color: defaultTheme.colors.accents.red,
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-
-                    {/* Description */}
-                    <div className="mb-2">
-                      <label
-                        className="text-xs"
-                        style={{ color: defaultTheme.colors.text.secondary }}
-                      >
-                        Description *
-                      </label>
-                      <input
-                        type="text"
-                        value={step.description}
-                        onChange={(e) =>
-                          handleStepChange(index, "description", e.target.value)
-                        }
-                        placeholder="e.g., Fill search form"
-                        className="w-full px-3 py-1 rounded text-sm"
-                        style={{
-                          backgroundColor:
-                            defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${errors[`step_${index}_description`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
-                        }}
-                      />
-                    </div>
-
-                    {/* Instance */}
-                    <div className="mb-2">
-                      <label
-                        className="text-xs"
-                        style={{ color: defaultTheme.colors.text.secondary }}
-                      >
-                        Instance *
-                      </label>
-                      <select
-                        value={step.instance}
-                        onChange={(e) =>
-                          handleStepInstanceSelect(index, e.target.value)
-                        }
-                        className="w-full px-3 py-1 rounded text-sm"
-                        style={{
-                          backgroundColor:
-                            defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${errors[`step_${index}_instance`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
-                        }}
-                      >
-                        <option value="">-- Select instance --</option>
-                        {formData.imports.map((imp, i) => (
-                          <option key={i} value={imp.varName}>
-                            {imp.varName} ({imp.className})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                   {/* Method with Signature */}
-<div className="mb-2">
-  <label
-    className="text-xs"
-    style={{ color: defaultTheme.colors.text.secondary }}
-  >
-    Method * (with signature)
-  </label>
-  <select
-    value={step.signature || ""}
-    onChange={(e) =>
-      handleStepMethodSelect(index, e.target.value)
-    }
-    disabled={!step.instance}
-    className="w-full px-3 py-1 rounded text-sm font-mono"
-    style={{
-      backgroundColor:
-        defaultTheme.colors.background.tertiary,
-      color: defaultTheme.colors.text.primary,
-      border: `1px solid ${errors[`step_${index}_method`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
-      opacity: !step.instance ? 0.5 : 1,
-    }}
-  >
-    <option value="">-- Select method --</option>
-    {step.availableMethods &&
-      step.availableMethods.map((method, i) => (
-        <option key={i} value={method.signature}>
-          {method.signature}
-        </option>
-      ))}
-  </select>
-  
-  {/* ✨ NEW: Show return keys when method is selected */}
-  {step.selectedMethodReturns?.type === 'object' && step.selectedMethodReturns.keys?.length > 0 && (
-    <div className="mt-1 p-2 rounded text-xs"
-      style={{ backgroundColor: `${defaultTheme.colors.accents.green}10`, border: `1px solid ${defaultTheme.colors.accents.green}30` }}>
-      <span style={{ color: defaultTheme.colors.accents.green }}>
-        📤 Returns: {step.selectedMethodReturns.keys
-          .filter(k => !k.includes('Wrapper') && !k.startsWith('...'))
-          .join(', ')}
-      </span>
-    </div>
-  )}
-</div>
-
-                  {/* Args Input with Smart Validation */}
+{/* Action Steps */}
 <div>
-  <label
-    className="text-xs"
-    style={{ color: defaultTheme.colors.text.secondary }}
-  >
-    Arguments (comma-separated)
-  </label>
-  <input
-    type="text"
-    value={step.args.join(", ")}
-    onChange={(e) =>
-      handleStepArgsChange(index, e.target.value)
-    }
-    placeholder="ctx.data.field1, ctx.data.field2 || defaultValue"
-    className="w-full px-3 py-1 rounded text-sm font-mono"
-    style={{
-      backgroundColor:
-        defaultTheme.colors.background.tertiary,
-      color: defaultTheme.colors.text.primary,
-      border: `1px solid ${defaultTheme.colors.border}`,
-    }}
-  />
-
-  {/* ✨ NEW: Show available variables from previous steps */}
-  {getAvailableVarsForStep(index).length > 0 && (
-    <AvailableVariablesHint 
-      availableVars={getAvailableVarsForStep(index)}
-      onInsert={(variable) => handleInsertVariable(index, variable)}
-    />
-  )}
-
-  {/* Helper Text */}
-  <div
-    className="text-xs mt-1"
-    style={{ color: defaultTheme.colors.text.tertiary }}
-  >
-    💡 Use{" "}
-    <code
-      className="px-1 rounded"
-      style={{
-        backgroundColor:
-          defaultTheme.colors.background.secondary,
-      }}
-    >
-      ||
-    </code>{" "}
-    for defaults, not{" "}
-    <code
-      className="px-1 rounded"
-      style={{
-        backgroundColor:
-          defaultTheme.colors.background.secondary,
-      }}
-    >
-      =
-    </code>
-  </div>
-
-  {/* Live Warning */}
-  {step.args.some((arg) => arg.includes(" = ")) && (
-    <div
-      className="text-xs mt-2 px-2 py-1 rounded flex items-center gap-2"
-      style={{
-        backgroundColor:
-          defaultTheme.colors.accents.yellow + "20",
-        color: defaultTheme.colors.accents.yellow,
-        border: `1px solid ${defaultTheme.colors.accents.yellow}`,
-      }}
-    >
-      <span>⚠️</span>
-      <span>
-        Args will be auto-converted to use ||
-      </span>
-    </div>
-  )}
-</div>
-
-{/* ✅ NEW: StoreAs Input */}
-<div className="mt-3">
-  <label
-    className="text-xs"
-    style={{ color: defaultTheme.colors.text.secondary }}
-  >
-    💾 Store Result As (optional)
-  </label>
-  <input
-    type="text"
-    value={step.storeAs || ''}
-    onChange={(e) => {
-      const newSteps = [...formData.steps];
-      newSteps[index] = { ...step, storeAs: e.target.value };
-      setFormData({ ...formData, steps: newSteps });
-    }}
-    placeholder="e.g., flightData, bookingResult"
-    className="w-full px-3 py-1 rounded text-sm font-mono"
-    style={{
-      backgroundColor: defaultTheme.colors.background.tertiary,
-      color: defaultTheme.colors.accents.yellow,
-      border: `1px solid ${defaultTheme.colors.border}`,
-    }}
-  />
-  
-  {step.storeAs && (
-    <div
-      className="text-xs mt-1 p-2 rounded"
-      style={{ 
-        backgroundColor: `${defaultTheme.colors.accents.yellow}10`,
-        color: defaultTheme.colors.accents.yellow,
-        border: `1px solid ${defaultTheme.colors.accents.yellow}30`
-      }}
-    >
-      ✨ Access in validations:{' '}
-      <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>
-        {`{{${step.storeAs}}}`}
-      </code>
-      {step.selectedMethodReturns?.keys?.length > 0 && (
-        <span>
-          {' '}or{' '}
-          <code className="px-1 rounded" style={{ backgroundColor: defaultTheme.colors.background.secondary }}>
-            {`{{${step.storeAs}.${step.selectedMethodReturns.keys.filter(k => !k.includes('Wrapper'))[0] || 'property'}}}`}
-          </code>
+  <div className="flex items-center justify-between mb-3">
+    <div className="flex items-center gap-2">
+      <label
+        className="text-sm font-semibold"
+        style={{ color: defaultTheme.colors.text.primary }}
+      >
+        🎬 Action Steps ({formData.steps.length})
+      </label>
+      {formData.steps.length > 1 && (
+        <span 
+          className="text-xs px-2 py-1 rounded"
+          style={{ 
+            background: `${defaultTheme.colors.accents.blue}20`,
+            color: defaultTheme.colors.accents.blue 
+          }}
+        >
+          ⋮⋮ Drag to reorder
         </span>
       )}
     </div>
-  )}
-</div>
+    <button
+      type="button"
+      onClick={handleAddStep}
+      className="px-3 py-1 rounded text-sm font-semibold transition"
+      style={{
+        backgroundColor: defaultTheme.colors.accents.blue,
+        color: "white",
+      }}
+    >
+      + Add Step
+    </button>
+  </div>
 
-               {/* ✅ Step Conditions */}
-                   <StepConditions
-  conditions={step.conditions}
-  onChange={(newConditions) => handleStepConditionsChange(index, newConditions)}
-  stepIndex={index}
-  availableVariables={getAvailableVarsForStep(index)}
-  storedVariables={allStoredVariables}  // ✅ ADD THIS
-  testDataSchema={testDataSchema}
-  requiresSuggestions={requiresSuggestions}
-  theme={defaultTheme}
-/>
-                  </div>
-                ))}
-
-                {formData.steps.length === 0 && (
-                  <p
-                    className="text-sm text-center py-4"
-                    style={{ color: defaultTheme.colors.text.secondary }}
+  {/* Steps List with Drag & Drop */}
+  {formData.steps.length > 0 ? (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleStepDragStart}
+      onDragEnd={handleStepDragEnd}
+      onDragCancel={handleStepDragCancel}
+    >
+      <SortableContext
+        items={formData.steps.map((s, i) => s.id || `step-${i}`)}
+        strategy={verticalListSortingStrategy}
+      >
+        {formData.steps.map((step, index) => (
+          <SortableStep
+            key={step.id || `step-${index}`}
+            step={{ ...step, onRemove: () => handleRemoveStep(index) }}
+            stepIndex={index}
+            theme={defaultTheme}
+          >
+            {/* Step Type Selector */}
+            <div className="mb-3">
+              <label
+                className="text-xs block mb-1"
+                style={{ color: defaultTheme.colors.text.secondary }}
+              >
+                Step Type
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {STEP_TYPES.map((typeOption) => (
+                  <button
+                    key={typeOption.value}
+                    type="button"
+                    onClick={() => handleStepChange(index, 'type', typeOption.value)}
+                    className="px-3 py-1.5 rounded text-xs font-semibold transition"
+                    style={{
+                      backgroundColor: step.type === typeOption.value
+                        ? defaultTheme.colors.accents.blue
+                        : defaultTheme.colors.background.tertiary,
+                      color: step.type === typeOption.value
+                        ? 'white'
+                        : defaultTheme.colors.text.secondary,
+                      border: `1px solid ${step.type === typeOption.value 
+                        ? defaultTheme.colors.accents.blue 
+                        : defaultTheme.colors.border}`,
+                    }}
+                    title={typeOption.description}
                   >
-                    No action steps added. Click "+ Add Step" to add one.
-                  </p>
+                    {typeOption.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="mb-2">
+              <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                Description *
+              </label>
+              <input
+                type="text"
+                value={step.description}
+                onChange={(e) => handleStepChange(index, "description", e.target.value)}
+                placeholder={
+                  step.type === 'click' ? "e.g., Click submit button" :
+                  step.type === 'fill' ? "e.g., Enter search query" :
+                  step.type === 'getText' ? "e.g., Get booking reference" :
+                  step.type === 'waitFor' ? "e.g., Wait for results to load" :
+                  step.type === 'custom' ? "e.g., Custom validation logic" :
+                  "e.g., Fill search form"
+                }
+                className="w-full px-3 py-1 rounded text-sm"
+                style={{
+                  backgroundColor: defaultTheme.colors.background.tertiary,
+                  color: defaultTheme.colors.text.primary,
+                  border: `1px solid ${errors[`step_${index}_description`] ? defaultTheme.colors.accents.red : defaultTheme.colors.border}`,
+                }}
+              />
+            </div>
+
+            {/* POM METHOD TYPE */}
+            {step.type === 'pom-method' && (
+              <>
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Instance *
+                  </label>
+                  <select
+                    value={step.instance}
+                    onChange={(e) => handleStepInstanceSelect(index, e.target.value)}
+                    className="w-full px-3 py-1 rounded text-sm"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.text.primary,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                    }}
+                  >
+                    <option value="">-- Select instance --</option>
+                    {formData.imports.map((imp, i) => (
+                      <option key={i} value={imp.varName}>
+                        {imp.varName} ({imp.className})
+                      </option>
+                    ))}
+                  </select>
+                  {formData.imports.length === 0 && (
+                    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.yellow }}>
+                      ⚠️ Add a Screen Object import first
+                    </p>
+                  )}
+                </div>
+
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Method *
+                  </label>
+                  <select
+                    value={step.signature || ""}
+                    onChange={(e) => handleStepMethodSelect(index, e.target.value)}
+                    disabled={!step.instance}
+                    className="w-full px-3 py-1 rounded text-sm font-mono"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.text.primary,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                      opacity: !step.instance ? 0.5 : 1,
+                    }}
+                  >
+                    <option value="">-- Select method --</option>
+                    {step.availableMethods?.map((method, i) => (
+                      <option key={i} value={method.signature}>
+                        {method.signature}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Arguments
+                  </label>
+                  <input
+                    type="text"
+                    value={step.args?.join(", ") || ""}
+                    onChange={(e) => handleStepArgsChange(index, e.target.value)}
+                    placeholder="ctx.data.field1, ctx.data.field2"
+                    className="w-full px-3 py-1 rounded text-sm font-mono"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.text.primary,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                    }}
+                  />
+                  {getAvailableVarsForStep(index).length > 0 && (
+                    <AvailableVariablesHint 
+                      availableVars={getAvailableVarsForStep(index)}
+                      onInsert={(variable) => handleInsertVariable(index, variable)}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* INLINE ACTION TYPES: click, fill, getText, waitFor */}
+            {['click', 'fill', 'getText', 'waitFor'].includes(step.type) && (
+              <>
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Screen Object *
+                  </label>
+                  <select
+                    value={step.screen || ""}
+                    onChange={(e) => {
+                      const selectedPOM = availablePOMs.find(p => p.className === e.target.value);
+                      handleStepChange(index, 'screen', e.target.value);
+                      handleStepChange(index, 'locator', '');
+                      // Get all getters/methods that look like locators
+                      const locators = selectedPOM?.functions?.map(f => f.name) || [];
+                      handleStepChange(index, 'availableLocators', locators);
+                    }}
+                    className="w-full px-3 py-1 rounded text-sm"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.text.primary,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                    }}
+                  >
+                    <option value="">-- Select screen object --</option>
+                    {availablePOMs.map((pom, i) => (
+                      <option key={i} value={pom.className}>
+                        {pom.className}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Locator *
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={step.locator || ""}
+                      onChange={(e) => handleStepChange(index, 'locator', e.target.value)}
+                      disabled={!step.screen}
+                      className="flex-1 px-3 py-1 rounded text-sm font-mono"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.tertiary,
+                        color: defaultTheme.colors.text.primary,
+                        border: `1px solid ${defaultTheme.colors.border}`,
+                        opacity: !step.screen ? 0.5 : 1,
+                      }}
+                    >
+                      <option value="">-- Select --</option>
+                      {(step.availableLocators || []).map((loc, i) => (
+                        <option key={i} value={loc}>{loc}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={step.locator || ""}
+                      onChange={(e) => handleStepChange(index, 'locator', e.target.value)}
+                      placeholder="or type"
+                      className="w-32 px-2 py-1 rounded text-sm font-mono"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.tertiary,
+                        color: defaultTheme.colors.text.primary,
+                        border: `1px solid ${defaultTheme.colors.border}`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {step.type === 'fill' && (
+                  <div className="mb-2">
+                    <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                      Value *
+                    </label>
+                    <input
+                      type="text"
+                      value={step.value || ""}
+                      onChange={(e) => handleStepChange(index, 'value', e.target.value)}
+                      placeholder="ctx.data.value or 'literal'"
+                      className="w-full px-3 py-1 rounded text-sm font-mono"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.tertiary,
+                        color: defaultTheme.colors.text.primary,
+                        border: `1px solid ${defaultTheme.colors.border}`,
+                      }}
+                    />
+                  </div>
+                )}
+
+                {step.type === 'waitFor' && (
+                  <div className="mb-2">
+                    <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                      Wait Until
+                    </label>
+                    <select
+                      value={step.waitState || "visible"}
+                      onChange={(e) => handleStepChange(index, 'waitState', e.target.value)}
+                      className="w-full px-3 py-1 rounded text-sm"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.tertiary,
+                        color: defaultTheme.colors.text.primary,
+                        border: `1px solid ${defaultTheme.colors.border}`,
+                      }}
+                    >
+                      <option value="visible">Visible</option>
+                      <option value="hidden">Hidden</option>
+                      <option value="attached">Attached</option>
+                      <option value="detached">Detached</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Code Preview */}
+                <div 
+                  className="p-2 rounded text-xs font-mono"
+                  style={{ backgroundColor: defaultTheme.colors.background.primary }}
+                >
+                  <span style={{ color: defaultTheme.colors.accents.blue }}>await </span>
+                  <span style={{ color: defaultTheme.colors.accents.purple }}>
+                    {step.screen ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) : 'screen'}
+                  </span>
+                  <span>.</span>
+                  <span style={{ color: defaultTheme.colors.accents.green }}>{step.locator || 'locator'}</span>
+                  <span>.</span>
+                  <span style={{ color: defaultTheme.colors.accents.yellow }}>
+                    {step.type === 'click' && 'click()'}
+                    {step.type === 'fill' && `fill(${step.value || "'...'"} )`}
+                    {step.type === 'getText' && 'textContent()'}
+                    {step.type === 'waitFor' && `waitFor({ state: '${step.waitState}' })`}
+                  </span>
+                </div>
+              </>
+            )}
+
+            {/* CUSTOM CODE TYPE */}
+            {step.type === 'custom' && (
+              <div className="mb-2">
+                <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  Custom Code *
+                </label>
+                <textarea
+                  value={step.code || ""}
+                  onChange={(e) => handleStepChange(index, 'code', e.target.value)}
+                  placeholder="// Your custom code here"
+                  rows={4}
+                  className="w-full px-3 py-2 rounded text-sm font-mono"
+                  style={{
+                    backgroundColor: defaultTheme.colors.background.tertiary,
+                    color: defaultTheme.colors.text.primary,
+                    border: `1px solid ${defaultTheme.colors.border}`,
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Store As */}
+            {step.type !== 'custom' && (
+              <div className="mt-3">
+                <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                  💾 Store Result As
+                </label>
+                <input
+                  type="text"
+                  value={step.storeAs || ''}
+                  onChange={(e) => handleStepChange(index, 'storeAs', e.target.value)}
+                  placeholder="variableName"
+                  className="w-full px-3 py-1 rounded text-sm font-mono"
+                  style={{
+                    backgroundColor: defaultTheme.colors.background.tertiary,
+                    color: defaultTheme.colors.accents.yellow,
+                    border: `1px solid ${defaultTheme.colors.border}`,
+                  }}
+                />
+                {step.storeAs && (
+                  <div className="text-xs mt-1 p-2 rounded"
+                    style={{ backgroundColor: `${defaultTheme.colors.accents.yellow}10`, color: defaultTheme.colors.accents.yellow }}>
+                    ✨ Use: <code>{`{{${step.storeAs}}}`}</code>
+                  </div>
                 )}
               </div>
+            )}
+
+            {/* Step Conditions */}
+            <StepConditions
+              conditions={step.conditions}
+              onChange={(newConditions) => handleStepConditionsChange(index, newConditions)}
+              stepIndex={index}
+              availableVariables={getAvailableVarsForStep(index)}
+              storedVariables={allStoredVariables}
+              testDataSchema={testDataSchema}
+              requiresSuggestions={requiresSuggestions}
+              theme={defaultTheme}
+            />
+          </SortableStep>
+        ))}
+      </SortableContext>
+
+      {/* Drag Overlay */}
+      <DragOverlay>
+        {activeStep ? (
+          <StepDragOverlay step={activeStep} theme={defaultTheme} />
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+  ) : (
+    <p
+      className="text-sm text-center py-4"
+      style={{ color: defaultTheme.colors.text.secondary }}
+    >
+      No action steps added. Click "+ Add Step" to add one.
+    </p>
+  )}
+</div>
             </div>
           )}
 

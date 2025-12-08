@@ -345,7 +345,6 @@ export function extractXStateTransitions(parsed, className) {
             
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
-             // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
                 const eventName = transitionProp.key?.name || transitionProp.key?.value;
                 
@@ -353,11 +352,13 @@ export function extractXStateTransitions(parsed, className) {
                 if (transitionProp.value?.type === 'ArrayExpression') {
                   console.log(`      📦 Found array transition for ${eventName}, extracting ${transitionProp.value.elements.length} variants`);
                   
-                 transitionProp.value.elements.forEach((element, index) => {
+                  transitionProp.value.elements.forEach((element, index) => {
                     if (element.type === 'ObjectExpression') {
                       let targetState = null;
                       let platforms = null;
                       let requires = null;
+                      let isObserver = false;
+                      let mode = null;
                       
                       // Extract target
                       const targetProp = element.properties.find(p => p.key?.name === 'target');
@@ -388,13 +389,35 @@ export function extractXStateTransitions(parsed, className) {
                         console.log(`         🔒 Variant ${index + 1} requires:`, requires);
                       }
                       
+                      // ✅ NEW: Extract isObserver
+                      const isObserverProp = element.properties.find(p => p.key?.name === 'isObserver');
+                      if (isObserverProp?.value?.type === 'BooleanLiteral') {
+                        isObserver = isObserverProp.value.value;
+                      }
+                      
+                      // ✅ NEW: Extract mode
+                      const modeProp = element.properties.find(p => p.key?.name === 'mode');
+                      if (modeProp?.value?.type === 'StringLiteral') {
+                        mode = modeProp.value.value;
+                        // Derive isObserver from mode if not explicitly set
+                        if (!isObserver && (mode === 'observer' || mode === 'verify')) {
+                          isObserver = true;
+                        }
+                      }
+                      
+                      if (isObserver) {
+                        console.log(`         👁️ Variant ${index + 1} is OBSERVER mode`);
+                      }
+                      
                       if (targetState) {
                         transitions.push({
                           from: fromStatus,
                           to: targetState,
                           event: eventName,
                           platforms: platforms,
-                          requires: requires
+                          requires: requires,
+                          isObserver: isObserver,
+                          mode: mode
                         });
                       }
                     }
@@ -403,12 +426,13 @@ export function extractXStateTransitions(parsed, className) {
                   return; // Skip rest of processing for this transition
                 }
                 
-// Original handling for single transitions
-               // Original handling for single transitions
+                // Original handling for single transitions
                 let targetState = null;
                 let platforms = null;
                 let requires = null;
                 let conditions = null;
+                let isObserver = false;
+                let mode = null;
                 
                 // Handle different formats
                 if (transitionProp.value?.type === 'StringLiteral') {
@@ -478,6 +502,30 @@ export function extractXStateTransitions(parsed, className) {
                     conditions = extractValueFromNode(conditionsProp.value);
                     console.log(`      🔒 Found conditions for ${eventName}:`, conditions?.blocks?.length || 0, 'blocks');
                   }
+                  
+                  // ✅ NEW: Extract isObserver
+                  const isObserverProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'isObserver'
+                  );
+                  if (isObserverProp?.value?.type === 'BooleanLiteral') {
+                    isObserver = isObserverProp.value.value;
+                  }
+                  
+                  // ✅ NEW: Extract mode
+                  const modeProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'mode'
+                  );
+                  if (modeProp?.value?.type === 'StringLiteral') {
+                    mode = modeProp.value.value;
+                    // Derive isObserver from mode if not explicitly set
+                    if (!isObserver && (mode === 'observer' || mode === 'verify')) {
+                      isObserver = true;
+                    }
+                  }
+                  
+                  if (isObserver) {
+                    console.log(`      👁️ ${eventName} is OBSERVER mode`);
+                  }
                 }
                 
                 if (eventName && targetState) {
@@ -487,7 +535,9 @@ export function extractXStateTransitions(parsed, className) {
                     event: eventName,
                     platforms: platforms,
                     requires: requires,
-                    conditions: conditions
+                    conditions: conditions,
+                    isObserver: isObserver,
+                    mode: mode
                   });
                 }
               });
