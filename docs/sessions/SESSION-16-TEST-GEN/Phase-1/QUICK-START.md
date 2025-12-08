@@ -100,7 +100,7 @@ apps/cms/tests/implications/pages/
 ```bash
 node cli.js <implication-file> [options]
 
---platform <n>     web, cms, mobile-dancer, mobile-manager
+--platform <n>     web, cms, dancer, manager
 --state <n>        Target state (for multi-state)
 --preview          Preview without writing
 --output <dir>     Output directory

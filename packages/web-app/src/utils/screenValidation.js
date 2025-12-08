@@ -6,13 +6,17 @@
  * - Length constraints
  * - Valid identifier format
  * - Duplicate prevention
+ * 
+ * ✅ Compatible with both formats:
+ *    - Array: [{ originalName, platform }]
+ *    - Object: { "screenName": {...} }
  */
 
 /**
  * Validate screen name
  * @param {string} name - Screen name to validate
  * @param {string} platformName - Target platform name
- * @param {Array} existingScreens - Array of existing screens with {originalName, platform}
+ * @param {Array|Object} existingScreens - Array of {originalName, platform} OR object with screen names as keys
  * @returns {Object} { valid: boolean, errors: string[] }
  */
 export const validateScreenName = (name, platformName, existingScreens = []) => {
@@ -38,10 +42,21 @@ export const validateScreenName = (name, platformName, existingScreens = []) => 
     errors.push('Name must be a valid identifier (letters, numbers, underscores only)');
   }
 
-  // Check for duplicates in same platform
-  const duplicate = existingScreens.some(screen => 
-    screen.originalName === trimmedName && screen.platform === platformName
-  );
+  // ✅ FIX: Check for duplicates - handle both array and object formats
+  let duplicate = false;
+  
+  if (Array.isArray(existingScreens)) {
+    // Original format: Array of {originalName, platform}
+    duplicate = existingScreens.some(screen => 
+      screen.originalName === trimmedName && screen.platform === platformName
+    );
+  } else if (existingScreens && typeof existingScreens === 'object') {
+    // New format: Object with screen names as keys (from mirrorsOn.UI[platform])
+    duplicate = Object.keys(existingScreens).some(screenName => 
+      screenName === trimmedName
+    );
+  }
+  
   if (duplicate) {
     errors.push('Screen name already exists in this platform');
   }
@@ -90,10 +105,20 @@ export const suggestCopyName = (originalName, existingScreens, platformName) => 
   let suffix = 1;
   let suggestedName = `${originalName}_copy`;
 
+  // ✅ Handle both formats
+  const checkExists = (name) => {
+    if (Array.isArray(existingScreens)) {
+      return existingScreens.some(s => 
+        s.originalName === name && s.platform === platformName
+      );
+    } else if (existingScreens && typeof existingScreens === 'object') {
+      return Object.keys(existingScreens).includes(name);
+    }
+    return false;
+  };
+
   // Keep incrementing suffix if name exists
-  while (existingScreens.some(s => 
-    s.originalName === suggestedName && s.platform === platformName
-  )) {
+  while (checkExists(suggestedName)) {
     suffix++;
     suggestedName = `${originalName}_copy${suffix}`;
   }

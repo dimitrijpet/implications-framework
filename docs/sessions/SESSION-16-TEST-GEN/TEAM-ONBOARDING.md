@@ -143,7 +143,7 @@ node tools/test-generator/cli.js MyImplications.js --state approved
 node tools/test-generator/cli.js MyImplications.js --platform web
 
 # Mobile
-node tools/test-generator/cli.js MyImplications.js --platform mobile-dancer
+node tools/test-generator/cli.js MyImplications.js --platform dancer
 ```
 
 ---

@@ -139,7 +139,7 @@ class {{stateName}}BookingImplications {
 ```javascript
 const finalData = {
   // Form data > Copied data > Smart defaults
-  platform: platform || copyData?.platform || 'mobile-manager',
+  platform: platform || copyData?.platform || 'manager',
   triggerButton: triggerButton || copyData?.triggerButton || stateName.toUpperCase(),
   requiredFields: (requiredFields?.length > 0) ? requiredFields : (copyData?.requiredFields || defaults)
 };
@@ -336,7 +336,7 @@ traverse.default(ast, { ... });
 2. Select "Quick Copy" tab (default)
 3. Choose state: "rejected" (12 screens)
 4. Fields auto-fill:
-   - Platform: mobile-manager
+   - Platform: manager
    - Trigger Button: REJECT
    - Setup Actions: navigateToBooking, waitForLoad
    - Required Fields: bookingId, userId, clubId

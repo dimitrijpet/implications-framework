@@ -122,7 +122,7 @@ ARGUMENTS:
   <implication-file>    Path to Implication file
 
 OPTIONS:
-  --platform <name>     Platform: web, cms, mobile-dancer, mobile-manager
+  --platform <name>     Platform: web, cms, dancer, manager
                         Default: web
   
   --preview             Preview without writing file
@@ -134,8 +134,8 @@ EXAMPLES:
   # Generate web test
   node cli.js ../../tests/implications/bookings/status/AcceptedBookingImplications.js
   
-  # Generate mobile-dancer test
-  node cli.js ../../tests/implications/bookings/status/AcceptedBookingImplications.js --platform mobile-dancer
+  # Generate dancer test
+  node cli.js ../../tests/implications/bookings/status/AcceptedBookingImplications.js --platform dancer
   
   # Preview only
   node cli.js ../../tests/implications/bookings/status/AcceptedBookingImplications.js --preview
@@ -283,10 +283,10 @@ node tools/test-generator/cli.js \
   tests/implications/bookings/status/AcceptedBookingImplications.js \
   --preview
 
-# Generate mobile-dancer test
+# Generate dancer test
 node tools/test-generator/cli.js \
   tests/implications/bookings/status/AcceptedBookingImplications.js \
-  --platform mobile-dancer
+  --platform dancer
 
 # Custom output directory
 node tools/test-generator/cli.js \

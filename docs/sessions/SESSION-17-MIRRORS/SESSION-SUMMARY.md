@@ -49,7 +49,7 @@ await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async
 
 3. **`_getPlatformKeyForMirrorsOn(platform)`** (lines ~999-1011)
    - Maps platform names to mirrorsOn keys
-   - cms → CMS, web → Web, mobile-dancer → dancer
+   - cms → CMS, web → Web, dancer → dancer
 
 **Updated Existing Methods:**
 

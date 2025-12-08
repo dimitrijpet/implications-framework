@@ -23,7 +23,7 @@ ARGUMENTS:
   <implication-file>    Path to Implication file
 
 OPTIONS:
-  --platform <n>     Platform: web, cms, mobile-dancer, mobile-manager
+  --platform <n>     Platform: web, cms, dancer, manager
                         Default: web
   
   --state <n>        Target state (for multi-state machines)
@@ -51,8 +51,8 @@ EXAMPLES:
   # Generate with custom utils path
   node cli.js CMSPageImplications.js --platform cms --utils apps/cms/tests/utils
   
-  # Generate mobile-dancer test
-  node cli.js ../../tests/implications/bookings/AcceptedBookingImplications.js --platform mobile-dancer
+  # Generate dancer test
+  node cli.js ../../tests/implications/bookings/AcceptedBookingImplications.js --platform dancer
   
   # Preview only
   node cli.js ../../tests/implications/bookings/AcceptedBookingImplications.js --preview

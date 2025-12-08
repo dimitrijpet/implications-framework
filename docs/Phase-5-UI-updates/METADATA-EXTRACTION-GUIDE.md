@@ -183,7 +183,7 @@ export function extractXStateMetadata(content) {
 - `triggerButton` - Button name (e.g., "ACCEPT")
 - `afterButton` - Button shown after action
 - `previousButton` - Previous state button
-- `platform` - Platform name (mobile-manager, web, etc.)
+- `platform` - Platform name (manager, web, etc.)
 - `platforms` - Array of all platforms
 - `notificationKey` - Notification identifier
 - `statusCode` - Status code string
@@ -597,7 +597,7 @@ class AcceptedBookingImplications {
     meta: {
       status: "Accepted",
       triggerButton: "ACCEPT",
-      platform: "mobile-manager",
+      platform: "manager",
       requiredFields: ["dancerName", "clubName"]
     },
     on: {
@@ -645,7 +645,7 @@ class AcceptedBookingImplications {
 {
   status: "Accepted",
   triggerButton: "ACCEPT",
-  platform: "mobile-manager",
+  platform: "manager",
   requiredFields: ["dancerName", "clubName"]
 }
 ```
@@ -687,7 +687,7 @@ class AcceptedBookingImplications {
   pattern: 'booking',
   status: "Accepted",
   triggerButton: "ACCEPT",
-  platform: "mobile-manager",
+  platform: "manager",
   requiredFields: ["dancerName", "clubName"],
   uiCoverage: { total: 1, platforms: {...} }
 }
@@ -738,7 +738,7 @@ meta: {
 meta: {
   status: "Accepted",  // Literal string
   requiredFields: ["dancerName", "clubName"],  // Literal array
-  platform: "mobile-manager"  // Literal string
+  platform: "manager"  // Literal string
 }
 ```
 

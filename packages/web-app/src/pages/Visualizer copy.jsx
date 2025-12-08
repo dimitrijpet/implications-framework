@@ -792,7 +792,7 @@ const disableTransitionMode = () => {
               <h1 
                 className="text-4xl font-bold bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent"
               >
-                🎯 State Machine Viewer
+                😈 The Imp - State Machine
               </h1>
               <p className="text-sm mt-1" style={{ color: defaultTheme.colors.text.tertiary }}>
                 Interactive visualization & documentation

@@ -230,8 +230,8 @@ Generator Platform → mirrorsOn Key
 
 'web'              → 'Web'
 'cms'              → 'CMS'
-'mobile-dancer'    → 'dancer'
-'mobile-manager'   → 'clubApp'
+'dancer'    → 'dancer'
+'manager'   → 'clubApp'
 
 Example:
   platform: 'cms'

@@ -152,9 +152,10 @@ class ImplicationGenerator {
       
       // Helpers
       helpers: {
-        needsMergeWithBase: this._needsMergeWithBase(screens),
-        needsImplicationHelper: this._needsImplicationHelper(screens)
-      }
+  needsMergeWithBase: this._needsMergeWithBase(screens),
+  needsImplicationHelper: this._needsImplicationHelper(screens),
+  implicationHelperPath: this._calculateImplicationHelperPath(outputPath)
+}
     };
     
     return context;
@@ -272,6 +273,42 @@ class ImplicationGenerator {
   _needsImplicationHelper(screens) {
     return this._needsMergeWithBase(screens);
   }
+
+  /**
+ * Calculate relative path to ImplicationHelper
+ */
+_calculateImplicationHelperPath(fromPath) {
+  // Common locations for ImplicationHelper
+  const possiblePaths = [
+    path.join(this.options.projectPath, 'ai-testing/utils/ImplicationHelper.js'),
+    path.join(this.options.projectPath, 'tests/utils/ImplicationHelper.js'),
+    path.join(this.options.projectPath, 'tests/implications/ImplicationHelper.js')
+  ];
+  
+  // Find which one exists
+  let helperPath = null;
+  for (const possiblePath of possiblePaths) {
+    if (fs.existsSync(possiblePath)) {
+      helperPath = possiblePath;
+      break;
+    }
+  }
+  
+  // If not found, assume it will be in ai-testing/utils
+  if (!helperPath) {
+    helperPath = path.join(this.options.projectPath, 'ai-testing/utils/ImplicationHelper.js');
+  }
+  
+  // Calculate relative path
+  const relativePath = path.relative(path.dirname(fromPath), helperPath);
+  
+  // Ensure it starts with ./ or ../
+  if (!relativePath.startsWith('.')) {
+    return './' + relativePath;
+  }
+  
+  return relativePath;
+}
   
   /**
    * Convert status to state ID

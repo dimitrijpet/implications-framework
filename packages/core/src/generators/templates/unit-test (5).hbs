@@ -15,12 +15,6 @@ const { expect } = require('@wdio/globals');
 const TestContext = require('{{testContextPath}}');
 const {{implClassName}} = require('./{{implClassName}}.js');
 const TestPlanner = require('{{testPlannerPath}}');
-{{#if testSetupPath}}
-const TestSetup = require('{{testSetupPath}}');
-{{/if}}
-{{#if hasUIValidation}}
-const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
-{{/if}}
 {{#if hasPrerequisites}}
 {{#each prerequisiteImports}}
 const { {{actionName}} } = require('{{path}}');
@@ -120,25 +114,8 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   {{/if}}
   
   {{/each}}
-  {{else if hasTriggeredByAction}}
-  // ✅ FIX #5: Extracted action from mirrorsOn.triggeredBy
-  console.log('\n🎬 Executing action from triggeredBy...');
-  
-  // TODO: Import and initialize {{triggeredByInstanceName}}
-  // Example:
-  // const config = require('../../../../config/local/android.conf.js').config;
-  // const Actions = require('../../../mobile/android/manager/actions/Actions.js');
-  // const {{triggeredByInstanceName}} = new Actions(config, null);
-  
-  {{triggeredByActionCall}}
   {{else}}
   // TODO: Navigate to the screen where you perform this action
-  {{#if testSetupPath}}
-  // ✅ Option 1: Use TestSetup helper (if you've set it up)
-  // await TestSetup.navigateToApp(page, ctx.config);
-  
-  // ✅ Option 2: Manual navigation
-  {{/if}}
   // Example navigation:
   {{#if navigationExample}}
   {{{navigationExample}}}
@@ -176,7 +153,14 @@ const {{actionName}} = async (testDataPath, options = {}) => {
       
       {{#if hasDeltaLogic}}
       // ✨ Generated delta from entry: assign
+      {{#if meta.entity}}
+      // ✅ Entity-scoped state change ({{meta.entity}})
+      {{#each deltaFields}}
+      delta['{{../meta.entity}}.{{name}}'] = {{value}};
+      {{/each}}
+      {{else}}
       {{#if hasEntityLogic}}
+      // Array-based entity change
       for (const target of targets) {
         const entityPath = `{{entityName}}s[${target.index || 0}]`;
         delta[entityPath] = {
@@ -186,10 +170,11 @@ const {{actionName}} = async (testDataPath, options = {}) => {
         };
       }
       {{else}}
-      // Update single entity or root fields
+      // Global state change
       {{#each deltaFields}}
       delta['{{name}}'] = {{value}};
       {{/each}}
+      {{/if}}
       {{/if}}
       {{else}}
       // TODO: Customize delta based on what changed
@@ -245,23 +230,6 @@ if (!shouldSkipRegistration) {
         page{{#if params}},
         {{params}}{{/if}}
       });
-      
-      {{#if ../hasUIValidation}}
-      // ✅ FIX #6: Validate UI implications (mirrorsOn)
-      await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
-        const ctx = TestContext.load({{../implClassName}}, testDataPath);
-        
-        {{#each ../validationScreens}}
-        // {{screenKey}}: Visible ({{visible}}), Hidden ({{hidden}})
-        await ExpectImplication.validateImplications(
-          {{../../implClassName}}.mirrorsOn.UI.{{../../platform}}.{{screenKey}},
-          ctx.data,
-          page
-        );
-        
-        {{/each}}
-      });
-      {{/if}}
     });
     
     {{/each}}
