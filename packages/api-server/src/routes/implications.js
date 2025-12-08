@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import nodePath from 'path';
 import fs from 'fs-extra';
 import * as parser from '@babel/parser';
 import { parse } from '@babel/parser';
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import CompositionAnalyzer from '../services/CompositionAnalyzer.js';
 import CompositionRewriter from '../services/CompositionRewriter.js';
+import { extractUIImplications } from '../services/astParser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,6 +28,280 @@ const router = express.Router();
 Handlebars.registerHelper('camelCase', function(str) {
   return str.charAt(0).toLowerCase() + str.slice(1);
 });
+
+Handlebars.registerHelper('capitalize', function(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+});
+
+
+function normalizePlatform(platform) {
+  if (!platform) return 'web';
+  
+  // Convert old names to new names
+  const normalized = platform
+    .replace('mobile-manager', 'manager')
+    .replace('mobile-dancer', 'dancer');
+  
+  return normalized;
+}
+
+/**
+ * Convert mirrorsOn.UI AST back to template-friendly structure
+ */
+function astToTemplateUI(uiNode) {
+  if (uiNode.type !== 'ObjectExpression') return {};
+  
+  const result = {};
+  
+  // For each platform (web, dancer, clubApp, etc.)
+  uiNode.properties.forEach(platformProp => {
+    const platformName = platformProp.key?.name;
+    if (!platformName || platformProp.value.type !== 'ObjectExpression') return;
+    
+    const screens = {};
+    
+    // For each screen in this platform
+    platformProp.value.properties.forEach(screenProp => {
+      const screenName = screenProp.key?.name;
+      if (!screenName) return;
+      
+      // Check if screen value is an array
+      if (screenProp.value.type === 'ArrayExpression') {
+        screens[screenName] = screenProp.value.elements.map(el => {
+          // Handle both direct objects and mergeWithBase calls
+          if (el.type === 'CallExpression' && 
+              el.callee?.property?.name === 'mergeWithBase') {
+            // It's a mergeWithBase call - mark it as extending base
+            return {
+              screenKey: screenName,
+              extendsBase: true,
+              // Can't easily extract overrides from AST, will use base
+            };
+          } else if (el.type === 'ObjectExpression') {
+            // Direct object - extract properties
+            return extractScreenDataFromAstNode(el, screenName);
+          }
+          return null;
+        }).filter(Boolean);
+      }
+    });
+    
+    result[platformName] = screens;
+  });
+  
+  return result;
+}
+
+/**
+ * Extract screen data from AST node
+ */
+function extractScreenDataFromAstNode(node, screenName) {
+  const screen = { screenKey: screenName };
+  
+  node.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    if (key === 'description' && prop.value.type === 'StringLiteral') {
+      screen.description = prop.value.value;
+    } else if (key === 'visible' && prop.value.type === 'ArrayExpression') {
+      screen.visible = prop.value.elements
+        .filter(el => el.type === 'StringLiteral')
+        .map(el => el.value);
+    } else if (key === 'hidden' && prop.value.type === 'ArrayExpression') {
+      screen.hidden = prop.value.elements
+        .filter(el => el.type === 'StringLiteral')
+        .map(el => el.value);
+   } else if (key === 'checks' && prop.value.type === 'ObjectExpression') {
+      screen.checks = {};
+      
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        
+        // Text checks (exact match) - ObjectExpression
+        if (checkKey === 'text' && checkProp.value.type === 'ObjectExpression') {
+          screen.checks.text = {};
+          checkProp.value.properties.forEach(textProp => {
+            if (textProp.value.type === 'StringLiteral') {
+              screen.checks.text[textProp.key.name] = textProp.value.value;
+            }
+          });
+        }
+        // ✅ ADD: Contains checks (partial match) - ObjectExpression
+        else if (checkKey === 'contains' && checkProp.value.type === 'ObjectExpression') {
+          screen.checks.contains = {};
+          checkProp.value.properties.forEach(containsProp => {
+            if (containsProp.value.type === 'StringLiteral') {
+              screen.checks.contains[containsProp.key.name] = containsProp.value.value;
+            }
+          });
+        }
+        // Array-based checks (visible, hidden)
+        else if (checkProp.value.type === 'ArrayExpression') {
+          screen.checks[checkKey] = checkProp.value.elements
+            .filter(el => el.type === 'StringLiteral')
+            .map(el => el.value);
+        } 
+      });
+    } else if (key === 'functions' && prop.value.type === 'ObjectExpression') {
+      screen.functions = {};
+      
+      prop.value.properties.forEach(funcProp => {
+        const funcName = funcProp.key?.name;
+        if (!funcName) return;
+        
+        if (funcProp.value.type === 'ObjectExpression') {
+          screen.functions[funcName] = {};
+          
+          funcProp.value.properties.forEach(funcDetailProp => {
+            const detailKey = funcDetailProp.key?.name;
+            
+            // Extract signature
+            if (detailKey === 'signature' && funcDetailProp.value.type === 'StringLiteral') {
+              screen.functions[funcName].signature = funcDetailProp.value.value;
+            }
+            // Extract parameters object
+            else if (detailKey === 'parameters' && funcDetailProp.value.type === 'ObjectExpression') {
+              screen.functions[funcName].parameters = {};
+              
+              funcDetailProp.value.properties.forEach(paramProp => {
+                const paramKey = paramProp.key?.name;
+                if (paramProp.value.type === 'StringLiteral') {
+                  screen.functions[funcName].parameters[paramKey] = paramProp.value.value;
+                }
+              });
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  console.log(`      📋 Screen data:`, JSON.stringify(screen, null, 2));
+return screen;
+}
+
+/**
+ * Extract UI structure from source implication file
+ */
+async function extractUIFromSource(sourceFilePath) {
+  try {
+    const content = await fs.readFile(sourceFilePath, 'utf-8');
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let uiStructure = null;
+    let needsImplicationHelper = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'mirrorsOn' && path.node.static) {
+          const mirrorsOnValue = path.node.value;
+          
+          if (mirrorsOnValue?.type === 'ObjectExpression') {
+            const uiProp = mirrorsOnValue.properties.find(
+              p => p.key?.name === 'UI'
+            );
+            
+            if (uiProp) {
+              console.log('  ✅ Found UI property in mirrorsOn');
+              
+              // Check if UI uses ImplicationHelper
+              const uiCode = babelGenerate.default(uiProp.value).code;
+              console.log('  📋 Raw UI code preview:', uiCode.substring(0, 150) + '...');
+              
+              if (uiCode.includes('ImplicationHelper') || uiCode.includes('mergeWithBase')) {
+                needsImplicationHelper = true;
+                console.log('  ✅ Detected ImplicationHelper usage');
+              }
+              
+              // Extract platform→screens structure
+              uiStructure = extractUIPlatforms(uiProp.value);
+              console.log('  📦 Extracted platforms:', Object.keys(uiStructure || {}));
+              
+              // Debug: Show full structure
+              if (uiStructure) {
+                Object.entries(uiStructure).forEach(([platform, screens]) => {
+                  console.log(`     - ${platform}: ${Object.keys(screens).length} screen(s)`);
+                });
+              }
+            } else {
+              console.log('  ⚠️ No UI property found in mirrorsOn');
+            }
+          }
+        }
+      }
+    });
+    
+    return { uiStructure, needsImplicationHelper };
+  } catch (error) {
+    console.error('Failed to extract UI from source:', error);
+    return { uiStructure: null, needsImplicationHelper: false };
+  }
+}
+
+/**
+ * Extract platforms from UI AST node
+ */
+/**
+ * Extract complete UI structure from AST node
+ */
+function extractUIPlatforms(uiNode) {
+  if (uiNode.type !== 'ObjectExpression') return null;
+  
+  const result = {};
+  
+  uiNode.properties.forEach(platformProp => {
+    const platformName = platformProp.key?.name || platformProp.key?.value;
+    if (!platformName || platformProp.value.type !== 'ObjectExpression') return;
+    
+    // Extract screens for this platform
+    const screens = {};
+    
+    platformProp.value.properties.forEach(screenProp => {
+      const screenName = screenProp.key?.name;
+      if (!screenName) return;
+      
+      // Check if screen value is an array
+      if (screenProp.value.type === 'ArrayExpression') {
+        screens[screenName] = screenProp.value.elements.map(el => {
+  // Handle mergeWithBase calls
+  if (el.type === 'CallExpression' && 
+      el.callee?.property?.name === 'mergeWithBase') {
+    
+    // ✅ NEW: Extract overrides from 2nd argument
+    const overridesArg = el.arguments[1];
+    if (overridesArg && overridesArg.type === 'ObjectExpression') {
+      const overrides = extractScreenDataFromAstNode(overridesArg, screenName);
+      return {
+        screenKey: screenName,
+        extendsBase: true,
+        ...overrides  // ✅ Include extracted overrides!
+      };
+    }
+    
+    // Fallback if can't extract
+    return {
+      screenKey: screenName,
+      extendsBase: true
+    };
+  }
+          // Handle direct objects
+          else if (el.type === 'ObjectExpression') {
+            return extractScreenDataFromAstNode(el, screenName);
+          }
+          return null;
+        }).filter(Boolean);
+      }
+    });
+    
+    result[platformName] = screens;  // ✅ Store screens, not just true!
+  });
+  
+  return result;  // ✅ Returns { clubApp: { StatusRequestsScreen: [...] } }
+}
 
 /**
  * POST /api/implications/create-state
@@ -70,44 +346,111 @@ router.post('/create-state', async (req, res) => {
     const stateId = stateName.toLowerCase();
     
     // Build template data
-    const templateData = {
-      className,
-      stateId,
-      timestamp: new Date().toISOString(),
-      initial: 'idle',
-      status: status || null,                    // ✅ Use status field
-      platform: platform || 'web',
-      description: description || null,           // ✅ Use description field
-      context: cleanContext,                      // ✅ Use cleaned context
-      hasEntry: !!status,
-      
-      meta: {
-        status: status || displayName || toPascalCase(stateName),
-        statusLabel: displayName || toPascalCase(stateName),
-        triggerAction: triggerButton ? toCamelCase(triggerButton) : null,
-        platform: platform || null,
-        triggerButton: triggerButton || null,
-        afterButton: afterButton || null,
-        previousButton: previousButton || null,
-        statusCode: statusCode || null,
-        statusNumber: statusNumber ? parseInt(statusNumber) : null,
-        notificationKey: notificationKey || null,
-        setupActions: setupActions || null,
-        requiredFields: requiredFields || null
-      }
-    };
+// Build template data
+const templateData = {
+  className,
+  stateId,
+  timestamp: new Date().toISOString(),
+  initial: 'idle',
+  status: status || null,
+  platform: platform || 'web',
+  description: description || null,
+  context: cleanContext,
+  hasEntry: !!status,
+  
+  // ✅ NEW: Tags support
+  tags: req.body.tags || null,
+  
+  // ✅ NEW: Empty setup entries (will be populated when transitions are added)
+  setupEntries: [],
+  
+  meta: {
+    status: status || displayName || toPascalCase(stateName),
+    statusLabel: displayName || toPascalCase(stateName),
+    triggerAction: triggerButton ? toCamelCase(triggerButton) : null,
+    platform: platform || 'web',
+    triggerButton: triggerButton || null,
+    afterButton: afterButton || null,
+    previousButton: previousButton || null,
+    statusCode: statusCode || null,
+    statusNumber: statusNumber ? parseInt(statusNumber) : null,
+    notificationKey: notificationKey || null,
+    setupActions: setupActions || null,
+    requiredFields: requiredFields || null
+  }
+};
     
     console.log('📝 Template data:', templateData);
+       // ✅ NEW: Copy UI from source if provided
+    if (copyFrom) {
+      console.log('📋 Attempting to copy UI from:', copyFrom);
+      
+      try {
+        // Find source file
+        const sourceClassName = toPascalCase(copyFrom) + 'Implications';
+        const searchPatterns = [
+          path.join(projectPath, `**/*${sourceClassName}.js`),
+          path.join(projectPath, `**/${sourceClassName}.js`)
+        ];
+        
+        let sourceFile = null;
+        for (const pattern of searchPatterns) {
+          const files = await glob(pattern, { ignore: ['**/node_modules/**'] });
+          if (files.length > 0) {
+            sourceFile = files[0];
+            break;
+          }
+        }
+        
+      if (sourceFile) {
+  console.log('  ✅ Found source file:', path.basename(sourceFile));
+  
+  const { uiStructure, needsImplicationHelper } = await extractUIFromSource(sourceFile);
+  
+  if (uiStructure && Object.keys(uiStructure).length > 0) {
+    console.log('  ✅ Source has UI platforms:', Object.keys(uiStructure));
     
+    // ✅ Try exact platform match first
+    if (uiStructure[platform]) {
+      templateData.screens = uiStructure[platform];
+      console.log(`  ✅ Copied screens from matching platform '${platform}':`, Object.keys(uiStructure[platform]));
+    } 
+    // ✅ Fallback: Use first available platform
+    else {
+      const firstPlatform = Object.keys(uiStructure)[0];
+      templateData.screens = uiStructure[firstPlatform];
+      console.log(`  ⚠️ No UI for '${platform}', using '${firstPlatform}' instead`);
+      console.log(`  ✅ Copied screens:`, Object.keys(uiStructure[firstPlatform]));
+      
+      // Update template to use correct platform
+      templateData.sourcePlatform = firstPlatform;
+    }
+  }
+  
+  if (needsImplicationHelper) {
+    console.log('  ✅ Source uses ImplicationHelper');
+    templateData.helpers = {
+      needsImplicationHelper: true,
+      implicationHelperPath: '../../ImplicationsHelper.js'
+    };
+  }
+} else {
+          console.log('  ⚠️ Source file not found');
+        }
+      } catch (error) {
+        console.warn('  ⚠️ Could not extract UI from source:', error.message);
+      }
+    }
+    
+    console.log('📝 Template data:', templateData);
     // Load template
     const templatePath = path.join(__dirname, '../templates/implication.hbs');
     const templateContent = await fs.readFile(templatePath, 'utf-8');
     
     // Register JSON helper for Handlebars
-    Handlebars.registerHelper('json', function(context) {
-      return JSON.stringify(context);
-    });
-    
+   Handlebars.registerHelper('json', function(context) {
+  return JSON.stringify(context);
+});
     const template = Handlebars.compile(templateContent);
     
     // Generate code
@@ -152,6 +495,142 @@ function toPascalCase(str) {
 function toCamelCase(str) {
   const pascal = toPascalCase(str);
   return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+}
+
+/**
+ * GET /api/implications/get-transition
+ * Get full transition data from an implication file
+ * 
+ * Query params:
+ * - filePath: Path to implication file
+ * - event: Event name to get
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   event: "UNBLOCK_CLUB",
+ *   transition: {
+ *     target: "dancer_logged_in",
+ *     platforms: ["dancer"],
+ *     actionDetails: {
+ *       description: "...",
+ *       navigationFile: "NavigationActionsDancer",
+ *       navigationMethod: "navigateToBlockedClubs()",
+ *       imports: [...],
+ *       steps: [...]
+ *     }
+ *   }
+ * }
+ */
+router.get('/get-transition', async (req, res) => {
+  try {
+    const { filePath, event } = req.query;
+    
+    if (!filePath || !event) {
+      return res.status(400).json({ 
+        error: 'filePath and event are required' 
+      });
+    }
+    
+    console.log(`📡 Getting transition "${event}" from: ${path.basename(filePath)}`);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let transitionData = null;
+    
+    traverse(ast, {
+      ClassDeclaration(classPath) {
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            if (t.isObjectExpression(member.value)) {
+              const onProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'on'
+              );
+              
+              if (onProp && t.isObjectExpression(onProp.value)) {
+                // Find the specific event
+                const eventProp = onProp.value.properties.find(
+                  p => t.isObjectProperty(p) && 
+                       (p.key.name === event || p.key.value === event)
+                );
+                
+                if (eventProp) {
+                  // Extract the full transition value
+                  transitionData = extractTransitionValue(eventProp.value);
+                  console.log(`   ✅ Found transition data for ${event}`);
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!transitionData) {
+      return res.status(404).json({ 
+        error: `Transition "${event}" not found in file` 
+      });
+    }
+    
+    console.log(`✅ Transition data:`, JSON.stringify(transitionData, null, 2));
+    
+    res.json({
+      success: true,
+      event,
+      transition: transitionData
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting transition:', error);
+    res.status(500).json({ 
+      error: error.message 
+    });
+  }
+});
+
+function extractTransitionValue(node) {
+  if (t.isStringLiteral(node)) {
+    // Simple: EVENT: "target"
+    return { target: node.value };
+  }
+  
+  if (t.isObjectExpression(node)) {
+    // Complex: EVENT: { target: "...", platforms: [...], actionDetails: {...} }
+    const result = {};
+    
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        result[key] = extractValueFromNode(prop.value);
+      }
+    });
+    
+    return result;
+  }
+  
+  if (t.isArrayExpression(node)) {
+    // Array of transitions: EVENT: [{...}, {...}]
+    // Return first one for now (or could return all)
+    if (node.elements.length > 0) {
+      return extractTransitionValue(node.elements[0]);
+    }
+    return null;
+  }
+  
+  return null;
 }
 
 /**
@@ -396,10 +875,6 @@ ${originalContent}
   }
 });
 
-/**
- * POST /api/implications/update-metadata
- * Update state metadata and transitions in implication file
- */
 router.post('/update-metadata', async (req, res) => {
   try {
     const { filePath, metadata, transitions } = req.body;
@@ -412,6 +887,12 @@ router.post('/update-metadata', async (req, res) => {
     
     console.log(`📝 Updating metadata in: ${path.basename(filePath)}`);
     console.log(`📊 Fields to update:`, Object.keys(metadata));
+    
+    // ✅ NEW: Warn if transitions were sent (they will be ignored)
+    if (transitions && transitions.length > 0) {
+      console.log(`⚠️  WARNING: transitions parameter received but will be IGNORED`);
+      console.log(`   Use dedicated endpoints: /add-transition, /update-transition, /delete-transition`);
+    }
     
     const fileExists = await fs.pathExists(filePath);
     if (!fileExists) {
@@ -428,7 +909,7 @@ router.post('/update-metadata', async (req, res) => {
     let modified = false;
     
     traverse(ast, {
-  ClassDeclaration(classPath) {
+      ClassDeclaration(classPath) {
         classPath.node.body.body.forEach((member) => {
           if (t.isClassProperty(member) && 
               member.static && 
@@ -439,100 +920,91 @@ router.post('/update-metadata', async (req, res) => {
                 p => t.isObjectProperty(p) && p.key.name === 'meta'
               );
               
-             if (metaProp && t.isObjectExpression(metaProp.value)) {
-  // ✅ WHITELIST: Only update these simple fields
-  const EDITABLE_FIELDS = [
-    'status',
-    'statusCode', 
-    'statusNumber',
-    'triggerButton',
-    'afterButton',
-    'previousButton',
-    'triggerAction',
-    'notificationKey',
-    'platform'
-  ];
-  
-  Object.entries(metadata).forEach(([key, value]) => {
-    // ❌ Skip if not in whitelist
-    if (!EDITABLE_FIELDS.includes(key)) {
-      console.log(`  ⏭️  Skipping ${key} (not editable)`);
-      return;
-    }
-    
-    // ❌ Skip undefined
-    if (value === undefined) return;
-    
-    const existingProp = metaProp.value.properties.find(
-      p => t.isObjectProperty(p) && p.key.name === key
-    );
-    
-    // Create the AST node for SIMPLE values only
-    let valueNode;
-    if (value === null) {
-      valueNode = t.nullLiteral();
-    } else if (typeof value === 'string') {
-      valueNode = t.stringLiteral(value);
-    } else if (typeof value === 'number') {
-      valueNode = t.numericLiteral(value);
-    } else {
-      console.log(`  ⚠️  Skipping ${key} - complex type`);
-      return;
-    }
-    
-    if (existingProp) {
-      // ✅ Update existing
-      existingProp.value = valueNode;
-      console.log(`  ✏️  Updated ${key}: ${value}`);
-      modified = true;
-    } else {
-      // ✅ Add new (simple fields only)
-      const newProp = t.objectProperty(
-        t.identifier(key),
-        valueNode
-      );
-      metaProp.value.properties.push(newProp);
-      console.log(`  ➕ Added ${key}: ${value}`);
-      modified = true;
-    }
-  });
-}
-              
-              // Handle transitions
-              if (transitions) {
-                const onProp = member.value.properties.find(
-                  p => t.isObjectProperty(p) && p.key.name === 'on'
-                );
+              if (metaProp && t.isObjectExpression(metaProp.value)) {
+                // ✅ WHITELIST: Only update these simple fields
+                const EDITABLE_FIELDS = [
+                  'status',
+                  'statusCode', 
+                  'statusNumber',
+                  'triggerButton',
+                  'afterButton',
+                  'previousButton',
+                  'triggerAction',
+                  'notificationKey',
+                  'platform'
+                ];
                 
-                if (onProp) {
-                  onProp.value = t.objectExpression(
-                    transitions.map(trans => 
-                      t.objectProperty(
-                        t.identifier(trans.event),
-                        t.stringLiteral(trans.target)
-                      )
-                    )
+                Object.entries(metadata).forEach(([key, value]) => {
+                  // ❌ Skip if not in whitelist
+                  if (!EDITABLE_FIELDS.includes(key)) {
+                    console.log(`  ⏭️  Skipping ${key} (not editable)`);
+                    return;
+                  }
+                  
+                  // ❌ Skip undefined
+                  if (value === undefined) return;
+                  
+                  const existingProp = metaProp.value.properties.find(
+                    p => t.isObjectProperty(p) && p.key.name === key
                   );
-                  console.log(`  🔄 Updated ${transitions.length} transitions`);
-                  modified = true;
-                } else if (transitions.length > 0) {
-                  // ✅ ADD 'on' property if it doesn't exist
-                  const newOnProp = t.objectProperty(
-                    t.identifier('on'),
-                    t.objectExpression(
-                      transitions.map(trans =>
-                        t.objectProperty(
-                          t.identifier(trans.event),
-                          t.stringLiteral(trans.target)
-                        )
-                      )
-                    )
-                  );
-                  member.value.properties.push(newOnProp);
-                  console.log(`  ➕ Added 'on' with ${transitions.length} transitions`);
-                  modified = true;
-                }
+                  
+                  // Create the AST node for SIMPLE values only
+                  let valueNode;
+                  if (value === null) {
+                    valueNode = t.nullLiteral();
+                  } else if (typeof value === 'string') {
+                    valueNode = t.stringLiteral(value);
+                  } else if (typeof value === 'number') {
+                    valueNode = t.numericLiteral(value);
+                  } else {
+                    console.log(`  ⚠️  Skipping ${key} - complex type`);
+                    return;
+                  }
+                  
+                  if (existingProp) {
+                    // ✅ Update existing
+                    existingProp.value = valueNode;
+                    console.log(`  ✏️  Updated ${key}: ${value}`);
+                    modified = true;
+                  } else {
+                    // ✅ Add new (simple fields only)
+                    const newProp = t.objectProperty(
+                      t.identifier(key),
+                      valueNode
+                    );
+                    metaProp.value.properties.push(newProp);
+                    console.log(`  ➕ Added ${key}: ${value}`);
+                    modified = true;
+                  }
+                });
               }
+              
+              // ═══════════════════════════════════════════════════════════
+              // ❌ REMOVED: Transition handling that was destroying data
+              // ═══════════════════════════════════════════════════════════
+              // 
+              // The following code was REMOVED because it converted:
+              //   UNBLOCK_CLUB: { target: "...", platforms: [...], actionDetails: {...} }
+              // Into:
+              //   UNBLOCK_CLUB: "..."  (losing platforms, actionDetails, etc.)
+              //
+              // OLD BROKEN CODE (DO NOT USE):
+              // if (transitions) {
+              //   const onProp = member.value.properties.find(
+              //     p => t.isObjectProperty(p) && p.key.name === 'on'
+              //   );
+              //   if (onProp) {
+              //     onProp.value = t.objectExpression(
+              //       transitions.map(trans => 
+              //         t.objectProperty(
+              //           t.identifier(trans.event),
+              //           t.stringLiteral(trans.target)  // ← DESTROYED STRUCTURE!
+              //         )
+              //       )
+              //     );
+              //   }
+              // }
+              // ═══════════════════════════════════════════════════════════
             }
           }
         });
@@ -540,14 +1012,19 @@ router.post('/update-metadata', async (req, res) => {
     });
     
     if (!modified) {
-      return res.status(400).json({ 
-        error: 'Could not update metadata - no xstateConfig found'
+      // ✅ IMPROVED: Return success even if nothing changed
+      console.log('ℹ️  No metadata fields were modified');
+      return res.json({ 
+        success: true,
+        message: 'No metadata fields needed updating',
+        filePath,
+        modified: { metadata: [], transitions: 0 }
       });
     }
     
     // Generate code with better formatting
     const output = babelGenerate.default(ast, {
-      retainLines: false,  // ✅ Better formatting
+      retainLines: false,
       compact: false,
       comments: true,
       concise: false
@@ -568,9 +1045,16 @@ router.post('/update-metadata', async (req, res) => {
       filePath,
       backup: backupPath,
       modified: { 
-        metadata: Object.keys(metadata), 
-        transitions: transitions?.length || 0 
-      }
+        metadata: Object.keys(metadata).filter(k => 
+          ['status', 'statusCode', 'statusNumber', 'triggerButton', 
+           'afterButton', 'previousButton', 'triggerAction', 
+           'notificationKey', 'platform'].includes(k)
+        ),
+        transitions: 0  // ✅ Always 0 now - we don't touch transitions here
+      },
+      warning: transitions?.length > 0 
+        ? 'Transitions parameter was ignored. Use /add-transition, /update-transition, or /delete-transition endpoints.'
+        : undefined
     });
     
   } catch (error) {
@@ -581,6 +1065,172 @@ router.post('/update-metadata', async (req, res) => {
     });
   }
 });
+
+router.post('/update-tags', async (req, res) => {
+  try {
+    const { filePath, tags } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`🏷️ Updating tags in: ${path.basename(filePath)}`);
+    console.log(`📊 Tags:`, tags);
+    
+    const fileExists = await fs.pathExists(filePath);
+    if (!fileExists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    const originalContent = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(originalContent, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse(ast, {
+      ClassDeclaration(classPath) {
+        console.log(`📍 Found class: ${classPath.node.id?.name}`);
+        classPath.node.body.body.forEach((member) => {
+          if (t.isClassProperty(member) && member.static) {
+            console.log(`   📍 Static property: ${member.key?.name}`);
+          }
+          if (t.isClassProperty(member) && 
+              member.static && 
+              member.key.name === 'xstateConfig') {
+            
+            console.log(`   ✅ Found xstateConfig`);
+            if (t.isObjectExpression(member.value)) {
+              const metaProp = member.value.properties.find(
+                p => t.isObjectProperty(p) && p.key.name === 'meta'
+              );
+              
+              console.log(`   📍 Found meta in xstateConfig: ${!!metaProp}`);
+              if (metaProp && t.isObjectExpression(metaProp.value)) {
+                // Find existing tags property
+                let tagsProp = metaProp.value.properties.find(
+                  p => t.isObjectProperty(p) && p.key.name === 'tags'
+                );
+                
+                // Helper to build array AST node
+                const buildArrayNode = (arr) => {
+                  if (!arr || !Array.isArray(arr) || arr.length === 0) return null;
+                  return t.arrayExpression(arr.map(item => t.stringLiteral(item)));
+                };
+                
+                // Build tags object - support arrays
+                const tagsProperties = [];
+                
+                // Handle screen - can be string or array
+                const screenArray = Array.isArray(tags?.screen) 
+                  ? tags.screen.filter(s => s && s.trim())
+                  : (tags?.screen?.trim() ? [tags.screen.trim()] : []);
+                if (screenArray.length > 0) {
+                  tagsProperties.push(
+                    t.objectProperty(
+                      t.identifier('screen'),
+                      buildArrayNode(screenArray)
+                    )
+                  );
+                }
+                
+                // Handle group - can be string or array
+                const groupArray = Array.isArray(tags?.group)
+                  ? tags.group.filter(g => g && g.trim())
+                  : (tags?.group?.trim() ? [tags.group.trim()] : []);
+                if (groupArray.length > 0) {
+                  tagsProperties.push(
+                    t.objectProperty(
+                      t.identifier('group'),
+                      buildArrayNode(groupArray)
+                    )
+                  );
+                }
+                
+                // If no tags, remove the tags property entirely
+                if (tagsProperties.length === 0) {
+                  if (tagsProp) {
+                    const idx = metaProp.value.properties.indexOf(tagsProp);
+                    if (idx > -1) {
+                      metaProp.value.properties.splice(idx, 1);
+                      console.log('🗑️ Removed empty tags property');
+                      modified = true;
+                    }
+                  }
+                } else {
+                  const tagsNode = t.objectExpression(tagsProperties);
+                  
+                  if (tagsProp) {
+                    // Update existing
+                    tagsProp.value = tagsNode;
+                    console.log('✏️ Updated existing tags:', { screen: screenArray, group: groupArray });
+                  } else {
+                    // Add new tags property after status
+                    const statusIdx = metaProp.value.properties.findIndex(
+                      p => t.isObjectProperty(p) && p.key.name === 'status'
+                    );
+                    const insertIdx = statusIdx >= 0 ? statusIdx + 1 : 0;
+                    
+                    metaProp.value.properties.splice(
+                      insertIdx,
+                      0,
+                      t.objectProperty(t.identifier('tags'), tagsNode)
+                    );
+                    console.log('➕ Added new tags property:', { screen: screenArray, group: groupArray });
+                  }
+                  modified = true;
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+    
+    if (!modified) {
+      return res.json({ 
+        success: true,
+        message: 'No tags changes needed',
+        filePath
+      });
+    }
+    
+    // Generate code
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, originalContent);
+    
+    // Create backup
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    console.log('📦 Backup created:', path.basename(backupPath));
+    
+    // Write updated file
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Tags updated successfully');
+    
+    res.json({
+      success: true,
+      filePath,
+      backup: backupPath,
+      tags
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating tags:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 
 /**
  * POST /api/implications/update-composition
@@ -939,7 +1589,9 @@ router.post('/update-ui', async (req, res) => {
     }
     
     // Build new UI AST with smart preservation
-    const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent);
+    const className = path.basename(filePath, '.js');
+
+const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, className);
     
     // Second pass: Replace UI node
     traverse(ast, {
@@ -1005,39 +1657,83 @@ router.post('/update-ui', async (req, res) => {
   }
 });
 
+
+
 /**
- * ✅ SMART: Build UI AST while preserving original structure where possible
+ * ✅ SMART: Build UI AST while preserving untouched platforms and screens
  */
-function buildSmartUIAst(newData, originalUINode, originalContent) {
+function buildSmartUIAst(newData, originalUINode, originalContent, className) {
   const platformProps = [];
   
-  // For each platform in new data
-  for (const [platformName, platformData] of Object.entries(newData)) {
-    // Find original platform node
+  // ✅ Step 1: Get all original platform names
+  const originalPlatformNames = originalUINode.properties.map(p => p.key?.name).filter(Boolean);
+  console.log('  📋 Original platforms:', originalPlatformNames);
+  console.log('  📋 Updated platforms:', Object.keys(newData));
+  
+  // ✅ Step 2: Process all original platforms
+  for (const platformName of originalPlatformNames) {
     const originalPlatformProp = originalUINode.properties.find(
       p => p.key?.name === platformName
     );
     
-    let platformScreenProps;
+    if (!originalPlatformProp) continue;
     
-    if (originalPlatformProp && t.isObjectExpression(originalPlatformProp.value)) {
-      // Platform exists in original - preserve what we can
-      platformScreenProps = buildSmartScreenProps(
-        platformData.screens,
+    // Check if this platform is being updated
+    if (newData[platformName]) {
+      // ✅ Platform is in update - use new data
+      console.log(`  🔧 Updating platform: ${platformName}`);
+      
+      const screensArray = Object.entries(newData[platformName].screens || {}).map(([screenName, screenData]) => ({
+        ...screenData,
+        screenName: screenName
+      }));
+      
+      const platformScreenProps = buildSmartScreenProps(
+        screensArray,
         originalPlatformProp.value,
-        originalContent
+        originalContent,
+        platformName,
+        className
+      );
+      
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          t.objectExpression(platformScreenProps)
+        )
       );
     } else {
-      // New platform - build from scratch
-      platformScreenProps = buildScreenPropsFromData(platformData.screens);
+      // ✅ Platform NOT in update - preserve original completely!
+      console.log(`  ♻️  Preserving untouched platform: ${platformName}`);
+      
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          originalPlatformProp.value  // Use original AST node!
+        )
+      );
     }
-    
-    platformProps.push(
-      t.objectProperty(
-        t.identifier(platformName),
-        t.objectExpression(platformScreenProps)
-      )
-    );
+  }
+  
+  // ✅ Step 3: Add any NEW platforms that weren't in original
+  for (const [platformName, platformData] of Object.entries(newData)) {
+    if (!originalPlatformNames.includes(platformName)) {
+      console.log(`  ➕ Adding new platform: ${platformName}`);
+      
+      const screensArray = Object.entries(platformData.screens || {}).map(([screenName, screenData]) => ({
+        ...screenData,
+        screenName: screenName
+      }));
+      
+      const platformScreenProps = buildScreenPropsFromData(screensArray);
+      
+      platformProps.push(
+        t.objectProperty(
+          t.identifier(platformName),
+          t.objectExpression(platformScreenProps)
+        )
+      );
+    }
   }
   
   return t.objectExpression(platformProps);
@@ -1046,58 +1742,614 @@ function buildSmartUIAst(newData, originalUINode, originalContent) {
 /**
  * Build screen properties while preserving original AST where unchanged
  */
-function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent) {
-  // Group new screens by originalName
-  const screenGroups = {};
+function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent, platformName, className) {
+  // ✅ First, get ALL original screen names
+  const originalScreenNames = originalPlatformNode.properties.map(p => p.key?.name).filter(Boolean);
+  
+  // ✅ Build a map of new screens by name
+  const newScreensMap = {};
   newScreens.forEach(screen => {
-    const key = screen.originalName || screen.name;
-    if (!screenGroups[key]) {
-      screenGroups[key] = [];
+    const key = screen.screenName || screen.originalName || screen.name;
+    if (!newScreensMap[key]) {
+      newScreensMap[key] = [];
     }
-    screenGroups[key].push(screen);
+    newScreensMap[key].push(screen);
   });
+  
+  console.log(`    📊 Original screens: ${originalScreenNames.length}, New screens: ${Object.keys(newScreensMap).length}`);
   
   const screenProps = [];
   
-  for (const [screenKey, screens] of Object.entries(screenGroups)) {
-    // Find original screen array
+  // ✅ Process ALL original screens (preserve those not in update)
+  for (const screenName of originalScreenNames) {
     const originalScreenProp = originalPlatformNode.properties.find(
-      p => p.key?.name === screenKey
+      p => p.key?.name === screenName
     );
     
-    let screenArrayNode;
+    if (!originalScreenProp) continue;
     
-    if (originalScreenProp && t.isArrayExpression(originalScreenProp.value)) {
-      // Check if screens changed
-      const hasChanges = screensHaveChanges(screens, originalScreenProp.value);
+    let screenNode;
+    
+    // Check if this screen is in the update
+    if (newScreensMap[screenName]) {
+      // ✅ Screen is being updated
+      const screens = newScreensMap[screenName];
+      const screen = screens[0]; // Usually just one screen per key
       
-      if (!hasChanges) {
-        // ✅ NO CHANGES - Use original AST (preserves spreads, merges, comments!)
-        console.log(`  ✨ Preserving original AST for ${screenKey}`);
-        screenArrayNode = originalScreenProp.value;
+      // ═══════════════════════════════════════════════════════════
+      // DETECT ORIGINAL FORMAT
+      // ═══════════════════════════════════════════════════════════
+      const originalFormat = detectScreenFormat(originalScreenProp.value);
+      console.log(`    📋 ${screenName}: original format = ${originalFormat}`);
+      
+      if (originalFormat === 'direct-object') {
+        // ─────────────────────────────────────────────────────────
+        // DIRECT OBJECT FORMAT: { visible: [...], hidden: [...] }
+        // ─────────────────────────────────────────────────────────
+        const comparisonResult = screenHasChangesDirectObject(screen, originalScreenProp.value);
+        
+        if (!comparisonResult.hasChanges) {
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
+        } else {
+          console.log(`    🔧 Regenerating ${screenName} as direct object`);
+          // Preserve original function nodes
+          if (comparisonResult.originalFunctions.prerequisites) {
+            screen._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+          }
+          if (comparisonResult.originalFunctions.expect) {
+            screen._originalExpect = comparisonResult.originalFunctions.expect;
+          }
+          // ✅ Use buildScreenObjectAstWithBlocks (direct object, no mergeWithBase)
+          screenNode = buildScreenObjectAstWithBlocks(screen);
+        }
+        
+      } else if (originalFormat === 'array-direct') {
+        // ─────────────────────────────────────────────────────────
+        // ARRAY OF DIRECT OBJECTS: [{ visible: [...] }]
+        // ─────────────────────────────────────────────────────────
+        const comparisonResult = screensHaveChanges(screens, originalScreenProp.value);
+        
+        if (!comparisonResult.hasChanges) {
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
+        } else {
+          console.log(`    🔧 Regenerating ${screenName} as array of direct objects`);
+          screenNode = t.arrayExpression(
+            screens.map(s => {
+              if (comparisonResult.originalFunctions.prerequisites) {
+                s._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+              }
+              if (comparisonResult.originalFunctions.expect) {
+                s._originalExpect = comparisonResult.originalFunctions.expect;
+              }
+              return buildScreenObjectAstWithBlocks(s);
+            })
+          );
+        }
+        
+      } else if (originalFormat === 'array-mergeWithBase') {
+        // ─────────────────────────────────────────────────────────
+        // ARRAY WITH mergeWithBase: [ImplicationHelper.mergeWithBase(...)]
+        // ─────────────────────────────────────────────────────────
+        const comparisonResult = screensHaveChanges(screens, originalScreenProp.value);
+        
+        if (!comparisonResult.hasChanges) {
+          console.log(`    ✨ Preserving original AST for ${screenName} (no changes)`);
+          screenNode = originalScreenProp.value;
+        } else {
+          console.log(`    🔧 Regenerating ${screenName} with mergeWithBase`);
+          screenNode = t.arrayExpression(
+            screens.map(s => {
+              if (comparisonResult.originalFunctions.prerequisites) {
+                s._originalPrerequisites = comparisonResult.originalFunctions.prerequisites;
+              }
+              if (comparisonResult.originalFunctions.expect) {
+                s._originalExpect = comparisonResult.originalFunctions.expect;
+              }
+              return buildScreenAst(s, screenName, platformName, className);
+            })
+          );
+        }
+        
       } else {
-        // ❌ HAS CHANGES - Generate new AST
-        console.log(`  🔧 Regenerating AST for ${screenKey} (modified)`);
-        screenArrayNode = t.arrayExpression(
-          screens.map(screen => buildScreenObjectAst(screen))
-        );
+        // ─────────────────────────────────────────────────────────
+        // UNKNOWN FORMAT - preserve original
+        // ─────────────────────────────────────────────────────────
+        console.log(`    ⚠️  Unknown format for ${screenName}, preserving original`);
+        screenNode = originalScreenProp.value;
       }
+      
+      // Remove from map so we know it's processed
+      delete newScreensMap[screenName];
+      
     } else {
-      // New screen - build from scratch
-      screenArrayNode = t.arrayExpression(
-        screens.map(screen => buildScreenObjectAst(screen))
-      );
+      // ✅ Screen NOT in update - preserve original completely!
+      console.log(`    ♻️  Preserving untouched screen: ${screenName}`);
+      screenNode = originalScreenProp.value;
     }
     
     screenProps.push(
       t.objectProperty(
-        t.identifier(screenKey),
-        screenArrayNode
+        t.identifier(screenName),
+        screenNode
+      )
+    );
+  }
+  
+  // ✅ Add any NEW screens that weren't in original
+  // For new screens, use direct object format (simpler)
+  for (const [screenName, screens] of Object.entries(newScreensMap)) {
+    console.log(`    ➕ Adding new screen: ${screenName}`);
+    const screen = screens[0];
+    screenProps.push(
+      t.objectProperty(
+        t.identifier(screenName),
+        buildScreenObjectAstWithBlocks(screen)
       )
     );
   }
   
   return screenProps;
+}
+
+/**
+ * Detect the format of the original screen AST node
+ * Returns: 'direct-object' | 'array-direct' | 'array-mergeWithBase' | 'unknown'
+ */
+function detectScreenFormat(node) {
+  if (t.isObjectExpression(node)) {
+    return 'direct-object';
+  }
+  
+  if (t.isArrayExpression(node)) {
+    if (node.elements.length === 0) {
+      return 'array-direct'; // Empty array, treat as direct
+    }
+    
+    const firstElement = node.elements[0];
+    
+    // Check if first element is a CallExpression (mergeWithBase)
+    if (t.isCallExpression(firstElement)) {
+      const callee = firstElement.callee;
+      if (t.isMemberExpression(callee) &&
+          callee.object?.name === 'ImplicationHelper' &&
+          callee.property?.name === 'mergeWithBase') {
+        return 'array-mergeWithBase';
+      }
+    }
+    
+    // Check if first element is direct object
+    if (t.isObjectExpression(firstElement)) {
+      return 'array-direct';
+    }
+  }
+  
+  // Also handle single CallExpression (mergeWithBase not in array)
+  if (t.isCallExpression(node)) {
+    const callee = node.callee;
+    if (t.isMemberExpression(callee) &&
+        callee.object?.name === 'ImplicationHelper' &&
+        callee.property?.name === 'mergeWithBase') {
+      return 'single-mergeWithBase';
+    }
+  }
+  
+  return 'unknown';
+}
+
+/**
+ * Check if a single screen (direct object) has changes
+ */
+function screenHasChangesDirectObject(newScreen, originalNode) {
+  let originalFunctions = {};
+  
+  // Extract function nodes from original
+  if (t.isObjectExpression(originalNode)) {
+    originalNode.properties.forEach(prop => {
+      if (prop.key?.name === 'prerequisites') {
+        originalFunctions.prerequisites = prop.value;
+      } else if (prop.key?.name === 'expect') {
+        originalFunctions.expect = prop.value;
+      }
+    });
+  }
+  
+  // Extract data for comparison
+  const originalData = extractScreenDataFromAst(originalNode);
+  
+  // Compare
+  if (!screensMatch(newScreen, originalData)) {
+    return { hasChanges: true, originalFunctions };
+  }
+  
+  return { hasChanges: false, originalFunctions };
+}
+
+
+/**
+ * ✅ FIXED: Build screen object AST with blocks support
+ * Now includes: navigation, order
+ */
+function buildScreenObjectAstWithBlocks(screen) {
+  const props = [];
+  
+  // name
+  if (screen.name) {
+    props.push(t.objectProperty(
+      t.identifier('name'),
+      t.stringLiteral(screen.name)
+    ));
+  }
+  
+  // description
+  if (screen.description) {
+    props.push(t.objectProperty(
+      t.identifier('description'),
+      t.stringLiteral(screen.description)
+    ));
+  }
+  
+  // screen (POM reference)
+  if (screen.screen) {
+    props.push(t.objectProperty(
+      t.identifier('screen'),
+      t.stringLiteral(screen.screen)
+    ));
+  }
+  
+  // instance
+  if (screen.instance) {
+    props.push(t.objectProperty(
+      t.identifier('instance'),
+      t.stringLiteral(screen.instance)
+    ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: order (for screen execution order)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.order !== undefined) {
+    props.push(t.objectProperty(
+      t.identifier('order'),
+      t.numericLiteral(screen.order)
+    ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: navigation (for screen navigation before validation)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.navigation && (screen.navigation.pomName || screen.navigation.method)) {
+    const navProps = [];
+    
+    if (screen.navigation.pomName) {
+      navProps.push(t.objectProperty(
+        t.identifier('pomName'), 
+        t.stringLiteral(screen.navigation.pomName)
+      ));
+    }
+    if (screen.navigation.instanceName) {
+      navProps.push(t.objectProperty(
+        t.identifier('instanceName'), 
+        t.stringLiteral(screen.navigation.instanceName)
+      ));
+    }
+    if (screen.navigation.method) {
+      navProps.push(t.objectProperty(
+        t.identifier('method'), 
+        t.stringLiteral(screen.navigation.method)
+      ));
+    }
+    if (screen.navigation.args && screen.navigation.args.length > 0) {
+      navProps.push(t.objectProperty(
+        t.identifier('args'),
+        t.arrayExpression(screen.navigation.args.map(arg => t.stringLiteral(String(arg))))
+      ));
+    }
+    
+    if (navProps.length > 0) {
+      console.log(`    🧭 Including navigation for screen`);
+      props.push(t.objectProperty(
+        t.identifier('navigation'),
+        t.objectExpression(navProps)
+      ));
+    }
+  }
+  
+  // visible
+  if (screen.visible && screen.visible.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('visible'),
+      t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
+    ));
+  }
+  
+  // hidden
+  if (screen.hidden && screen.hidden.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('hidden'),
+      t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
+    ));
+  }
+  
+  // truthy
+  if (screen.truthy && screen.truthy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(tr => t.stringLiteral(tr)))
+    ));
+  }
+  
+  // falsy
+  if (screen.falsy && screen.falsy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(f => t.stringLiteral(f)))
+    ));
+  }
+  
+  // assertions
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertProps = [];
+      if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+      if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+      if (assertion.value !== undefined) {
+        assertProps.push(t.objectProperty(
+          t.identifier('value'),
+          typeof assertion.value === 'number' 
+            ? t.numericLiteral(assertion.value)
+            : typeof assertion.value === 'boolean'
+              ? t.booleanLiteral(assertion.value)
+              : t.stringLiteral(String(assertion.value))
+        ));
+      }
+      return t.objectExpression(assertProps);
+    });
+    props.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+  }
+  
+  // checks
+  if (screen.checks) {
+    const checkProps = [];
+    
+    if (screen.checks.visible && screen.checks.visible.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('visible'),
+        t.arrayExpression(screen.checks.visible.map(v => t.stringLiteral(v)))
+      ));
+    }
+    
+    if (screen.checks.hidden && screen.checks.hidden.length > 0) {
+      checkProps.push(t.objectProperty(
+        t.identifier('hidden'),
+        t.arrayExpression(screen.checks.hidden.map(h => t.stringLiteral(h)))
+      ));
+    }
+    
+    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('text'),
+        t.objectExpression(textProps)
+      ));
+    }
+    
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
+      ));
+    }
+    
+    if (checkProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('checks'),
+        t.objectExpression(checkProps)
+      ));
+    }
+  }
+  
+  // functions
+  if (screen.functions && Object.keys(screen.functions).length > 0) {
+    const functionProps = [];
+    
+    for (const [funcName, funcData] of Object.entries(screen.functions)) {
+      const funcObjectProps = [];
+      
+      if (funcData.signature) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('signature'),
+          t.stringLiteral(funcData.signature)
+        ));
+      }
+      
+      if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
+        const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
+          t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+        );
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('parameters'),
+          t.objectExpression(paramProps)
+        ));
+      }
+      
+      if (funcData.storeAs) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('storeAs'),
+          t.stringLiteral(funcData.storeAs)
+        ));
+      }
+      
+      functionProps.push(t.objectProperty(
+        t.identifier(funcName),
+        t.objectExpression(funcObjectProps)
+      ));
+    }
+    
+    props.push(t.objectProperty(
+      t.identifier('functions'),
+      t.objectExpression(functionProps)
+    ));
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ BLOCKS ARRAY
+  // ═══════════════════════════════════════════════════════════
+  if (screen.blocks && Array.isArray(screen.blocks) && screen.blocks.length > 0) {
+    console.log(`    🧱 Including ${screen.blocks.length} blocks`);
+    
+    const blockElements = screen.blocks.map(block => {
+      const blockProps = [];
+      
+      // Basic block properties
+      if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+      if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+      if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
+      if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
+      if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
+      if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+      
+      // UI-ASSERTION block data
+      if (block.type === 'ui-assertion' && block.data) {
+        const dataProps = [];
+        
+        if (block.data.visible?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('visible'), t.arrayExpression(block.data.visible.map(v => t.stringLiteral(v)))));
+        }
+        if (block.data.hidden?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('hidden'), t.arrayExpression(block.data.hidden.map(h => t.stringLiteral(h)))));
+        }
+        if (block.data.truthy?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('truthy'), t.arrayExpression(block.data.truthy.map(tr => t.stringLiteral(tr)))));
+        }
+        if (block.data.falsy?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('falsy'), t.arrayExpression(block.data.falsy.map(f => t.stringLiteral(f)))));
+        }
+        
+        // checks
+        if (block.data.checks) {
+          const checksProps = [];
+          if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([k, v]) =>
+              t.objectProperty(t.identifier(k), t.stringLiteral(String(v)))
+            );
+            checksProps.push(t.objectProperty(t.identifier('text'), t.objectExpression(textProps)));
+          }
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([k, v]) =>
+              t.objectProperty(t.identifier(k), t.stringLiteral(String(v)))
+            );
+            checksProps.push(t.objectProperty(t.identifier('contains'), t.objectExpression(containsProps)));
+          }
+          if (checksProps.length > 0) {
+            dataProps.push(t.objectProperty(t.identifier('checks'), t.objectExpression(checksProps)));
+          }
+        }
+        
+        // assertions
+        if (block.data.assertions?.length > 0) {
+          const assertElements = block.data.assertions.map(a => {
+            const aProps = [];
+            if (a.fn) aProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(a.fn)));
+            if (a.expect) aProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(a.expect)));
+            if (a.value !== undefined) {
+              aProps.push(t.objectProperty(t.identifier('value'),
+                typeof a.value === 'number' ? t.numericLiteral(a.value) :
+                typeof a.value === 'boolean' ? t.booleanLiteral(a.value) :
+                t.stringLiteral(String(a.value))
+              ));
+            }
+            return t.objectExpression(aProps);
+          });
+          dataProps.push(t.objectProperty(t.identifier('assertions'), t.arrayExpression(assertElements)));
+        }
+        
+        if (block.data.timeout) {
+          dataProps.push(t.objectProperty(t.identifier('timeout'), t.numericLiteral(block.data.timeout)));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+        }
+      }
+      
+      // CUSTOM-CODE block
+      if (block.type === 'custom-code') {
+        if (block.code) blockProps.push(t.objectProperty(t.identifier('code'), t.stringLiteral(block.code)));
+        if (block.wrapInTestStep !== undefined) blockProps.push(t.objectProperty(t.identifier('wrapInTestStep'), t.booleanLiteral(block.wrapInTestStep)));
+        if (block.testStepName) blockProps.push(t.objectProperty(t.identifier('testStepName'), t.stringLiteral(block.testStepName)));
+      }
+      
+      // FUNCTION-CALL block
+      if (block.type === 'function-call' && block.data) {
+        const dataProps = [];
+        if (block.data.instance) dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
+        if (block.data.method) dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
+        if (block.data.args?.length > 0) {
+          dataProps.push(t.objectProperty(t.identifier('args'),
+            t.arrayExpression(block.data.args.map(arg =>
+              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+            ))
+          ));
+        }
+        if (block.data.await !== undefined) dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
+        if (block.data.storeAs) dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+        }
+      }
+      
+      return t.objectExpression(blockProps);
+    });
+    
+    props.push(t.objectProperty(
+      t.identifier('blocks'),
+      t.arrayExpression(blockElements)
+    ));
+  }
+  
+  // _pomSource (preserve if exists)
+  if (screen._pomSource) {
+    const pomProps = [];
+    if (screen._pomSource.path) pomProps.push(t.objectProperty(t.identifier('path'), t.stringLiteral(screen._pomSource.path)));
+    if (screen._pomSource.name) pomProps.push(t.objectProperty(t.identifier('name'), t.stringLiteral(screen._pomSource.name)));
+    if (screen._pomSource.className) pomProps.push(t.objectProperty(t.identifier('className'), t.stringLiteral(screen._pomSource.className)));
+    
+    if (pomProps.length > 0) {
+      props.push(t.objectProperty(
+        t.identifier('_pomSource'),
+        t.objectExpression(pomProps)
+      ));
+    }
+  }
+  
+  // Preserved prerequisites
+  if (screen._originalPrerequisites) {
+    props.push(t.objectProperty(
+      t.identifier('prerequisites'),
+      screen._originalPrerequisites
+    ));
+  }
+  
+  // Preserved expect
+  if (screen._originalExpect) {
+    props.push(t.objectProperty(
+      t.identifier('expect'),
+      screen._originalExpect
+    ));
+  }
+  
+  return t.objectExpression(props);
 }
 
 
@@ -1107,28 +2359,86 @@ function buildSmartScreenProps(newScreens, originalPlatformNode, originalContent
 function screensHaveChanges(newScreens, originalArrayNode) {
   // Simple check: compare lengths
   if (newScreens.length !== originalArrayNode.elements.length) {
-    return true;
+    console.log('    📊 Length changed:', newScreens.length, 'vs', originalArrayNode.elements.length);
+    return { hasChanges: true, originalFunctions: {} };
   }
+  
+  // Track original function nodes
+  let originalFunctions = {};
   
   // Deep check: compare each screen's data
   for (let i = 0; i < newScreens.length; i++) {
     const newScreen = newScreens[i];
     const originalElement = originalArrayNode.elements[i];
     
-    if (!originalElement || originalElement.type !== 'ObjectExpression') {
-      return true;  // Can't compare - assume changed
+    if (!originalElement) {
+      return { hasChanges: true, originalFunctions: {} };
     }
     
-    // Extract data from original AST
-    const originalData = extractScreenDataFromAst(originalElement);
-    
-    // Compare
-    if (!screensMatch(newScreen, originalData)) {
-      return true;
+    // Check if original is mergeWithBase call
+    if (originalElement.type === 'CallExpression' &&
+        originalElement.callee?.type === 'MemberExpression' &&
+        originalElement.callee.object?.name === 'ImplicationHelper' &&
+        originalElement.callee.property?.name === 'mergeWithBase') {
+      
+      console.log('    🔍 Original is mergeWithBase, extracting child overrides...');
+      
+      // Extract child overrides from mergeWithBase (2nd argument)
+      const overridesArg = originalElement.arguments[1];
+      if (!overridesArg || overridesArg.type !== 'ObjectExpression') {
+        console.log('    ⚠️ Could not extract overrides, assuming changed');
+        return { hasChanges: true, originalFunctions: {} };
+      }
+      
+      // ✨ NEW: Extract prerequisites and expect nodes
+      const originalOverrides = extractScreenDataFromAst(overridesArg);
+      
+      // Extract function nodes
+      overridesArg.properties.forEach(prop => {
+        if (prop.key?.name === 'prerequisites') {
+          originalFunctions.prerequisites = prop.value;
+          console.log('    📦 Preserved prerequisites function');
+        } else if (prop.key?.name === 'expect') {
+          originalFunctions.expect = prop.value;
+          console.log('    📦 Preserved expect function');
+        }
+      });
+      
+      // Compare new data with original overrides (not merged result!)
+      if (!screensMatch(newScreen, originalOverrides)) {
+        console.log('    🔧 Child overrides changed!');
+        console.log('       Original:', JSON.stringify(originalOverrides, null, 2));
+        console.log('       New:', JSON.stringify(newScreen, null, 2));
+        return { hasChanges: true, originalFunctions };
+      }
+      
+      console.log('    ✨ Child overrides match! Preserving mergeWithBase');
+    } else if (originalElement.type === 'ObjectExpression') {
+      // Direct object - compare as before
+      const originalData = extractScreenDataFromAst(originalElement);
+      
+      // ✨ NEW: Extract function nodes from direct object too
+      originalElement.properties.forEach(prop => {
+        if (prop.key?.name === 'prerequisites') {
+          originalFunctions.prerequisites = prop.value;
+        } else if (prop.key?.name === 'expect') {
+          originalFunctions.expect = prop.value;
+        }
+      });
+      
+      if (!screensMatch(newScreen, originalData)) {
+        console.log('    🔧 Screen data changed');
+        return { hasChanges: true, originalFunctions };
+      }
+    } else {
+      // Unknown type - assume changed
+      console.log('    ⚠️ Unknown original type:', originalElement.type);
+      return { hasChanges: true, originalFunctions: {} };
     }
   }
   
-  return false;  // No changes detected
+  console.log('    ✅ No changes detected');
+  return { hasChanges: false, originalFunctions };  // No changes detected
 }
 
 /**
@@ -1144,10 +2454,24 @@ function extractScreenDataFromAst(objectNode) {
     
     if (t.isStringLiteral(prop.value)) {
       data[key] = prop.value.value;
+    } else if (t.isBooleanLiteral(prop.value)) {
+      data[key] = prop.value.value;
+    } else if (t.isNumericLiteral(prop.value)) {
+      data[key] = prop.value.value;
     } else if (t.isArrayExpression(prop.value)) {
-      data[key] = prop.value.elements
-        .filter(e => t.isStringLiteral(e))
-        .map(e => e.value);
+      // ✅ Handle blocks array specially
+      if (key === 'blocks') {
+        data[key] = prop.value.elements.map(blockNode => {
+          if (t.isObjectExpression(blockNode)) {
+            return extractScreenDataFromAst(blockNode);
+          }
+          return null;
+        }).filter(Boolean);
+      } else {
+        data[key] = prop.value.elements
+          .filter(e => t.isStringLiteral(e))
+          .map(e => e.value);
+      }
     } else if (t.isObjectExpression(prop.value)) {
       data[key] = extractScreenDataFromAst(prop.value);
     }
@@ -1159,27 +2483,70 @@ function extractScreenDataFromAst(objectNode) {
 /**
  * Compare two screen objects
  */
-function screensMatch(newScreen, originalData) {
-  // Compare basic fields
-  if (newScreen.name !== originalData.name) return false;
-  if (newScreen.description !== originalData.description) return false;
+function screensMatch(screen1, screen2) {
+  const clean1 = stripMetadata(screen1);
+  const clean2 = stripMetadata(screen2);
   
-  // Compare arrays
-  if (!arraysMatch(newScreen.visible, originalData.visible)) return false;
-  if (!arraysMatch(newScreen.hidden, originalData.hidden)) return false;
+  // Deep comparison instead of JSON.stringify
+  return deepEqual(clean1, clean2);
+}
+
+function deepEqual(obj1, obj2) {
+  // Handle null/undefined
+  if (obj1 === obj2) return true;
+  if (!obj1 || !obj2) return false;
+  if (typeof obj1 !== 'object' || typeof obj2 !== 'object') return obj1 === obj2;
   
-  // Compare checks
-  if (newScreen.checks || originalData.checks) {
-    if (!newScreen.checks || !originalData.checks) return false;
-    
-    if (!arraysMatch(newScreen.checks.visible, originalData.checks.visible)) return false;
-    if (!arraysMatch(newScreen.checks.hidden, originalData.checks.hidden)) return false;
-    
-    // Compare checks.text
-    if (!objectsMatch(newScreen.checks.text, originalData.checks.text)) return false;
+  // Handle arrays
+  if (Array.isArray(obj1) && Array.isArray(obj2)) {
+    if (obj1.length !== obj2.length) return false;
+    return obj1.every((item, i) => deepEqual(item, obj2[i]));
   }
   
-  return true;
+  // Handle arrays vs objects mismatch
+  if (Array.isArray(obj1) !== Array.isArray(obj2)) return false;
+  
+  // Handle objects
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+  
+  if (keys1.length !== keys2.length) return false;
+  
+  return keys1.every(key => {
+    if (!keys2.includes(key)) return false;
+    return deepEqual(obj1[key], obj2[key]);
+  });
+}
+
+function stripMetadata(screen) {
+  // Note: blocks is intentionally NOT stripped - we want to compare it
+  const { screenName, sourceInfo, alwaysVisible, sometimesVisible, ...cleanScreen } = screen;
+  
+  // Also strip empty arrays from checks
+  if (cleanScreen.checks) {
+    const cleanChecks = { ...cleanScreen.checks };
+    if (cleanChecks.visible?.length === 0) delete cleanChecks.visible;
+    if (cleanChecks.hidden?.length === 0) delete cleanChecks.hidden;
+    if (Object.keys(cleanChecks.text || {}).length === 0) delete cleanChecks.text;
+    if (Object.keys(cleanChecks.contains || {}).length === 0) delete cleanChecks.contains;
+    if (Object.keys(cleanChecks).length === 0) {
+      delete cleanScreen.checks;
+    } else {
+      cleanScreen.checks = cleanChecks;
+    }
+  }
+  
+  // Strip empty arrays
+  if (cleanScreen.visible?.length === 0) delete cleanScreen.visible;
+  if (cleanScreen.hidden?.length === 0) delete cleanScreen.hidden;
+  if (cleanScreen.truthy?.length === 0) delete cleanScreen.truthy;
+  if (cleanScreen.falsy?.length === 0) delete cleanScreen.falsy;
+  if (cleanScreen.assertions?.length === 0) delete cleanScreen.assertions;
+  
+  // ✅ Keep blocks but clean empty ones
+  if (cleanScreen.blocks?.length === 0) delete cleanScreen.blocks;
+  
+  return cleanScreen;
 }
 
 /**
@@ -1215,7 +2582,8 @@ function buildScreenPropsFromData(screens) {
   const screenGroups = {};
   
   screens.forEach(screen => {
-    const key = screen.originalName || screen.name;
+    // ✅ FIXED: Check screenName first!
+    const key = screen.screenName || screen.originalName || screen.name;
     if (!screenGroups[key]) {
       screenGroups[key] = [];
     }
@@ -1331,7 +2699,7 @@ function buildScreenObjectAst(screen) {
       ));
     }
     
-    // checks.text
+   // checks.text
     if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
       const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
         t.objectProperty(
@@ -1342,6 +2710,20 @@ function buildScreenObjectAst(screen) {
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
+      ));
+    }
+    
+    // ✅ ADD THIS: checks.contains
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(
+          t.identifier(key),
+          t.stringLiteral(value)
+        )
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
       ));
     }
     
@@ -1426,60 +2808,169 @@ function buildScreenObjectAst(screen) {
       t.objectExpression(functionProps)
     ));
   }
+
+  // ✅ NEW: truthy (array of function names that must return truthy)
+  if (screen.truthy && screen.truthy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(fn => t.stringLiteral(fn)))
+    ));
+  }
+
+  // ✅ NEW: falsy (array of function names that must return falsy)
+  if (screen.falsy && screen.falsy.length > 0) {
+    props.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(fn => t.stringLiteral(fn)))
+    ));
+  }
+
+  // ✅ NEW: assertions (array of { fn, expect, value } objects)
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertionProps = [];
+      
+      // fn (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('fn'),
+        t.stringLiteral(assertion.fn)
+      ));
+      
+      // expect (required)
+      assertionProps.push(t.objectProperty(
+        t.identifier('expect'),
+        t.stringLiteral(assertion.expect)
+      ));
+      
+      // value (optional, can be string, number, boolean, null)
+      if (assertion.value !== undefined) {
+        let valueNode;
+        if (typeof assertion.value === 'number') {
+          valueNode = t.numericLiteral(assertion.value);
+        } else if (typeof assertion.value === 'boolean') {
+          valueNode = t.booleanLiteral(assertion.value);
+        } else if (assertion.value === null) {
+          valueNode = t.nullLiteral();
+        } else {
+          valueNode = t.stringLiteral(String(assertion.value));
+        }
+        assertionProps.push(t.objectProperty(
+          t.identifier('value'),
+          valueNode
+        ));
+      }
+      
+      return t.objectExpression(assertionProps);
+    });
+    
+    props.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+  }
   
   return t.objectExpression(props);
 }
 /**
  * Helper: Build AST for UI data
  */
-function buildUIAst(uiData) {
+function buildUIAst(uiData, className) {
   const platformProps = Object.entries(uiData).map(([platformName, platformData]) => {
-    const screenArray = t.arrayExpression(
-      platformData.screens.map(screen => buildScreenAst(screen))
-    );
+    const screenEntries = Object.entries(platformData.screens);
     
-    const screenNameKey = Object.keys(platformData.screens[0]?.screen ? { screen: 1 } : {})[0] || 
-                          platformData.screens[0]?.name || 
-                          'unknownScreen';
+    const screenProps = screenEntries.map(([screenName, screenArray]) => {
+      // Each screen is wrapped in an array
+      const wrappedScreens = t.arrayExpression(
+        screenArray.map(screen => buildScreenAst(screen, screenName, platformName, className, originalContent))
+      );
+      
+      return t.objectProperty(
+        t.identifier(screenName),
+        wrappedScreens
+      );
+    });
     
     return t.objectProperty(
-      t.identifier(screenNameKey),
-      screenArray
+      t.identifier(platformName),
+      t.objectExpression(screenProps)
     );
   });
   
-  return t.objectExpression(platformProps);
+  return t.objectExpression([
+    t.objectProperty(
+      t.identifier('UI'),
+      t.objectExpression(platformProps)
+    )
+  ]);
 }
-
-/**
- * Helper: Build AST for screen object
- */
-function buildScreenAst(screen) {
-  const props = [];
+function buildScreenAst(screen, screenName, platformName, className) {
+  const overrideProps = [];
   
-  // Add each property
-  if (screen.name) {
-    props.push(t.objectProperty(t.identifier('name'), t.stringLiteral(screen.name)));
-  }
-  
+  // description (always include if present)
   if (screen.description) {
-    props.push(t.objectProperty(t.identifier('description'), t.stringLiteral(screen.description)));
+    overrideProps.push(t.objectProperty(
+      t.identifier('description'), 
+      t.stringLiteral(screen.description)
+    ));
   }
   
+  // visible (only if has child elements)
   if (screen.visible && screen.visible.length > 0) {
-    props.push(t.objectProperty(
+    overrideProps.push(t.objectProperty(
       t.identifier('visible'),
       t.arrayExpression(screen.visible.map(v => t.stringLiteral(v)))
     ));
   }
   
+  // hidden (only if has child elements)
   if (screen.hidden && screen.hidden.length > 0) {
-    props.push(t.objectProperty(
+    overrideProps.push(t.objectProperty(
       t.identifier('hidden'),
       t.arrayExpression(screen.hidden.map(h => t.stringLiteral(h)))
     ));
   }
   
+  // truthy (only if has elements)
+  if (screen.truthy && screen.truthy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('truthy'),
+      t.arrayExpression(screen.truthy.map(tr => t.stringLiteral(tr)))
+    ));
+  }
+  
+  // falsy (only if has elements)
+  if (screen.falsy && screen.falsy.length > 0) {
+    overrideProps.push(t.objectProperty(
+      t.identifier('falsy'),
+      t.arrayExpression(screen.falsy.map(f => t.stringLiteral(f)))
+    ));
+  }
+  
+  // assertions (only if has elements)
+  if (screen.assertions && screen.assertions.length > 0) {
+    const assertionElements = screen.assertions.map(assertion => {
+      const assertProps = [];
+      if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+      if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+      if (assertion.value !== undefined) {
+        assertProps.push(t.objectProperty(
+          t.identifier('value'),
+          typeof assertion.value === 'number' 
+            ? t.numericLiteral(assertion.value)
+            : typeof assertion.value === 'boolean'
+              ? t.booleanLiteral(assertion.value)
+              : t.stringLiteral(String(assertion.value))
+        ));
+      }
+      return t.objectExpression(assertProps);
+    });
+    overrideProps.push(t.objectProperty(
+      t.identifier('assertions'),
+      t.arrayExpression(assertionElements)
+    ));
+  }
+  
+  // checks
   if (screen.checks) {
     const checkProps = [];
     
@@ -1497,7 +2988,7 @@ function buildScreenAst(screen) {
       ));
     }
     
-    if (screen.checks.text) {
+    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
       const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
         t.objectProperty(t.identifier(key), t.stringLiteral(value))
       );
@@ -1507,15 +2998,377 @@ function buildScreenAst(screen) {
       ));
     }
     
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(t.identifier(key), t.stringLiteral(value))
+      );
+      checkProps.push(t.objectProperty(
+        t.identifier('contains'),
+        t.objectExpression(containsProps)
+      ));
+    }
+    
     if (checkProps.length > 0) {
-      props.push(t.objectProperty(
+      overrideProps.push(t.objectProperty(
         t.identifier('checks'),
         t.objectExpression(checkProps)
       ));
     }
   }
   
-  return t.objectExpression(props);
+  // ✅ Functions
+  if (screen.functions && Object.keys(screen.functions).length > 0) {
+    const functionProps = [];
+    
+    for (const [funcName, funcData] of Object.entries(screen.functions)) {
+      const funcObjectProps = [];
+      
+      // signature
+      if (funcData.signature) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('signature'),
+          t.stringLiteral(funcData.signature)
+        ));
+      }
+      
+      // parameters object
+      if (funcData.parameters && Object.keys(funcData.parameters).length > 0) {
+        const paramProps = Object.entries(funcData.parameters).map(([key, value]) =>
+          t.objectProperty(
+            t.identifier(key),
+            t.stringLiteral(String(value))
+          )
+        );
+        
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('parameters'),
+          t.objectExpression(paramProps)
+        ));
+      }
+      
+      // storeAs
+      if (funcData.storeAs) {
+        funcObjectProps.push(t.objectProperty(
+          t.identifier('storeAs'),
+          t.stringLiteral(funcData.storeAs)
+        ));
+      }
+      
+      functionProps.push(t.objectProperty(
+        t.identifier(funcName),
+        t.objectExpression(funcObjectProps)
+      ));
+    }
+    
+    overrideProps.push(t.objectProperty(
+      t.identifier('functions'),
+      t.objectExpression(functionProps)
+    ));
+    
+    console.log(`    ✨ Including functions for ${screenName}:`, Object.keys(screen.functions));
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ✅ NEW: BLOCKS ARRAY (for block-based validation)
+  // ═══════════════════════════════════════════════════════════
+  if (screen.blocks && Array.isArray(screen.blocks) && screen.blocks.length > 0) {
+    console.log(`    🧱 Including ${screen.blocks.length} blocks for ${screenName}`);
+    console.log('    🔍 DEBUG blocks data:', JSON.stringify(screen.blocks, null, 2));
+    
+    const blockElements = screen.blocks.map(block => {
+      const blockProps = [];
+      
+      // id
+      if (block.id) {
+        blockProps.push(t.objectProperty(
+          t.identifier('id'),
+          t.stringLiteral(block.id)
+        ));
+      }
+      
+      // type
+      if (block.type) {
+        blockProps.push(t.objectProperty(
+          t.identifier('type'),
+          t.stringLiteral(block.type)
+        ));
+      }
+      
+      // label
+      if (block.label) {
+        blockProps.push(t.objectProperty(
+          t.identifier('label'),
+          t.stringLiteral(block.label)
+        ));
+      }
+      
+      // order
+      if (block.order !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('order'),
+          t.numericLiteral(block.order)
+        ));
+      }
+      
+      // expanded
+      if (block.expanded !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('expanded'),
+          t.booleanLiteral(block.expanded)
+        ));
+      }
+      
+      // enabled
+      if (block.enabled !== undefined) {
+        blockProps.push(t.objectProperty(
+          t.identifier('enabled'),
+          t.booleanLiteral(block.enabled)
+        ));
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle UI-ASSERTION block data
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'ui-assertion' && block.data) {
+        const dataProps = [];
+        
+        // visible array
+        if (block.data.visible && block.data.visible.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('visible'),
+            t.arrayExpression(block.data.visible.map(v => t.stringLiteral(v)))
+          ));
+        }
+        
+        // hidden array
+        if (block.data.hidden && block.data.hidden.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('hidden'),
+            t.arrayExpression(block.data.hidden.map(h => t.stringLiteral(h)))
+          ));
+        }
+        
+        // truthy array
+        if (block.data.truthy && block.data.truthy.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('truthy'),
+            t.arrayExpression(block.data.truthy.map(tr => t.stringLiteral(tr)))
+          ));
+        }
+        
+        // falsy array
+        if (block.data.falsy && block.data.falsy.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('falsy'),
+            t.arrayExpression(block.data.falsy.map(f => t.stringLiteral(f)))
+          ));
+        }
+        
+        // checks object
+        if (block.data.checks) {
+          const checksProps = [];
+          
+          if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([key, value]) =>
+              t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('text'),
+              t.objectExpression(textProps)
+            ));
+          }
+          
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([key, value]) =>
+              t.objectProperty(t.identifier(key), t.stringLiteral(String(value)))
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('contains'),
+              t.objectExpression(containsProps)
+            ));
+          }
+          
+          if (checksProps.length > 0) {
+            dataProps.push(t.objectProperty(
+              t.identifier('checks'),
+              t.objectExpression(checksProps)
+            ));
+          }
+        }
+        
+        // assertions array
+        if (block.data.assertions && block.data.assertions.length > 0) {
+          const assertionElements = block.data.assertions.map(assertion => {
+            const assertProps = [];
+            if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+            if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+            if (assertion.value !== undefined) {
+              assertProps.push(t.objectProperty(
+                t.identifier('value'),
+                typeof assertion.value === 'number' 
+                  ? t.numericLiteral(assertion.value)
+                  : typeof assertion.value === 'boolean'
+                    ? t.booleanLiteral(assertion.value)
+                    : t.stringLiteral(String(assertion.value))
+              ));
+            }
+            return t.objectExpression(assertProps);
+          });
+          dataProps.push(t.objectProperty(
+            t.identifier('assertions'),
+            t.arrayExpression(assertionElements)
+          ));
+        }
+        
+        // timeout
+        if (block.data.timeout) {
+          dataProps.push(t.objectProperty(
+            t.identifier('timeout'),
+            t.numericLiteral(block.data.timeout)
+          ));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(
+            t.identifier('data'),
+            t.objectExpression(dataProps)
+          ));
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle CUSTOM-CODE block
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'custom-code') {
+        if (block.code) {
+          blockProps.push(t.objectProperty(
+            t.identifier('code'),
+            t.stringLiteral(block.code)
+          ));
+        }
+        
+        if (block.wrapInTestStep !== undefined) {
+          blockProps.push(t.objectProperty(
+            t.identifier('wrapInTestStep'),
+            t.booleanLiteral(block.wrapInTestStep)
+          ));
+        }
+        
+        if (block.testStepName) {
+          blockProps.push(t.objectProperty(
+            t.identifier('testStepName'),
+            t.stringLiteral(block.testStepName)
+          ));
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────
+      // Handle FUNCTION-CALL block
+      // ─────────────────────────────────────────────────────────
+      if (block.type === 'function-call' && block.data) {
+        const dataProps = [];
+        
+        if (block.data.instance) {
+          dataProps.push(t.objectProperty(
+            t.identifier('instance'),
+            t.stringLiteral(block.data.instance)
+          ));
+        }
+        
+        if (block.data.method) {
+          dataProps.push(t.objectProperty(
+            t.identifier('method'),
+            t.stringLiteral(block.data.method)
+          ));
+        }
+        
+        if (block.data.args && block.data.args.length > 0) {
+          dataProps.push(t.objectProperty(
+            t.identifier('args'),
+            t.arrayExpression(block.data.args.map(arg => 
+              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+            ))
+          ));
+        }
+        
+        if (block.data.await !== undefined) {
+          dataProps.push(t.objectProperty(
+            t.identifier('await'),
+            t.booleanLiteral(block.data.await)
+          ));
+        }
+        
+        if (block.data.storeAs) {
+          dataProps.push(t.objectProperty(
+            t.identifier('storeAs'),
+            t.stringLiteral(block.data.storeAs)
+          ));
+        }
+        
+        if (dataProps.length > 0) {
+          blockProps.push(t.objectProperty(
+            t.identifier('data'),
+            t.objectExpression(dataProps)
+          ));
+        }
+      }
+      
+      return t.objectExpression(blockProps);
+    });
+    
+    overrideProps.push(t.objectProperty(
+      t.identifier('blocks'),
+      t.arrayExpression(blockElements)
+    ));
+  }
+  // ═══════════════════════════════════════════════════════════
+  // END BLOCKS SUPPORT
+  // ═══════════════════════════════════════════════════════════
+
+  // ✨ prerequisites (preserved from original AST)
+  if (screen._originalPrerequisites) {
+    console.log('    📦 Including preserved prerequisites');
+    overrideProps.push(t.objectProperty(
+      t.identifier('prerequisites'),
+      screen._originalPrerequisites // AST node from original file
+    ));
+  }
+  
+  // ✨ expect (preserved from original AST)
+  if (screen._originalExpect) {
+    console.log('    📦 Including preserved expect function');
+    overrideProps.push(t.objectProperty(
+      t.identifier('expect'),
+      screen._originalExpect // AST node from original file
+    ));
+  }
+  
+  // ✅ Build: ImplicationHelper.mergeWithBase(base, overrides, options)
+  return t.callExpression(
+    t.memberExpression(
+      t.identifier('ImplicationHelper'),
+      t.identifier('mergeWithBase')
+    ),
+    [
+      // First arg: BaseBookingImplications.platform.screenName
+      t.memberExpression(
+        t.memberExpression(
+          t.identifier('BaseBookingImplications'),
+          t.identifier(platformName)
+        ),
+        t.identifier(screenName)
+      ),
+      // Second arg: override object
+      t.objectExpression(overrideProps),
+      // Third arg: { parentClass: AcceptedBookingImplications }
+      t.objectExpression([
+        t.objectProperty(
+          t.identifier('parentClass'),
+          t.identifier(className)
+        )
+      ])
+    ]
+  );
 }
 
 /**
@@ -1593,60 +3446,51 @@ function extractCompleteXStateConfig(content) {
 function extractValueFromNode(node) {
   if (!node) return null;
   
-  switch (node.type) {
-    case 'StringLiteral':
-    case 'NumericLiteral':
-    case 'BooleanLiteral':
-      return node.value;
-      
-    case 'NullLiteral':
-      return null;
-      
-    case 'Identifier':
-      if (node.name === 'undefined') return undefined;
-      if (node.name === 'null') return null;
-      return node.name;
-      
-    case 'ArrayExpression':
-      return node.elements
-        .map(el => extractValueFromNode(el))
-        .filter(v => v !== null && v !== undefined);
-      
-    case 'ObjectExpression':
-      const obj = {};
-      node.properties.forEach(prop => {
-        if (prop.key) {
-          const key = prop.key.name || prop.key.value;
-          const value = extractValueFromNode(prop.value);
-          if (value !== undefined) {
-            obj[key] = value;
-          }
-        }
-      });
-      return obj;
-      
-    case 'ArrowFunctionExpression':
-    case 'FunctionExpression':
-      return '<function>';
-      
-    case 'CallExpression':
-      if (node.callee?.name === 'assign') {
-        return '<assign>';
-      }
-      return '<call>';
-      
-    default:
-      return null;
+  if (t.isStringLiteral(node)) return node.value;
+  if (t.isNumericLiteral(node)) return node.value;
+  if (t.isBooleanLiteral(node)) return node.value;
+  if (t.isNullLiteral(node)) return null;
+  
+  if (t.isArrayExpression(node)) {
+    return node.elements.map(el => extractValueFromNode(el));
   }
+  
+  if (t.isObjectExpression(node)) {
+    const obj = {};
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        obj[key] = extractValueFromNode(prop.value);
+      }
+    });
+    return obj;
+  }
+  
+  if (t.isIdentifier(node)) {
+    // Could be a variable reference
+    return `{{${node.name}}}`;
+  }
+  
+  if (t.isTemplateLiteral(node)) {
+    // Template literal - extract the quasi values
+    return node.quasis.map(q => q.value.raw).join('');
+  }
+  
+  if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+    // For functions, return a placeholder
+    return '{{function}}';
+  }
+  
+  // For complex expressions, return null
+  console.warn(`   ⚠️ Unsupported node type: ${node.type}`);
+  return null;
 }
 
 // ✅ FIXED VERSION - Add Transition Endpoint
 // Replace lines 1547-1676 in implications.js with this
 router.post('/add-transition', async (req, res) => {
   try {
-    const { sourceFile, targetFile, event, actionDetails } = req.body;  // ✨ Added actionDetails
-    
-    console.log('➕ Adding transition:', { sourceFile, targetFile, event });
+    const { sourceFile, targetFile, event, platform, actionDetails, requires, conditions, isObserver, mode } = req.body;  // ← ADD isObserver, mode
     
     // Validate inputs
     if (!sourceFile || !targetFile || !event) {
@@ -1655,40 +3499,27 @@ router.post('/add-transition', async (req, res) => {
       });
     }
     
+    // Read both files
     const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    const targetContent = await fs.readFile(targetFile, 'utf-8');
 
+    // Parse both files
     const sourceAst = parse(sourceContent, {
       sourceType: 'module',
       plugins: ['classProperties', 'objectRestSpread'],
     });
-
-    // Read target file to extract actual state ID
-    const targetContent = await fs.readFile(targetFile, 'utf-8');
+    
     const targetAst = parse(targetContent, {
       sourceType: 'module',
       plugins: ['classProperties', 'objectRestSpread']
     });
 
-    let targetStateName = null;
-
-    // Extract ID from target file's xstateConfig
-    traverse(targetAst, {
-      ClassProperty(path) {
-        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-          const config = path.node.value;
-          if (config?.type === 'ObjectExpression') {
-            const idProp = config.properties.find(p => p.key?.name === 'id');
-            if (idProp?.value?.value) {
-              targetStateName = idProp.value.value;
-            }
-          }
-        }
-      }
-    });
-
+    // Extract target state name from target file
+    let targetStateName = extractStateName(targetAst);
+    
     // Fallback: derive from filename
     if (!targetStateName) {
-      targetStateName = path.basename(targetFile, '.js')
+      targetStateName = nodePath.basename(targetFile, '.js')
         .replace(/Implications$/, '')
         .replace(/Booking$/, '')
         .replace(/([A-Z])/g, '_$1')
@@ -1698,146 +3529,79 @@ router.post('/add-transition', async (req, res) => {
 
     console.log('🎯 Target state name:', targetStateName);
     
-  let transitionAdded = false;
-
-// ✅ NEW: Handle BOTH simple and complex xstateConfig structures
-traverse(sourceAst, {
-  ClassProperty(path) {
-    if (path.node.key?.name === 'xstateConfig' && path.node.static) {
-      const configValue = path.node.value;
-      
-      if (configValue?.type === 'ObjectExpression') {
-        let onProperty = null;
-        
-        // Try to find 'on' at root level (SIMPLE structure)
-        onProperty = configValue.properties.find(p => p.key?.name === 'on');
-        
-        if (onProperty) {
-          console.log('✅ Found simple structure: xstateConfig.on');
-        } else {
-          // Try to find 'on' inside states.idle (COMPLEX structure)
-          console.log('🔍 Looking for complex structure: xstateConfig.states.*.on');
-          
-          const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
-          
-          if (statesProperty && statesProperty.value?.type === 'ObjectExpression') {
-            // Find 'idle' or first state
-            let targetState = statesProperty.value.properties.find(p => p.key?.name === 'idle');
-            
-            if (!targetState && statesProperty.value.properties.length > 0) {
-              targetState = statesProperty.value.properties[0];
-              console.log(`✅ Using first state: ${targetState.key?.name}`);
-            }
-            
-            if (targetState && targetState.value?.type === 'ObjectExpression') {
-              onProperty = targetState.value.properties.find(p => p.key?.name === 'on');
-              
-              if (!onProperty) {
-                // Create 'on' property inside state
-                console.log('📝 Creating new "on" property inside state');
-                onProperty = {
-                  type: 'ObjectProperty',
-                  key: { type: 'Identifier', name: 'on' },
-                  value: { type: 'ObjectExpression', properties: [] }
-                };
-                targetState.value.properties.push(onProperty);
-              }
-            }
-          }
-        }
-        
-        // If still no 'on' found, create it at root level
-        if (!onProperty) {
-          console.log('📝 Creating new "on" property at root level');
-          onProperty = {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'on' },
-            value: { type: 'ObjectExpression', properties: [] }
-          };
-          configValue.properties.push(onProperty);
-        }
-        
-        // Check if transition already exists
-        const existingTransition = onProperty.value.properties?.find(
-          p => p.key?.name === event || p.key?.value === event
-        );
-        
-        if (existingTransition) {
-          console.log('⚠️ Transition already exists');
-          return;
-        }
-        
-        // Build transition value
-        const transitionProperties = [
-          {
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'target' },
-            value: { type: 'StringLiteral', value: `${targetStateName}` }
-          }
-        ];
-        
-        // ✨ Add actionDetails if provided
-        if (actionDetails) {
-          console.log('✨ Adding actionDetails to transition');
-          
-          // Convert actionDetails to AST
-          const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
-          
-          transitionProperties.push({
-            type: 'ObjectProperty',
-            key: { type: 'Identifier', name: 'actionDetails' },
-            value: actionDetailsAST
-          });
-        }
-        
-        // Add new transition
-        console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
-        onProperty.value.properties.push({
-          type: 'ObjectProperty',
-          key: { type: 'Identifier', name: event },
-          value: {
-            type: 'ObjectExpression',
-            properties: transitionProperties
-          }
-        });
-        
-        transitionAdded = true;
-      }
-    }
-  }
-});
+    // ✅ NEW: Convert single platform to array for AST (backward compatible)
+    const platformsArray = platform ? [platform] : null;
+    console.log('✅ Converting platform to array:', platform, '→', platformsArray);
+    
+    // Add transition to source file
+    // Add transition to source file
+const transitionAdded = addTransitionToAST(sourceAst, event, targetStateName, platformsArray, actionDetails, requires, conditions, isObserver, mode);
     
     if (!transitionAdded) {
       return res.status(400).json({ 
-        error: 'Could not add transition - failed to modify xstateConfig.states.idle.on' 
+        error: 'Could not add transition - failed to modify xstateConfig.on' 
       });
     }
     
-    // Generate updated code
-    const { code: newCode } = (babelGenerate.default || babelGenerate)(sourceAst, {
+    // Generate updated source code
+    const { code: newSourceCode } = (babelGenerate.default || babelGenerate)(sourceAst, {
       retainLines: true,
       comments: true
     });
     
-    // Create backup
+    // Create backup and write source file
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${sourceFile}.backup-${timestamp}`;
-    await fs.copy(sourceFile, backupPath);
+    const sourceBackupPath = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, sourceBackupPath);
+    await fs.writeFile(sourceFile, newSourceCode, 'utf-8');
+    console.log('✅ Source file updated');
     
-    // Write updated file
-    await fs.writeFile(sourceFile, newCode, 'utf-8');
+    // Update target file with prerequisite
+    const sourceStateName = nodePath.basename(sourceFile, '.js')
+      .replace(/Implications$/, '')
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '');
     
-    console.log('✅ Transition added successfully');
-    console.log('📦 Backup:', backupPath);
+    // Extract requires from transition conditions if present
+const transitionRequires = requires || {};
+
+ const targetUpdated = addSetupEntryToAST(
+      targetAst, 
+      sourceStateName,
+      targetStateName,
+      event,
+      platform || 'web',
+      transitionRequires,
+      isObserver ? 'observer' : undefined  // ← ADD mode parameter
+    );
+    
+    // Write updated target file if modified
+    if (targetUpdated) {
+      const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+        retainLines: true,
+        comments: true
+      });
+      
+      const targetBackupPath = `${targetFile}.backup-${timestamp}`;
+      await fs.copy(targetFile, targetBackupPath);
+      await fs.writeFile(targetFile, newTargetCode, 'utf-8');
+      
+      console.log('✅ Target file updated with prerequisite');
+      console.log('📦 Target backup:', targetBackupPath);
+    }
+    
+    console.log('📦 Source backup:', sourceBackupPath);
     
     res.json({
       success: true,
       transition: {
         event,
-        from: path.basename(sourceFile),
-        to: `#${targetStateName}`
+        from: nodePath.basename(sourceFile),
+        to: `#${targetStateName}`,
+        platforms: platformsArray || []  // ✅ CHANGED: use platformsArray
       },
-      backup: backupPath
+      backup: sourceBackupPath
     });
     
   } catch (error) {
@@ -1848,6 +3612,490 @@ traverse(sourceAst, {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+function extractStateName(ast) {
+  let stateName = null;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const config = path.node.value;
+        if (config?.type === 'ObjectExpression') {
+          const idProp = config.properties.find(p => p.key?.name === 'id');
+          if (idProp?.value?.value) {
+            stateName = idProp.value.value;
+          }
+        }
+      }
+    }
+  });
+  
+  return stateName;
+}
+
+function addTransitionToAST(ast, event, targetStateName, platforms, actionDetails, requires, conditions, isObserver, mode) {
+  let transitionAdded = false;
+  
+  // ✅ BUILD transitionObj OUTSIDE traverse!
+  const transitionObj = t.objectExpression([
+    t.objectProperty(
+      t.identifier('target'),
+      t.stringLiteral(targetStateName)
+    )
+  ]);
+  
+  // Add platforms if specified
+  if (platforms && Array.isArray(platforms) && platforms.length > 0) {
+    console.log('✅ Adding platforms to transition:', platforms);
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('platforms'),
+        t.arrayExpression(platforms.map(p => t.stringLiteral(p)))
+      )
+    );
+  }
+  
+  // Add requires if provided (for conditional path selection)
+  if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
+    console.log('✅ Adding requires to transition:', requires);
+    
+    const requiresProperties = Object.entries(requires).map(([key, value]) => {
+      let valueNode;
+      if (typeof value === 'boolean') {
+        valueNode = t.booleanLiteral(value);
+      } else if (typeof value === 'number') {
+        valueNode = t.numericLiteral(value);
+      } else {
+        valueNode = t.stringLiteral(String(value));
+      }
+      return t.objectProperty(t.identifier(key), valueNode);
+    });
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('requires'),
+        t.objectExpression(requiresProperties)
+      )
+    );
+  }
+
+  // Add conditions if provided (block-based)
+  if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+    console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('conditions'),
+        createValueNode(conditions)
+      )
+    );
+  }
+  
+  // ✅ NEW: Add isObserver if true
+  if (isObserver) {
+    console.log('✅ Adding isObserver to transition');
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('isObserver'),
+        t.booleanLiteral(true)
+      )
+    );
+  }
+  
+  // ✅ NEW: Add mode if provided
+  if (mode) {
+    console.log('✅ Adding mode to transition:', mode);
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('mode'),
+        t.stringLiteral(mode)
+      )
+    );
+  }
+  
+  // Add actionDetails if provided
+  if (actionDetails) {
+    console.log('✅ Adding actionDetails to transition');
+    
+    const actionDetailsObj = buildActionDetailsAST(actionDetails);
+    
+    transitionObj.properties.push(
+      t.objectProperty(
+        t.identifier('actionDetails'),
+        actionDetailsObj
+      )
+    );
+  }
+  // NOW traverse and add the transition
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type === 'ObjectExpression') {
+          // Find or create 'on' property
+          let onProperty = findOrCreateOnProperty(configValue);
+          
+          // Check if transition already exists
+          const existingTransition = onProperty.value.properties?.find(
+            p => p.key?.name === event || p.key?.value === event
+          );
+          
+           if (existingTransition) {
+            console.log('Converting transition to array for multiple platforms...');
+            
+            // Convert single transition to array with multiple platform versions
+            if (existingTransition.value.type === 'ObjectExpression') {
+              // Current value is a single object - wrap it in an array
+              console.log('   Wrapping existing transition in array');
+              existingTransition.value = t.arrayExpression([
+                existingTransition.value,  // Keep existing
+                transitionObj              // Add new platform version
+              ]);
+              transitionAdded = true;
+              console.log(`Converted ${event} to array with 2 platform versions`);
+            } else if (existingTransition.value.type === 'ArrayExpression') {
+              // Already an array - just push
+              console.log('   Adding to existing array');
+              existingTransition.value.elements.push(transitionObj);
+              transitionAdded = true;
+              console.log(`Added platform version to ${event} array`);
+            } else {
+              console.log('   Unknown transition type:', existingTransition.value.type);
+            }
+            return;
+          }
+          
+          // Add transition to 'on' property
+          console.log(`✅ Adding transition: ${event} → ${targetStateName}`);
+          
+          onProperty.value.properties.push(
+            t.objectProperty(
+              t.identifier(event),
+              transitionObj  // ✅ Use the pre-built object!
+            )
+          );
+          
+          transitionAdded = true;
+        }
+      }
+    }
+  });
+  
+  return transitionAdded;
+}
+
+function buildActionDetailsAST(actionDetails) {
+  const properties = [];
+  
+  // Description
+  if (actionDetails.description) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('description'),
+        t.stringLiteral(actionDetails.description)
+      )
+    );
+  }
+  
+  // Platform
+  if (actionDetails.platform) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('platform'),
+        t.stringLiteral(actionDetails.platform)
+      )
+    );
+  }
+  
+  // Navigation method
+  if (actionDetails.navigationMethod) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('navigationMethod'),
+        t.stringLiteral(actionDetails.navigationMethod)
+      )
+    );
+  }
+  
+  // Navigation file
+  if (actionDetails.navigationFile) {
+    properties.push(
+      t.objectProperty(
+        t.identifier('navigationFile'),
+        t.stringLiteral(actionDetails.navigationFile)
+      )
+    );
+  }
+  
+  // Imports
+  if (actionDetails.imports && actionDetails.imports.length > 0) {
+    const importsArray = t.arrayExpression(
+      actionDetails.imports.map(imp => 
+        t.objectExpression([
+          t.objectProperty(t.identifier('className'), t.stringLiteral(imp.className || '')),
+          t.objectProperty(t.identifier('varName'), t.stringLiteral(imp.varName || '')),
+          t.objectProperty(t.identifier('path'), t.stringLiteral(imp.path || '')),
+          t.objectProperty(t.identifier('constructor'), t.stringLiteral(imp.constructor || ''))
+        ])
+      )
+    );
+    
+    properties.push(
+      t.objectProperty(
+        t.identifier('imports'),
+        importsArray
+      )
+    );
+  }
+  
+  // Steps ✅ ENHANCED with storeAs
+  if (actionDetails.steps && actionDetails.steps.length > 0) {
+    const stepsArray = t.arrayExpression(
+      actionDetails.steps.map(step => {
+        const argsString = Array.isArray(step.args) 
+          ? step.args.join(', ')
+          : (step.args || '');
+        
+        const argsArrayValue = Array.isArray(step.args) 
+          ? step.args 
+          : (step.args ? step.args.split(',').map(s => s.trim()) : []);
+        
+        // Build step properties dynamically
+        const stepProperties = [
+          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description || '')),
+          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance || '')),
+          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method || '')),
+          t.objectProperty(
+            t.identifier('args'),
+            t.stringLiteral(argsString)
+          ),
+          t.objectProperty(
+            t.identifier('argsArray'),
+            t.arrayExpression(argsArrayValue.map(arg => t.stringLiteral(arg)))
+          )
+        ];
+        
+       // ✅ NEW: Add storeAs if present
+        if (step.storeAs) {
+          console.log(`   💾 Adding storeAs to step: ${step.storeAs}`);
+          stepProperties.push(
+            t.objectProperty(t.identifier('storeAs'), t.stringLiteral(step.storeAs))
+          );
+        }
+        
+        // ✅ NEW: Add conditions if present (block-based system)
+        if (step.conditions && step.conditions.blocks && step.conditions.blocks.length > 0) {
+          console.log(`   🔒 Adding conditions to step: ${step.conditions.blocks.length} blocks`);
+          stepProperties.push(
+            t.objectProperty(t.identifier('conditions'), createValueNode(step.conditions))
+          );
+        }
+        
+        return t.objectExpression(stepProperties);
+      })
+    );
+    
+    properties.push(
+      t.objectProperty(
+        t.identifier('steps'),
+        stepsArray
+      )
+    );
+  }
+  
+  return t.objectExpression(properties);
+}
+
+function findOrCreateOnProperty(configValue) {
+  // Try to find 'on' at root level
+  let onProperty = configValue.properties.find(p => p.key?.name === 'on');
+  
+  if (onProperty) {
+    console.log('✅ Found simple structure: xstateConfig.on');
+    return onProperty;
+  }
+  
+  // Try to find 'on' inside states
+  console.log('🔍 Looking for complex structure: xstateConfig.states.*.on');
+  
+  const statesProperty = configValue.properties.find(p => p.key?.name === 'states');
+  
+  if (statesProperty && statesProperty.value?.type === 'ObjectExpression') {
+    // Find first state
+    let targetState = statesProperty.value.properties[0];
+    
+    if (targetState && targetState.value?.type === 'ObjectExpression') {
+      onProperty = targetState.value.properties.find(p => p.key?.name === 'on');
+      
+      if (!onProperty) {
+        // Create 'on' property inside state
+        console.log('📝 Creating new "on" property inside state');
+        onProperty = {
+          type: 'ObjectProperty',
+          key: { type: 'Identifier', name: 'on' },
+          value: { type: 'ObjectExpression', properties: [] }
+        };
+        targetState.value.properties.push(onProperty);
+      }
+      
+      return onProperty;
+    }
+  }
+  
+  // Create at root level as fallback
+  console.log('📝 Creating new "on" property at root level');
+  onProperty = {
+    type: 'ObjectProperty',
+    key: { type: 'Identifier', name: 'on' },
+    value: { type: 'ObjectExpression', properties: [] }
+  };
+  configValue.properties.push(onProperty);
+  
+  return onProperty;
+}
+
+/**
+ * Add a setup entry to the target implication's meta.setup array
+ * Called when a transition is added TO this state
+ * 
+ * @param {AST} ast - Babel AST of target file
+ * @param {string} sourceStateName - The state this transition comes FROM
+ * @param {string} targetStateName - The state this transition goes TO
+ * @param {string} event - The transition event name
+ * @param {string} platform - Platform for this transition
+ * @param {object} requires - Conditions from transition (optional)
+ * @returns {boolean} Whether the file was modified
+ */
+function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires, mode) {
+  let targetUpdated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        // Find or create meta property
+        let metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        
+        if (!metaProperty) {
+          metaProperty = t.objectProperty(
+            t.identifier('meta'),
+            t.objectExpression([])
+          );
+          configValue.properties.unshift(metaProperty);
+        }
+        
+        // Find or create setup array
+        let setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        
+        if (!setupProperty) {
+          setupProperty = t.objectProperty(
+            t.identifier('setup'),
+            t.arrayExpression([])
+          );
+          metaProperty.value.properties.push(setupProperty);
+        }
+        
+        // Check if setup entry for this source already exists
+        const existingEntry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (existingEntry) {
+          console.log(`ℹ️  Setup entry from '${sourceStateName}' already exists`);
+          return;
+        }
+        
+        // Build the new setup entry
+        const toPascalCase = (str) => str
+          .split('_')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join('');
+        
+        const targetPascal = toPascalCase(targetStateName);
+        const sourcePascal = toPascalCase(sourceStateName);
+        const platformCapitalized = platform.charAt(0).toUpperCase() + platform.slice(1);
+        const eventClean = event;
+        
+        const testFileName = `${targetPascal}Via${sourcePascal}-${eventClean}-${platformCapitalized}-UNIT.spec.js`;
+        const actionName = `${targetStateName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${sourcePascal}`;
+        
+        // Build setup entry properties
+        const setupEntryProps = [
+          t.objectProperty(
+            t.identifier('testFile'),
+            t.stringLiteral(`tests/implications/bookings/status/${testFileName}`)
+          ),
+          t.objectProperty(
+            t.identifier('actionName'),
+            t.stringLiteral(actionName)
+          ),
+          t.objectProperty(
+            t.identifier('platform'),
+            t.stringLiteral(platform)
+          ),
+          t.objectProperty(
+            t.identifier('previousStatus'),
+            t.stringLiteral(sourceStateName)
+          )
+        ];
+        
+        // ✅ NEW: Add mode if provided (for observer transitions)
+        if (mode) {
+          console.log(`✅ Adding mode "${mode}" to setup entry`);
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            )
+          );
+        }
+        
+        // Add requires if provided
+        if (requires && Object.keys(requires).length > 0) {
+          const requiresProps = Object.entries(requires).map(([key, value]) => {
+            let valueNode;
+            if (typeof value === 'boolean') {
+              valueNode = t.booleanLiteral(value);
+            } else if (typeof value === 'number') {
+              valueNode = t.numericLiteral(value);
+            } else {
+              valueNode = t.stringLiteral(String(value));
+            }
+            return t.objectProperty(t.identifier(key), valueNode);
+          });
+          
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('requires'),
+              t.objectExpression(requiresProps)
+            )
+          );
+        }
+        
+        // Add the new setup entry
+        setupProperty.value.elements.push(
+          t.objectExpression(setupEntryProps)
+        );
+        
+        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform}${mode ? ', mode: ' + mode : ''})`);
+        targetUpdated = true;
+      }
+    }
+  });
+  
+  return targetUpdated;
+}
 
 /**
  * GET /api/implications/analyze-composition
@@ -1918,6 +4166,31 @@ router.get('/analyze-composition', async (req, res) => {
   }
 });
 
+router.get('/ui-with-source', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+
+    console.log('📋 Getting UI data with source info for:', filePath);
+    
+    // Read the file
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // Extract UI with full merge (this includes sourceInfo!)
+    const projectPath = findProjectRoot(filePath);
+    const uiData = await extractUIImplications(content, projectPath, {});
+    
+    res.json({ uiData });
+    
+  } catch (error) {
+    console.error('❌ Error getting UI with source:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/context-schema', async (req, res) => {
   try {
     const { filePath } = req.query;
@@ -1975,7 +4248,28 @@ router.get('/context-schema', async (req, res) => {
     });
   }
 });
-
+function findProjectRoot(filePath) {
+  let current = path.dirname(filePath);
+  
+  // Go up until we find a directory that contains 'tests'
+  while (current !== '/' && !current.endsWith('/')) {
+    if (fs.existsSync(path.join(current, 'package.json'))) {
+      console.log('   ✅ Found project root (package.json):', current);
+      return current;
+    }
+    
+    // Check if current dir has 'tests' subdirectory
+    if (fs.existsSync(path.join(current, 'tests'))) {
+      console.log('   ✅ Found project root (tests/):', current);
+      return current;
+    }
+    
+    current = path.dirname(current);
+  }
+  
+  console.warn('   ⚠️ Could not find project root, using 3-level-up fallback');
+  return path.dirname(path.dirname(path.dirname(filePath)));
+}
 /**
  * ✨ NEW: Extract required fields from actionDetails
  * Parses ctx.data.fieldName from transition steps
@@ -2076,7 +4370,7 @@ router.post('/add-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -2200,7 +4494,7 @@ router.post('/delete-context-field', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -2301,7 +4595,7 @@ router.get('/extract-mirrorson-variables', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8');
     
     // 2. Parse to AST
-    const ast = babelParser.parse(content, {
+    const ast = parser.parse(content, {
       sourceType: 'module',
       plugins: ['jsx', 'classProperties', 'objectRestSpread']
     });
@@ -2532,6 +4826,187 @@ function createValueNode(value) {
 }
 
 /**
+ * Remove a setup entry from meta.setup array by previousStatus
+ */
+function removeSetupEntryFromAST(ast, sourceStateName) {
+  let removed = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        // Find meta property
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        // Find setup array
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find and remove entry with matching previousStatus
+        const setupArray = setupProperty.value.elements;
+        const entryIndex = setupArray.findIndex(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entryIndex !== -1) {
+          setupArray.splice(entryIndex, 1);
+          console.log(`✅ Removed setup entry for previousStatus="${sourceStateName}"`);
+          removed = true;
+        }
+      }
+    }
+  });
+  
+  return removed;
+}
+
+/**
+ * Update requires in a setup entry
+ */
+function updateSetupEntryRequiresInAST(ast, sourceStateName, requires, mode) {
+  let updated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find entry with matching previousStatus
+        const entry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entry) {
+          // ═══════════════════════════════════════════════════════════
+          // Handle requires
+          // ═══════════════════════════════════════════════════════════
+          const requiresIndex = entry.properties.findIndex(p => p.key?.name === 'requires');
+          
+          if (requires && Object.keys(requires).length > 0) {
+            const requiresProps = Object.entries(requires).map(([key, value]) => {
+              let valueNode;
+              if (typeof value === 'boolean') {
+                valueNode = t.booleanLiteral(value);
+              } else if (typeof value === 'number') {
+                valueNode = t.numericLiteral(value);
+              } else {
+                valueNode = t.stringLiteral(String(value));
+              }
+              return t.objectProperty(t.identifier(key), valueNode);
+            });
+            
+            const requiresNode = t.objectProperty(
+              t.identifier('requires'),
+              t.objectExpression(requiresProps)
+            );
+            
+            if (requiresIndex !== -1) {
+              entry.properties[requiresIndex] = requiresNode;
+              console.log(`✅ Updated requires in setup entry`);
+            } else {
+              entry.properties.push(requiresNode);
+              console.log(`✅ Added requires to setup entry`);
+            }
+            updated = true;
+          } else if (requiresIndex !== -1) {
+            entry.properties.splice(requiresIndex, 1);
+            console.log(`✅ Removed requires from setup entry`);
+            updated = true;
+          }
+          
+          // ═══════════════════════════════════════════════════════════
+          // ✅ NEW: Handle mode
+          // ═══════════════════════════════════════════════════════════
+          const modeIndex = entry.properties.findIndex(p => p.key?.name === 'mode');
+          
+          if (mode) {
+            const modeNode = t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            );
+            
+            if (modeIndex !== -1) {
+              entry.properties[modeIndex] = modeNode;
+              console.log(`✅ Updated mode in setup entry: ${mode}`);
+            } else {
+              entry.properties.push(modeNode);
+              console.log(`✅ Added mode to setup entry: ${mode}`);
+            }
+            updated = true;
+          } else if (modeIndex !== -1) {
+            // Remove mode if not provided (transition is no longer observer)
+            entry.properties.splice(modeIndex, 1);
+            console.log(`✅ Removed mode from setup entry`);
+            updated = true;
+          }
+        }
+      }
+    }
+  });
+  
+  return updated;
+}
+
+/**
+ * Update event name in a setup entry's testFile path
+ */
+function updateSetupEntryEventInAST(ast, sourceStateName, oldEvent, newEvent) {
+  let updated = false;
+  
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+        
+        const metaProperty = configValue.properties.find(p => p.key?.name === 'meta');
+        if (!metaProperty?.value?.properties) return;
+        
+        const setupProperty = metaProperty.value.properties.find(p => p.key?.name === 'setup');
+        if (!setupProperty?.value?.elements) return;
+        
+        // Find entry with matching previousStatus
+        const entry = setupProperty.value.elements.find(el => {
+          if (el.type !== 'ObjectExpression') return false;
+          const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevStatusProp?.value?.value === sourceStateName;
+        });
+        
+        if (entry) {
+          // Update testFile path
+          const testFileProp = entry.properties.find(p => p.key?.name === 'testFile');
+          if (testFileProp?.value?.value) {
+            const newPath = testFileProp.value.value.replace(oldEvent, newEvent);
+            testFileProp.value.value = newPath;
+            console.log(`✅ Updated testFile: ${oldEvent} → ${newEvent}`);
+            updated = true;
+          }
+        }
+      }
+    }
+  });
+  
+  return updated;
+}
+
+/**
  * Extract JavaScript value from AST node
  */
 function extractValueFromAST(node) {
@@ -2707,28 +5182,38 @@ router.delete('/graph/layout', async (req, res) => {
   }
 });
 
-/**
- * POST /api/implications/update-transition
- * Update an existing transition (change event name or target)
- */
 router.post('/update-transition', async (req, res) => {
   try {
-    const { 
-      sourceFile, 
-      oldEvent,      // Current event name
-      newEvent,      // New event name (can be same as oldEvent)
-      newTarget,     // New target state
-      actionDetails  // Optional: update actionDetails
-    } = req.body;
+const { 
+  sourceFile, 
+  oldEvent,
+  newEvent,
+  newTarget,
+  platform,
+  actionDetails,
+  conditions,
+  isObserver,  // ← ADD
+  mode         // ← ADD
+} = req.body;
+
+console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
     
-    console.log('✏️ Updating transition:', { sourceFile, oldEvent, newEvent, newTarget });
+    console.log('═══════════════════════════════════════');
+    console.log('✏️ UPDATE-TRANSITION DEBUG');
+    console.log('═══════════════════════════════════════');
+    console.log('📦 Raw req.body:', JSON.stringify(req.body, null, 2));
+    console.log('🎯 Platform:', platform);
+    console.log('📊 ActionDetails present:', !!actionDetails);
+    console.log('═══════════════════════════════════════');
     
+    // Validate required fields
     if (!sourceFile || !oldEvent || !newEvent || !newTarget) {
       return res.status(400).json({ 
         error: 'sourceFile, oldEvent, newEvent, and newTarget are required' 
       });
     }
     
+    // Read and parse file
     const content = await fs.readFile(sourceFile, 'utf-8');
     const ast = parse(content, {
       sourceType: 'module',
@@ -2743,6 +5228,7 @@ router.post('/update-transition', async (req, res) => {
           const configValue = path.node.value;
           
           if (configValue?.type === 'ObjectExpression') {
+            // Find 'on' property (simple or complex structure)
             let onProperty = null;
             
             // Try root level 'on'
@@ -2762,9 +5248,7 @@ router.post('/update-transition', async (req, res) => {
             }
             
             if (!onProperty || !onProperty.value?.properties) {
-              return res.status(400).json({ 
-                error: 'Could not find transitions in xstateConfig' 
-              });
+              throw new Error('Could not find transitions in xstateConfig');
             }
             
             // Find the old transition
@@ -2773,49 +5257,164 @@ router.post('/update-transition', async (req, res) => {
             );
             
             if (transitionIndex === -1) {
-              return res.status(404).json({ 
-                error: `Transition "${oldEvent}" not found` 
-              });
+              throw new Error(`Transition "${oldEvent}" not found`);
             }
             
             const oldTransition = onProperty.value.properties[transitionIndex];
             
-            // Update the transition
-            const transitionProperties = [
-              {
-                type: 'ObjectProperty',
-                key: { type: 'Identifier', name: 'target' },
-                value: { type: 'StringLiteral', value: newTarget }
-              }
-            ];
+            // ✅ BUILD NEW TRANSITION PROPERTIES
+            const transitionProperties = [];
             
-            // Add actionDetails if provided
-            if (actionDetails) {
-              const actionDetailsAST = parser.parseExpression(JSON.stringify(actionDetails));
-              transitionProperties.push({
-                type: 'ObjectProperty',
-                key: { type: 'Identifier', name: 'actionDetails' },
-                value: actionDetailsAST
+            // 1. Target (always required)
+            transitionProperties.push(
+              t.objectProperty(
+                t.identifier('target'),
+                t.stringLiteral(newTarget)
+              )
+            );
+            
+            // 2. Platform (if provided)
+            if (platform) {
+              console.log('✅ Adding platform to transition:', platform);
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('platforms'),
+                  t.arrayExpression([t.stringLiteral(platform)])
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing platforms if not updating
+              const existingPlatforms = oldTransition.value.properties.find(
+                p => p.key?.name === 'platforms'
+              );
+              if (existingPlatforms) {
+                transitionProperties.push(existingPlatforms);
+              }
+            }
+            
+ // 3. Requires (if provided)
+            const requires = req.body.requires;
+            if (requires && typeof requires === 'object' && Object.keys(requires).length > 0) {
+              console.log('✅ Adding requires to transition:', requires);
+              
+              const requiresProperties = Object.entries(requires).map(([key, value]) => {
+                let valueNode;
+                if (typeof value === 'boolean') {
+                  valueNode = t.booleanLiteral(value);
+                } else if (typeof value === 'number') {
+                  valueNode = t.numericLiteral(value);
+                } else {
+                  valueNode = t.stringLiteral(String(value));
+                }
+                return t.objectProperty(t.identifier(key), valueNode);
               });
+              
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('requires'),
+                  t.objectExpression(requiresProperties)
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing requires if not updating
+              const existingRequires = oldTransition.value.properties.find(
+                p => p.key?.name === 'requires'
+              );
+              if (existingRequires) {
+                console.log('⭐ Preserving existing requires');
+                transitionProperties.push(existingRequires);
+              }
+            }
+
+             // 3.5. Conditions (block-based system - NEW)
+            if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+              console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('conditions'),
+                  createValueNode(conditions)
+                )
+              );
+            } else if (oldTransition.value?.type === 'ObjectExpression') {
+              // Preserve existing conditions if not updating
+              const existingConditions = oldTransition.value.properties.find(
+                p => p.key?.name === 'conditions'
+              );
+              if (existingConditions) {
+                console.log('⭐ Preserving existing conditions');
+                transitionProperties.push(existingConditions);
+              }
+            }
+            
+            // 4. ActionDetails (if provided, use buildActionDetailsAST helper)
+            if (actionDetails) {
+              console.log('✅ Adding actionDetails to transition');
+              const actionDetailsAST = buildActionDetailsAST(actionDetails);
+              transitionProperties.push(
+                t.objectProperty(
+                  t.identifier('actionDetails'),
+                  actionDetailsAST
+                )
+              );
             } else if (oldTransition.value?.type === 'ObjectExpression') {
               // Preserve existing actionDetails if not updating
               const existingActionDetails = oldTransition.value.properties.find(
                 p => p.key?.name === 'actionDetails'
               );
               if (existingActionDetails) {
+                console.log('⭐ Preserving existing actionDetails');
                 transitionProperties.push(existingActionDetails);
               }
             }
+
+            // 5. isObserver (if true)
+if (isObserver) {
+  console.log('✅ Adding isObserver to transition');
+  transitionProperties.push(
+    t.objectProperty(
+      t.identifier('isObserver'),
+      t.booleanLiteral(true)
+    )
+  );
+}
+
+// 6. mode (if provided)
+if (mode) {
+  console.log('✅ Adding mode to transition:', mode);
+  transitionProperties.push(
+    t.objectProperty(
+      t.identifier('mode'),
+      t.stringLiteral(mode)
+    )
+  );
+}
+
+            // // 5. Conditions (if provided - new block-based system)
+            // if (conditions && conditions.blocks && conditions.blocks.length > 0) {
+            //   console.log('✅ Adding conditions to transition:', conditions.blocks.length, 'blocks');
+            //   transitionProperties.push(
+            //     t.objectProperty(
+            //       t.identifier('conditions'),
+            //       createValueNode(conditions)
+            //     )
+            //   );
+            // } else if (oldTransition.value?.type === 'ObjectExpression') {
+            //   // Preserve existing conditions if not updating
+            //   const existingConditions = oldTransition.value.properties.find(
+            //     p => p.key?.name === 'conditions'
+            //   );
+            //   if (existingConditions) {
+            //     console.log('⭐ Preserving existing conditions');
+            //     transitionProperties.push(existingConditions);
+            //   }
+            // }
+
             
-            // Replace the transition
-            onProperty.value.properties[transitionIndex] = {
-              type: 'ObjectProperty',
-              key: { type: 'Identifier', name: newEvent },
-              value: {
-                type: 'ObjectExpression',
-                properties: transitionProperties
-              }
-            };
+            // ✅ REPLACE THE TRANSITION
+            onProperty.value.properties[transitionIndex] = t.objectProperty(
+              t.identifier(newEvent),
+              t.objectExpression(transitionProperties)
+            );
             
             transitionUpdated = true;
             console.log(`✅ Updated: ${oldEvent} → ${newEvent} (target: ${newTarget})`);
@@ -2829,15 +5428,75 @@ router.post('/update-transition', async (req, res) => {
         error: 'Could not update transition' 
       });
     }
+
+      // ✅ MOVE THIS UP - before using it
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    // ✅ NEW: Update setup entry in target file if event name changed
+// ✅ NEW: Update setup entry in target file if event name changed
+// ✅ UPDATE: Sync setup entry in target file (event name AND requires)
+const requires = req.body.requires;
+const hasRequiresChange = requires !== undefined; // User sent requires (even if empty)
+const hasEventChange = oldEvent !== newEvent;
+
+if (req.body.targetFile && (hasEventChange || hasRequiresChange)) {
+  try {
+    const targetContent = await fs.readFile(req.body.targetFile, 'utf-8');
+    const targetAst = parse(targetContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
     
-    // Generate updated code
+    const sourceStateName = nodePath.basename(sourceFile, '.js')
+      .replace(/Implications$/, '')
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '');
+    
+    console.log('🔍 DEBUG updateSetupEntry:');
+    console.log('   sourceStateName:', sourceStateName);
+    console.log('   hasEventChange:', hasEventChange, `(${oldEvent} → ${newEvent})`);
+    console.log('   hasRequiresChange:', hasRequiresChange, requires);
+    
+    let targetUpdated = false;
+    
+    // Update event name in testFile path if changed
+    if (hasEventChange) {
+      targetUpdated = updateSetupEntryEventInAST(targetAst, sourceStateName, oldEvent, newEvent) || targetUpdated;
+    }
+    
+    // Update requires in setup entry
+
+    if (hasRequiresChange || isObserver) {
+  targetUpdated = updateSetupEntryRequiresInAST(targetAst, sourceStateName, requires, isObserver ? 'observer' : undefined) || targetUpdated;
+}
+    
+    console.log('   targetUpdated:', targetUpdated);
+        
+    if (targetUpdated) {
+      const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+        retainLines: true,
+        comments: true
+      });
+      
+      const targetBackupPath = `${req.body.targetFile}.backup-${timestamp}`;
+      await fs.copy(req.body.targetFile, targetBackupPath);
+      await fs.writeFile(req.body.targetFile, newTargetCode, 'utf-8');
+      
+      console.log('✅ Target file updated - setup entry synced');
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not update target file setup entry:', err.message);
+  }
+}
+    
+  // Generate updated code
     const { code: newCode } = (babelGenerate.default || babelGenerate)(ast, {
       retainLines: true,
       comments: true
     });
     
-    // Create backup
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    // Create backup (timestamp already defined above)
     const backupPath = `${sourceFile}.backup-${timestamp}`;
     await fs.copy(sourceFile, backupPath);
     
@@ -2845,13 +5504,15 @@ router.post('/update-transition', async (req, res) => {
     await fs.writeFile(sourceFile, newCode, 'utf-8');
     
     console.log('✅ Transition updated successfully');
+    console.log('📦 Backup created:', backupPath);
     
     res.json({
       success: true,
       transition: {
         oldEvent,
         newEvent,
-        target: newTarget
+        target: newTarget,
+        platform: platform || null
       },
       backup: backupPath
     });
@@ -2871,9 +5532,9 @@ router.post('/update-transition', async (req, res) => {
  */
 router.post('/delete-transition', async (req, res) => {
   try {
-    const { sourceFile, event } = req.body;
+    const { sourceFile, targetFile, event } = req.body;  // ✅ Added targetFile
     
-    console.log('🗑️ Deleting transition:', { sourceFile, event });
+    console.log('🗑️ Deleting transition:', { sourceFile, targetFile, event });
     
     if (!sourceFile || !event) {
       return res.status(400).json({ 
@@ -2888,6 +5549,7 @@ router.post('/delete-transition', async (req, res) => {
     });
     
     let transitionDeleted = false;
+    let deletedTargetState = null;  // ✅ Track what we're deleting
     
     traverse(ast, {
       ClassProperty(path) {
@@ -2914,27 +5576,34 @@ router.post('/delete-transition', async (req, res) => {
             }
             
             if (!onProperty || !onProperty.value?.properties) {
-              return res.status(400).json({ 
-                error: 'Could not find transitions in xstateConfig' 
-              });
+              return;
             }
             
-            // Find and remove the transition
+            // Find the transition (to get target info before deleting)
             const transitionIndex = onProperty.value.properties.findIndex(
               p => (p.key?.name === event || p.key?.value === event)
             );
             
             if (transitionIndex === -1) {
-              return res.status(404).json({ 
-                error: `Transition "${event}" not found` 
-              });
+              return;
+            }
+            
+            // ✅ Extract target state name before deleting
+            const transition = onProperty.value.properties[transitionIndex];
+            if (transition.value?.type === 'ObjectExpression') {
+              const targetProp = transition.value.properties.find(p => p.key?.name === 'target');
+              if (targetProp?.value?.value) {
+                deletedTargetState = targetProp.value.value;
+              }
+            } else if (transition.value?.type === 'StringLiteral') {
+              deletedTargetState = transition.value.value;
             }
             
             // Remove the transition
             onProperty.value.properties.splice(transitionIndex, 1);
             transitionDeleted = true;
             
-            console.log(`✅ Deleted transition: ${event}`);
+            console.log(`✅ Deleted transition: ${event} → ${deletedTargetState}`);
           }
         }
       }
@@ -2960,11 +5629,51 @@ router.post('/delete-transition', async (req, res) => {
     // Write updated file
     await fs.writeFile(sourceFile, newCode, 'utf-8');
     
+    console.log('✅ Source file updated');
+    
+    // ✅ NEW: Remove setup entry from target file
+    let targetUpdated = false;
+    if (targetFile) {
+      const sourceStateName = nodePath.basename(sourceFile, '.js')
+        .replace(/Implications$/, '')
+        .replace(/([A-Z])/g, '_$1')
+        .toLowerCase()
+        .replace(/^_/, '');
+      
+      try {
+        const targetContent = await fs.readFile(targetFile, 'utf-8');
+        const targetAst = parse(targetContent, {
+          sourceType: 'module',
+          plugins: ['classProperties', 'objectRestSpread']
+        });
+        
+        targetUpdated = removeSetupEntryFromAST(targetAst, sourceStateName);
+        
+        if (targetUpdated) {
+          const { code: newTargetCode } = (babelGenerate.default || babelGenerate)(targetAst, {
+            retainLines: true,
+            comments: true
+          });
+          
+          const targetBackupPath = `${targetFile}.backup-${timestamp}`;
+          await fs.copy(targetFile, targetBackupPath);
+          await fs.writeFile(targetFile, newTargetCode, 'utf-8');
+          
+          console.log('✅ Target file updated - setup entry removed');
+          console.log('📦 Target backup:', targetBackupPath);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not update target file:', err.message);
+      }
+    }
+    
     console.log('✅ Transition deleted successfully');
     
     res.json({
       success: true,
       deletedEvent: event,
+      deletedTarget: deletedTargetState,
+      targetUpdated,
       backup: backupPath
     });
     

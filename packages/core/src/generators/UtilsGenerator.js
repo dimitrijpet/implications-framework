@@ -11,12 +11,13 @@ const __dirname = path.dirname(__filename);
 /**
  * UtilsGenerator
  * 
- * Generates utility files (TestContext, TestPlanner) for guest projects.
+ * Generates utility files (TestContext, TestPlanner, NavigationActions) for guest projects.
  * 
  * Features:
  * - Generates TestContext.js with delta file system
  * - Generates TestPlanner.js with auto-chaining
  * - Generates ExpectImplication.js for validation
+ * - Generates NavigationActions.js for screen navigation
  * - Creates utils directory if needed
  * - Backs up existing files before overwriting
  */
@@ -37,12 +38,14 @@ class UtilsGenerator {
    * @param {object} options - Generation options
    * @param {string} options.projectPath - Path to guest project
    * @param {boolean} options.preview - Return code without writing files
+   * @param {array} options.platforms - Platforms to generate NavigationActions for
    * @returns {object} { files: [...] }
    */
   generateAll(options = {}) {
     const {
       projectPath,
-      preview = false
+      preview = false,
+      platforms = ['web', 'dancer', 'manager']  // ✅ NEW: Generate for all platforms
     } = options;
     
     console.log('\n🛠️  UtilsGenerator.generateAll()');
@@ -76,6 +79,31 @@ class UtilsGenerator {
       results.files.push(expectImplicationResult);
     } catch (error) {
       console.warn('   ⚠️  ExpectImplication template not found, skipping');
+    }
+    
+    // Generate ImplicationsHelper (if template exists)
+    try {
+      const implicationsHelperResult = this.generateImplicationsHelper({
+        projectPath,
+        preview
+      });
+      results.files.push(implicationsHelperResult);
+    } catch (error) {
+      console.warn('   ⚠️  ImplicationsHelper template not found, skipping');
+    }
+    
+    // ✅ NEW: Generate NavigationActions for each platform
+    for (const platform of platforms) {
+      try {
+        const navActionsResult = this.generateNavigationActions({
+          projectPath,
+          platform,
+          preview
+        });
+        results.files.push(navActionsResult);
+      } catch (error) {
+        console.warn(`   ⚠️  NavigationActions template not found for ${platform}, skipping`);
+      }
     }
     
     console.log(`\n   ✅ Generated ${results.files.length} utility file(s)\n`);
@@ -253,18 +281,139 @@ class UtilsGenerator {
       size: code.length
     };
   }
+
+  /**
+   * Generate ImplicationsHelper.js
+   */
+  generateImplicationsHelper(options = {}) {
+    const { projectPath, preview = false } = options;
+    
+    console.log('\n   🔧 Generating ImplicationsHelper.js');
+    
+    // Load and compile template
+    const templatePath = path.join(this.options.templatesDir, 'ImplicationsHelper.hbs');
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found: ${templatePath}`);
+    }
+    
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource, { noEscape: true });
+    
+    const context = {
+      outputPath: 'tests/implications/ImplicationsHelper.js',
+      timestamp: new Date().toISOString()
+    };
+    
+    const code = template(context);
+    
+    const fileName = 'ImplicationsHelper.js';
+    const outputDir = path.join(projectPath, 'tests/implications');
+    const filePath = path.join(outputDir, fileName);
+    
+    if (!preview) {
+      // Create directory if needed
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log(`      📁 Created directory: ${outputDir}`);
+      }
+      
+      // Backup existing file
+      if (this.options.backup && fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.backup`;
+        fs.copyFileSync(filePath, backupPath);
+        console.log(`      💾 Backed up existing file to: ${path.basename(backupPath)}`);
+      }
+      
+      // Write file
+      fs.writeFileSync(filePath, code);
+      console.log(`      ✅ Written: ${filePath}`);
+    }
+    
+    return {
+      type: 'ImplicationsHelper',
+      fileName,
+      filePath: preview ? null : filePath,
+      code,
+      size: code.length
+    };
+  }
+  
+  /**
+   * ✅ NEW: Generate NavigationActions.js for a specific platform
+   */
+  generateNavigationActions(options = {}) {
+    const { projectPath, platform = 'web', preview = false } = options;
+    
+    console.log(`\n   🔧 Generating NavigationActions for ${platform}`);
+    
+    // Load and compile template
+    const templatePath = path.join(this.options.templatesDir, 'NavigationActions.hbs');
+    
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found: ${templatePath}`);
+    }
+    
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = Handlebars.compile(templateSource, { noEscape: true });
+    
+    // Determine if Playwright or WebdriverIO
+    const isPlaywright = platform === 'web' || platform === 'cms';
+    
+    const context = {
+      platform,
+      isPlaywright,
+      timestamp: new Date().toISOString()
+    };
+    
+    const code = template(context);
+    
+    const fileName = `navigation.${platform}.js`;
+    const outputDir = path.join(projectPath, 'tests/helpers');
+    const filePath = path.join(outputDir, fileName);
+    
+    if (!preview) {
+      // Create directory if needed
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log(`      📁 Created directory: ${outputDir}`);
+      }
+      
+      // Backup existing file
+      if (this.options.backup && fs.existsSync(filePath)) {
+        const backupPath = `${filePath}.backup`;
+        fs.copyFileSync(filePath, backupPath);
+        console.log(`      💾 Backed up existing file to: ${path.basename(backupPath)}`);
+      }
+      
+      // Write file
+      fs.writeFileSync(filePath, code);
+      console.log(`      ✅ Written: ${filePath}`);
+    }
+    
+    return {
+      type: 'NavigationActions',
+      platform,
+      fileName,
+      filePath: preview ? null : filePath,
+      code,
+      size: code.length
+    };
+  }
   
   /**
    * Generate single utility file
    * 
-   * @param {string} utilName - 'TestContext' | 'TestPlanner' | 'ExpectImplication'
+   * @param {string} utilName - 'TestContext' | 'TestPlanner' | 'ExpectImplication' | 'NavigationActions'
    * @param {object} options - Generation options
    */
   generate(utilName, options = {}) {
     const methodMap = {
       'TestContext': 'generateTestContext',
       'TestPlanner': 'generateTestPlanner',
-      'ExpectImplication': 'generateExpectImplication'
+      'ExpectImplication': 'generateExpectImplication',
+      'ImplicationsHelper': 'generateImplicationsHelper',
+      'NavigationActions': 'generateNavigationActions'  // ✅ NEW
     };
     
     const method = methodMap[utilName];

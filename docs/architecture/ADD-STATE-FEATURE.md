@@ -145,7 +145,7 @@ GET /api/implications/get-state-details?stateId=rejected
 **Response:**
 ```json
 {
-  "platform": "mobile-manager",
+  "platform": "manager",
   "triggerButton": "REJECT",
   "afterButton": "UNDO",
   "previousButton": null,
@@ -251,8 +251,8 @@ GET /api/implications/get-state-details?stateId=rejected
         <>
           <FormGroup label="Copy from *">
             <select>
-              <option>rejected (mobile-manager, 12 screens)</option>
-              <option>pending (mobile-dancer, 12 screens)</option>
+              <option>rejected (manager, 12 screens)</option>
+              <option>pending (dancer, 12 screens)</option>
             </select>
           </FormGroup>
           

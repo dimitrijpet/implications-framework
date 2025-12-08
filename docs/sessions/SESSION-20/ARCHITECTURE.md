@@ -258,7 +258,7 @@ class UnitTestGenerator {
     const mirrorsOn = metadata.mirrorsOn;
     if (!mirrorsOn?.UI) return result;
     
-    // Get platform key (web → web, mobile-dancer → dancer)
+    // Get platform key (web → web, dancer → dancer)
     const platformKey = this._getPlatformKeyForMirrorsOn(platform);
     const platformUI = mirrorsOn.UI[platformKey];
     if (!platformUI) return result;
@@ -676,8 +676,8 @@ _getPlatformKeyForMirrorsOn(platform) {
   const mapping = {
     'web': 'web',                      // Direct match
     'cms': 'cms',                      // Direct match
-    'mobile-dancer': 'dancer',         // Shortened
-    'mobile-manager': 'clubApp'        // Different name
+    'dancer': 'dancer',         // Shortened
+    'manager': 'clubApp'        // Different name
   };
   
   return mapping[platform] || platform;
@@ -688,8 +688,8 @@ _getPlatformKeyForMirrorsOn(platform) {
 ```javascript
 mirrorsOn: {
   UI: {
-    dancer: { ... },     // Not 'mobile-dancer'
-    clubApp: { ... },    // Not 'mobile-manager'
+    dancer: { ... },     // Not 'dancer'
+    clubApp: { ... },    // Not 'manager'
     web: { ... }         // Direct match
   }
 }

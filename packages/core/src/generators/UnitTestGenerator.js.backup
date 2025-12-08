@@ -108,7 +108,7 @@ class UnitTestGenerator {
    * 
    * @param {string} implFilePath - Path to Implication file
    * @param {object} options - Generation options
-   * @param {string} options.platform - Platform: 'web', 'cms', 'mobile-dancer', 'mobile-manager'
+   * @param {string} options.platform - Platform: 'web', 'cms', 'dancer', 'manager'
    * @param {string} options.state - Target state (for multi-state machines)
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
@@ -1043,8 +1043,8 @@ _applyNamingPattern(pattern, name) {
     const mapping = {
       'web': 'Web',
       'cms': 'CMS',
-      'mobile-dancer': 'Dancer',
-      'mobile-manager': 'Manager'
+      'dancer': 'Dancer',
+      'manager': 'Manager'
     };
     
     return mapping[platform] || 'Web';

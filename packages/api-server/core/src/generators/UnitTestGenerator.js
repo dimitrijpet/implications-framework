@@ -39,7 +39,7 @@ class UnitTestGenerator {
    * 
    * @param {string} implFilePath - Path to Implication file
    * @param {object} options - Generation options
-   * @param {string} options.platform - Platform: 'web', 'cms', 'mobile-dancer', 'mobile-manager'
+   * @param {string} options.platform - Platform: 'web', 'cms', 'dancer', 'manager'
    * @param {string} options.state - Target state (for multi-state machines)
    * @param {boolean} options.preview - Return code without writing file
    * @returns {object} { code, fileName, filePath } or array of results for multi-state
@@ -890,8 +890,8 @@ return {
     const mapping = {
       'web': 'Web',
       'cms': 'CMS',
-      'mobile-dancer': 'Dancer',
-      'mobile-manager': 'Manager'
+      'dancer': 'Dancer',
+      'manager': 'Manager'
     };
     
     return mapping[platform] || 'Web';
@@ -1089,7 +1089,7 @@ return {
       return result;
     }
     
-    // Get platform key (convert web → web, mobile-dancer → dancer, etc.)
+    // Get platform key (convert web → web, dancer → dancer, etc.)
     const platformKey = this._getPlatformKeyForMirrorsOn(platform);
     
     const platformUI = mirrorsOn.UI[platformKey];
@@ -1131,15 +1131,15 @@ return {
    * Maps platform to mirrorsOn.UI key:
    *   web → web
    *   cms → cms  
-   *   mobile-dancer → dancer
-   *   mobile-manager → clubApp (or manager?)
+   *   dancer → dancer
+   *   manager → clubApp (or manager?)
    */
   _getPlatformKeyForMirrorsOn(platform) {
     const mapping = {
       'web': 'web',
       'cms': 'cms',
-      'mobile-dancer': 'dancer',
-      'mobile-manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
+      'dancer': 'dancer',
+      'manager': 'clubApp'  // âœ… Use actual key from mirrorsOn
     };
     
     return mapping[platform] || platform;

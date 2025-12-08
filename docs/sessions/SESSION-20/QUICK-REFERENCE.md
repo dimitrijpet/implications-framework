@@ -104,8 +104,8 @@ your-project/
 ```javascript
 --platform web              // Web app (Playwright)
 --platform cms              // CMS (Playwright)
---platform mobile-dancer    // Mobile dancer app (Appium)
---platform mobile-manager   // Mobile manager app (Appium)
+--platform dancer    // Mobile dancer app (Appium)
+--platform manager   // Mobile manager app (Appium)
 ```
 
 ---
