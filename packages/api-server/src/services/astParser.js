@@ -134,6 +134,149 @@ export async function parseFileWithMethods(filePath) {
 }
 
 /**
+ * ✨ NEW: Extract return object keys from a function body
+ * Handles: return { key1, key2, key3: value }
+ */
+function extractReturnKeys(functionBody) {
+  const returnInfo = {
+    type: 'unknown',
+    keys: []
+  };
+  
+  if (!functionBody || functionBody.type !== 'BlockStatement') {
+    return returnInfo;
+  }
+  
+  // Find return statements recursively
+  const findReturns = (node, results = []) => {
+    if (!node) return results;
+    
+    if (node.type === 'ReturnStatement' && node.argument) {
+      results.push(node);
+    }
+    
+    // Traverse children
+    if (Array.isArray(node.body)) {
+      node.body.forEach(child => findReturns(child, results));
+    } else if (node.body) {
+      findReturns(node.body, results);
+    }
+    
+    if (node.consequent) findReturns(node.consequent, results);
+    if (node.alternate) findReturns(node.alternate, results);
+    if (node.block) findReturns(node.block, results);
+    
+    return results;
+  };
+  
+  const returnStatements = findReturns(functionBody);
+  
+  // Process return statements - look for object returns
+  for (const returnStmt of returnStatements) {
+    const argument = returnStmt.argument;
+    
+    if (!argument) continue;
+    
+    if (argument.type === 'ObjectExpression') {
+      returnInfo.type = 'object';
+      
+      argument.properties.forEach(prop => {
+        if (prop.type === 'ObjectProperty' || prop.type === 'Property') {
+          const keyName = prop.key?.name || prop.key?.value;
+          if (keyName && !returnInfo.keys.includes(keyName)) {
+            returnInfo.keys.push(keyName);
+          }
+        } else if (prop.type === 'SpreadElement') {
+          returnInfo.keys.push('...<spread>');
+        }
+      });
+      
+      // If we found an object return, use it (prioritize explicit returns)
+      if (returnInfo.keys.length > 0) {
+        break;
+      }
+    } else if (argument.type === 'ArrayExpression') {
+      returnInfo.type = 'array';
+    } else if (argument.type === 'Identifier') {
+      returnInfo.type = 'variable';
+      returnInfo.variableName = argument.name;
+    }
+  }
+  
+  return returnInfo;
+}
+
+/**
+ * ✨ ENHANCED: Parse file with methods AND return keys
+ * For storeAs autocomplete support
+ */
+export async function parseFileWithMethodsAndReturns(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties', 'objectRestSpread'],
+    });
+    
+    const classes = [];
+    
+    traverse.default(ast, {
+      ClassDeclaration(path) {
+        const className = path.node.id?.name;
+        const functions = [];
+        
+        path.node.body.body.forEach(member => {
+          if (member.type === 'ClassMethod') {
+            // Extract parameters
+            const params = member.params.map(param => {
+              if (param.type === 'Identifier') {
+                return param.name;
+              } else if (param.type === 'AssignmentPattern') {
+                return `${param.left.name} = ${extractValueFromNode(param.right)}`;
+              }
+              return 'unknown';
+            });
+            
+            const signature = `${member.key?.name}(${params.join(', ')})`;
+            
+            // ✨ Extract return keys
+            const returns = extractReturnKeys(member.body);
+            
+            functions.push({
+              name: member.key?.name,
+              signature: signature,
+              params: params,
+              static: member.static,
+              async: member.async,
+              returns: returns  // ✨ NEW: { type: 'object', keys: ['index', 'price', ...] }
+            });
+          }
+        });
+        
+        classes.push({
+          name: className,
+          functions: functions,
+        });
+      },
+    });
+    
+    return {
+      path: filePath,
+      classes,
+      error: null,
+    };
+    
+  } catch (error) {
+    return {
+      path: filePath,
+      classes: [],
+      error: error.message,
+    };
+  }
+}
+
+/**
  * Check if parsed file has a specific pattern
  */
 export function hasPattern(parsed, patternName) {
@@ -156,6 +299,8 @@ export function hasPattern(parsed, patternName) {
       return false;
   }
 }
+
+
 
 /**
  * Extract XState transitions from xstateConfig
@@ -200,7 +345,6 @@ export function extractXStateTransitions(parsed, className) {
             
             if (onProperty && onProperty.value?.type === 'ObjectExpression') {
               // Extract each transition
-             // Extract each transition
               onProperty.value.properties.forEach(transitionProp => {
                 const eventName = transitionProp.key?.name || transitionProp.key?.value;
                 
@@ -212,6 +356,9 @@ export function extractXStateTransitions(parsed, className) {
                     if (element.type === 'ObjectExpression') {
                       let targetState = null;
                       let platforms = null;
+                      let requires = null;
+                      let isObserver = false;
+                      let mode = null;
                       
                       // Extract target
                       const targetProp = element.properties.find(p => p.key?.name === 'target');
@@ -228,12 +375,49 @@ export function extractXStateTransitions(parsed, className) {
                         console.log(`         📱 Variant ${index + 1} platforms:`, platforms);
                       }
                       
+                      // Extract requires
+                      const requiresProp = element.properties.find(p => p.key?.name === 'requires');
+                      if (requiresProp && requiresProp.value?.type === 'ObjectExpression') {
+                        requires = {};
+                        requiresProp.value.properties.forEach(reqProp => {
+                          const key = reqProp.key?.name || reqProp.key?.value;
+                          const value = extractValueFromNode(reqProp.value);
+                          if (key) {
+                            requires[key] = value;
+                          }
+                        });
+                        console.log(`         🔒 Variant ${index + 1} requires:`, requires);
+                      }
+                      
+                      // ✅ NEW: Extract isObserver
+                      const isObserverProp = element.properties.find(p => p.key?.name === 'isObserver');
+                      if (isObserverProp?.value?.type === 'BooleanLiteral') {
+                        isObserver = isObserverProp.value.value;
+                      }
+                      
+                      // ✅ NEW: Extract mode
+                      const modeProp = element.properties.find(p => p.key?.name === 'mode');
+                      if (modeProp?.value?.type === 'StringLiteral') {
+                        mode = modeProp.value.value;
+                        // Derive isObserver from mode if not explicitly set
+                        if (!isObserver && (mode === 'observer' || mode === 'verify')) {
+                          isObserver = true;
+                        }
+                      }
+                      
+                      if (isObserver) {
+                        console.log(`         👁️ Variant ${index + 1} is OBSERVER mode`);
+                      }
+                      
                       if (targetState) {
                         transitions.push({
                           from: fromStatus,
                           to: targetState,
                           event: eventName,
-                          platforms: platforms
+                          platforms: platforms,
+                          requires: requires,
+                          isObserver: isObserver,
+                          mode: mode
                         });
                       }
                     }
@@ -245,6 +429,10 @@ export function extractXStateTransitions(parsed, className) {
                 // Original handling for single transitions
                 let targetState = null;
                 let platforms = null;
+                let requires = null;
+                let conditions = null;
+                let isObserver = false;
+                let mode = null;
                 
                 // Handle different formats
                 if (transitionProp.value?.type === 'StringLiteral') {
@@ -288,6 +476,56 @@ export function extractXStateTransitions(parsed, className) {
                       }
                     }
                   }
+                  
+                  // Extract requires
+                  const requiresProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'requires'
+                  );
+                  
+                  if (requiresProp && requiresProp.value?.type === 'ObjectExpression') {
+                    requires = {};
+                    requiresProp.value.properties.forEach(reqProp => {
+                      const key = reqProp.key?.name || reqProp.key?.value;
+                      const value = extractValueFromNode(reqProp.value);
+                      if (key) {
+                        requires[key] = value;
+                      }
+                    });
+                    console.log(`      🔑 Found requires for ${eventName}:`, requires);
+                  }
+                  
+                  // Extract conditions (block-based system)
+                  const conditionsProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'conditions'
+                  );
+                  if (conditionsProp) {
+                    conditions = extractValueFromNode(conditionsProp.value);
+                    console.log(`      🔒 Found conditions for ${eventName}:`, conditions?.blocks?.length || 0, 'blocks');
+                  }
+                  
+                  // ✅ NEW: Extract isObserver
+                  const isObserverProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'isObserver'
+                  );
+                  if (isObserverProp?.value?.type === 'BooleanLiteral') {
+                    isObserver = isObserverProp.value.value;
+                  }
+                  
+                  // ✅ NEW: Extract mode
+                  const modeProp = transitionProp.value.properties.find(
+                    p => p.key?.name === 'mode'
+                  );
+                  if (modeProp?.value?.type === 'StringLiteral') {
+                    mode = modeProp.value.value;
+                    // Derive isObserver from mode if not explicitly set
+                    if (!isObserver && (mode === 'observer' || mode === 'verify')) {
+                      isObserver = true;
+                    }
+                  }
+                  
+                  if (isObserver) {
+                    console.log(`      👁️ ${eventName} is OBSERVER mode`);
+                  }
                 }
                 
                 if (eventName && targetState) {
@@ -295,7 +533,11 @@ export function extractXStateTransitions(parsed, className) {
                     from: fromStatus,
                     to: targetState,
                     event: eventName,
-                    platforms: platforms
+                    platforms: platforms,
+                    requires: requires,
+                    conditions: conditions,
+                    isObserver: isObserver,
+                    mode: mode
                   });
                 }
               });
@@ -548,7 +790,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                             console.log(`      ⚠️ Unknown element type: ${element.type}`);
                           }
                         }
-                      } else if (screenProp.value?.type === 'CallExpression') {
+                                    } else if (screenProp.value?.type === 'CallExpression') {
                         console.log('      📞 Direct CallExpression (not in array)');
                         const merged = await parseScreenValidation(
                           screenProp.value,
@@ -560,7 +802,7 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                           screenDefinitions.push(merged);
                         }
                       } else if (screenProp.value?.type === 'MemberExpression') {
-                        console.log('      🔗 Direct base reference');
+                        console.log('      📗 Direct base reference');
                         const baseData = await resolveBaseImplication(
                           {
                             className: screenProp.value.object?.object?.name,
@@ -573,6 +815,13 @@ export async function extractUIImplications(content, projectPath, cache = {}) {
                         
                         if (baseData) {
                           screenDefinitions.push(baseData);
+                        }
+                      } else if (screenProp.value?.type === 'ObjectExpression') {
+                        // ✅ Handle direct object (not in array)
+                        console.log('      📝 Direct ObjectExpression (single screen)');
+                        const def = extractScreenDefinition(screenProp.value);
+                        if (def) {
+                          screenDefinitions.push(def);
                         }
                       } else {
                         console.log(`      ⚠️ Unhandled screen value type: ${screenProp.value?.type}`);
@@ -744,23 +993,66 @@ function extractScreenDefinition(objectNode) {
   const def = {
     visible: [],
     hidden: [],
+    truthy: [],
+    falsy: [],
+    assertions: [],
     checks: {
       visible: [],
       hidden: [],
-      text: {}
+      text: {},
+      contains: {}
     }
+    // blocks, screen, instance, functions, _pomSource added dynamically
   };
   
   objectNode.properties.forEach(prop => {
     const key = prop.key?.name;
     
-    if (key === 'visible' || key === 'hidden') {
+    // ─────────────────────────────────────────────────────────
+    // Simple string fields
+    // ─────────────────────────────────────────────────────────
+    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance') {
+      const value = extractValueFromNode(prop.value);
+      if (value) {
+        def[key] = value;
+      }
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Array fields: visible, hidden, truthy, falsy
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'visible' || key === 'hidden' || key === 'truthy' || key === 'falsy') {
       if (prop.value?.type === 'ArrayExpression') {
         def[key] = prop.value.elements
           .map(el => extractValueFromNode(el))
           .filter(Boolean);
       }
-    } else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Assertions array: [{ fn, expect, value }]
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      def.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(el => {
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            if (k === 'fn' || k === 'expect') {
+              assertion[k] = extractValueFromNode(p.value);
+            } else if (k === 'value') {
+              assertion.value = extractValueFromNode(p.value);
+            }
+          });
+          return assertion;
+        });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // Checks object: { visible, hidden, text, contains }
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
       prop.value.properties.forEach(checkProp => {
         const checkKey = checkProp.key?.name;
         
@@ -770,20 +1062,169 @@ function extractScreenDefinition(objectNode) {
               .map(el => extractValueFromNode(el))
               .filter(Boolean);
           }
-        } else if (checkKey === 'text' && checkProp.value?.type === 'ObjectExpression') {
+        } else if ((checkKey === 'text' || checkKey === 'contains') && checkProp.value?.type === 'ObjectExpression') {
+          def.checks[checkKey] = {};
           checkProp.value.properties.forEach(textProp => {
             const textKey = textProp.key?.name || textProp.key?.value;
             const textValue = extractValueFromNode(textProp.value);
-            if (textKey && textValue) {
-              def.checks.text[textKey] = textValue;
+            if (textKey && textValue !== undefined) {
+              def.checks[checkKey][textKey] = textValue;
             }
           });
         }
       });
     }
+    
+    // ─────────────────────────────────────────────────────────
+    // Functions object: { funcName: { signature, parameters, storeAs } }
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'functions' && prop.value?.type === 'ObjectExpression') {
+      def.functions = {};
+      prop.value.properties.forEach(funcProp => {
+        const funcName = funcProp.key?.name;
+        if (!funcName || funcProp.value?.type !== 'ObjectExpression') return;
+        
+        def.functions[funcName] = {};
+        funcProp.value.properties.forEach(fp => {
+          const fk = fp.key?.name;
+          if (fk === 'signature' || fk === 'storeAs' || fk === 'type' || fk === 'name') {
+            def.functions[funcName][fk] = extractValueFromNode(fp.value);
+          } else if (fk === 'parameters' && fp.value?.type === 'ObjectExpression') {
+            def.functions[funcName].parameters = {};
+            fp.value.properties.forEach(paramProp => {
+              const paramKey = paramProp.key?.name || paramProp.key?.value;
+              def.functions[funcName].parameters[paramKey] = extractValueFromNode(paramProp.value);
+            });
+          }
+        });
+      });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // _pomSource object: { path, name, className }
+    // ─────────────────────────────────────────────────────────
+    else if (key === '_pomSource' && prop.value?.type === 'ObjectExpression') {
+      def._pomSource = {};
+      prop.value.properties.forEach(pomProp => {
+        const pomKey = pomProp.key?.name;
+        if (pomKey) {
+          def._pomSource[pomKey] = extractValueFromNode(pomProp.value);
+        }
+      });
+    }
+    
+    // ─────────────────────────────────────────────────────────
+    // ✅ BLOCKS ARRAY - The key addition!
+    // ─────────────────────────────────────────────────────────
+    else if (key === 'blocks' && prop.value?.type === 'ArrayExpression') {
+      console.log('      🧱 Extracting blocks array...');
+      def.blocks = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(blockNode => extractBlockFromNode(blockNode));
+      console.log(`      🧱 Extracted ${def.blocks.length} blocks`);
+    }
   });
   
   return def;
+}
+
+function extractBlockFromNode(blockNode) {
+  const block = {};
+  
+  blockNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    // Simple fields
+    if (key === 'id' || key === 'type' || key === 'label' || key === 'code' || key === 'testStepName') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Number fields
+    else if (key === 'order') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Boolean fields
+    else if (key === 'expanded' || key === 'enabled' || key === 'wrapInTestStep') {
+      block[key] = extractValueFromNode(prop.value);
+    }
+    // Data object (for ui-assertion and function-call blocks)
+    else if (key === 'data' && prop.value?.type === 'ObjectExpression') {
+      block.data = extractBlockDataFromNode(prop.value);
+    }
+    // Dependencies object (for custom-code blocks)
+    else if (key === 'dependencies' && prop.value?.type === 'ObjectExpression') {
+      block.dependencies = { poms: [], imports: [] };
+      prop.value.properties.forEach(depProp => {
+        const depKey = depProp.key?.name;
+        if ((depKey === 'poms' || depKey === 'imports') && depProp.value?.type === 'ArrayExpression') {
+          block.dependencies[depKey] = depProp.value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+        }
+      });
+    }
+  });
+  
+  return block;
+}
+
+/**
+ * Extract block.data from AST node
+ */
+function extractBlockDataFromNode(dataNode) {
+  const data = {};
+  
+  dataNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    // Arrays: visible, hidden, truthy, falsy, args
+    if (key === 'visible' || key === 'hidden' || key === 'truthy' || key === 'falsy' || key === 'args') {
+      if (prop.value?.type === 'ArrayExpression') {
+        data[key] = prop.value.elements
+          .map(el => extractValueFromNode(el))
+          .filter(v => v !== null && v !== undefined);
+      }
+    }
+    // Simple strings: instance, method, storeAs
+    else if (key === 'instance' || key === 'method' || key === 'storeAs') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Numbers: timeout
+    else if (key === 'timeout') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Booleans: await
+    else if (key === 'await') {
+      data[key] = extractValueFromNode(prop.value);
+    }
+    // Checks object
+    else if (key === 'checks' && prop.value?.type === 'ObjectExpression') {
+      data.checks = { text: {}, contains: {} };
+      prop.value.properties.forEach(checkProp => {
+        const checkKey = checkProp.key?.name;
+        if ((checkKey === 'text' || checkKey === 'contains') && checkProp.value?.type === 'ObjectExpression') {
+          checkProp.value.properties.forEach(textProp => {
+            const textKey = textProp.key?.name || textProp.key?.value;
+            data.checks[checkKey][textKey] = extractValueFromNode(textProp.value);
+          });
+        }
+      });
+    }
+    // Assertions array
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      data.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(el => {
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            assertion[k] = extractValueFromNode(p.value);
+          });
+          return assertion;
+        });
+    }
+  });
+  
+  return data;
 }
 
 /**
@@ -902,7 +1343,7 @@ async function parseScreenValidation(node, projectPath, cache) {
       hidden: [],
       alwaysVisible: [],
       sometimesVisible: [],
-      checks: { visible: [], hidden: [], text: {} }
+      checks: { visible: [], hidden: [], text: {}, contains: {} }
     };
   }
   
@@ -945,7 +1386,7 @@ async function parseScreenValidation(node, projectPath, cache) {
             hidden: [],
             alwaysVisible: [],
             sometimesVisible: [],
-            checks: { visible: [], hidden: [], text: {} }
+            checks: { visible: [], hidden: [], text: {}, contains: {} }
           };
         }
       } catch (error) {
@@ -956,7 +1397,7 @@ async function parseScreenValidation(node, projectPath, cache) {
           hidden: [],
           alwaysVisible: [],
           sometimesVisible: [],
-          checks: { visible: [], hidden: [], text: {} }
+          checks: { visible: [], hidden: [], text: {}, contains: {} }
         };
       }
     }
@@ -972,7 +1413,7 @@ async function parseScreenValidation(node, projectPath, cache) {
       hidden: [],
       alwaysVisible: [],
       sometimesVisible: [],
-      checks: { visible: [], hidden: [], text: {} }
+      checks: { visible: [], hidden: [], text: {}, contains: {} }
     };
   }
   
@@ -1111,12 +1552,63 @@ case 'sometimesVisible':
         break;
         
       // ✨ NEW: Extract instance (POM instance)
+// ✨ NEW: Extract instance (POM instance)
       case 'instance':
         if (value.type === 'StringLiteral') {
           screenData.instance = value.value;
           console.log('          Instance:', screenData.instance);
         } else if (value.type === 'NullLiteral') {
           screenData.instance = null;
+        }
+        break;
+
+      // ✅ NEW: Extract truthy (array of function names)
+      case 'truthy':
+        if (value.type === 'ArrayExpression') {
+          screenData.truthy = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Truthy:', screenData.truthy);
+        }
+        break;
+
+      // ✅ NEW: Extract falsy (array of function names)
+      case 'falsy':
+        if (value.type === 'ArrayExpression') {
+          screenData.falsy = value.elements
+            .map(el => extractValueFromNode(el))
+            .filter(Boolean);
+          console.log('          Falsy:', screenData.falsy);
+        }
+        break;
+
+      // ✅ NEW: Extract assertions (array of { fn, expect, value })
+      case 'assertions':
+        if (value.type === 'ArrayExpression') {
+          screenData.assertions = value.elements
+            .map(el => {
+              if (el.type === 'ObjectExpression') {
+                const assertion = {};
+                el.properties.forEach(p => {
+                  if (p.key) {
+                    const k = p.key.name || p.key.value;
+                    assertion[k] = extractValueFromNode(p.value);
+                  }
+                });
+                return assertion;
+              }
+              return null;
+            })
+            .filter(Boolean);
+          console.log('          Assertions:', screenData.assertions?.length || 0);
+        }
+        break;
+        
+      // ✅ NEW: Extract name
+      case 'name':
+        if (value.type === 'StringLiteral') {
+          screenData.name = value.value;
+          console.log('          Name:', screenData.name);
         }
         break;
     }
@@ -1126,7 +1618,7 @@ case 'sometimesVisible':
 }
 
 /**
- * ✨ NEW: Parse functions object
+ * ✨ Parse functions object - NOW WITH storeAs SUPPORT
  */
 function parseFunctionsObject(node) {
   const functions = {};
@@ -1160,6 +1652,20 @@ function parseFunctionsObject(node) {
               funcData.parameters[paramKey] = paramValue;
             }
           });
+        } else if (key === 'params' && funcProp.value.type === 'ObjectExpression') {
+          // ✅ Also support 'params' as alias for 'parameters'
+          funcData.parameters = {};
+          funcProp.value.properties.forEach(paramProp => {
+            if (paramProp.key) {
+              const paramKey = paramProp.key.name || paramProp.key.value;
+              const paramValue = extractValueFromNode(paramProp.value);
+              funcData.parameters[paramKey] = paramValue;
+            }
+          });
+        } else if (key === 'storeAs') {
+          // ✅ NEW: Extract storeAs
+          funcData.storeAs = value;
+          console.log(`          StoreAs: ${value}`);
         } else if (value !== undefined) {
           funcData[key] = value;
         }
@@ -1179,7 +1685,8 @@ function parseChecksObject(node) {
   const checks = {
     visible: [],
     hidden: [],
-    text: {}
+    text: {},
+    contains: {}  // ✅ ADD THIS
   };
   
   if (!node || node.type !== 'ObjectExpression') {
@@ -1210,6 +1717,21 @@ function parseChecksObject(node) {
               const textValue = extractValueFromNode(textProp.value);
               if (textValue !== undefined) {
                 checks.text[textKey] = textValue;
+              }
+            }
+          });
+        }
+        break;
+      
+      // ✅ ADD THIS CASE
+      case 'contains':
+        if (value.type === 'ObjectExpression') {
+          value.properties.forEach(containsProp => {
+            if (containsProp.key) {
+              const containsKey = containsProp.key.name || containsProp.key.value;
+              const containsValue = extractValueFromNode(containsProp.value);
+              if (containsValue !== undefined) {
+                checks.contains[containsKey] = containsValue;
               }
             }
           });
@@ -1465,7 +1987,7 @@ function mergeScreenData(baseData, overrides, options = {}) {
     visible: {},
     hidden: {},
     description: null,
-    checks: { visible: {}, hidden: {}, text: {} }
+    checks: { visible: {}, hidden: {}, text: {}, contains: {} }
   };
   
   // ============================================

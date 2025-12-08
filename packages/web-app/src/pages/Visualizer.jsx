@@ -1,6 +1,6 @@
 // packages/web-app/src/pages/Visualizer.jsx (COMPLETE REPLACEMENT - FIXED)
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import StateGraph from '../components/StateGraph/StateGraph';
 import StateDetailModal from '../components/StateGraph/StateDetailModal';
 import { buildGraphFromDiscovery } from '../utils/graphBuilder';
@@ -10,6 +10,9 @@ import IssuePanel from '../components/IssuePanel/IssuePanel';
 import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
+import { initializeFromDiscovery } from '../utils/requiresColors.js';
+// ADD THIS LINE after the other imports:
+import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
 const API_URL = 'http://localhost:3000';
 
 
@@ -45,6 +48,16 @@ export default function Visualizer() {
   const [showAddStateModal, setShowAddStateModal] = useState(false);
 const [transitionMode, setTransitionMode] = useState({ enabled: false, source: null });
 const transitionModeRef = useRef(transitionMode);
+const [testDataFiles, setTestDataFiles] = useState([]);
+const [loadedTestData, setLoadedTestData] = useState(null);
+const [selectedTestDataFile, setSelectedTestDataFile] = useState(null);
+const [loadingTestData, setLoadingTestData] = useState(false);
+
+useEffect(() => {
+  if (discoveryResult) {
+    initializeFromDiscovery(discoveryResult);
+  }
+}, [discoveryResult]);
 
 // âœ… Keep ref in sync with state
 useEffect(() => {
@@ -61,6 +74,48 @@ const [createdFiles, setCreatedFiles] = useState([]);
   const [showScreenGroups, setShowScreenGroups] = useState(false);
   const [savedLayout, setSavedLayout] = useState(null);
 const [isSavingLayout, setIsSavingLayout] = useState(false);
+const [tagsPanelCollapsed, setTagsPanelCollapsed] = useState(false);
+  const { tagConfig, setTagConfig, activeFilters, setActiveFilters } = useTagConfig(projectPath);
+  const [discoveredTags, setDiscoveredTags] = useState({});
+  const [projectConfig, setProjectConfig] = useState(null);
+
+// ✅ NEW: Compute existing tags for AddStateModal autocomplete
+// ✅ FIXED: Compute existing tags for AddStateModal autocomplete
+const existingTags = useMemo(() => {
+  if (!discoveryResult?.files?.implications) return { screen: [], group: [] };
+  
+  const screenTags = new Set();
+  const groupTags = new Set();
+  
+  discoveryResult.files.implications.forEach(imp => {
+    // Check multiple possible locations for tags
+    const tags = imp.metadata?.tags 
+      || imp.metadata?.xstateConfig?.meta?.tags
+      || imp.metadata?.meta?.tags;
+    
+    if (tags?.screen) screenTags.add(tags.screen);
+    if (tags?.group) groupTags.add(tags.group);
+  });
+  
+  // Also include from discoveredTags state (from graphData)
+  if (discoveredTags?.screen) {
+    Object.keys(discoveredTags.screen).forEach(tag => screenTags.add(tag));
+  }
+  if (discoveredTags?.group) {
+    Object.keys(discoveredTags.group).forEach(tag => groupTags.add(tag));
+  }
+  
+  console.log('🏷️ Computed existingTags:', { 
+    screen: Array.from(screenTags), 
+    group: Array.from(groupTags) 
+  });
+  
+  return {
+    screen: Array.from(screenTags).sort(),
+    group: Array.from(groupTags).sort()
+  };
+}, [discoveryResult, discoveredTags]);
+
 
 
   // Clear cache and reset state
@@ -77,8 +132,22 @@ const [isSavingLayout, setIsSavingLayout] = useState(false);
     setGraphData(null);
     setSelectedState(null);
     setSelectedNodeId(null);
+    setDiscoveredTags({});
   };
 
+  useEffect(() => {
+  if (projectPath) {
+   fetch(`${API_URL}/api/discovery/config?projectPath=${encodeURIComponent(projectPath)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.config) {
+          setProjectConfig(data.config);
+          console.log('📋 Loaded config, platforms:', data.config.platforms);
+        }
+      })
+      .catch(err => console.warn('Failed to load config:', err));
+  }
+}, [projectPath]);
   // ADD THIS FUNCTION after handleClearCache
 const checkInitialization = async (path) => {
   try {
@@ -212,6 +281,74 @@ const handleReInitialize = async () => {
   }
 };
 
+// ══════════════════════════════════════════════════════════════
+// TESTDATA LOADING
+// ══════════════════════════════════════════════════════════════
+
+const loadTestDataFiles = async () => {
+  if (!projectPath) return;
+  
+  try {
+    console.log('📂 Loading testData files...');
+    const response = await fetch(
+      `${API_URL}/api/test-data/files?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData files');
+      return;
+    }
+    
+    const data = await response.json();
+    if (data.success) {
+      setTestDataFiles(data.files);
+      console.log(`✅ Found ${data.files.length} testData files`);
+      
+      // Auto-load first master file if available
+      const masterFile = data.files.find(f => f.type === 'master');
+      if (masterFile) {
+        loadTestDataFile(masterFile.path);
+      } else if (data.files.length > 0) {
+        // Or just load the first file
+        loadTestDataFile(data.files[0].path);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData files:', error);
+  }
+};
+
+const loadTestDataFile = async (filePath) => {
+  if (!projectPath || !filePath) return;
+  
+  setLoadingTestData(true);
+  
+  try {
+    console.log(`📖 Loading testData: ${filePath}`);
+    const response = await fetch(
+      `${API_URL}/api/test-data/load?projectPath=${encodeURIComponent(projectPath)}&filePath=${encodeURIComponent(filePath)}`
+    );
+    
+    if (!response.ok) {
+      console.warn('Failed to load testData file');
+      setLoadingTestData(false);
+      return;
+    }
+    
+    const result = await response.json();
+    if (result.success) {
+      setLoadedTestData(result);
+      setSelectedTestDataFile(filePath);
+      console.log(`✅ Loaded testData with ${result.keys.length} fields`);
+      console.log(`   Root keys: ${result.rootKeys.join(', ')}`);
+    }
+  } catch (error) {
+    console.error('❌ Error loading testData:', error);
+  } finally {
+    setLoadingTestData(false);
+  }
+};
+
 const loadGraphLayout = async () => {
   // âœ¨ ADD VALIDATION
   if (!projectPath) {
@@ -271,6 +408,13 @@ useEffect(() => {
   }
 }, [graphData, projectPath]);
 
+useEffect(() => {
+  if (graphData?.discoveredTags) {
+    setDiscoveredTags(graphData.discoveredTags);
+    console.log('🏷️ Discovered tags:', graphData.discoveredTags);
+  }
+}, [graphData]);
+
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 3. ADD SAVE LAYOUT FUNCTION
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -298,12 +442,13 @@ const saveGraphLayout = async () => {
       const positions = {};
       
       if (typeof window.cytoscapeGraph.nodes === 'function') {
-        window.cytoscapeGraph.nodes().forEach(node => {
-          if (node.data('type') === 'screen_group') return;
-          const pos = node.position();
-          positions[node.id()] = { x: pos.x, y: pos.y };
-        });
-      } else {
+  window.cytoscapeGraph.nodes().forEach(node => {
+    const type = node.data('type');
+    if (type === 'screen_group' || type === 'group_box') return;
+    const pos = node.position();
+    positions[node.id()] = { x: pos.x, y: pos.y };
+  });
+} else {
         throw new Error('Cytoscape graph not fully initialized');
       }
       
@@ -529,116 +674,105 @@ useEffect(() => {
   // Handle node click in graph
 const handleNodeClick = (nodeData) => {
   setSelectedNodeId(nodeData.id);
-  console.log('ðŸ–±ï¸ Node clicked:', nodeData);
+  console.log('🖱️ Node clicked:', nodeData);
   
   if (!discoveryResult) {
-    console.warn('âš ï¸ No discovery result available');
+    console.warn('⚠️ No discovery result available');
     return;
   }
   
-  // âœ… Try multiple ways to find the implication (most reliable first)
+  // Find the implication
   let implication = null;
   
-  // Method 1: Use className from node metadata (most reliable!)
   if (nodeData.metadata?.className) {
-    console.log('ðŸ” Looking up by className:', nodeData.metadata.className);
+    console.log('🔍 Looking up by className:', nodeData.metadata.className);
     implication = discoveryResult.files.implications.find(
       imp => imp.metadata.className === nodeData.metadata.className
     );
   }
   
-  // Method 2: Fall back to extractStateName comparison (backward compatibility)
   if (!implication) {
-    console.log('ðŸ” Fallback: Looking up by extracted name:', nodeData.id);
+    console.log('🔍 Fallback: Looking up by extracted name:', nodeData.id);
     implication = discoveryResult.files.implications.find(
       imp => extractStateName(imp.metadata.className) === nodeData.id
     );
   }
   
-  // Method 3: Last resort - try matching xstateConfig.id
   if (!implication) {
-    console.log('ðŸ” Last resort: Looking up by xstateConfig.id:', nodeData.id);
-    implication = discoveryResult.files.implications.find(
-      imp => imp.metadata.id === nodeData.id
-    );
-  }
-  
-  if (!implication) {
-    console.error('âŒ Implication not found for:', nodeData.id);
-    console.error('   Tried className:', nodeData.metadata?.className);
-    console.error('   Available implications:', 
-      discoveryResult.files.implications.map(i => i.metadata.className)
-    );
+    console.error('❌ Implication not found for:', nodeData.id);
     alert(`Could not find implication for "${nodeData.id}"`);
     return;
   }
   
-  console.log('âœ… Found implication:', implication.metadata.className);
-  
+  console.log('✅ Found implication:', implication.metadata.className);
   const metadata = implication.metadata;
   
-  // Check for xstateConfig
   if (!metadata.hasXStateConfig) {
-    console.warn('âš ï¸ This implication has no xstateConfig:', nodeData.id);
+    console.warn('⚠️ This implication has no xstateConfig:', nodeData.id);
     alert(`"${nodeData.id}" doesn't have xstateConfig metadata`);
     return;
   }
   
-  console.log('ðŸ” Modal data for', nodeData.id, ':', {
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    triggerButton: metadata.triggerButton
-  });
-  
-  // Extract transitions for this state
+  // ✅ FIX: Match transitions by status (not className!)
   const stateTransitions = (discoveryResult.transitions || [])
     .filter(t => {
-      // âœ… Match by className for reliability
-      const fromClassName = t.from;
-      return fromClassName === metadata.className || 
-             extractStateName(fromClassName) === nodeData.id;
+      // Transitions use status field, not className
+      const matchByStatus = t.from === metadata.status;
+      const matchByNodeId = t.from === nodeData.id;
+      const matchByClassName = t.from === metadata.className;
+      
+      console.log(`  Checking transition ${t.event}:`, {
+        from: t.from,
+        matchByStatus,
+        matchByNodeId,
+        matchByClassName
+      });
+      
+      return matchByStatus || matchByNodeId || matchByClassName;
     })
     .map(t => ({
       event: t.event,
-      target: t.to
+      target: t.to,
+      platforms: t.platforms
     }));
+  
+  console.log(`✅ Found ${stateTransitions.length} transitions for ${metadata.status}`);
   
   // Build state object for modal
   const state = {
-  id: nodeData.id,
-  name: nodeData.id,
-  displayName: metadata.status || nodeData.label,
-  className: metadata.className,
-  meta: {
-    status: metadata.status,
-    triggerAction: metadata.triggerAction,
-    triggerButton: metadata.triggerButton,
-    afterButton: metadata.afterButton,
-    previousButton: metadata.previousButton,
-    platform: metadata.platform,
-    platforms: metadata.platforms,
-    notificationKey: metadata.notificationKey,
-    statusCode: metadata.statusCode,
-    statusNumber: metadata.statusNumber,
-    requiredFields: metadata.requiredFields,
-    requires: metadata.requires,
-    setup: metadata.setup,
-    xstateContext: metadata.xstateContext || {},
-    uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
-    xstateConfig: metadata.xstateConfig || null  // âœ… ADD THIS LINE!
-  },
-  transitions: stateTransitions,
-  files: {
-    implication: `${projectPath}/${implication.path}`,
-    test: (Array.isArray(metadata.setup) 
-      ? metadata.setup[0]?.testFile 
-      : metadata.setup?.testFile) || ''
-  },
-};
+    id: nodeData.id,
+    name: nodeData.id,
+    displayName: metadata.status || nodeData.label,
+    className: metadata.className,
+    meta: {
+      status: metadata.status,
+      triggerAction: metadata.triggerAction,
+      triggerButton: metadata.triggerButton,
+      afterButton: metadata.afterButton,
+      previousButton: metadata.previousButton,
+      platform: metadata.platform,
+      platforms: metadata.platforms,
+      notificationKey: metadata.notificationKey,
+      statusCode: metadata.statusCode,
+      statusNumber: metadata.statusNumber,
+      requiredFields: metadata.requiredFields,
+      requires: metadata.requires,
+      setup: metadata.setup,
+      xstateContext: metadata.xstateContext || {},
+      uiCoverage: metadata.uiCoverage || { total: 0, platforms: {} },
+      xstateConfig: metadata.xstateConfig || null
+    },
+    transitions: stateTransitions,
+    files: {
+      implication: `${projectPath}/${implication.path}`,
+      test: (Array.isArray(metadata.setup) 
+        ? metadata.setup[0]?.testFile 
+        : metadata.setup?.testFile) || ''
+    },
+  };
   
-  console.log('âœ… Selected state with full metadata:', state);
-  console.log('ðŸ” meta.uiCoverage:', state.meta.uiCoverage);
-  console.log('ðŸ” platforms:', state.meta.uiCoverage?.platforms);
+  console.log('✅ Selected state with full metadata:', state);
+  console.log('🔍 transitions:', state.transitions);
   
   setSelectedState(state);
 };
@@ -824,10 +958,10 @@ const disableTransitionMode = () => {
               <h1 
                 className="text-4xl font-bold bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent"
               >
-                ðŸŽ¯ State Machine Viewer
+                😈 - The Imp - State Machine Viewer
               </h1>
               <p className="text-sm mt-1" style={{ color: defaultTheme.colors.text.tertiary }}>
-                Interactive visualization & documentation
+                Interactive implication visualization & documentation
               </p>
             </div>
             
@@ -1174,7 +1308,7 @@ const disableTransitionMode = () => {
   </div>
 )}
 
-        {/* Stats Panel */}
+     {/* Stats Panel */}
         {discoveryResult && (
           <div className="mb-6">
             <StatsPanel 
@@ -1195,43 +1329,299 @@ const disableTransitionMode = () => {
           </div>
         )}
 
+        {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>
-  <button
-    onClick={enableTransitionMode}
-    disabled={transitionMode.enabled}
-    style={{
-      padding: '8px 16px',
-      marginRight: '8px',
-      background: transitionMode.enabled ? '#3b82f6' : '#6b7280',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: transitionMode.enabled ? 'default' : 'pointer'
-    }}
+          <button
+            onClick={enableTransitionMode}
+            disabled={transitionMode.enabled}
+            style={{
+              padding: '8px 16px',
+              marginRight: '8px',
+              background: transitionMode.enabled ? '#3b82f6' : '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: transitionMode.enabled ? 'default' : 'pointer'
+            }}
+          >
+            🔗 Add Transition Mode
+            {transitionMode.enabled && transitionMode.source && ' (Select target)'}
+            {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
+          </button>
+          
+          {transitionMode.enabled && (
+            <button
+              onClick={disableTransitionMode}
+              style={{
+                padding: '8px 16px',
+                background: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              ❌ Cancel
+            </button>
+          )}
+        </div>
+
+        {/* ✅ TAGS PANEL - Goes HERE, ABOVE the graph section! */}
+        {graphData && Object.keys(discoveredTags).length > 0 && (
+          <TagsPanel
+            discoveredTags={discoveredTags}
+            tagConfig={tagConfig}
+            onTagConfigChange={setTagConfig}
+            activeFilters={activeFilters}
+            onFilterChange={setActiveFilters}
+            theme={defaultTheme}
+            collapsed={tagsPanelCollapsed}
+            onToggleCollapse={() => setTagsPanelCollapsed(!tagsPanelCollapsed)}
+          />
+        )}
+
+{/* TestData Context Selector */}
+{discoveryResult && (
+  <div 
+    className="glass rounded-xl p-4 mb-6"
+    style={{ border: `1px solid ${defaultTheme.colors.border}` }}
   >
-    ðŸ”— Add Transition Mode
-    {transitionMode.enabled && transitionMode.source && ' (Select target)'}
-    {transitionMode.enabled && !transitionMode.source && ' (Select source)'}
-  </button>
-  
-  {transitionMode.enabled && (
-    <button
-      onClick={disableTransitionMode}
-      style={{
-        padding: '8px 16px',
-        background: '#ef4444',
-        color: 'white',
-        border: 'none',
-        borderRadius: '4px',
-        cursor: 'pointer'
-      }}
-    >
-      âŒ Cancel
-    </button>
-  )}
-</div>
+    {/* Main Row */}
+    <div className="flex items-center justify-between flex-wrap gap-4">
+      {/* Left side - Selector */}
+      <div className="flex items-center gap-3">
+        <span className="text-xl">📊</span>
+        <span 
+          className="font-semibold"
+          style={{ color: defaultTheme.colors.text.primary }}
+        >
+          TestData Context
+        </span>
         
-        {/* Graph */}
+        {testDataFiles.length > 0 ? (
+          <select
+            value={selectedTestDataFile || ''}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                setLoadedTestData(null);
+                setSelectedTestDataFile(null);
+                // Clear highlights when deselecting
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              } else {
+                loadTestDataFile(e.target.value);
+              }
+            }}
+            disabled={loadingTestData}
+            className="px-3 py-1.5 rounded-lg text-sm"
+            style={{
+              background: defaultTheme.colors.background.secondary,
+              border: `1px solid ${defaultTheme.colors.border}`,
+              color: defaultTheme.colors.text.primary,
+              minWidth: '250px',
+              opacity: loadingTestData ? 0.6 : 1
+            }}
+          >
+            <option value="">-- No testData (show all) --</option>
+            {testDataFiles.map(file => (
+              <option key={file.path} value={file.path}>
+                {file.name} {file.type === 'master' ? '⭐' : file.type === 'current' ? '🔄' : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span 
+            className="text-sm px-3 py-1.5"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            No testData files found
+          </span>
+        )}
+        
+        <button
+          onClick={loadTestDataFiles}
+          className="px-2 py-1.5 rounded text-sm transition hover:brightness-110"
+          style={{
+            background: defaultTheme.colors.background.tertiary,
+            color: defaultTheme.colors.text.secondary,
+            border: `1px solid ${defaultTheme.colors.border}`
+          }}
+          title="Refresh testData files list"
+        >
+          🔄
+        </button>
+      </div>
+      
+      {/* Middle - Status info when testData loaded */}
+      {loadedTestData && (
+        <div className="flex items-center gap-3">
+          <span 
+            className="text-sm px-3 py-1 rounded-full font-semibold"
+            style={{ 
+              background: `${defaultTheme.colors.accents.green}20`,
+              color: defaultTheme.colors.accents.green 
+            }}
+          >
+            ✓ {loadedTestData.keys.length} fields
+          </span>
+          
+          {loadedTestData.data?.status && (
+            <span 
+              className="text-sm px-3 py-1 rounded font-semibold"
+              style={{ 
+                background: `${defaultTheme.colors.accents.purple}20`,
+                color: defaultTheme.colors.accents.purple 
+              }}
+            >
+              📍 Status: <strong>{loadedTestData.data.status}</strong>
+            </span>
+          )}
+        </div>
+      )}
+      
+      {/* Right side - Action buttons */}
+      <div className="flex items-center gap-2">
+        {loadedTestData && loadedTestData.data?.status && loadedTestData.data.status !== 'initial' && (
+          <>
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.highlightPathTo) {
+                  window.cytoscapeGraph.highlightPathTo(loadedTestData.data.status);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.accents.purple,
+                color: 'white'
+              }}
+              title="Highlight path from initial to current status"
+            >
+              🛤️ Show Path
+            </button>
+            
+            <button
+              onClick={() => {
+                if (window.cytoscapeGraph?.clearPathHighlight) {
+                  window.cytoscapeGraph.clearPathHighlight();
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+              style={{
+                background: defaultTheme.colors.background.tertiary,
+                color: defaultTheme.colors.text.secondary,
+                border: `1px solid ${defaultTheme.colors.border}`
+              }}
+              title="Clear highlight, show all nodes"
+            >
+              👁️ Show All
+            </button>
+          </>
+        )}
+        
+        {loadedTestData && (
+          <button
+            onClick={() => {
+              setLoadedTestData(null);
+              setSelectedTestDataFile(null);
+              if (window.cytoscapeGraph?.clearPathHighlight) {
+                window.cytoscapeGraph.clearPathHighlight();
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg text-sm font-semibold transition hover:brightness-110"
+            style={{
+              background: `${defaultTheme.colors.accents.red}20`,
+              color: defaultTheme.colors.accents.red,
+              border: `1px solid ${defaultTheme.colors.accents.red}40`
+            }}
+            title="Clear testData selection"
+          >
+            ✕ Clear
+          </button>
+        )}
+        
+        {loadingTestData && (
+          <span style={{ color: defaultTheme.colors.text.tertiary }}>
+            ⏳ Loading...
+          </span>
+        )}
+      </div>
+    </div>
+    
+    {/* Path Preview Row - shows when testData has non-initial status */}
+    {loadedTestData?.data?.status && loadedTestData.data.status !== 'initial' && (
+      <div 
+        className="mt-3 pt-3 flex items-center gap-2 flex-wrap"
+        style={{ borderTop: `1px solid ${defaultTheme.colors.border}` }}
+      >
+        <span 
+          className="text-sm"
+          style={{ color: defaultTheme.colors.text.tertiary }}
+        >
+          📍 TestData represents path:
+        </span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono"
+          style={{ 
+            background: `${defaultTheme.colors.accents.green}20`,
+            color: defaultTheme.colors.accents.green 
+          }}
+        >
+          initial
+        </span>
+        <span style={{ color: defaultTheme.colors.text.tertiary }}>→ ... →</span>
+        <span 
+          className="px-2 py-0.5 rounded text-xs font-mono font-bold"
+          style={{ 
+            background: `${defaultTheme.colors.accents.purple}30`,
+            color: defaultTheme.colors.accents.purple,
+            border: `1px solid ${defaultTheme.colors.accents.purple}`
+          }}
+        >
+          {loadedTestData.data.status}
+        </span>
+        
+        {/* Show entities in testData */}
+        {loadedTestData.rootKeys && (
+          <span 
+            className="text-xs ml-4"
+            style={{ color: defaultTheme.colors.text.tertiary }}
+          >
+            Contains: {loadedTestData.rootKeys.filter(k => 
+              typeof loadedTestData.data[k] === 'object' && !k.startsWith('_')
+            ).map(k => (
+              <span 
+                key={k}
+                className="px-1.5 py-0.5 rounded mx-0.5"
+                style={{ 
+                  background: defaultTheme.colors.background.tertiary,
+                  color: defaultTheme.colors.text.secondary
+                }}
+              >
+                {k}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+    )}
+    
+    {/* No testData selected info */}
+    {!loadedTestData && !loadingTestData && testDataFiles.length > 0 && (
+      <div 
+        className="mt-3 pt-3 text-sm"
+        style={{ 
+          borderTop: `1px solid ${defaultTheme.colors.border}`,
+          color: defaultTheme.colors.text.tertiary 
+        }}
+      >
+        💡 Select a testData file to validate path requirements and highlight the current status on the graph
+      </div>
+    )}
+  </div>
+)}
+        
+        {/* Graph - NO changes needed inside here! */}
         <div 
           className="glass rounded-xl p-6 mb-8"
           style={{ border: `1px solid ${defaultTheme.colors.border}` }}
@@ -1239,72 +1629,68 @@ const disableTransitionMode = () => {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-2xl font-bold mb-1" style={{ color: defaultTheme.colors.accents.blue }}>
-                ðŸ“Š Interactive State Graph
+                📊 Interactive State Graph
               </h2>
               <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
-                ðŸ’¡ {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+                💡 {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+                {Object.keys(activeFilters).length > 0 && (
+                  <span style={{ color: defaultTheme.colors.accents.blue, marginLeft: '8px' }}>
+                    | 🔍 Filtered: {Object.keys(activeFilters).length} tags
+                  </span>
+                )}
               </p>
             </div>
             
-         {/* Graph Controls */}
-{graphData && (
-  <div className="flex gap-2">
-    <button onClick={() => window.cytoscapeGraph?.fit()}>
-      <span>ðŸŽ¯</span> Fit
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
-      <span>ðŸ”</span> Reset
-    </button>
-    <button onClick={() => window.cytoscapeGraph?.relayout()}>
-      <span>ðŸ”„</span> Layout
-    </button>
-    
-    {/* âœ¨ ADD THESE */}
-    <button 
-      onClick={saveGraphLayout}
-      disabled={isSavingLayout}
-      title="Save current graph layout"
-      style={{
-        background: savedLayout 
-          ? defaultTheme.colors.accents.green 
-          : defaultTheme.colors.background.tertiary,
-        opacity: isSavingLayout ? 0.6 : 1
-      }}
-    >
-      <span>{isSavingLayout ? 'â³' : savedLayout ? 'âœ…' : 'ðŸ’¾'}</span>
-      {isSavingLayout ? 'Saving...' : 'Save Layout'}
-    </button>
-    
-    {savedLayout && (
-      <button 
-        onClick={resetGraphLayout}
-        title="Reset to default layout"
-      >
-        <span>ðŸ”„</span> Reset
-      </button>
-    )}
-  </div>
-)}
+            {/* Graph Controls - keep as-is */}
+            {graphData && (
+              <div className="flex gap-2">
+                <button onClick={() => window.cytoscapeGraph?.fit()}>
+                  <span>🎯</span> Fit
+                </button>
+                <button onClick={() => window.cytoscapeGraph?.resetZoom()}>
+                  <span>🔍</span> Reset
+                </button>
+                <button onClick={() => window.cytoscapeGraph?.relayout()}>
+                  <span>🔄</span> Layout
+                </button>
+                
+                <button 
+                  onClick={saveGraphLayout}
+                  disabled={isSavingLayout}
+                  title="Save current graph layout"
+                  style={{
+                    background: savedLayout 
+                      ? defaultTheme.colors.accents.green 
+                      : defaultTheme.colors.background.tertiary,
+                    opacity: isSavingLayout ? 0.6 : 1
+                  }}
+                >
+                  <span>{isSavingLayout ? '⏳' : savedLayout ? '✅' : '💾'}</span>
+                  {isSavingLayout ? 'Saving...' : 'Save Layout'}
+                </button>
+                
+                {savedLayout && (
+                  <button 
+                    onClick={resetGraphLayout}
+                    title="Reset to default layout"
+                  >
+                    <span>🔄</span> Reset
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           
+          {/* StateGraph - just add the two new props */}
           {graphData ? (
-   <StateGraph
+<StateGraph
   graphData={graphData}
   onNodeClick={(nodeData) => {
-    // âœ… Use ref to get current value, avoiding stale closure
     const currentMode = transitionModeRef.current;
     
-    console.log('ðŸ”µ onNodeClick fired:', { 
-      nodeId: nodeData.id, 
-      transitionModeEnabled: currentMode.enabled,
-      hasSource: !!currentMode.source 
-    });
-    
     if (currentMode.enabled) {
-      console.log('ðŸŸ¢ Calling handleTransitionModeClick');
       handleTransitionModeClick(nodeData);
     } else {
-      console.log('ðŸŸ¡ Calling handleNodeClick (open modal)');
       handleNodeClick(nodeData);
     }
   }}
@@ -1314,6 +1700,11 @@ const disableTransitionMode = () => {
   screenGroups={graphData.screenGroups}
   savedLayout={savedLayout}
   onLayoutChange={(layout) => {}}
+  tagConfig={tagConfig}
+  activeFilters={activeFilters}
+  projectPath={projectPath}
+  loadedTestData={loadedTestData}
+  transitionMode={transitionMode}  // ← ADD THIS
 />
           ) : (
             <div 
@@ -1323,7 +1714,7 @@ const disableTransitionMode = () => {
                 color: defaultTheme.colors.text.tertiary
               }}
             >
-              <p>ðŸ” {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
+              <p>🔍 {discoveryResult ? 'Loading graph...' : 'Scan a project to visualize its state machine'}</p>
             </div>
           )}
         </div>
@@ -1342,60 +1733,64 @@ const disableTransitionMode = () => {
         )}
       </main>
       
-      {/* Detail Modal */}
+ {/* Detail Modal */}
 {selectedState && (
   <StateDetailModal 
     state={selectedState}
     onClose={closeDetail}
     theme={defaultTheme}
     projectPath={projectPath}
-    discoveryResult={discoveryResult}  // â† ADD THIS LINE
+    discoveryResult={discoveryResult}
+    loadedTestData={loadedTestData}  // ← ADD THIS LINE
   />
 )}
       
-      {showAddStateModal && (
-        <AddStateModal
-          isOpen={showAddStateModal}
-          onClose={() => setShowAddStateModal(false)}
-          onCreate={handleCreateState}
-          existingStates={discoveryResult?.files.implications.map(imp => ({
-            id: extractStateName(imp.metadata.className),
-            className: imp.metadata.className,
-            platform: imp.metadata.platform || 'unknown',
-            uiCoverage: {
-              totalScreens: imp.metadata.uiCoverage?.total || 0
-            },
-            hasXState: imp.metadata.hasXStateConfig,
-            status: imp.metadata.status
-          }))
-            .filter(state => {
-              if (!state.hasXState) return false;
-              return state.uiCoverage.totalScreens > 0 || 
-                     state.className?.includes('Booking') ||
-                     state.status;
-            })
-            .sort((a, b) => {
-              if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
-                return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
-              }
-              return a.id.localeCompare(b.id);
-            })
-          || []}
-          projectPath={projectPath}
-          theme={defaultTheme}
-        />
-      )}
+     {showAddStateModal && (
+  <AddStateModal
+    isOpen={showAddStateModal}
+    onClose={() => setShowAddStateModal(false)}
+    onCreate={handleCreateState}
+    existingStates={discoveryResult?.files.implications.map(imp => ({
+      id: extractStateName(imp.metadata.className),
+      className: imp.metadata.className,
+      platform: imp.metadata.platform || 'unknown',
+      meta: imp.metadata,  // ✅ ADD THIS for setup info
+      uiCoverage: {
+        totalScreens: imp.metadata.uiCoverage?.total || 0
+      },
+      hasXState: imp.metadata.hasXStateConfig,
+      status: imp.metadata.status
+    }))
+      .filter(state => {
+        if (!state.hasXState) return false;
+        return state.uiCoverage.totalScreens > 0 || 
+               state.className?.includes('Booking') ||
+               state.status;
+      })
+      .sort((a, b) => {
+        if (b.uiCoverage.totalScreens !== a.uiCoverage.totalScreens) {
+          return b.uiCoverage.totalScreens - a.uiCoverage.totalScreens;
+        }
+        return a.id.localeCompare(b.id);
+      })
+    || []}
+    existingTags={existingTags}  // ✅ ADD THIS
+    projectPath={projectPath}
+    theme={defaultTheme}
+  />
+)}
 <AddTransitionModal
-        isOpen={showTransitionModal}
-        onClose={() => {
-          setShowTransitionModal(false);
-          setTransitionMode({ enabled: false, source: null });
-        }}
-        onSubmit={handleTransitionSubmit}
-        sourceState={transitionModalData.source}
-        targetState={transitionModalData.target}
-        projectPath={projectPath}
-      />
+  isOpen={showTransitionModal}
+  onClose={() => {
+    setShowTransitionModal(false);
+    setTransitionMode({ enabled: false, source: null });
+  }}
+  onSubmit={handleTransitionSubmit}
+  sourceState={transitionModalData.source}
+  targetState={transitionModalData.target}
+  projectPath={projectPath}
+  availablePlatforms={projectConfig?.platforms || ["web"]}
+/>
     
     </div>
   );

@@ -8,6 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { getAllTemplates, createScreenFromTemplate } from '../../utils/screenTemplates';
 import { validateScreenName } from '../../utils/screenValidation';
+import useProjectConfig from '../../hooks/useProjectConfig';
 
 const API_URL = 'http://localhost:3000';
 
@@ -15,9 +16,9 @@ export default function AddScreenModal({
   isOpen, 
   onClose, 
   onAdd,
-  projectPath,         // ✅ NEW: For autocomplete
-  availablePlatforms,  // ✅ NEW: List of platforms to choose from
-  existingScreens = {} // All existing screens across all platforms
+  projectPath,
+  // ❌ REMOVE: availablePlatforms,  - We'll load from config
+  existingScreens = {}
 }) {
   const [selectedPlatform, setSelectedPlatform] = useState('');
   const [selectedPOM, setSelectedPOM] = useState('');
@@ -30,21 +31,28 @@ export default function AddScreenModal({
   const [availablePOMs, setAvailablePOMs] = useState([]);
   const [loadingPOMs, setLoadingPOMs] = useState(false);
 
+  // ✅ ADD: Load platforms from config
+  const { platforms: availablePlatforms, loading: platformsLoading } = useProjectConfig(projectPath);
+
   const templates = getAllTemplates();
 
-  // Fetch POMs when modal opens
+  // ✅ UPDATED: Fetch POMs when modal opens OR when platform changes
   useEffect(() => {
     if (isOpen && projectPath) {
-      fetchAvailablePOMs();
+      fetchAvailablePOMs(selectedPlatform);
     }
-  }, [isOpen, projectPath]);
+  }, [isOpen, projectPath, selectedPlatform]);
 
-  const fetchAvailablePOMs = async () => {
+  // ✅ UPDATED: Accept platform parameter
+  const fetchAvailablePOMs = async (platform) => {
     setLoadingPOMs(true);
     try {
-      const response = await fetch(
-        `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`
-      );
+      let url = `${API_URL}/api/poms?projectPath=${encodeURIComponent(projectPath)}`;
+      if (platform) {
+        url += `&platform=${encodeURIComponent(platform)}`;
+      }
+      
+      const response = await fetch(url);
       
       if (response.ok) {
         const data = await response.json();
@@ -62,7 +70,7 @@ export default function AddScreenModal({
           };
         });
         
-        console.log('✅ Loaded', transformedPOMs.length, 'POMs');
+        console.log(`✅ Loaded ${transformedPOMs.length} POMs${platform ? ` for ${platform}` : ''}`);
         setAvailablePOMs(transformedPOMs);
       } else {
         console.error('Failed to fetch POMs:', response.status);
@@ -92,21 +100,21 @@ export default function AddScreenModal({
   }, [availablePOMs, searchQuery]);
 
   // Reset form when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      // ✅ Auto-select first platform if only one
-      if (availablePlatforms && availablePlatforms.length === 1) {
-        setSelectedPlatform(availablePlatforms[0].name);
-      } else {
-        setSelectedPlatform('');
-      }
-      setSelectedPOM('');
-      setDescription('');
-      setSelectedTemplate('simple');
-      setSearchQuery('');
-      setValidation({ valid: false, errors: [] });
+useEffect(() => {
+  if (isOpen) {
+    // ✅ Auto-select first platform if only one
+    if (availablePlatforms && availablePlatforms.length === 1) {
+      setSelectedPlatform(availablePlatforms[0].name);
+    } else {
+      setSelectedPlatform('');
     }
-  }, [isOpen, availablePlatforms]);
+    setSelectedPOM('');
+    setDescription('');
+    setSelectedTemplate('simple');
+    setSearchQuery('');
+    setValidation({ valid: false, errors: [] });
+  }
+}, [isOpen, availablePlatforms]);
 
   // Validate selected POM
   useEffect(() => {
@@ -139,20 +147,28 @@ export default function AddScreenModal({
 
     // Create screen from template
     const newScreen = createScreenFromTemplate(
-      selectedTemplate,
-      screenName,
-      description.trim() || `${selected.className || screenName} from ${selected.path}`
-    );
+  selectedTemplate,
+  screenName,
+  description.trim() || `${selected.className || screenName} from ${selected.path}`
+);
 
-    // Set POM reference to original name
-    newScreen.screen = selected.name;  
-    newScreen._pomSource = {
-      path: selected.path,
-      name: selected.name,
-      className: selected.className,
-      methods: selected.methods || [],
-      fields: selected.fields || []
-    };
+// ✅ FIX: Remove .js extension and set instance name
+const screenFile = selected.name.replace(/\.js$/, '');  // "searchBar.wrapper"
+const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);  // "roundTrip"
+
+newScreen.screen = screenFile;      // ✅ Without .js
+newScreen.instance = instanceName;  // ✅ Add instance
+newScreen._pomSource = {
+  path: selected.path,
+  name: selected.name,
+  className: selected.className,
+  methods: selected.methods || [],
+  fields: selected.fields || []
+};
+
+console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
+console.log('📦 newScreen data:', JSON.stringify(newScreen, null, 2));  // ✅ ADD THIS
+onAdd(selectedPlatform, screenName, newScreen);
 
     console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
     onAdd(selectedPlatform, screenName, newScreen);
@@ -193,15 +209,15 @@ export default function AddScreenModal({
           <h2 className="text-xl font-semibold text-white">
             Add UI Screen
           </h2>
-          {loadingPOMs ? (
-            <p className="text-sm text-gray-400 mt-1">
-              ⏳ Loading screen objects...
-            </p>
-          ) : (
-            <p className="text-sm text-gray-400 mt-1">
-              Select platform and screen object ({availablePOMs.length} POMs available)
-            </p>
-          )}
+        {loadingPOMs || platformsLoading ? (
+  <p className="text-sm text-gray-400 mt-1">
+    ⏳ Loading...
+  </p>
+) : (
+  <p className="text-sm text-gray-400 mt-1">
+    Select platform and screen object ({availablePOMs.length} POMs available)
+  </p>
+)}
         </div>
 
         {/* Form */}

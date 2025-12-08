@@ -6,6 +6,131 @@ import fs from 'fs-extra';
 
 const router = express.Router();
 
+router.get('/platforms/:projectPath(*)', async (req, res) => {
+  try {
+    const projectPath = req.params.projectPath;
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    
+    console.log('📋 Loading platforms from:', configPath);
+    
+    const exists = await fs.pathExists(configPath);
+    
+    if (!exists) {
+      return res.json({
+        success: true,
+        platforms: [],
+        platformNames: [],
+        message: 'No ai-testing.config.js found'
+      });
+    }
+    
+    const configModule = await import(`file://${configPath}?t=${Date.now()}`);
+    const config = configModule.default || configModule;
+    
+    // Extract platform names from screenPaths (excluding 'ignore')
+    const screenPaths = config.screenPaths || {};
+    const platformNames = Object.keys(screenPaths).filter(key => key !== 'ignore');
+    
+    // Build platform objects with display names
+    const platforms = platformNames.map(name => ({
+      name,
+      displayName: name
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, str => str.toUpperCase())
+        .trim(),
+      paths: screenPaths[name]
+    }));
+    
+    console.log(`✅ Loaded ${platforms.length} platforms:`, platformNames);
+    
+    res.json({
+      success: true,
+      platforms,
+      platformNames
+    });
+    
+  } catch (error) {
+    console.error('❌ Error loading platforms:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      platforms: [],
+      platformNames: []
+    });
+  }
+});
+
+/**
+ * GET /api/config/test-data-schema
+ * Get test data schema from project config
+ * Used by UI to show available ctx.data.* variables
+ */
+router.get('/test-data-schema/:projectPath(*)', async (req, res) => {
+  try {
+    const projectPath = req.params.projectPath;
+    const configPath = path.join(projectPath, 'ai-testing.config.js');
+    
+    console.log('📋 Loading test data schema from:', configPath);
+    
+    // Check if config exists
+    const exists = await fs.pathExists(configPath);
+    
+    if (!exists) {
+      return res.json({
+        success: true,
+        schema: [],
+        source: null,
+        message: 'No ai-testing.config.js found'
+      });
+    }
+    
+    // Import the config (with cache bust)
+    const configModule = await import(`file://${configPath}?t=${Date.now()}`);
+    const config = configModule.default || configModule;
+    
+    // Extract testData.schema
+    const testDataSchema = config.testData?.schema || config.testDataSchema || {};
+    
+    // Convert to array format
+    const schemaArray = Object.entries(testDataSchema).map(([key, value]) => {
+      // Handle both { type, description } and simple string descriptions
+      if (typeof value === 'string') {
+        return {
+          name: `ctx.data.${key}`,
+          key,
+          type: 'string',
+          description: value
+        };
+      }
+      
+      return {
+        name: `ctx.data.${key}`,
+        key,
+        type: value.type || 'unknown',
+        description: value.description || key,
+        values: value.values || null,  // For enum types
+        required: value.required || false
+      };
+    });
+    
+    console.log(`✅ Loaded ${schemaArray.length} test data fields`);
+    
+    res.json({
+      success: true,
+      schema: schemaArray,
+      source: configPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error loading test data schema:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      schema: []
+    });
+  }
+});
+
 /**
  * GET /api/config/:projectPath
  * Load config from project
@@ -276,5 +401,7 @@ router.post('/add-prefix', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+
 
 export default router;
