@@ -52,8 +52,8 @@ test("Execute published transition", async ({ page }) => {
 |-------------------|---------------|---------|
 | `web` | `Web` | `mirrorsOn.UI.Web` |
 | `cms` | `CMS` | `mirrorsOn.UI.CMS` |
-| `mobile-dancer` | `dancer` | `mirrorsOn.UI.dancer` |
-| `mobile-manager` | `clubApp` | `mirrorsOn.UI.clubApp` |
+| `dancer` | `dancer` | `mirrorsOn.UI.dancer` |
+| `manager` | `clubApp` | `mirrorsOn.UI.clubApp` |
 
 ## ✅ What's Validated
 

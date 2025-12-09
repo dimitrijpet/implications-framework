@@ -432,7 +432,7 @@ Generate a UNIT test from an Implication file.
 
 **Parameters:**
 - `implPath` (string, required) - Path to implication file
-- `platform` (string, optional) - Platform: 'web', 'cms', 'mobile-dancer', 'mobile-manager'. Default: 'web'
+- `platform` (string, optional) - Platform: 'web', 'cms', 'dancer', 'manager'. Default: 'web'
 - `state` (string, optional) - Target state for multi-state machines. Generates all states if null
 
 **Response:**
@@ -543,7 +543,7 @@ node packages/cli/src/cli.js <implication-path> [options]
 
 ### Options
 
-- `--platform <platform>` - Target platform (web, mobile-dancer, mobile-manager, cms)
+- `--platform <platform>` - Target platform (web, dancer, manager, cms)
 - `--state <state>` - Target state for multi-state machines
 - `--preview` - Preview without writing files
 - `--output <dir>` - Output directory (default: same as implication)
@@ -661,7 +661,7 @@ const discovery = await discoveryService.scanProject({
       name: 'AcceptedBookingImplications',
       path: '/path/to/AcceptedBookingImplications.js',
       status: 'Accepted',
-      platform: ['web', 'mobile-manager'],
+      platform: ['web', 'manager'],
       hasUI: true,
       uiScreens: ['manageRequestingEntertainers']
     }

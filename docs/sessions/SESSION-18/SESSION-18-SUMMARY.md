@@ -197,7 +197,7 @@ const finalPath = path.join(projectPath, meta.setup.testFile);
    ```
 
 3. **From `meta.setup.platform`:**
-   - `mobile-dancer` → import App, NavigationActions
+   - `dancer` → import App, NavigationActions
    - `web` → import Page, page objects
    - `cms` → import CMS helpers
 

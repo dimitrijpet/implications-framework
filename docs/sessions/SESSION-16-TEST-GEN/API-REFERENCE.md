@@ -45,7 +45,7 @@ const result = generator.generate(implFilePath, options);
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `implFilePath` | string | Yes | Path to Implication file |
-| `options.platform` | string | No | Platform: `'web'`, `'cms'`, `'mobile-dancer'`, `'mobile-manager'` (default: `'web'`) |
+| `options.platform` | string | No | Platform: `'web'`, `'cms'`, `'dancer'`, `'manager'` (default: `'web'`) |
 | `options.state` | string | No | Target state (for multi-state). If omitted, generates all states |
 | `options.preview` | boolean | No | Return code without writing file (default: `false`) |
 
@@ -529,7 +529,7 @@ interface GeneratorOptions {
 
 ```typescript
 interface GenerateOptions {
-  platform?: 'web' | 'cms' | 'mobile-dancer' | 'mobile-manager';
+  platform?: 'web' | 'cms' | 'dancer' | 'manager';
   state?: string;
   preview?: boolean;
 }

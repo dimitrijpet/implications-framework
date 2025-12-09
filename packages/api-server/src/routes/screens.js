@@ -1,18 +1,10 @@
-// Add this to packages/api-server/src/routes/discovery.js
-// OR create a new file: packages/api-server/src/routes/screens.js
-
 import express from 'express';
 import { glob } from 'glob';
 import path from 'path';
+import { parseFile } from '../services/astParser.js';  // ✅ ADD THIS
 
 const router = express.Router();
 
-/**
- * GET /api/screens
- * 
- * Returns all screen files (.screen.js) in the project
- * Used by POMFieldSelector to show screen dropdown
- */
 router.get('/', async (req, res) => {
   try {
     const { projectPath } = req.query;
@@ -24,29 +16,52 @@ router.get('/', async (req, res) => {
       });
     }
     
-    console.log(`🔍 Finding screen files in: ${projectPath}`);
+    console.log(`🔍 Finding screen/wrapper files in: ${projectPath}`);
     
-    // Find all .screen.js files
-    const screenFiles = await glob('**/*.screen.js', {
+    // Find all .screen.js AND .wrapper.js files
+    const screenFiles = await glob('**/*.{screen,wrapper}.js', {
       cwd: projectPath,
       ignore: ['node_modules/**', 'dist/**', 'build/**', '.next/**'],
-      absolute: false
+      absolute: true  // ✅ Get absolute paths for parsing
     });
     
-    console.log(`📋 Found ${screenFiles.length} screen files`);
+    console.log(`📋 Found ${screenFiles.length} files`);
     
-    // Extract screen names (remove .js extension)
-    const screens = screenFiles.map(filePath => {
-      const fileName = path.basename(filePath, '.js'); // Remove .js
-      return {
-        name: fileName,           // e.g., "passengers.screen"
-        path: filePath,          // e.g., "tests/screens/passengers.screen.js"
-        displayName: fileName    // e.g., "passengers.screen"
-      };
-    });
+    const screens = [];
+    
+    // ✅ Parse each file and extract ALL classes
+    for (const filePath of screenFiles) {
+      const fileName = path.basename(filePath, '.js');
+      console.log(`   🔍 Parsing: ${fileName}`);
+      
+      try {
+        const parsed = await parseFile(filePath);
+        
+        if (parsed.classes && parsed.classes.length > 0) {
+          // ✅ Loop through ALL classes in the file
+          for (const classData of parsed.classes) {
+            console.log(`      ✅ Found class: ${classData.name}`);
+            
+            screens.push({
+              name: classData.name,           // ✅ Class name
+              path: path.relative(projectPath, filePath),
+              displayName: classData.name,    // ✅ Class name
+              fileName: fileName,             // Original file name
+              filePath: filePath
+            });
+          }
+        } else {
+          console.log(`      ⚠️ No classes found`);
+        }
+      } catch (parseError) {
+        console.error(`      ❌ Parse error: ${parseError.message}`);
+      }
+    }
     
     // Sort alphabetically
     screens.sort((a, b) => a.name.localeCompare(b.name));
+    
+    console.log(`✅ Returning ${screens.length} screen classes`);
     
     res.json({
       success: true,
