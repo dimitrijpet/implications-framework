@@ -7,9 +7,10 @@
 // - Truthy/Falsy: Index selector (for array-returning functions)
 // - Custom assertions: Index selector for function/locator
 // - ✅ NEW: Function arguments support with variable suggestions
+// - ✅ NEW: Type field (locator vs method) for assertions
 // - Timeout configuration
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import usePOMData from '../../hooks/usePOMData';
 
 // ═══════════════════════════════════════════════════════════
@@ -88,6 +89,7 @@ export default function UIAssertionContent({
     poms, 
     loading: pomsLoading,
     getPOMLocators,
+    getPOMLocatorsSync,
     getPOMFunctions
   } = usePOMData(projectPath);
 
@@ -98,31 +100,47 @@ export default function UIAssertionContent({
   // State for function options (for truthy/falsy/assertions)
   const [functionOptions, setFunctionOptions] = useState([]);
 
+  // ✅ NEW: State for typed options (with type: 'locator' | 'method')
+  const [typedLocatorOptions, setTypedLocatorOptions] = useState([]);
+
   // Load locators when POM changes
   useEffect(() => {
     const loadLocators = async () => {
       if (!pomName && !instanceName) {
         setLocatorOptions([]);
+        setTypedLocatorOptions([]);
         return;
       }
 
       setLoadingLocators(true);
       try {
+        // Get string locators for simple fields (visible/hidden/text)
         const locators = await getPOMLocators(pomName, instanceName);
         setLocatorOptions(locators.map(loc => ({
           value: loc,
           label: loc
         })));
+
+        // ✅ NEW: Get typed locators from sync method
+        const typedLocs = getPOMLocatorsSync(pomName);
+        setTypedLocatorOptions(typedLocs.map(loc => ({
+          value: loc.name,
+          label: loc.name,
+          type: 'locator',  // ✅ Always 'locator' for getters/properties
+          signature: loc.signature
+        })));
+
       } catch (err) {
         console.error('Failed to load locators:', err);
         setLocatorOptions([]);
+        setTypedLocatorOptions([]);
       } finally {
         setLoadingLocators(false);
       }
     };
 
     loadLocators();
-  }, [pomName, instanceName, getPOMLocators]);
+  }, [pomName, instanceName, getPOMLocators, getPOMLocatorsSync]);
 
   // Load functions when POM changes
   useEffect(() => {
@@ -135,11 +153,12 @@ export default function UIAssertionContent({
     setFunctionOptions(functions.map(fn => ({
       value: fn.name,
       label: fn.name,
+      type: 'method',  // ✅ Always 'method' for functions
       description: fn.signature,
       async: fn.async,
-      parameters: fn.parameters || [],  // ✅ Include parameters
-      paramNames: fn.paramNames || [],  // ✅ Include param names
-      returns: fn.returns               // ✅ Include return info
+      parameters: fn.parameters || [],
+      paramNames: fn.paramNames || [],
+      returns: fn.returns
     })));
   }, [pomName, getPOMFunctions]);
 
@@ -241,14 +260,14 @@ export default function UIAssertionContent({
         </div>
       )}
 
-      {/* Assertions Section - ✅ NOW WITH ARGS SUPPORT */}
+      {/* Assertions Section - ✅ NOW WITH TYPE SUPPORT */}
       {(editMode || summary.assertions > 0) && (
         <AssertionsSection
           assertions={data.assertions || []}
           editMode={editMode}
           theme={theme}
           functionOptions={functionOptions}
-          locatorOptions={locatorOptions}
+          locatorOptions={typedLocatorOptions}  // ✅ Pass typed locators
           storedVariables={storedVariables}
           onChange={(vals) => updateData('assertions', vals)}
         />
@@ -962,7 +981,7 @@ function TextChecksSection({
 }
 
 // ═══════════════════════════════════════════════════════════
-// ✅ ENHANCED ASSERTIONS SECTION WITH FUNCTION ARGUMENTS
+// ✅ ENHANCED ASSERTIONS SECTION WITH TYPE SUPPORT
 // ═══════════════════════════════════════════════════════════
 
 function AssertionsSection({ 
@@ -974,17 +993,23 @@ function AssertionsSection({
   storedVariables = [],
   onChange 
 }) {
+  console.log('🔍 DEBUG AssertionsSection:', {
+    assertionsCount: assertions.length,
+    locatorOptionsCount: locatorOptions.length,
+    functionOptionsCount: functionOptions.length,
+    hasTypeMissing: assertions.some(a => !a.type),
+    firstLocator: locatorOptions[0]
+  });
   const [isAdding, setIsAdding] = useState(false);
   const [newFn, setNewFn] = useState('');
+  const [newType, setNewType] = useState('');  // ✅ Track selected type
   const [newIndexType, setNewIndexType] = useState('');
   const [newCustomIndex, setNewCustomIndex] = useState('');
   const [newExpect, setNewExpect] = useState('toBe');
   const [newValue, setNewValue] = useState('');
   const [newStoreAs, setNewStoreAs] = useState('');
   const [useVariable, setUseVariable] = useState(false);
-  
-  // ✅ NEW: State for function arguments
-  const [newArgs, setNewArgs] = useState([]);  // Array of { value, useVar }
+  const [newArgs, setNewArgs] = useState([]);
 
   // Get selected function's parameter info
   const selectedFunctionInfo = useMemo(() => {
@@ -992,7 +1017,7 @@ function AssertionsSection({
     return functionOptions.find(f => f.value === newFn);
   }, [newFn, functionOptions]);
 
-  // ✅ NEW: Initialize args when function is selected
+  // Initialize args when function is selected
   useEffect(() => {
     if (selectedFunctionInfo?.parameters?.length > 0) {
       setNewArgs(selectedFunctionInfo.parameters.map(p => ({
@@ -1007,18 +1032,43 @@ function AssertionsSection({
     }
   }, [selectedFunctionInfo]);
 
-  const allOptions = useMemo(() => {
-    const combined = [
-      ...functionOptions.map(f => ({ ...f, category: 'function' })),
-      ...locatorOptions.map(l => ({ ...l, category: 'getter' }))
-    ];
-    const seen = new Set();
-    return combined.filter(opt => {
-      if (seen.has(opt.value)) return false;
-      seen.add(opt.value);
-      return true;
-    });
-  }, [functionOptions, locatorOptions]);
+const justUpdatedRef = useRef(false);
+
+useEffect(() => {
+  // Skip if we just triggered an update
+  if (justUpdatedRef.current) {
+    justUpdatedRef.current = false;
+    return;
+  }
+
+  const needsTypeUpdate = assertions.some(a => !a.type);
+  if (!needsTypeUpdate) return;
+  
+  const updated = assertions.map(assertion => {
+    if (assertion.type) return assertion;
+    
+    const baseFn = parseFieldWithIndex(assertion.fn).field;
+    
+    // Check if it's in locatorOptions (if available)
+    if (locatorOptions.length > 0) {
+      const isLocator = locatorOptions.some(l => l.value === baseFn);
+      return { ...assertion, type: isLocator ? 'locator' : 'method' };
+    }
+    
+    // Fallback: infer from naming patterns
+    const methodPatterns = /^(click|get|set|fill|select|wait|scroll|drag|drop|hover|focus|blur|submit|clear|check|uncheck|toggle|open|close|show|hide|enable|disable|validate|verify|assert|is|has|can|should)/i;
+    
+    if (methodPatterns.test(baseFn)) {
+      return { ...assertion, type: 'method' };
+    }
+    
+    // Default to locator (most UI elements are locators)
+    return { ...assertion, type: 'locator' };
+  });
+  
+  justUpdatedRef.current = true;
+  onChange(updated);
+}, [assertions, locatorOptions, onChange]);
 
   // Categorized expectation types
   const EXPECTATION_TYPES = {
@@ -1038,6 +1088,7 @@ function AssertionsSection({
       { value: 'toBe', label: 'toBe (===)', needsValue: true },
       { value: 'toEqual', label: 'toEqual (deep)', needsValue: true },
       { value: 'toContain', label: 'toContain', needsValue: true },
+      { value: 'toContainText', label: 'toContainText', needsValue: true },
       { value: 'toMatch', label: 'toMatch (regex)', needsValue: true },
       { value: 'toHaveLength', label: 'toHaveLength', needsValue: true },
     ],
@@ -1068,27 +1119,32 @@ function AssertionsSection({
   const selectedExpectType = getExpectType(newExpect);
   const noValueExpectations = allExpectTypes.filter(t => !t.needsValue).map(t => t.value);
 
-  // ✅ NEW: Update argument value
+  // Update argument value
   const handleArgChange = (index, value) => {
     const updated = [...newArgs];
     updated[index] = { ...updated[index], value };
     setNewArgs(updated);
   };
 
-  // ✅ NEW: Toggle variable mode for argument
+  // Toggle variable mode for argument
   const handleArgVarToggle = (index, useVar) => {
     const updated = [...newArgs];
     updated[index] = { ...updated[index], useVar, value: '' };
     setNewArgs(updated);
   };
 
-  // ✅ NEW: Insert variable into argument
+  // Insert variable into argument
   const handleInsertVarIntoArg = (index, varTemplate) => {
     const updated = [...newArgs];
-    // Extract variable name from template like "{{varName}}"
     const varName = varTemplate.replace(/[{}]/g, '');
     updated[index] = { ...updated[index], value: varName, useVar: true };
     setNewArgs(updated);
+  };
+
+  // ✅ Handle selection from dropdown - sets both fn and type
+  const handleSelectItem = (value, type) => {
+    setNewFn(value);
+    setNewType(type);
   };
 
   const handleAdd = () => {
@@ -1104,20 +1160,24 @@ function AssertionsSection({
       finalValue = Number(newValue);
     }
     
-    // ✅ NEW: Build args array from form state
+    // Build args array
     const argsArray = newArgs.map(arg => {
       if (arg.useVar && arg.value) {
         return `{{${arg.value}}}`;
       }
       return arg.value;
-    }).filter(v => v !== '');  // Remove empty args
+    }).filter(v => v !== '');
+    
+    // ✅ Use the tracked type, or infer from options
+    const finalType = newType || (locatorOptions.some(l => l.value === newFn.trim()) ? 'locator' : 'method');
     
     const newAssertion = {
       fn: finalFn,
+      type: finalType,  // ✅ Always include type
       expect: newExpect,
       ...(!noValueExpectations.includes(newExpect) && finalValue !== '' && { value: finalValue }),
       ...(newStoreAs.trim() && { storeAs: newStoreAs.trim() }),
-      ...(argsArray.length > 0 && { args: argsArray })  // ✅ NEW: Include args
+      ...(argsArray.length > 0 && { args: argsArray })
     };
     
     onChange([...assertions, newAssertion]);
@@ -1126,6 +1186,7 @@ function AssertionsSection({
 
   const resetForm = () => {
     setNewFn('');
+    setNewType('');
     setNewIndexType('');
     setNewCustomIndex('');
     setNewExpect('toBe');
@@ -1186,6 +1247,21 @@ function AssertionsSection({
               >
                 {/* Main assertion line */}
                 <div className="flex items-center gap-1 font-mono flex-wrap">
+                  {/* ✅ Type badge */}
+                  <span 
+                    className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                    style={{ 
+                      background: assertion.type === 'locator' 
+                        ? `${theme.colors.accents.blue}30` 
+                        : `${theme.colors.accents.purple}30`,
+                      color: assertion.type === 'locator' 
+                        ? theme.colors.accents.blue 
+                        : theme.colors.accents.purple
+                    }}
+                  >
+                    {assertion.type === 'locator' ? '📍' : 'ƒ'}
+                  </span>
+
                   {(expectType.returnsValue || expectType.returnsBoolean) && (
                     <span 
                       className="px-1.5 py-0.5 rounded text-[10px] font-bold mr-1"
@@ -1210,34 +1286,37 @@ function AssertionsSection({
                       {getIndexLabel(parsed.indexType, parsed.customIndex)}
                     </span>
                   )}
-                  <span style={{ color: theme.colors.text.tertiary }}>(</span>
                   
-                  {/* ✅ NEW: Show args */}
-                  {assertion.args && assertion.args.length > 0 && (
-                    <span style={{ color: theme.colors.accents.cyan }}>
-                      {assertion.args.map((arg, i) => (
-                        <span key={i}>
-                          {i > 0 && ', '}
-                          {typeof arg === 'string' && arg.includes('{{') ? (
-                            <span 
-                              className="px-1 py-0.5 rounded"
-                              style={{ background: `${theme.colors.accents.yellow}30` }}
-                            >
-                              {arg}
+                  {/* ✅ Show () only for methods */}
+                  {assertion.type === 'method' && (
+                    <>
+                      <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                      {assertion.args && assertion.args.length > 0 && (
+                        <span style={{ color: theme.colors.accents.cyan }}>
+                          {assertion.args.map((arg, i) => (
+                            <span key={i}>
+                              {i > 0 && ', '}
+                              {typeof arg === 'string' && arg.includes('{{') ? (
+                                <span 
+                                  className="px-1 py-0.5 rounded"
+                                  style={{ background: `${theme.colors.accents.yellow}30` }}
+                                >
+                                  {arg}
+                                </span>
+                              ) : (
+                                typeof arg === 'string' ? `"${arg}"` : String(arg)
+                              )}
                             </span>
-                          ) : (
-                            typeof arg === 'string' ? `"${arg}"` : String(arg)
-                          )}
+                          ))}
                         </span>
-                      ))}
-                    </span>
+                      )}
+                      <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                    </>
                   )}
                   
-                  <span style={{ color: theme.colors.text.tertiary }}>
-                    {expectType.returnsValue || expectType.returnsBoolean ? ')' : ').'}
-                  </span>
                   {!(expectType.returnsValue || expectType.returnsBoolean) && (
                     <>
+                      <span style={{ color: theme.colors.text.tertiary }}>).</span>
                       <span style={{ color: theme.colors.accents.blue }}>{assertion.expect}</span>
                       <span style={{ color: theme.colors.text.tertiary }}>(</span>
                       {assertion.value !== undefined && (
@@ -1326,11 +1405,20 @@ function AssertionsSection({
           className="p-3 rounded space-y-3"
           style={{ background: theme.colors.background.tertiary, border: `1px solid ${color}40` }}
         >
-          {/* Function selector */}
+          {/* ✅ ENHANCED: Function/Locator selector with categorized dropdown */}
           <div className="flex gap-2">
             <select
               value={newFn}
-              onChange={(e) => setNewFn(e.target.value)}
+              onChange={(e) => {
+                const selectedValue = e.target.value;
+                // Find in locators first
+                const locator = locatorOptions.find(l => l.value === selectedValue);
+                if (locator) {
+                  handleSelectItem(selectedValue, 'locator');
+                } else {
+                  handleSelectItem(selectedValue, 'method');
+                }
+              }}
               className="flex-1 px-2 py-1.5 rounded text-sm"
               style={{
                 background: theme.colors.background.primary,
@@ -1338,9 +1426,22 @@ function AssertionsSection({
                 color: theme.colors.text.primary
               }}
             >
-              <option value="">Select function/getter...</option>
+              <option value="">Select function/locator...</option>
+              
+              {/* ✅ Locators group */}
+              {locatorOptions.length > 0 && (
+                <optgroup label="📍 Locators (getters)">
+                  {locatorOptions.map(opt => (
+                    <option key={`loc-${opt.value}`} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              
+              {/* ✅ Methods group */}
               {functionOptions.length > 0 && (
-                <optgroup label="Functions">
+                <optgroup label="ƒ Methods (functions)">
                   {functionOptions.map(opt => (
                     <option key={`fn-${opt.value}`} value={opt.value}>
                       {opt.description || opt.label}{opt.async ? ' (async)' : ''}
@@ -1348,18 +1449,16 @@ function AssertionsSection({
                   ))}
                 </optgroup>
               )}
-              {locatorOptions.length > 0 && (
-                <optgroup label="Locators">
-                  {locatorOptions.map(opt => (
-                    <option key={`get-${opt.value}`} value={opt.value}>{opt.label}</option>
-                  ))}
-                </optgroup>
-              )}
             </select>
+            
             <input
               type="text"
               value={newFn}
-              onChange={(e) => setNewFn(e.target.value)}
+              onChange={(e) => {
+                setNewFn(e.target.value);
+                // When typing manually, we need to infer type
+                setNewType('');  // Will be inferred on add
+              }}
               placeholder="or type name"
               className="w-32 px-2 py-1.5 rounded text-sm font-mono"
               style={{
@@ -1368,11 +1467,26 @@ function AssertionsSection({
                 color: theme.colors.text.primary
               }}
             />
+            
+            {/* ✅ Show selected type badge */}
+            {newType && (
+              <span 
+                className="flex items-center px-2 py-1 rounded text-xs font-semibold"
+                style={{
+                  background: newType === 'locator' 
+                    ? `${theme.colors.accents.blue}30` 
+                    : `${theme.colors.accents.purple}30`,
+                  color: newType === 'locator' 
+                    ? theme.colors.accents.blue 
+                    : theme.colors.accents.purple
+                }}
+              >
+                {newType === 'locator' ? '📍 locator' : 'ƒ method'}
+              </span>
+            )}
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════
-              ✅ NEW: FUNCTION ARGUMENTS SECTION
-              ═══════════════════════════════════════════════════════════ */}
+          {/* Function arguments (only for methods with params) */}
           {selectedFunctionInfo?.parameters?.length > 0 && (
             <div 
               className="p-3 rounded space-y-2"
@@ -1396,7 +1510,6 @@ function AssertionsSection({
                   className="p-2 rounded space-y-2"
                   style={{ background: theme.colors.background.secondary }}
                 >
-                  {/* Parameter name & badges */}
                   <div className="flex items-center gap-2">
                     <span 
                       className="font-mono text-sm font-bold"
@@ -1428,7 +1541,6 @@ function AssertionsSection({
                     )}
                   </div>
 
-                  {/* Default value hint */}
                   {arg.hasDefault && arg.defaultValue !== undefined && (
                     <div className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
                       Default: <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>
@@ -1437,7 +1549,6 @@ function AssertionsSection({
                     </div>
                   )}
 
-                  {/* Mode toggle */}
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleArgVarToggle(idx, false)}
@@ -1469,7 +1580,6 @@ function AssertionsSection({
                     </button>
                   </div>
 
-                  {/* Input */}
                   {arg.useVar ? (
                     <div className="space-y-2">
                       <div className="flex items-center gap-1">
@@ -1489,7 +1599,6 @@ function AssertionsSection({
                         <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'}}'}</span>
                       </div>
                       
-                      {/* Variable suggestions */}
                       {storedVariables.length > 0 && (
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
@@ -1506,20 +1615,6 @@ function AssertionsSection({
                               }}
                             >
                               {v.path || v.name}
-                            </button>
-                          ))}
-                          {/* Common ctx.data fields */}
-                          {['booking', 'dancerName', 'clubName', 'lang'].map(field => (
-                            <button
-                              key={field}
-                              onClick={() => handleInsertVarIntoArg(idx, `{{ctx.data.${field}}}`)}
-                              className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
-                              style={{ 
-                                background: `${theme.colors.accents.blue}20`,
-                                color: theme.colors.accents.blue
-                              }}
-                            >
-                              ctx.data.{field}
                             </button>
                           ))}
                         </div>
@@ -1540,7 +1635,6 @@ function AssertionsSection({
                     />
                   )}
 
-                  {/* Preview */}
                   {arg.value && (
                     <div 
                       className="text-[10px] p-1 rounded font-mono"
@@ -1740,21 +1834,40 @@ function AssertionsSection({
             className="p-2 rounded text-xs font-mono"
             style={{ background: theme.colors.background.primary }}
           >
+            {/* ✅ Show type in preview */}
+            <span 
+              className="text-[10px] px-1 py-0.5 rounded mr-2"
+              style={{
+                background: (newType || 'method') === 'locator' 
+                  ? `${theme.colors.accents.blue}30` 
+                  : `${theme.colors.accents.purple}30`,
+                color: (newType || 'method') === 'locator' 
+                  ? theme.colors.accents.blue 
+                  : theme.colors.accents.purple
+              }}
+            >
+              {(newType || 'method') === 'locator' ? '📍' : 'ƒ'}
+            </span>
+            
             {selectedExpectType.returnsValue || selectedExpectType.returnsBoolean ? (
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>const result = await </span>
                 <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
-                <span style={{ color: theme.colors.text.tertiary }}>(</span>
-                {/* ✅ NEW: Show args in preview */}
-                {newArgs.filter(a => a.value).map((arg, i) => (
-                  <span key={i}>
-                    {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
-                    <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
-                      {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
-                    </span>
-                  </span>
-                ))}
-                <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                {/* ✅ Show () only for methods */}
+                {(newType || 'method') === 'method' && (
+                  <>
+                    <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                    {newArgs.filter(a => a.value).map((arg, i) => (
+                      <span key={i}>
+                        {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                        <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
+                          {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
+                        </span>
+                      </span>
+                    ))}
+                    <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                  </>
+                )}
                 {newStoreAs && (
                   <>
                     <br />
@@ -1766,17 +1879,22 @@ function AssertionsSection({
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
                 <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
-                <span style={{ color: theme.colors.text.tertiary }}>(</span>
-                {/* ✅ NEW: Show args in preview */}
-                {newArgs.filter(a => a.value).map((arg, i) => (
-                  <span key={i}>
-                    {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
-                    <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
-                      {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
-                    </span>
-                  </span>
-                ))}
-                <span style={{ color: theme.colors.text.tertiary }}>)).</span>
+                {/* ✅ Show () only for methods */}
+                {(newType || 'method') === 'method' && (
+                  <>
+                    <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                    {newArgs.filter(a => a.value).map((arg, i) => (
+                      <span key={i}>
+                        {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                        <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
+                          {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
+                        </span>
+                      </span>
+                    ))}
+                    <span style={{ color: theme.colors.text.tertiary }}>)</span>
+                  </>
+                )}
+                <span style={{ color: theme.colors.text.tertiary }}>).</span>
                 <span style={{ color: theme.colors.accents.blue }}>{newExpect}</span>
                 <span style={{ color: theme.colors.text.tertiary }}>(</span>
                 {newValue && !noValueExpectations.includes(newExpect) && (

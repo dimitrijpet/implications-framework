@@ -12,6 +12,7 @@ import { migrateRequiresToConditions, conditionsToRequires } from './conditionBl
 import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVariablesFromUIValidations';
 import useProjectConfig from '../../hooks/useProjectConfig';
 import DataFlowSummary from './DataFlowSummary';
+import usePOMData from '../../hooks/usePOMData';
 import {
   DndContext,
   closestCenter,
@@ -354,6 +355,14 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
   const [selectedNavFile, setSelectedNavFile] = useState("");
   const [loadingNavigation, setLoadingNavigation] = useState(false);
   const [editModeInitialized, setEditModeInitialized] = useState(false)
+    // ✅ ADD: POM data for argument suggestions
+  // const { 
+  //   poms: availablePOMsFromHook,
+  //   getPOMFunctions,
+  //   getPOMLocatorsSync,
+  //   getMethodReturnKeys 
+  // } = usePOMData(projectPath);
+    const [stepMethodInfos, setStepMethodInfos] = useState({});
 
 // ✨ NEW: Compute available storeAs variables from previous steps
   const availableStoreAsVars = useMemo(() => {
@@ -415,6 +424,8 @@ const allStoredVariables = useMemo(() => {
   const getAvailableVarsForStep = (stepIndex) => {
     return availableStoreAsVars.filter(v => v.stepIndex < stepIndex);
   };
+
+  
 
  // ═══════════════════════════════════════════════════════════════════════════
 // EDIT MODE INITIALIZATION
@@ -972,37 +983,62 @@ const handleAddStep = () => {
   };
 
   // Handle method selection with signature
- const handleStepMethodSelect = (stepIndex, methodSignature) => {
+// Handle method selection with signature AND parameter info
+  const handleStepMethodSelect = (stepIndex, methodSignature) => {
     const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
 
     if (match) {
       const methodName = match[1];
       const paramsStr = match[2];
-      const params = paramsStr ? paramsStr.split(",").map((p) => p.trim()) : [];
-
-      // ✨ NEW: Find the method's return info
+      
+      // Find the step's instance to get method info
       const step = formData.steps[stepIndex];
       const matchingImport = formData.imports.find(imp => imp.varName === step.instance);
+      
+      // Get full method info from the import's functions
       const methodInfo = matchingImport?.functions?.find(f => f.name === methodName);
+      
+      // Store method info for this step
+      setStepMethodInfos(prev => ({
+        ...prev,
+        [stepIndex]: methodInfo || null
+      }));
+
+      // Initialize args based on parameters
+      const initialArgs = (methodInfo?.parameters || []).map(p => 
+        p.hasDefault ? String(p.defaultValue || '') : ''
+      );
 
       setFormData((prev) => ({
         ...prev,
-        steps: prev.steps.map((step, i) =>
+        steps: prev.steps.map((s, i) =>
           i === stepIndex
             ? {
-                ...step,
+                ...s,
                 method: methodName,
                 signature: methodSignature,
-                args: params.map((p) => {
-                  const paramName = p.split("=")[0].trim();
-                  return `ctx.data.${paramName}`;
-                }),
-                selectedMethodReturns: methodInfo?.returns || null,  // ✨ NEW
+                args: initialArgs,
               }
-            : step
+            : s
         ),
       }));
     }
+  };
+
+
+    // ✅ NEW: Handle individual argument change
+  const handleStepArgChange = (stepIndex, argIndex, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      steps: prev.steps.map((step, i) => {
+        if (i === stepIndex) {
+          const newArgs = [...(step.args || [])];
+          newArgs[argIndex] = value;
+          return { ...step, args: newArgs };
+        }
+        return step;
+      }),
+    }));
   };
 
   // Update step field
@@ -1182,8 +1218,9 @@ const submitData = {
           ...(step.type === 'custom' && {
             code: step.code,
           }),
-          // Common fields
+          // Common fields - ENHANCED with persistStoreAs
           storeAs: step.storeAs || undefined,
+          persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,  // ✅ NEW
           conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
         })),
       }
@@ -1988,64 +2025,127 @@ const submitData = {
                   </select>
                 </div>
 
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Arguments
-                  </label>
-                  <input
-                    type="text"
-                    value={step.args?.join(", ") || ""}
-                    onChange={(e) => handleStepArgsChange(index, e.target.value)}
-                    placeholder="ctx.data.field1, ctx.data.field2"
-                    className="w-full px-3 py-1 rounded text-sm font-mono"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.tertiary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  />
-                  {getAvailableVarsForStep(index).length > 0 && (
-                    <AvailableVariablesHint 
-                      availableVars={getAvailableVarsForStep(index)}
-                      onInsert={(variable) => handleInsertVariable(index, variable)}
-                    />
-                  )}
-                </div>
+             {/* ✅ ENHANCED: Rich Arguments Section */}
+{stepMethodInfos[index]?.parameters?.length > 0 ? (
+  <div 
+    className="mb-3 p-3 rounded space-y-3"
+    style={{ 
+      background: `${defaultTheme.colors.accents.cyan}10`,
+      border: `1px solid ${defaultTheme.colors.accents.cyan}40`
+    }}
+  >
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-semibold" style={{ color: defaultTheme.colors.accents.cyan }}>
+        📝 Arguments ({stepMethodInfos[index].parameters.length})
+      </span>
+      <span className="text-xs font-mono" style={{ color: defaultTheme.colors.text.tertiary }}>
+        {step.signature}
+      </span>
+    </div>
+
+    {stepMethodInfos[index].parameters.map((param, argIdx) => (
+      <StepArgumentInput
+        key={argIdx}
+        param={param}
+        value={step.args?.[argIdx] || ''}
+        onChange={(val) => handleStepArgChange(index, argIdx, val)}
+        theme={defaultTheme}
+        storedVariables={allStoredVariables}
+        testDataSchema={testDataSchema}
+      />
+    ))}
+  </div>
+) : (
+  /* Fallback: simple text input for methods without discovered params */
+  <div className="mb-2">
+    <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+      Arguments
+    </label>
+    <input
+      type="text"
+      value={step.args?.join(", ") || ""}
+      onChange={(e) => handleStepArgsChange(index, e.target.value)}
+      placeholder="ctx.data.field1, ctx.data.field2"
+      className="w-full px-3 py-1 rounded text-sm font-mono"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    />
+    {getAvailableVarsForStep(index).length > 0 && (
+      <AvailableVariablesHint 
+        availableVars={getAvailableVarsForStep(index)}
+        onInsert={(variable) => handleInsertVariable(index, variable)}
+      />
+    )}
+  </div>
+)}
               </>
             )}
 
             {/* INLINE ACTION TYPES: click, fill, getText, waitFor */}
             {['click', 'fill', 'getText', 'waitFor'].includes(step.type) && (
               <>
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Screen Object *
-                  </label>
-                  <select
-                    value={step.screen || ""}
-                    onChange={(e) => {
-                      const selectedPOM = availablePOMs.find(p => p.className === e.target.value);
-                      handleStepChange(index, 'screen', e.target.value);
-                      handleStepChange(index, 'locator', '');
-                      // Get all getters/methods that look like locators
-                      const locators = selectedPOM?.functions?.map(f => f.name) || [];
-                      handleStepChange(index, 'availableLocators', locators);
-                    }}
-                    className="w-full px-3 py-1 rounded text-sm"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.tertiary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  >
-                    <option value="">-- Select screen object --</option>
-                    {availablePOMs.map((pom, i) => (
-                      <option key={i} value={pom.className}>
-                        {pom.className}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+             {/* Screen Object */}
+<div className="mb-2">
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Screen Object *
+  </label>
+  <select
+    value={step.screen || ""}
+    onChange={(e) => {
+      const selectedPOMName = e.target.value;
+      handleStepChange(index, 'screen', selectedPOMName);
+      handleStepChange(index, 'locator', '');
+      
+      // ✅ FIXED: Get LOCATORS (getters), not methods
+      const selectedPOM = availablePOMs.find(p => p.className === selectedPOMName);
+      const locators = [];
+      
+      if (selectedPOM?.classes) {
+        for (const cls of selectedPOM.classes) {
+          // Get getters (these are locators like btnSubmit, inputSearch)
+          for (const getter of cls.getters || []) {
+            locators.push(getter.name);
+          }
+          // Get properties (non-instance, like this.btn defined in constructor)
+          for (const prop of cls.properties || []) {
+            if (prop.type === 'property') {
+              locators.push(prop.name);
+            }
+          }
+        }
+      }
+      
+      // Fallback: if no getters found, maybe this POM uses methods as locators
+      if (locators.length === 0 && selectedPOM?.functions) {
+        // Filter to only getter-like methods (start with get, btn, input, etc.)
+        const locatorPatterns = /^(get|btn|input|link|label|text|card|modal|popup|dropdown|select|checkbox|radio|tab|menu|nav|header|footer|sidebar|icon|img|image|container|wrapper)/i;
+        for (const fn of selectedPOM.functions) {
+          if (locatorPatterns.test(fn.name) || fn.name.startsWith('get')) {
+            locators.push(fn.name);
+          }
+        }
+      }
+      
+      handleStepChange(index, 'availableLocators', locators);
+    }}
+    className="w-full px-3 py-1 rounded text-sm"
+    style={{
+      backgroundColor: defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${defaultTheme.colors.border}`,
+    }}
+  >
+    <option value="">-- Select screen object --</option>
+    {availablePOMs.map((pom, i) => (
+      <option key={i} value={pom.className}>
+        {pom.className}
+      </option>
+    ))}
+  </select>
+</div>
 
                 <div className="mb-2">
                   <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
@@ -2171,33 +2271,73 @@ const submitData = {
               </div>
             )}
 
-            {/* Store As */}
+            {/* Store As - Enhanced with Persistence Option */}
             {step.type !== 'custom' && (
-              <div className="mt-3">
+              <div className="mt-3 space-y-2">
                 <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
                   💾 Store Result As
                 </label>
-                <input
-                  type="text"
-                  value={step.storeAs || ''}
-                  onChange={(e) => handleStepChange(index, 'storeAs', e.target.value)}
-                  placeholder="variableName"
-                  className="w-full px-3 py-1 rounded text-sm font-mono"
-                  style={{
-                    backgroundColor: defaultTheme.colors.background.tertiary,
-                    color: defaultTheme.colors.accents.yellow,
-                    border: `1px solid ${defaultTheme.colors.border}`,
-                  }}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={step.storeAs || ''}
+                    onChange={(e) => handleStepChange(index, 'storeAs', e.target.value)}
+                    placeholder="variableName"
+                    className="flex-1 px-3 py-1 rounded text-sm font-mono"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.accents.yellow,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                    }}
+                  />
+                  {step.storeAs && (
+                    <label 
+                      className="flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap"
+                      style={{ 
+                        backgroundColor: step.persistStoreAs !== false 
+                          ? `${defaultTheme.colors.accents.green}20` 
+                          : defaultTheme.colors.background.tertiary,
+                        border: `1px solid ${step.persistStoreAs !== false 
+                          ? defaultTheme.colors.accents.green 
+                          : defaultTheme.colors.border}`,
+                        color: step.persistStoreAs !== false 
+                          ? defaultTheme.colors.accents.green 
+                          : defaultTheme.colors.text.tertiary
+                      }}
+                      title="If enabled, value persists to ctx.data and survives across test runs"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={step.persistStoreAs !== false}
+                        onChange={(e) => handleStepChange(index, 'persistStoreAs', e.target.checked)}
+                        className="w-3 h-3"
+                      />
+                      Persist
+                    </label>
+                  )}
+                </div>
                 {step.storeAs && (
-                  <div className="text-xs mt-1 p-2 rounded"
-                    style={{ backgroundColor: `${defaultTheme.colors.accents.yellow}10`, color: defaultTheme.colors.accents.yellow }}>
-                    ✨ Use: <code>{`{{${step.storeAs}}}`}</code>
+                  <div 
+                    className="text-xs p-2 rounded space-y-1"
+                    style={{ 
+                      backgroundColor: `${defaultTheme.colors.accents.yellow}10`, 
+                      color: defaultTheme.colors.accents.yellow 
+                    }}
+                  >
+                    <div>✨ Access via: <code>{`{{${step.storeAs}}}`}</code></div>
+                    {step.persistStoreAs !== false ? (
+                      <div style={{ color: defaultTheme.colors.accents.green }}>
+                        💾 Will persist to ctx.data (available in later tests)
+                      </div>
+                    ) : (
+                      <div style={{ color: defaultTheme.colors.text.tertiary }}>
+                        ⚡ Current test only (faster, no file write)
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
-
             {/* Step Conditions */}
             <StepConditions
               conditions={step.conditions}
@@ -2286,6 +2426,198 @@ const submitData = {
    
         </form>
       </div>
+    </div>
+    
+  );
+}
+
+/**
+ * StepArgumentInput - Rich argument input for transition steps
+ */
+function StepArgumentInput({ param, value, onChange, theme, storedVariables = [], testDataSchema = [] }) {
+  const [useVariable, setUseVariable] = useState(
+    value?.startsWith('ctx.') || value?.includes('{{') || false
+  );
+
+  // Update mode when value changes externally
+  useEffect(() => {
+    if (value) {
+      setUseVariable(value.startsWith('ctx.') || value.includes('{{'));
+    }
+  }, [value]);
+
+  // Build ctx.data suggestions from testDataSchema
+  const ctxDataSuggestions = useMemo(() => {
+    if (testDataSchema && testDataSchema.length > 0) {
+      return testDataSchema.slice(0, 10).map(field => `ctx.data.${field.name || field}`);
+    }
+    return [
+      'ctx.data.lang',
+      'ctx.data.device',
+      'ctx.data.searchType',
+      'ctx.data.dateDepart',
+      'ctx.data.destination'
+    ];
+  }, [testDataSchema]);
+
+  return (
+    <div 
+      className="p-2 rounded space-y-2"
+      style={{ background: theme.colors.background.secondary }}
+    >
+      {/* Parameter name & badges */}
+      <div className="flex items-center gap-2">
+        <span 
+          className="font-mono text-sm font-bold"
+          style={{ color: theme.colors.accents.cyan }}
+        >
+          {param.name}
+        </span>
+        {param.hasDefault ? (
+          <span 
+            className="text-[10px] px-1.5 py-0.5 rounded"
+            style={{ 
+              background: `${theme.colors.accents.blue}20`,
+              color: theme.colors.accents.blue
+            }}
+          >
+            optional
+          </span>
+        ) : (
+          <span 
+            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+            style={{ 
+              background: `${theme.colors.accents.red}20`,
+              color: theme.colors.accents.red
+            }}
+          >
+            required
+          </span>
+        )}
+      </div>
+
+      {/* Default value hint */}
+      {param.hasDefault && param.defaultValue !== undefined && (
+        <div className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+          Default: <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>
+            {JSON.stringify(param.defaultValue)}
+          </code>
+        </div>
+      )}
+
+      {/* Mode toggle */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => { setUseVariable(false); onChange(''); }}
+          className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+          style={{
+            background: !useVariable ? theme.colors.accents.cyan : theme.colors.background.tertiary,
+            color: !useVariable ? 'white' : theme.colors.text.tertiary
+          }}
+        >
+          ✏️ Custom Value
+        </button>
+        <button
+          type="button"
+          onClick={() => { setUseVariable(true); onChange(''); }}
+          className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+          style={{
+            background: useVariable ? theme.colors.accents.yellow : theme.colors.background.tertiary,
+            color: useVariable ? 'black' : theme.colors.text.tertiary
+          }}
+        >
+          📦 Variable
+        </button>
+      </div>
+
+      {/* Input based on mode */}
+      {useVariable ? (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="ctx.data.field or {{variableName}}"
+            className="w-full px-2 py-1.5 rounded text-sm font-mono"
+            style={{
+              background: theme.colors.background.primary,
+              border: `1px solid ${theme.colors.accents.yellow}`,
+              color: theme.colors.accents.yellow
+            }}
+          />
+          
+          {/* Variable suggestions */}
+          <div className="space-y-1">
+            {/* Stored variables from previous steps */}
+            {storedVariables.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                  💾 Stored:
+                </span>
+                {storedVariables.slice(0, 5).map((v, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => onChange(`{{${v.path || v.name}}}`)}
+                    className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                    style={{ 
+                      background: `${theme.colors.accents.yellow}30`,
+                      color: theme.colors.accents.yellow
+                    }}
+                  >
+                    {`{{${v.path || v.name}}}`}
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            {/* Common ctx.data fields */}
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                📋 ctx.data:
+              </span>
+              {ctxDataSuggestions.map((field, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onChange(field)}
+                  className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                  style={{ 
+                    background: `${theme.colors.accents.blue}20`,
+                    color: theme.colors.accents.blue
+                  }}
+                >
+                  {field}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <input
+          type="text"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={param.hasDefault ? `Leave empty for default` : `Enter ${param.name}...`}
+          className="w-full px-2 py-1.5 rounded text-sm"
+          style={{
+            background: theme.colors.background.primary,
+            border: `1px solid ${theme.colors.border}`,
+            color: theme.colors.text.primary
+          }}
+        />
+      )}
+
+      {/* Preview */}
+      {value && (
+        <div 
+          className="text-[10px] p-1 rounded font-mono"
+          style={{ background: theme.colors.background.tertiary, color: theme.colors.accents.green }}
+        >
+          → {value.startsWith('ctx.') || value.includes('{{') ? value : `"${value}"`}
+        </div>
+      )}
     </div>
   );
 }

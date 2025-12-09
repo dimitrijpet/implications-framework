@@ -548,23 +548,83 @@ const handleAddScreen = (platformName, screenName, screenData) => {
     return denormalized;
   };
 
-  const handleSaveChanges = async () => {
+const handleSaveChanges = async () => {
   try {
     console.log('💾 SAVE TRIGGERED!');
-    console.log('📦 editedUI:', JSON.stringify(editedUI, null, 2));
-    console.log('✏️ editedScreens:', Array.from(editedScreens));
+    
+    // ✅ AUTO-FIX: Add type to assertions before saving
+    const fixedUI = JSON.parse(JSON.stringify(editedUI));
+    
+    for (const [platformName, platformData] of Object.entries(fixedUI)) {
+      // ✅ FIX: screens might be directly under platform OR under .screens
+      const screens = platformData.screens || platformData;
+      
+      for (const [screenName, screenData] of Object.entries(screens)) {
+        // Skip non-screen properties like 'displayName'
+        if (typeof screenData !== 'object' || screenData === null) continue;
+        if (screenName === 'displayName' || screenName === 'count') continue;
+        
+        console.log(`🔧 Processing screen: ${platformName}.${screenName}`);
+        
+        // Fix blocks
+        if (screenData.blocks && Array.isArray(screenData.blocks)) {
+          for (const block of screenData.blocks) {
+            if (block.type === 'ui-assertion' && block.data?.assertions) {
+              console.log(`   📦 Fixing ${block.data.assertions.length} assertions in block ${block.id}`);
+              
+              block.data.assertions = block.data.assertions.map(assertion => {
+                if (assertion.type) {
+                  console.log(`   ✓ ${assertion.fn} already has type: ${assertion.type}`);
+                  return assertion;
+                }
+                
+                // Infer type from naming patterns
+                const baseFn = (assertion.fn || '').replace(/\[.*\]$/, '');
+                const methodPatterns = /^(click|get|set|fill|select|wait|scroll|drag|drop|hover|focus|blur|submit|clear|check|uncheck|toggle|open|close|show|hide|enable|disable|validate|verify|assert|is|has|can|should|array)/i;
+                
+                const inferredType = methodPatterns.test(baseFn) ? 'method' : 'locator';
+                console.log(`   + ${assertion.fn} → ${inferredType}`);
+                
+                return {
+                  ...assertion,
+                  type: inferredType
+                };
+              });
+            }
+          }
+        }
+        
+        // Fix legacy assertions (not in blocks)
+        if (screenData.assertions && Array.isArray(screenData.assertions)) {
+          screenData.assertions = screenData.assertions.map(assertion => {
+            if (assertion.type) return assertion;
+            
+            const baseFn = (assertion.fn || '').replace(/\[.*\]$/, '');
+            const methodPatterns = /^(click|get|set|fill|select|wait|scroll|drag|drop|hover|focus|blur|submit|clear|check|uncheck|toggle|open|close|show|hide|enable|disable|validate|verify|assert|is|has|can|should|array)/i;
+            
+            return {
+              ...assertion,
+              type: methodPatterns.test(baseFn) ? 'method' : 'locator'
+            };
+          });
+        }
+      }
+    }
+    
+    console.log('✅ Fixed UI ready to save');
     
     if (onSave) {
-      await onSave(editedUI, editedScreens);
+      await onSave(fixedUI, editedScreens);
     }
-      setEditMode(false);
-      setHasChanges(false);
-      setEditedUI(null);
-      setEditedScreens(new Set());
-    } catch (error) {
-      console.error('❌ Save failed, staying in edit mode');
-    }
-  };
+    setEditMode(false);
+    setHasChanges(false);
+    setEditedUI(null);
+    setEditedScreens(new Set());
+  } catch (error) {
+    console.error('❌ Save failed:', error);
+  }
+};
+
 const getAvailablePlatforms = () => {
   if (configPlatforms && configPlatforms.length > 0) {
     return configPlatforms;
@@ -1667,32 +1727,45 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
     onChange(updated);
   };
 
-  // ✅ NEW: Toggle storeAs for a function
+  // Toggle storeAs for a function
   const handleToggleStoreAs = (funcName) => {
     const func = functions[funcName];
     const updated = { ...functions };
     
     if (func.storeAs) {
-      // Remove storeAs
-      delete updated[funcName].storeAs;
+      // Remove storeAs and persistStoreAs
+      const { storeAs, persistStoreAs, ...rest } = updated[funcName];
+      updated[funcName] = rest;
     } else {
-      // Add default storeAs (camelCase of function name + "Result")
+      // Add default storeAs with persistence enabled
       updated[funcName] = {
         ...func,
-        storeAs: funcName + 'Result'
+        storeAs: funcName + 'Result',
+        persistStoreAs: true  // ✅ Default to persist
       };
     }
     
     onChange(updated);
   };
 
-  // ✅ NEW: Update storeAs value
+  // Update storeAs value
   const handleStoreAsChange = (funcName, newValue) => {
     onChange({
       ...functions,
       [funcName]: {
         ...functions[funcName],
         storeAs: newValue
+      }
+    });
+  };
+
+  // ✅ NEW: Update persistStoreAs value
+  const handlePersistStoreAsChange = (funcName, persist) => {
+    onChange({
+      ...functions,
+      [funcName]: {
+        ...functions[funcName],
+        persistStoreAs: persist
       }
     });
   };
@@ -1726,32 +1799,81 @@ function FunctionSection({ functions, editMode, pomName, projectPath, contextFie
                   </div>
                 )}
                 
-                {/* ✅ NEW: StoreAs display/edit */}
+                {/* ✅ ENHANCED: StoreAs display/edit WITH persistence toggle */}
                 {funcData.storeAs && (
-                  <div className="mt-2 flex items-center gap-2 text-xs">
+                  <div className="mt-2 flex items-center gap-2 text-xs flex-wrap">
                     <span className="text-yellow-500">💾</span>
                     <span style={{ color: theme.colors.text.tertiary }}>stores as:</span>
                     {editMode ? (
-                      <input
-                        type="text"
-                        value={funcData.storeAs}
-                        onChange={(e) => handleStoreAsChange(funcName, e.target.value)}
-                        className="px-2 py-0.5 rounded text-xs font-mono"
-                        style={{ 
-                          background: theme.colors.background.primary, 
-                          border: `1px solid ${theme.colors.border}`,
-                          color: theme.colors.accents.yellow 
-                        }}
-                      />
+                      <>
+                        <input
+                          type="text"
+                          value={funcData.storeAs}
+                          onChange={(e) => handleStoreAsChange(funcName, e.target.value)}
+                          className="px-2 py-0.5 rounded text-xs font-mono"
+                          style={{ 
+                            background: theme.colors.background.primary, 
+                            border: `1px solid ${theme.colors.border}`,
+                            color: theme.colors.accents.yellow,
+                            width: '120px'
+                          }}
+                        />
+                        {/* ✅ NEW: Persistence toggle */}
+                        <label 
+                          className="flex items-center gap-1 cursor-pointer ml-2 px-2 py-0.5 rounded"
+                          style={{ 
+                            background: funcData.persistStoreAs !== false 
+                              ? `${theme.colors.accents.green}20` 
+                              : theme.colors.background.tertiary,
+                            color: funcData.persistStoreAs !== false 
+                              ? theme.colors.accents.green 
+                              : theme.colors.text.tertiary,
+                            border: `1px solid ${funcData.persistStoreAs !== false 
+                              ? theme.colors.accents.green 
+                              : theme.colors.border}`
+                          }}
+                          title={funcData.persistStoreAs !== false 
+                            ? 'Persists to ctx.data (available in later tests)' 
+                            : 'Current test only (faster)'}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={funcData.persistStoreAs !== false}
+                            onChange={(e) => handlePersistStoreAsChange(funcName, e.target.checked)}
+                            className="w-3 h-3"
+                          />
+                          <span className="text-[10px]">persist</span>
+                        </label>
+                      </>
                     ) : (
-                      <code className="px-2 py-0.5 rounded font-mono" style={{ background: `${theme.colors.accents.yellow}20`, color: theme.colors.accents.yellow }}>
-                        {funcData.storeAs}
-                      </code>
+                      <div className="flex items-center gap-2">
+                        <code className="px-2 py-0.5 rounded font-mono" style={{ background: `${theme.colors.accents.yellow}20`, color: theme.colors.accents.yellow }}>
+                          {funcData.storeAs}
+                        </code>
+                        {/* ✅ Show persistence indicator */}
+                        {funcData.persistStoreAs !== false ? (
+                          <span 
+                            className="text-[10px] px-1.5 py-0.5 rounded" 
+                            style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+                            title="Persists to ctx.data"
+                          >
+                            💾 persist
+                          </span>
+                        ) : (
+                          <span 
+                            className="text-[10px] px-1.5 py-0.5 rounded" 
+                            style={{ background: theme.colors.background.tertiary, color: theme.colors.text.tertiary }}
+                            title="Current test only"
+                          >
+                            ⚡ temp
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
                 
-                {/* ✅ NEW: Add storeAs button in edit mode */}
+                {/* Add storeAs button in edit mode */}
                 {editMode && !funcData.storeAs && (
                   <button
                     onClick={() => handleToggleStoreAs(funcName)}
@@ -2063,29 +2185,42 @@ const ASSERTION_TYPES = [
 
 function AssertionsSection({ assertions = [], editMode, pomName, projectPath, storedVariables = [], onChange, theme }) {
   const [isAdding, setIsAdding] = useState(false);
-  const [availableFunctions, setAvailableFunctions] = useState([]);
-  const [newAssertion, setNewAssertion] = useState({ fn: '', expect: 'toBe', value: '', useVariable: false });
+  const [availableItems, setAvailableItems] = useState({ methods: [], locators: [] });
+  const [newAssertion, setNewAssertion] = useState({ 
+    fn: '', 
+    type: 'method',  // ← NEW: 'method' or 'locator'
+    expect: 'toBe', 
+    value: '', 
+    useVariable: false,
+    storeAs: '',
+    persistStoreAs: true
+  });
   const color = theme.colors.accents.yellow;
-
   useEffect(() => {
     if (pomName && projectPath) {
-      fetchPOMFunctions();
+      fetchPOMItems();
     }
   }, [pomName, projectPath]);
 
-  const fetchPOMFunctions = async () => {
-    try {
-      const response = await fetch(
-        `/api/poms/functions?projectPath=${encodeURIComponent(projectPath)}&pomName=${encodeURIComponent(pomName)}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableFunctions(data.functions || []);
-      }
-    } catch (error) {
-      console.error('Failed to fetch POM functions:', error);
+const fetchPOMItems = async () => {
+  try {
+    const response = await fetch(
+      `/api/poms/functions?projectPath=${encodeURIComponent(projectPath)}&pomName=${encodeURIComponent(pomName)}`
+    );
+    if (response.ok) {
+      const data = await response.json();
+      console.log('🔍 API returned:', data);  // ← ADD THIS
+      console.log('   Methods:', data.methods?.length || 0);
+      console.log('   Locators:', data.locators?.length || 0);
+      setAvailableItems({
+        methods: data.methods || [],
+        locators: data.locators || []
+      });
     }
-  };
+  } catch (error) {
+    console.error('Failed to fetch POM items:', error);
+  }
+};
 
   const handleAdd = () => {
     if (!newAssertion.fn) return;
@@ -2093,7 +2228,6 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
     
     let valueToStore = newAssertion.value;
     
-    // If using a stored variable, wrap it in {{}}
     if (newAssertion.useVariable && newAssertion.value) {
       valueToStore = `{{${newAssertion.value}}}`;
     } else if (selectedType?.needsValue && !isNaN(Number(newAssertion.value))) {
@@ -2102,17 +2236,40 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
     
     const assertionToAdd = {
       fn: newAssertion.fn,
+      type: newAssertion.type,  // ← SAVE THE TYPE!
       expect: newAssertion.expect,
-      ...(selectedType?.needsValue ? { value: valueToStore } : {})
+      ...(selectedType?.needsValue ? { value: valueToStore } : {}),
+      ...(newAssertion.storeAs.trim() && { 
+        storeAs: newAssertion.storeAs.trim(),
+        persistStoreAs: newAssertion.persistStoreAs
+      })
     };
     
     onChange([...assertions, assertionToAdd]);
-    setNewAssertion({ fn: '', expect: 'toBe', value: '', useVariable: false });
+    setNewAssertion({ fn: '', type: 'method', expect: 'toBe', value: '', useVariable: false, storeAs: '', persistStoreAs: true });
     setIsAdding(false);
   };
 
   const handleRemove = (idx) => {
     onChange(assertions.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdateStoreAs = (idx, newStoreAsValue) => {
+    const updated = [...assertions];
+    if (newStoreAsValue.trim()) {
+      updated[idx] = { ...updated[idx], storeAs: newStoreAsValue.trim() };
+    } else {
+      const { storeAs, persistStoreAs, ...rest } = updated[idx];
+      updated[idx] = rest;
+    }
+    onChange(updated);
+  };
+
+  // ✅ NEW: Update persistStoreAs for existing assertion
+  const handleUpdatePersistStoreAs = (idx, persist) => {
+    const updated = [...assertions];
+    updated[idx] = { ...updated[idx], persistStoreAs: persist };
+    onChange(updated);
   };
 
   const getAssertionLabel = (assertion) => {
@@ -2126,9 +2283,10 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
     return `${assertion.fn}() is ${type?.label || assertion.expect}`;
   };
 
+  
   const selectedType = ASSERTION_TYPES.find(t => t.value === newAssertion.expect);
 
-  return (
+return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
       <div className="flex items-center justify-between mb-2">
         <div className="font-semibold" style={{ color }}>
@@ -2146,30 +2304,185 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
       </div>
       
       <div className="space-y-2">
+        {/* Existing assertions display - add type indicator */}
         {assertions.map((assertion, idx) => (
-          <div key={idx} className="flex items-center justify-between p-2 rounded text-sm" style={{ background: `${color}20` }}>
-            <span className="font-mono">{getAssertionLabel(assertion)}</span>
-            {editMode && (
-              <button onClick={() => handleRemove(idx)} className="text-red-400 hover:text-red-300">✕</button>
+          <div key={idx} className="p-2 rounded text-sm" style={{ background: `${color}20` }}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {/* Type badge */}
+                <span 
+                  className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+                  style={{ 
+                    background: assertion.type === 'locator' 
+                      ? `${theme.colors.accents.blue}30` 
+                      : `${theme.colors.accents.purple}30`,
+                    color: assertion.type === 'locator' 
+                      ? theme.colors.accents.blue 
+                      : theme.colors.accents.purple
+                  }}
+                >
+                  {assertion.type === 'locator' ? '📍' : 'ƒ'}
+                </span>
+                <span className="font-mono">{getAssertionLabel(assertion)}</span>
+              </div>
+              {editMode && (
+                <button onClick={() => handleRemove(idx)} className="text-red-400 hover:text-red-300">✕</button>
+              )}
+            </div>
+            
+            {/* ✅ ENHANCED: StoreAs with persistence toggle */}
+            {assertion.storeAs ? (
+              <div className="flex items-center gap-2 mt-2 ml-2 flex-wrap">
+                <span className="text-xs" style={{ color: theme.colors.accents.green }}>💾</span>
+                {editMode ? (
+                  <>
+                    <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>ctx.</span>
+                    <input
+                      type="text"
+                      value={assertion.storeAs}
+                      onChange={(e) => handleUpdateStoreAs(idx, e.target.value)}
+                      className="px-2 py-0.5 rounded text-xs font-mono"
+                      style={{ 
+                        background: theme.colors.background.primary, 
+                        border: `1px solid ${theme.colors.accents.green}`,
+                        color: theme.colors.accents.green,
+                        width: '120px'
+                      }}
+                    />
+                    {/* ✅ NEW: Persistence toggle for existing */}
+                    <label 
+                      className="flex items-center gap-1 cursor-pointer px-2 py-0.5 rounded text-[10px]"
+                      style={{ 
+                        background: assertion.persistStoreAs !== false 
+                          ? `${theme.colors.accents.green}20` 
+                          : theme.colors.background.tertiary,
+                        color: assertion.persistStoreAs !== false 
+                          ? theme.colors.accents.green 
+                          : theme.colors.text.tertiary,
+                        border: `1px solid ${assertion.persistStoreAs !== false 
+                          ? theme.colors.accents.green 
+                          : theme.colors.border}`
+                      }}
+                      title={assertion.persistStoreAs !== false 
+                        ? 'Persists to ctx.data' 
+                        : 'Current test only'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={assertion.persistStoreAs !== false}
+                        onChange={(e) => handleUpdatePersistStoreAs(idx, e.target.checked)}
+                        className="w-3 h-3"
+                      />
+                      persist
+                    </label>
+                    <button
+                      onClick={() => handleUpdateStoreAs(idx, '')}
+                      className="text-xs hover:text-red-400"
+                      style={{ color: theme.colors.text.tertiary }}
+                      title="Remove storeAs"
+                    >
+                      ×
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <code 
+                      className="px-2 py-0.5 rounded text-xs font-mono"
+                      style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+                    >
+                      → ctx.{assertion.storeAs}
+                    </code>
+                    {/* ✅ Show persistence indicator */}
+                    {assertion.persistStoreAs !== false ? (
+                      <span 
+                        className="text-[10px] px-1.5 py-0.5 rounded" 
+                        style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+                        title="Persists to ctx.data"
+                      >
+                        💾
+                      </span>
+                    ) : (
+                      <span 
+                        className="text-[10px] px-1.5 py-0.5 rounded" 
+                        style={{ background: theme.colors.background.tertiary, color: theme.colors.text.tertiary }}
+                        title="Current test only"
+                      >
+                        ⚡
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : editMode && (
+              <button
+                onClick={() => handleUpdateStoreAs(idx, `${assertion.fn}Result`)}
+                className="mt-2 ml-2 px-2 py-0.5 rounded text-[10px] transition hover:brightness-110"
+                style={{ background: `${theme.colors.accents.green}20`, color: theme.colors.accents.green }}
+              >
+                💾 + storeAs
+              </button>
             )}
           </div>
         ))}
         
         {isAdding && (
           <div className="space-y-2 p-2 rounded" style={{ background: `${color}15` }}>
-            <div className="flex gap-2">
-              {/* Function select */}
+            {/* ✅ FIXED: Categorized dropdown with optgroup */}
+            <div className="flex gap-2 items-center">
               <select
                 value={newAssertion.fn}
-                onChange={(e) => setNewAssertion({ ...newAssertion, fn: e.target.value })}
+                onChange={(e) => {
+                  const selected = e.target.value;
+                  // Find which type it is
+                  const isLocator = availableItems.locators.some(l => l.name === selected);
+                  setNewAssertion({ 
+                    ...newAssertion, 
+                    fn: selected,
+                    type: isLocator ? 'locator' : 'method'
+                  });
+                }}
                 className="flex-1 px-2 py-1 rounded border text-sm font-mono"
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
               >
-                <option value="">Function...</option>
-                {availableFunctions.map(fn => (
-                  <option key={fn} value={fn}>{fn}()</option>
-                ))}
+                <option value="">Select...</option>
+                
+                {availableItems.locators?.length > 0 && (
+                  <optgroup label="📍 Locators (getters)">
+                    {availableItems.locators.map(item => (
+                      <option key={item.name} value={item.name}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                
+                {availableItems.methods?.length > 0 && (
+                  <optgroup label="ƒ Methods (functions)">
+                    {availableItems.methods.map(item => (
+                      <option key={item.name} value={item.name}>
+                        {item.signature}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              
+              {/* Show selected type indicator */}
+              {newAssertion.fn && (
+                <span 
+                  className="px-2 py-1 rounded text-xs font-semibold whitespace-nowrap"
+                  style={{ 
+                    background: newAssertion.type === 'locator' 
+                      ? `${theme.colors.accents.blue}30` 
+                      : `${theme.colors.accents.purple}30`,
+                    color: newAssertion.type === 'locator' 
+                      ? theme.colors.accents.blue 
+                      : theme.colors.accents.purple
+                  }}
+                >
+                  {newAssertion.type === 'locator' ? '📍 locator' : 'ƒ method'}
+                </span>
+              )}
               
               {/* Assertion type */}
               <select
@@ -2228,13 +2541,86 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
                     style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
                   />
                 )}
-                
-                {/* Helper text */}
-                <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                  💡 Use stored variables like <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>{`{{flightData.price}}`}</code> from transition actions
-                </div>
               </div>
             )}
+            
+            {/* ✅ ENHANCED: StoreAs input with persistence toggle */}
+            <div 
+              className="p-2 rounded space-y-2"
+              style={{ 
+                background: `${theme.colors.accents.green}10`,
+                border: `1px dashed ${theme.colors.accents.green}40`
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold" style={{ color: theme.colors.accents.green }}>
+                  💾 Store result as variable (optional)
+                </span>
+                {/* ✅ NEW: Persistence toggle */}
+                {newAssertion.storeAs.trim() && (
+                  <label 
+                    className="flex items-center gap-1.5 text-xs cursor-pointer px-2 py-0.5 rounded"
+                    style={{ 
+                      background: newAssertion.persistStoreAs 
+                        ? `${theme.colors.accents.green}20` 
+                        : theme.colors.background.tertiary,
+                      color: newAssertion.persistStoreAs 
+                        ? theme.colors.accents.green 
+                        : theme.colors.text.tertiary,
+                      border: `1px solid ${newAssertion.persistStoreAs 
+                        ? theme.colors.accents.green 
+                        : theme.colors.border}`
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={newAssertion.persistStoreAs}
+                      onChange={(e) => setNewAssertion({ ...newAssertion, persistStoreAs: e.target.checked })}
+                      className="w-3 h-3"
+                    />
+                    Persist to ctx.data
+                  </label>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-mono" style={{ color: theme.colors.text.tertiary }}>ctx.</span>
+                <input
+                  type="text"
+                  value={newAssertion.storeAs}
+                  onChange={(e) => setNewAssertion({ ...newAssertion, storeAs: e.target.value.replace(/\s/g, '') })}
+                  placeholder="variableName"
+                  className="flex-1 px-2 py-1 rounded text-sm font-mono"
+                  style={{ 
+                    background: theme.colors.background.primary, 
+                    border: `1px solid ${newAssertion.storeAs ? theme.colors.accents.green : theme.colors.border}`, 
+                    color: theme.colors.accents.green 
+                  }}
+                />
+              </div>
+              
+              {/* ✅ NEW: Helper text showing persistence behavior */}
+              {newAssertion.storeAs.trim() && (
+                <div className="text-[10px] flex items-center gap-1" style={{ color: theme.colors.text.tertiary }}>
+                  {newAssertion.persistStoreAs ? (
+                    <>
+                      <span style={{ color: theme.colors.accents.green }}>💾</span>
+                      <span>Value will be saved to ctx.data (persists across tests)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>⚡</span>
+                      <span>Value available in current test only (faster, no file write)</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Helper text */}
+            <div className="text-xs" style={{ color: theme.colors.text.tertiary }}>
+              💡 Use stored variables like <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>{`{{flightData.price}}`}</code> from transition actions
+            </div>
             
             <div className="flex gap-2">
               <button 
@@ -2246,7 +2632,7 @@ function AssertionsSection({ assertions = [], editMode, pomName, projectPath, st
                 Add
               </button>
               <button 
-                onClick={() => { setIsAdding(false); setNewAssertion({ fn: '', expect: 'toBe', value: '', useVariable: false }); }}
+                onClick={() => { setIsAdding(false); setNewAssertion({ fn: '', type: 'method', expect: 'toBe', value: '', useVariable: false, storeAs: '', persistStoreAs: true }); }}
                 className="px-3 py-1 rounded text-sm"
                 style={{ background: theme.colors.background.tertiary, color: theme.colors.text.secondary }}
               >

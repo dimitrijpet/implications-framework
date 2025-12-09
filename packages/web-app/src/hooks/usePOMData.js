@@ -144,6 +144,8 @@ export default function usePOMData(projectPath) {
     return pom?.functions || [];
   }, [poms]);
 
+  
+
   // Get locators (getters) for a POM
   const getPOMLocators = useCallback(async (pomName, instanceName = null) => {
     if (!pomName) return [];
@@ -163,6 +165,50 @@ export default function usePOMData(projectPath) {
     const pom = poms.find(p => p.name === pomName || p.className === pomName);
     return pom?.getters?.map(g => g.name) || [];
   }, [poms, fetchPOMDetails]);
+
+  // Add this new function inside usePOMData hook (around line 90)
+
+  // ✅ NEW: Get locators (getters) for a POM - SYNC version from cached data
+// ✅ NEW: Get locators (getters) for a POM - SYNC version from cached data
+const getPOMLocatorsSync = useCallback((pomName) => {
+  if (!pomName) return [];
+  
+  const pom = poms.find(p => 
+    p.name === pomName || 
+    p.className === pomName ||
+    p.name.includes(pomName) ||
+    pomName.includes(p.name)
+  );
+  
+  if (!pom) return [];
+  
+  // Extract getters from classes
+  const locators = [];
+  for (const cls of pom.classes || []) {
+    // Getters (these are the locators!)
+    for (const getter of cls.getters || []) {
+      locators.push({
+        name: getter.name,
+        type: 'getter',
+        signature: `get ${getter.name}()`
+      });
+    }
+    // Properties (non-instance) - also locators
+    for (const prop of cls.properties || []) {
+      if (prop.type === 'property') {
+        locators.push({
+          name: prop.name,
+          type: 'property',
+          signature: `this.${prop.name}`
+        });
+      }
+    }
+  }
+  
+  return locators;
+}, [poms]);
+
+  // Update the return statement to include getPOMLocatorsSync
 
   // Get instances for a POM
   const getPOMInstances = useCallback(async (pomName) => {
@@ -217,18 +263,19 @@ export default function usePOMData(projectPath) {
     fetchAllPOMs(true);
   }, [fetchAllPOMs]);
 
-  return {
-    poms,
-    loading,
-    error,
-    getPOMFunctions,
-    getPOMLocators,
-    getPOMInstances,
-    searchPOMs,
-    searchMethods,
-    getMethodReturnKeys,
-    refreshPOMs
-  };
+return {
+  poms,
+  loading,
+  error,
+  getPOMFunctions,
+  getPOMLocators,
+  getPOMLocatorsSync,  // ✅ ADD THIS
+  getPOMInstances,
+  searchPOMs,
+  searchMethods,
+  getMethodReturnKeys,
+  refreshPOMs
+};
 }
 
 /**

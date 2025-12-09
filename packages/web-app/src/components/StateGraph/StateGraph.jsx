@@ -476,21 +476,25 @@ if (Object.keys(tagGroups).length > 0) {
             'control-point-step-size': 60,
             'line-style': 'solid',
             'z-index': 5,
-            'label': (ele) => {
-              const event = ele.data('label');
-              const platforms = ele.data('platforms');
-              const requiresLabel = ele.data('requiresLabel');
-              
-              let label = event;
-              if (platforms && platforms.length > 0) {
-                const badges = platforms.map(p => p === 'web' ? '🌐' : '📱').join('');
-                label += ` ${badges}`;
-              }
-              if (requiresLabel) {
-                label += `\n${requiresLabel}`;
-              }
-              return label;
-            },
+         'label': (ele) => {
+  const event = ele.data('label');
+  const platforms = ele.data('platforms');
+  const requiresLabel = ele.data('requiresLabel');
+  const conditionsLabel = ele.data('conditionsLabel');  // ← ADD
+  
+  let label = event;
+  if (platforms && platforms.length > 0) {
+    const badges = platforms.map(p => p === 'web' ? '🌐' : '📱').join('');
+    label += ` ${badges}`;
+  }
+  if (requiresLabel) {
+    label += `\n${requiresLabel}`;
+  }
+  if (conditionsLabel) {  // ← ADD
+    label += `\n${conditionsLabel}`;
+  }
+  return label;
+},
             'font-size': '11px',
             'text-background-color': theme.colors.background.secondary,
             'text-background-opacity': 0.9,
@@ -514,6 +518,15 @@ if (Object.keys(tagGroups).length > 0) {
             'color': (ele) => ele.data('requiresColor') || '#A855F7',
           }
         },
+        {
+  selector: 'edge[?hasConditions]',
+  style: {
+    'line-style': 'dashed',
+    'line-dash-pattern': [6, 3],
+    'line-color': '#22c55e',  // Green for conditions
+    'target-arrow-color': '#22c55e',
+  }
+},
         {
   selector: '.dimmed',
   style: {

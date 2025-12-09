@@ -2089,28 +2089,30 @@ function buildScreenObjectAstWithBlocks(screen) {
   }
   
   // assertions
-  if (screen.assertions && screen.assertions.length > 0) {
-    const assertionElements = screen.assertions.map(assertion => {
-      const assertProps = [];
-      if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
-      if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
-      if (assertion.value !== undefined) {
-        assertProps.push(t.objectProperty(
-          t.identifier('value'),
-          typeof assertion.value === 'number' 
-            ? t.numericLiteral(assertion.value)
-            : typeof assertion.value === 'boolean'
-              ? t.booleanLiteral(assertion.value)
-              : t.stringLiteral(String(assertion.value))
-        ));
-      }
-      return t.objectExpression(assertProps);
-    });
-    props.push(t.objectProperty(
-      t.identifier('assertions'),
-      t.arrayExpression(assertionElements)
-    ));
-  }
+ if (screen.assertions && screen.assertions.length > 0) {
+  const assertionElements = screen.assertions.map(assertion => {
+    const assertProps = [];
+    if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+    // ✅ ADD TYPE FIELD
+    if (assertion.type) assertProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(assertion.type)));
+    if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
+    if (assertion.value !== undefined) {
+      assertProps.push(t.objectProperty(
+        t.identifier('value'),
+        typeof assertion.value === 'number' 
+          ? t.numericLiteral(assertion.value)
+          : typeof assertion.value === 'boolean'
+            ? t.booleanLiteral(assertion.value)
+            : t.stringLiteral(String(assertion.value))
+      ));
+    }
+    return t.objectExpression(assertProps);
+  });
+  props.push(t.objectProperty(
+    t.identifier('assertions'),
+    t.arrayExpression(assertionElements)
+  ));
+}
   
   // checks
   if (screen.checks) {
@@ -2255,23 +2257,25 @@ function buildScreenObjectAstWithBlocks(screen) {
           }
         }
         
-        // assertions
-        if (block.data.assertions?.length > 0) {
-          const assertElements = block.data.assertions.map(a => {
-            const aProps = [];
-            if (a.fn) aProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(a.fn)));
-            if (a.expect) aProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(a.expect)));
-            if (a.value !== undefined) {
-              aProps.push(t.objectProperty(t.identifier('value'),
-                typeof a.value === 'number' ? t.numericLiteral(a.value) :
-                typeof a.value === 'boolean' ? t.booleanLiteral(a.value) :
-                t.stringLiteral(String(a.value))
-              ));
-            }
-            return t.objectExpression(aProps);
-          });
-          dataProps.push(t.objectProperty(t.identifier('assertions'), t.arrayExpression(assertElements)));
-        }
+       // assertions in block.data
+if (block.data.assertions?.length > 0) {
+  const assertElements = block.data.assertions.map(a => {
+    const aProps = [];
+    if (a.fn) aProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(a.fn)));
+    // ✅ ADD TYPE FIELD
+    if (a.type) aProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(a.type)));
+    if (a.expect) aProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(a.expect)));
+    if (a.value !== undefined) {
+      aProps.push(t.objectProperty(t.identifier('value'),
+        typeof a.value === 'number' ? t.numericLiteral(a.value) :
+        typeof a.value === 'boolean' ? t.booleanLiteral(a.value) :
+        t.stringLiteral(String(a.value))
+      ));
+    }
+    return t.objectExpression(aProps);
+  });
+  dataProps.push(t.objectProperty(t.identifier('assertions'), t.arrayExpression(assertElements)));
+}
         
         if (block.data.timeout) {
           dataProps.push(t.objectProperty(t.identifier('timeout'), t.numericLiteral(block.data.timeout)));
@@ -2825,7 +2829,7 @@ function buildScreenObjectAst(screen) {
     ));
   }
 
-  // ✅ NEW: assertions (array of { fn, expect, value } objects)
+// ✅ NEW: assertions (array of { fn, type, expect, value } objects)
   if (screen.assertions && screen.assertions.length > 0) {
     const assertionElements = screen.assertions.map(assertion => {
       const assertionProps = [];
@@ -2835,6 +2839,14 @@ function buildScreenObjectAst(screen) {
         t.identifier('fn'),
         t.stringLiteral(assertion.fn)
       ));
+      
+      // ✅ type (locator or method)
+      if (assertion.type) {
+        assertionProps.push(t.objectProperty(
+          t.identifier('type'),
+          t.stringLiteral(assertion.type)
+        ));
+      }
       
       // expect (required)
       assertionProps.push(t.objectProperty(
@@ -2951,6 +2963,8 @@ function buildScreenAst(screen, screenName, platformName, className) {
     const assertionElements = screen.assertions.map(assertion => {
       const assertProps = [];
       if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+      // ✅ type (locator or method)
+      if (assertion.type) assertProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(assertion.type)));
       if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
       if (assertion.value !== undefined) {
         assertProps.push(t.objectProperty(
@@ -3196,11 +3210,13 @@ function buildScreenAst(screen, screenName, platformName, className) {
           }
         }
         
-        // assertions array
+    // assertions array
         if (block.data.assertions && block.data.assertions.length > 0) {
           const assertionElements = block.data.assertions.map(assertion => {
             const assertProps = [];
             if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
+            // ✅ type (locator or method)
+            if (assertion.type) assertProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(assertion.type)));
             if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
             if (assertion.value !== undefined) {
               assertProps.push(t.objectProperty(
@@ -3855,6 +3871,7 @@ function buildActionDetailsAST(actionDetails) {
   }
   
   // Steps ✅ ENHANCED with storeAs
+  // Steps ✅ ENHANCED with storeAs AND persistStoreAs
   if (actionDetails.steps && actionDetails.steps.length > 0) {
     const stepsArray = t.arrayExpression(
       actionDetails.steps.map(step => {
@@ -3881,15 +3898,22 @@ function buildActionDetailsAST(actionDetails) {
           )
         ];
         
-       // ✅ NEW: Add storeAs if present
+        // ✅ Add storeAs if present
         if (step.storeAs) {
           console.log(`   💾 Adding storeAs to step: ${step.storeAs}`);
           stepProperties.push(
             t.objectProperty(t.identifier('storeAs'), t.stringLiteral(step.storeAs))
           );
+          
+          // ✅ NEW: Add persistStoreAs (defaults to true if not specified)
+          const persistValue = step.persistStoreAs !== false;
+          stepProperties.push(
+            t.objectProperty(t.identifier('persistStoreAs'), t.booleanLiteral(persistValue))
+          );
+          console.log(`   💾 persistStoreAs: ${persistValue}`);
         }
         
-        // ✅ NEW: Add conditions if present (block-based system)
+        // ✅ Add conditions if present (block-based system)
         if (step.conditions && step.conditions.blocks && step.conditions.blocks.length > 0) {
           console.log(`   🔒 Adding conditions to step: ${step.conditions.blocks.length} blocks`);
           stepProperties.push(

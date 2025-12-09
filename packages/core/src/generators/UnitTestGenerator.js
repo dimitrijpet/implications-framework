@@ -273,1101 +273,1187 @@ class UnitTestGenerator {
     };
   }
 
-  /**
-   * Extract ordered screens for Phase 3.7 validation with hybrid support
-   *
-   * Features:
-   * - Processes screens in order (by `order` field)
-   * - Smart detection: ExpectImplication for simple, raw for complex
-   * - External POM detection and initialization
-   * - Deduplicates POM requires across screens
-   * - forceRawValidation option for verbose output
-   *
-   * @param {object} metadata - Implication metadata
-   * @param {string} platform - Platform key (web, dancer, etc.)
-   * @param {object} options - Options including forceRawValidation
-   * @returns {object} { hasOrderedScreens, orderedScreens, orderedScreenCount, uniquePomRequires, ... }
-   */
-  _extractOrderedScreensForValidation(metadata, platform, options = {}) {
-    const { forceRawValidation = false } = options;
+/**
+ * Extract ordered screens for Phase 3.7 validation with hybrid support
+ *
+ * Features:
+ * - Processes screens in order (by `order` field)
+ * - Smart detection: ExpectImplication for simple, raw for complex
+ * - External POM detection and initialization
+ * - Deduplicates POM requires across screens
+ * - forceRawValidation option for verbose output
+ * - storeAs keys use result.data, testData fields use ctx.data
+ *
+ * @param {object} metadata - Implication metadata
+ * @param {string} platform - Platform key (web, dancer, etc.)
+ * @param {object} options - Options including forceRawValidation
+ * @returns {object} { hasOrderedScreens, orderedScreens, orderedScreenCount, uniquePomRequires, ... }
+ */
+_extractOrderedScreensForValidation(metadata, platform, options = {}) {
+  const { forceRawValidation = false } = options;
 
-    console.log(`\n🔄 _extractOrderedScreensForValidation for ${platform}`);
-    if (forceRawValidation) {
-      console.log(`   ⚡ Force raw validation: ENABLED`);
-    }
+  console.log(`\n🔄 _extractOrderedScreensForValidation for ${platform}`);
+  if (forceRawValidation) {
+    console.log(`   ⚡ Force raw validation: ENABLED`);
+  }
 
-    const result = {
-      hasOrderedScreens: false,
-      orderedScreens: [],
-      orderedScreenCount: 0,
-      uniquePomRequires: [],
-      usesBlocks: false,
-      usesLegacy: false,
-    };
+  const result = {
+    hasOrderedScreens: false,
+    orderedScreens: [],
+    orderedScreenCount: 0,
+    uniquePomRequires: [],
+    usesBlocks: false,
+    usesLegacy: false,
+  };
 
-    if (!metadata.mirrorsOn?.UI) {
-      console.log("   ⚠️  No mirrorsOn.UI found");
-      return result;
-    }
-
-    const platformKey = this._getPlatformKeyForMirrorsOn(platform);
-    const platformScreens = metadata.mirrorsOn.UI[platformKey];
-
-    if (!platformScreens || typeof platformScreens !== "object") {
-      console.log(`   ⚠️  No screens for platform: ${platformKey}`);
-      return result;
-    }
-
-    console.log(
-      `   📺 Found ${Object.keys(platformScreens).length} screen(s) for ${platformKey}`
-    );
-
-    const isPlaywright = platform === "web" || platform === "cms";
-    const screens = [];
-
-    // ═══════════════════════════════════════════════════════════
-    // PASS 1: Process all screens
-    // ═══════════════════════════════════════════════════════════
-    for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
-      let screen;
-
-      // Handle array or object format
-      if (Array.isArray(screenDef)) {
-        if (screenDef.length === 0) continue;
-        screen = screenDef[0];
-      } else if (typeof screenDef === "object" && screenDef !== null) {
-        screen = screenDef;
-      } else {
-        continue;
+  // ✅ NEW: Collect storeAs keys from actionDetails
+  const storeAsKeys = new Set();
+  if (metadata.actionDetails?.storeAsFields) {
+    metadata.actionDetails.storeAsFields.forEach(f => storeAsKeys.add(f.key));
+  }
+  if (metadata.actionDetails?.steps) {
+    metadata.actionDetails.steps.forEach(step => {
+      if (step.storeAsKey) storeAsKeys.add(step.storeAsKey);
+      if (step.storeAs) {
+        const key = typeof step.storeAs === 'string' ? step.storeAs : step.storeAs?.key;
+        if (key) storeAsKeys.add(key);
       }
-
-      if (!screen || typeof screen !== "object") continue;
-
-      const order = typeof screen.order === "number" ? screen.order : 999;
-      const hasBlocks =
-        Array.isArray(screen.blocks) && screen.blocks.length > 0;
-      const hasNavigation =
-        screen.navigation &&
-        (screen.navigation.pomName || screen.navigation.method);
-
-      // ═══════════════════════════════════════════════════════════
-      // ✅ FIX #1: Check if screen has ANY enabled blocks
-      // ═══════════════════════════════════════════════════════════
-      let hasEnabledBlocks = false;
-      if (hasBlocks) {
-        hasEnabledBlocks = screen.blocks.some(
-          (block) => block.enabled !== false
-        );
-      }
-
-      // Skip screens where ALL blocks are disabled
-      if (hasBlocks && !hasEnabledBlocks) {
-        console.log(`   ⏭️  Skipping ${screenKey}: all blocks disabled`);
-        continue;
-      }
-
-      // ═══════════════════════════════════════════════════════════
-      // ✅ FIX #2: Warn if order > 0 and no navigation
-      // ═══════════════════════════════════════════════════════════
-      if (order > 0 && !hasNavigation && hasEnabledBlocks) {
-        console.warn(
-          `   ⚠️  WARNING: ${screenKey} has order=${order} but NO navigation defined!`
-        );
-        console.warn(
-          `      Add a navigation block to ensure the test can reach this screen.`
-        );
-        console.warn(
-          `      Example: navigation: { pomName: 'SomeScreen', method: 'navigateTo', args: [] }`
-        );
-      }
-
-      console.log(
-        `   📺 ${screenKey}: order=${order}, blocks=${hasBlocks}, enabled=${hasEnabledBlocks}, nav=${hasNavigation}`
-      );
-
-      if (hasBlocks) result.usesBlocks = true;
-      else result.usesLegacy = true;
-
-      // ───────────────────────────────────────────────────────
-      // Process navigation
-      // ───────────────────────────────────────────────────────
-      let navigation = null;
-
-      if (hasNavigation) {
-        const nav = screen.navigation;
-        const instanceName = nav.pomName
-          ? this._toCamelCase(nav.pomName)
-          : "navigationScreen";
-
-        let pomPath = nav.pomPath || null;
-if (!pomPath && nav.pomName && this.implFilePath) {
-  pomPath = this._calculateScreenObjectPath(
-    this.implFilePath,
-    nav.pomName,
-    platform  // ← Make sure this is here too
-  );
-}
-
-        const resolvedArgs = (nav.args || []).map((arg) =>
-          this._resolveTemplateArg(arg)
-        );
-
-        navigation = {
-          pomName: nav.pomName,
-          pomPath: pomPath,
-          method: nav.method,
-          args: nav.args || [],
-          resolvedArgs: resolvedArgs,
-          resolvedArgsString: resolvedArgs.join(", "),
-          instanceName: instanceName,
-          className: nav.pomName ? this._toPascalCase(nav.pomName) : null,
-        };
-      }
-
-      // ───────────────────────────────────────────────────────
-      // SMART DETECTION: Determine validation mode per-screen
-      // ───────────────────────────────────────────────────────
-      let useRawValidation = forceRawValidation;
-      let rawValidationReason = forceRawValidation ? "forced by user" : null;
-
-      // Only do auto-detection if NOT forced
-      if (!forceRawValidation && hasBlocks) {
-        const screenPomName = (screen.screen || screenKey)
-          .toLowerCase()
-          .replace(/\.(wrapper|screen|page)$/i, "")
-          .replace(/\//g, "");
-
-        for (const block of screen.blocks) {
-          if (block.enabled === false) continue;
-
-          // Check 1: Custom code blocks always need raw
-          if (block.type === "custom-code" && block.code?.trim()) {
-            useRawValidation = true;
-            rawValidationReason = "custom-code block";
-            break;
-          }
-
-          // ✅ NEW Check 2: ui-assertion with assertions array needs raw
-          if (
-            block.type === "ui-assertion" &&
-            block.data?.assertions?.length > 0
-          ) {
-            useRawValidation = true;
-            rawValidationReason = "function-based assertions";
-            break;
-          }
-
-          // Check 3: Function calls to DIFFERENT POMs need raw
-          if (block.type === "function-call") {
-            const blockInstance = (block.data?.instance || "")
-              .toLowerCase()
-              .replace(/\.(wrapper|screen|page)$/i, "")
-              .replace(/\//g, "");
-
-            if (
-              blockInstance &&
-              !screenPomName.includes(blockInstance) &&
-              !blockInstance.includes(screenPomName)
-            ) {
-              useRawValidation = true;
-              rawValidationReason = `external function call to ${block.data?.instance}`;
-              break;
-            }
-          }
-        }
-      }
-
-      console.log(
-        `      🎯 Validation mode: ${useRawValidation ? "RAW" : "ExpectImplication"}${rawValidationReason ? ` (${rawValidationReason})` : ""}`
-      );
-
-      // ───────────────────────────────────────────────────────
-      // Process blocks (for raw mode) OR legacy assertions
-      // ───────────────────────────────────────────────────────
-      let processedBlocks = [];
-      let externalPoms = [];
-      let legacyAssertions = null;
-
-      if (hasBlocks && useRawValidation) {
-        const blockResult = this._processBlocksForTemplate(
-          screen.blocks,
-          screenKey,
-          isPlaywright
-        );
-        processedBlocks = blockResult.blocks;
-        externalPoms = blockResult.externalPoms;
-      } else if (!hasBlocks) {
-        legacyAssertions = {
-          visible: screen.visible || [],
-          hidden: screen.hidden || [],
-          checks: screen.checks || {},
-          hasVisible: (screen.visible || []).length > 0,
-          hasHidden: (screen.hidden || []).length > 0,
-          hasTextChecks: Object.keys(screen.checks?.text || {}).length > 0,
-        };
-      }
-
-      // ───────────────────────────────────────────────────────
-      // Calculate POM path using _pomSource or screen property
-      // ───────────────────────────────────────────────────────
-      let pomPathValue = null;
-      let pomClassName = null;
-
-      // ✅ ADD DEBUG LOGGING HERE
-      console.log(`\n🔍 DEBUG POM PATH for ${screenKey}:`);
-      console.log(
-        `   screen._pomSource:`,
-        JSON.stringify(screen._pomSource, null, 2)
-      );
-      console.log(`   screen.screen:`, screen.screen);
-      console.log(`   platform:`, platform);
-      console.log(`   this.implFilePath:`, this.implFilePath);
-
-      if (screen._pomSource?.path && this.implFilePath) {
-        pomPathValue = this._calculateScreenObjectPath(
-          this.implFilePath,
-          screen._pomSource.path,
-          platform // ← ADD THIS
-        );
-        pomClassName =
-          screen._pomSource.className ||
-          this._toPascalCase(
-            (screen._pomSource.name || screenKey)
-              .replace(/\./g, "")
-              .replace(/screen$/i, "")
-          );
-        console.log(
-          `      📁 POM from _pomSource: ${pomClassName} → ${pomPathValue}`
-        );
-      } else if (screen.screen && this.implFilePath) {
-        // Priority 2: Use screen property and calculate path
-        pomPathValue = this._calculateScreenObjectPath(
-          this.implFilePath,
-          screen.screen,
-          platform // ← ADD THIS
-        );
-        pomClassName = this._toPascalCase(
-          screen.screen
-            .replace(/\.screen$/i, "")
-            .replace(/\.wrapper$/i, "")
-            .replace(/\./g, "")
-            .replace(/\//g, "")
-        );
-        console.log(
-          `      📁 POM from screen: ${pomClassName} → ${pomPathValue}`
-        );
-      } else {
-        // Priority 3: No path info - use screenKey for class name
-        pomClassName = this._toPascalCase(screenKey);
-        console.log(
-          `      📁 POM from screenKey only: ${pomClassName} (no path available)`
-        );
-      }
-
-      // ───────────────────────────────────────────────────────
-      // Build screen object
-      // ───────────────────────────────────────────────────────
-      screens.push({
-        screenKey,
-        order,
-
-        // POM info
-        pomClassName: pomClassName,
-        pomPath: pomPathValue,
-        pomInstance: screen.instance || this._toCamelCase(screenKey),
-        hasPom: !!pomPathValue,
-
-        // Navigation
-        hasNavigation: !!navigation,
-        navigation,
-
-        // Block info
-        hasBlocks: hasBlocks,
-        blocks: processedBlocks,
-        blockCount: processedBlocks.length,
-
-        // External POMs for function calls
-        externalPoms: externalPoms,
-        hasExternalPoms: externalPoms.length > 0,
-
-        // Validation mode flags
-        useRawValidation: useRawValidation,
-        useExpectImplication: hasBlocks && !useRawValidation,
-        rawValidationReason: rawValidationReason,
-
-        // Legacy support (no blocks)
-        hasLegacyAssertions:
-          !hasBlocks &&
-          !!legacyAssertions &&
-          (legacyAssertions.hasVisible ||
-            legacyAssertions.hasHidden ||
-            legacyAssertions.hasTextChecks),
-        legacyAssertions,
-        useLegacyValidation: !hasBlocks,
-
-        // Platform
-        platformKey,
-        isPlaywright,
-      });
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // PASS 2: Sort by order and add position info
-    // ═══════════════════════════════════════════════════════════
-    screens.sort((a, b) => a.order - b.order);
-
-    screens.forEach((screen, index) => {
-      screen.position = index + 1;
-      screen.totalScreens = screens.length;
-      screen.isFirst = index === 0;
-      screen.isLast = index === screens.length - 1;
     });
+  }
+  
+  if (storeAsKeys.size > 0) {
+    console.log(`   💾 storeAs keys for validation: ${[...storeAsKeys].join(', ')}`);
+  }
 
-    // ═══════════════════════════════════════════════════════════
-    // PASS 3: Collect unique POM requires (DEDUPLICATION FIX)
-    // ═══════════════════════════════════════════════════════════
-    const uniquePomRequires = new Map();
-
-    for (const screen of screens) {
-      // Add screen's own POM
-      if (screen.pomPath && screen.pomClassName) {
-        if (!uniquePomRequires.has(screen.pomClassName)) {
-          uniquePomRequires.set(screen.pomClassName, {
-            className: screen.pomClassName,
-            path: screen.pomPath,
-            isScreenPom: true,
-          });
-        }
-      }
-
-      // Add external POMs from function calls
-      if (screen.externalPoms && screen.externalPoms.length > 0) {
-        for (const pom of screen.externalPoms) {
-          if (!uniquePomRequires.has(pom.className)) {
-            uniquePomRequires.set(pom.className, {
-              className: pom.className,
-              path: pom.pomPath,
-              isScreenPom: false,
-            });
-          }
-        }
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // Build result
-    // ═══════════════════════════════════════════════════════════
-    result.hasOrderedScreens = screens.length > 0;
-    result.orderedScreens = screens;
-    result.orderedScreenCount = screens.length;
-    result.uniquePomRequires = Array.from(uniquePomRequires.values());
-
-    // Summary
-    const rawCount = screens.filter((s) => s.useRawValidation).length;
-    const expectCount = screens.filter((s) => s.useExpectImplication).length;
-    const legacyCount = screens.filter((s) => s.useLegacyValidation).length;
-    console.log(`\n   ✅ Prepared ${screens.length} screen(s):`);
-    console.log(`      - ${expectCount} ExpectImplication`);
-    console.log(`      - ${rawCount} Raw validation`);
-    console.log(`      - ${legacyCount} Legacy`);
-    console.log(
-      `      - ${result.uniquePomRequires.length} unique POM(s) to require`
-    );
-
+  if (!metadata.mirrorsOn?.UI) {
+    console.log("   ⚠️  No mirrorsOn.UI found");
     return result;
   }
 
-  /**
-   * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
-   *
-   * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
-   *
-   * Supports:
-   * - element         → element (single)
-   * - element[0]      → element.first() or element.nth(0)
-   * - element[last]   → element.last()
-   * - element[any]    → element.first() (at least one)
-   * - element[all]    → loop checking all elements
-   * - element[N]      → element.nth(N)
-   */
-  /**
-   * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
-   *
-   * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
-   *
-   * Supports:
-   * - element         → element (single)
-   * - element[0]      → element.first() or element.nth(0)
-   * - element[last]   → element.last()
-   * - element[any]    → element.first() (at least one)
-   * - element[all]    → loop checking all elements
-   * - element[N]      → element.nth(N)
-   */
-  /**
-   * Process blocks for template - WITH ARRAY INDEX SELECTOR SUPPORT
-   *
-   * Replace the entire _processBlocksForTemplate method in UnitTestGenerator.js
-   *
-   * Supports:
-   * - element         → element (single)
-   * - element[0]      → element.first() or element.nth(0)
-   * - element[last]   → element.last()
-   * - element[any]    → element.first() (at least one)
-   * - element[all]    → loop checking all elements
-   * - element[N]      → element.nth(N)
-   */
-  _processBlocksForTemplate(blocks, screenKey, isPlaywright) {
-    console.log(`\n🔍 _processBlocksForTemplate for ${screenKey}`);
+  const platformKey = this._getPlatformKeyForMirrorsOn(platform);
+  const platformScreens = metadata.mirrorsOn.UI[platformKey];
 
-    if (!Array.isArray(blocks)) return { blocks: [], externalPoms: [] };
+  if (!platformScreens || typeof platformScreens !== "object") {
+    console.log(`   ⚠️  No screens for platform: ${platformKey}`);
+    return result;
+  }
 
-    const processed = [];
-    const screenInstance = this._toCamelCase(screenKey);
+  console.log(
+    `   📺 Found ${Object.keys(platformScreens).length} screen(s) for ${platformKey}`
+  );
 
-    // Track external POMs that need to be required
-    const externalPoms = new Map();
+  const isPlaywright = platform === "web" || platform === "cms";
+  const screens = [];
+
+  // ═══════════════════════════════════════════════════════════
+  // PASS 1: Process all screens
+  // ═══════════════════════════════════════════════════════════
+  for (const [screenKey, screenDef] of Object.entries(platformScreens)) {
+    let screen;
+
+    // Handle array or object format
+    if (Array.isArray(screenDef)) {
+      if (screenDef.length === 0) continue;
+      screen = screenDef[0];
+    } else if (typeof screenDef === "object" && screenDef !== null) {
+      screen = screenDef;
+    } else {
+      continue;
+    }
+
+    if (!screen || typeof screen !== "object") continue;
+
+    const order = typeof screen.order === "number" ? screen.order : 999;
+    const hasBlocks =
+      Array.isArray(screen.blocks) && screen.blocks.length > 0;
+    const hasNavigation =
+      screen.navigation &&
+      (screen.navigation.pomName || screen.navigation.method);
 
     // ═══════════════════════════════════════════════════════════
-    // Helper: Parse field with index notation
+    // ✅ FIX #1: Check if screen has ANY enabled blocks
     // ═══════════════════════════════════════════════════════════
-    const parseFieldWithIndex = (fieldStr) => {
-      const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
-      if (!match) {
-        return { field: fieldStr, indexType: "", customIndex: "" };
+    let hasEnabledBlocks = false;
+    if (hasBlocks) {
+      hasEnabledBlocks = screen.blocks.some(
+        (block) => block.enabled !== false
+      );
+    }
+
+    // Skip screens where ALL blocks are disabled
+    if (hasBlocks && !hasEnabledBlocks) {
+      console.log(`   ⏭️  Skipping ${screenKey}: all blocks disabled`);
+      continue;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ✅ FIX #2: Warn if order > 0 and no navigation
+    // ═══════════════════════════════════════════════════════════
+    if (order > 0 && !hasNavigation && hasEnabledBlocks) {
+      console.warn(
+        `   ⚠️  WARNING: ${screenKey} has order=${order} but NO navigation defined!`
+      );
+      console.warn(
+        `      Add a navigation block to ensure the test can reach this screen.`
+      );
+      console.warn(
+        `      Example: navigation: { pomName: 'SomeScreen', method: 'navigateTo', args: [] }`
+      );
+    }
+
+    console.log(
+      `   📺 ${screenKey}: order=${order}, blocks=${hasBlocks}, enabled=${hasEnabledBlocks}, nav=${hasNavigation}`
+    );
+
+    if (hasBlocks) result.usesBlocks = true;
+    else result.usesLegacy = true;
+
+    // ───────────────────────────────────────────────────────
+    // Process navigation
+    // ───────────────────────────────────────────────────────
+    let navigation = null;
+
+    if (hasNavigation) {
+      const nav = screen.navigation;
+      const instanceName = nav.pomName
+        ? this._toCamelCase(nav.pomName)
+        : "navigationScreen";
+
+      let pomPath = nav.pomPath || null;
+      if (!pomPath && nav.pomName && this.implFilePath) {
+        pomPath = this._calculateScreenObjectPath(
+          this.implFilePath,
+          nav.pomName,
+          platform
+        );
       }
-      const idx = match[2];
-      if (idx === "0") {
-        return { field: match[1], indexType: "first", customIndex: "" };
-      } else if (["last", "all", "any"].includes(idx)) {
-        return { field: match[1], indexType: idx, customIndex: "" };
-      } else {
-        return { field: match[1], indexType: "custom", customIndex: idx };
-      }
-    };
 
-    // ═══════════════════════════════════════════════════════════
-    // Helper: Generate locator code based on index type
-    // ═══════════════════════════════════════════════════════════
-    const generateLocatorCode = (screenInst, field, indexType, customIndex) => {
-      const base = `${screenInst}.${field}`;
+      const resolvedArgs = (nav.args || []).map((arg) =>
+        this._resolveTemplateArg(arg, storeAsKeys)
+      );
 
-      switch (indexType) {
-        case "first":
-          return `${base}.first()`;
-        case "last":
-          return `${base}.last()`;
-        case "any":
-          return `${base}.first()`; // For visibility, check first exists
-        case "all":
-          return base; // Will use different assertion pattern
-        case "custom":
-          return `${base}.nth(${customIndex})`;
-        default:
-          return base;
-      }
-    };
+      navigation = {
+        pomName: nav.pomName,
+        pomPath: pomPath,
+        method: nav.method,
+        args: nav.args || [],
+        resolvedArgs: resolvedArgs,
+        resolvedArgsString: resolvedArgs.join(", "),
+        instanceName: instanceName,
+        className: nav.pomName ? this._toPascalCase(nav.pomName) : null,
+      };
+    }
 
-    const enabledBlocks = blocks
-      .filter((block) => block.enabled !== false)
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    // ───────────────────────────────────────────────────────
+    // SMART DETECTION: Determine validation mode per-screen
+    // ───────────────────────────────────────────────────────
+    let useRawValidation = forceRawValidation;
+    let rawValidationReason = forceRawValidation ? "forced by user" : null;
 
-    enabledBlocks.forEach((block, index) => {
-      const blockType = block.type || "ui-assertion";
-      const blockData = block.data || block;
+    // Only do auto-detection if NOT forced
+    if (!forceRawValidation && hasBlocks) {
+      const screenPomName = (screen.screen || screenKey)
+        .toLowerCase()
+        .replace(/\.(wrapper|screen|page)$/i, "")
+        .replace(/\//g, "");
 
-      switch (blockType) {
-        // ═══════════════════════════════════════════════════════════
-        // UI-ASSERTION BLOCK - WITH ARRAY INDEX SUPPORT
-        // ═══════════════════════════════════════════════════════════
-        case "ui-assertion": {
-          const assertions = [];
-          const timeout = blockData.timeout || 30000;
+      for (const block of screen.blocks) {
+        if (block.enabled === false) continue;
 
-          // ───────────────────────────────────────────────────────
-          // VISIBLE assertions
-          // ───────────────────────────────────────────────────────
-          const visibleFields = blockData.visible || block.visible || [];
-          if (Array.isArray(visibleFields) && visibleFields.length > 0) {
-            for (const field of visibleFields) {
-              const safeFieldRaw = this._sanitizeFieldName(field);
-              const {
-                field: baseField,
-                indexType,
-                customIndex,
-              } = parseFieldWithIndex(safeFieldRaw);
-              const safeField = this._sanitizeFieldName(baseField);
-
-              if (indexType === "all") {
-                // ALL elements must be visible
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  originalField: field,
-                  expectCode: `// Check ALL ${safeField} elements are visible`,
-                });
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  expectCode: `const ${safeField}VisibleCount = await ${screenInstance}.${safeField}.count();`,
-                });
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  expectCode: `expect(${safeField}VisibleCount).toBeGreaterThan(0);`,
-                });
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  expectCode: `for (let i = 0; i < ${safeField}VisibleCount; i++) {`,
-                });
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  expectCode: isPlaywright
-                    ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeVisible({ timeout: ${timeout} });`
-                    : `  await expect(${screenInstance}.${safeField}.nth(i)).toBeDisplayed();`,
-                });
-                assertions.push({
-                  assertionType: "visible-all",
-                  field: safeField,
-                  expectCode: `}`,
-                });
-              } else if (indexType === "any") {
-                // At least ONE must be visible
-                assertions.push({
-                  assertionType: "visible-any",
-                  field: safeField,
-                  originalField: field,
-                  expectCode: `// Check at least one ${safeField} is visible`,
-                });
-                assertions.push({
-                  assertionType: "visible-any",
-                  field: safeField,
-                  locator: `${screenInstance}.${safeField}.first()`,
-                  expectCode: isPlaywright
-                    ? `await expect(${screenInstance}.${safeField}.first()).toBeVisible({ timeout: ${timeout} });`
-                    : `await expect(${screenInstance}.${safeField}.first()).toBeDisplayed();`,
-                });
-              } else {
-                // Single element (no index, first, last, or custom)
-                const locator = generateLocatorCode(
-                  screenInstance,
-                  safeField,
-                  indexType,
-                  customIndex
-                );
-                assertions.push({
-                  assertionType: "visible",
-                  field: safeField,
-                  originalField: field,
-                  indexType: indexType || "single",
-                  locator: locator,
-                  expectCode: isPlaywright
-                    ? `await expect(${locator}).toBeVisible({ timeout: ${timeout} });`
-                    : `await expect(${locator}).toBeDisplayed();`,
-                });
-              }
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // HIDDEN assertions
-          // ───────────────────────────────────────────────────────
-          const hiddenFields = blockData.hidden || block.hidden || [];
-          if (Array.isArray(hiddenFields) && hiddenFields.length > 0) {
-            for (const field of hiddenFields) {
-              const safeFieldRaw = this._sanitizeFieldName(field);
-              const {
-                field: baseField,
-                indexType,
-                customIndex,
-              } = parseFieldWithIndex(safeFieldRaw);
-              const safeField = this._sanitizeFieldName(baseField);
-
-              if (indexType === "all") {
-                // ALL elements must be hidden
-                assertions.push({
-                  assertionType: "hidden-all",
-                  field: safeField,
-                  originalField: field,
-                  expectCode: `// Check ALL ${safeField} elements are hidden`,
-                });
-                assertions.push({
-                  assertionType: "hidden-all",
-                  field: safeField,
-                  expectCode: `const ${safeField}HiddenCount = await ${screenInstance}.${safeField}.count();`,
-                });
-                assertions.push({
-                  assertionType: "hidden-all",
-                  field: safeField,
-                  expectCode: `for (let i = 0; i < ${safeField}HiddenCount; i++) {`,
-                });
-                assertions.push({
-                  assertionType: "hidden-all",
-                  field: safeField,
-                  expectCode: isPlaywright
-                    ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeHidden({ timeout: ${timeout} });`
-                    : `  await expect(${screenInstance}.${safeField}.nth(i)).not.toBeDisplayed();`,
-                });
-                assertions.push({
-                  assertionType: "hidden-all",
-                  field: safeField,
-                  expectCode: `}`,
-                });
-              } else if (indexType === "any") {
-                // At least ONE must be hidden
-                assertions.push({
-                  assertionType: "hidden-any",
-                  field: safeField,
-                  originalField: field,
-                  expectCode: `// Check at least one ${safeField} is hidden`,
-                });
-                assertions.push({
-                  assertionType: "hidden-any",
-                  field: safeField,
-                  locator: `${screenInstance}.${safeField}.first()`,
-                  expectCode: isPlaywright
-                    ? `await expect(${screenInstance}.${safeField}.first()).toBeHidden({ timeout: ${timeout} });`
-                    : `await expect(${screenInstance}.${safeField}.first()).not.toBeDisplayed();`,
-                });
-              } else {
-                const locator = generateLocatorCode(
-                  screenInstance,
-                  safeField,
-                  indexType,
-                  customIndex
-                );
-                assertions.push({
-                  assertionType: "hidden",
-                  field: safeField,
-                  originalField: field,
-                  indexType: indexType || "single",
-                  locator: locator,
-                  expectCode: isPlaywright
-                    ? `await expect(${locator}).toBeHidden({ timeout: ${timeout} });`
-                    : `await expect(${locator}).not.toBeDisplayed();`,
-                });
-              }
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // TEXT checks (exact match) - with index support
-          // ───────────────────────────────────────────────────────
-          const checks = blockData.checks || block.checks || {};
-          if (checks.text && typeof checks.text === "object") {
-            for (const [field, expectedText] of Object.entries(checks.text)) {
-              const {
-                field: baseField,
-                indexType,
-                customIndex,
-              } = parseFieldWithIndex(field);
-              const safeField = this._sanitizeFieldName(baseField);
-              const resolvedText = this._resolveTemplateArg(expectedText);
-
-              if (indexType === "all") {
-                assertions.push({
-                  assertionType: "text-all",
-                  field: safeField,
-                  expectedText: resolvedText,
-                  expectCode: `// Check ALL ${safeField} elements have exact text`,
-                });
-                assertions.push({
-                  assertionType: "text-all",
-                  field: safeField,
-                  expectCode: `const ${safeField}TextCount = await ${screenInstance}.${safeField}.count();`,
-                });
-                assertions.push({
-                  assertionType: "text-all",
-                  field: safeField,
-                  expectCode: `for (let i = 0; i < ${safeField}TextCount; i++) {`,
-                });
-                assertions.push({
-                  assertionType: "text-all",
-                  field: safeField,
-                  expectCode: isPlaywright
-                    ? `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText}, { timeout: ${timeout} });`
-                    : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText});`,
-                });
-                assertions.push({
-                  assertionType: "text-all",
-                  field: safeField,
-                  expectCode: `}`,
-                });
-              } else {
-                const locator = generateLocatorCode(
-                  screenInstance,
-                  safeField,
-                  indexType,
-                  customIndex
-                );
-                assertions.push({
-                  assertionType: "text",
-                  field: safeField,
-                  expectedText: resolvedText,
-                  locator: locator,
-                  expectCode: isPlaywright
-                    ? `await expect(${locator}).toHaveText(${resolvedText}, { timeout: ${timeout} });`
-                    : `await expect(${locator}).toHaveText(${resolvedText});`,
-                });
-              }
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // CONTAINS checks - with index support
-          // ───────────────────────────────────────────────────────
-          if (checks.contains && typeof checks.contains === "object") {
-            for (const [field, expectedText] of Object.entries(
-              checks.contains
-            )) {
-              const {
-                field: baseField,
-                indexType,
-                customIndex,
-              } = parseFieldWithIndex(field);
-              const safeField = this._sanitizeFieldName(baseField);
-              const resolvedText = this._resolveTemplateArg(expectedText);
-
-              if (indexType === "all") {
-                assertions.push({
-                  assertionType: "contains-all",
-                  field: safeField,
-                  expectedText: resolvedText,
-                  expectCode: `// Check ALL ${safeField} elements contain text`,
-                });
-                assertions.push({
-                  assertionType: "contains-all",
-                  field: safeField,
-                  expectCode: `const ${safeField}ContainsCount = await ${screenInstance}.${safeField}.count();`,
-                });
-                assertions.push({
-                  assertionType: "contains-all",
-                  field: safeField,
-                  expectCode: `for (let i = 0; i < ${safeField}ContainsCount; i++) {`,
-                });
-                assertions.push({
-                  assertionType: "contains-all",
-                  field: safeField,
-                  expectCode: isPlaywright
-                    ? `  await expect(${screenInstance}.${safeField}.nth(i)).toContainText(${resolvedText}, { timeout: ${timeout} });`
-                    : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveTextContaining(${resolvedText});`,
-                });
-                assertions.push({
-                  assertionType: "contains-all",
-                  field: safeField,
-                  expectCode: `}`,
-                });
-              } else if (indexType === "any") {
-                assertions.push({
-                  assertionType: "contains-any",
-                  field: safeField,
-                  expectedText: resolvedText,
-                  expectCode: `// Check at least one ${safeField} contains text`,
-                });
-                assertions.push({
-                  assertionType: "contains-any",
-                  field: safeField,
-                  locator: `${screenInstance}.${safeField}.first()`,
-                  expectCode: isPlaywright
-                    ? `await expect(${screenInstance}.${safeField}.first()).toContainText(${resolvedText}, { timeout: ${timeout} });`
-                    : `await expect(${screenInstance}.${safeField}.first()).toHaveTextContaining(${resolvedText});`,
-                });
-              } else {
-                const locator = generateLocatorCode(
-                  screenInstance,
-                  safeField,
-                  indexType,
-                  customIndex
-                );
-                assertions.push({
-                  assertionType: "contains",
-                  field: safeField,
-                  expectedText: resolvedText,
-                  locator: locator,
-                  expectCode: isPlaywright
-                    ? `await expect(${locator}).toContainText(${resolvedText}, { timeout: ${timeout} });`
-                    : `await expect(${locator}).toHaveTextContaining(${resolvedText});`,
-                });
-              }
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // TRUTHY function checks
-          // ───────────────────────────────────────────────────────
-          const truthyFields = blockData.truthy || [];
-          if (Array.isArray(truthyFields) && truthyFields.length > 0) {
-            for (const funcName of truthyFields) {
-              const safeFn = this._sanitizeFieldName(funcName);
-              assertions.push({
-                assertionType: "truthy",
-                field: safeFn,
-                expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeTruthy();`,
-              });
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // FALSY function checks
-          // ───────────────────────────────────────────────────────
-          const falsyFields = blockData.falsy || [];
-          if (Array.isArray(falsyFields) && falsyFields.length > 0) {
-            for (const funcName of falsyFields) {
-              const safeFn = this._sanitizeFieldName(funcName);
-              assertions.push({
-                assertionType: "falsy",
-                field: safeFn,
-                expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeFalsy();`,
-              });
-            }
-          }
-
-          // ───────────────────────────────────────────────────────
-          // FUNCTION-BASED assertions (fn + expect format)
-          // ───────────────────────────────────────────────────────
-          const fnAssertions = blockData.assertions || [];
-          if (Array.isArray(fnAssertions) && fnAssertions.length > 0) {
-            for (const assertion of fnAssertions) {
-              const { fn, expect: expectType, args, storeAs: rawStoreAs } = assertion;
-
-// ✅ Handle storeAs as string or object
-let storeAs = null;
-if (typeof rawStoreAs === 'string') {
-  storeAs = rawStoreAs;
-} else if (typeof rawStoreAs === 'object' && rawStoreAs?.key) {
-  storeAs = rawStoreAs.key;
-}
-
-              if (!fn || !expectType) continue;
-
-              // Build args string
-              let argsStr = "";
-              if (args && Array.isArray(args)) {
-                argsStr = args
-                  .map((a) => this._resolveTemplateArg(a))
-                  .join(", ");
-              }
-
-              // Build the function call
-              const fnCall = `${screenInstance}.${fn}(${argsStr})`;
-
-              // If storeAs is provided, store the result first
-              let expectCode = "";
-              let locatorVar = storeAs || `${fn}Result`;
-
-              if (storeAs) {
-                // Store result and then assert
-                expectCode = `const ${locatorVar} = await ${fnCall};\n      `;
-              }
-
-              // Map expect type to actual assertion
-              const targetVar = storeAs ? locatorVar : `(await ${fnCall})`;
-
-              switch (expectType) {
-                case "toBeHidden":
-                case "not.toBeDisplayed":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeHidden({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).not.toBeDisplayed();`;
-                  break;
-
-                case "toBeVisible":
-                case "toBeDisplayed":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeVisible({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toBeDisplayed();`;
-                  break;
-
-                case "toExist":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeAttached({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toExist();`;
-                  break;
-
-                case "not.toExist":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).not.toBeAttached({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).not.toExist();`;
-                  break;
-
-                case "toBeEnabled":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeEnabled({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toBeEnabled();`;
-                  break;
-
-                case "toBeDisabled":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeDisabled({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toBeDisabled();`;
-                  break;
-
-                case "toBeChecked":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeChecked({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toBeSelected();`;
-                  break;
-
-                case "toBeFocused":
-                  expectCode += isPlaywright
-                    ? `await expect(${targetVar}).toBeFocused({ timeout: ${timeout} });`
-                    : `await expect(${targetVar}).toBeFocused();`;
-                  break;
-
-                default:
-                  // Generic expect - pass through as-is
-                  expectCode += `await expect(${targetVar}).${expectType}();`;
-              }
-
-              assertions.push({
-                assertionType: "function-assertion",
-                field: fn,
-                expectType: expectType,
-                expectCode: expectCode,
-              });
-            }
-          }
-
-          if (assertions.length > 0) {
-            processed.push({
-              blockType: "ui-assertion",
-              position: index + 1,
-              description: block.label || block.description || "UI assertions",
-              assertions,
-              assertionCount: assertions.length,
-              enabled: true,
-            });
-            console.log(
-              `   ✅ Added ui-assertion block with ${assertions.length} assertion(s)`
-            );
-          } else {
-            console.log(
-              `   ⚠️  Skipping empty UI assertion block at position ${index + 1}`
-            );
-          }
+        // Check 1: Custom code blocks always need raw
+        if (block.type === "custom-code" && block.code?.trim()) {
+          useRawValidation = true;
+          rawValidationReason = "custom-code block";
           break;
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // FUNCTION-CALL BLOCK (unchanged)
-        // ═══════════════════════════════════════════════════════════
-        case "function-call": {
-          const rawInstance = blockData.instance || block.instance || null;
-          const method = blockData.method || block.method || "doSomething";
-          const storeAs = blockData.storeAs || block.storeAs || null;
-          const args = (blockData.args || block.args || []).map((arg) =>
-            this._resolveTemplateArg(arg)
-          );
-          const argsString = args.join(", ");
+        // ✅ NEW Check 2: ui-assertion with assertions array needs raw
+        if (
+          block.type === "ui-assertion" &&
+          block.data?.assertions?.length > 0
+        ) {
+          useRawValidation = true;
+          rawValidationReason = "function-based assertions";
+          break;
+        }
 
-          // Determine if this is the same POM or an external one
-          let instanceName;
-          let isExternal = false;
+        // Check 3: Function calls to DIFFERENT POMs need raw
+        if (block.type === "function-call") {
+          const blockInstance = (block.data?.instance || "")
+            .toLowerCase()
+            .replace(/\.(wrapper|screen|page)$/i, "")
+            .replace(/\//g, "");
 
-          if (!rawInstance || this._isSamePom(rawInstance, screenKey)) {
-            instanceName = screenInstance;
-          } else {
-            isExternal = true;
-            const cleanName = rawInstance.replace(
-              /\.(wrapper|screen|page)$/i,
-              ""
-            );
-            instanceName = this._toCamelCase(cleanName);
+          if (
+            blockInstance &&
+            !screenPomName.includes(blockInstance) &&
+            !blockInstance.includes(screenPomName)
+          ) {
+            useRawValidation = true;
+            rawValidationReason = `external function call to ${block.data?.instance}`;
+            break;
+          }
+        }
+      }
+    }
 
-            if (!externalPoms.has(instanceName)) {
-              externalPoms.set(instanceName, {
-                instanceName,
-                className: this._toPascalCase(cleanName) + "Wrapper",
-                rawInstance: rawInstance,
-                pomPath: `../../../screenObjects/${cleanName}.wrapper.js`,
+    console.log(
+      `      🎯 Validation mode: ${useRawValidation ? "RAW" : "ExpectImplication"}${rawValidationReason ? ` (${rawValidationReason})` : ""}`
+    );
+
+    // ───────────────────────────────────────────────────────
+    // Process blocks (for raw mode) OR legacy assertions
+    // ───────────────────────────────────────────────────────
+    let processedBlocks = [];
+    let externalPoms = [];
+    let legacyAssertions = null;
+
+    if (hasBlocks && useRawValidation) {
+      const blockResult = this._processBlocksForTemplate(
+        screen.blocks,
+        screenKey,
+        isPlaywright,
+        storeAsKeys  // ✅ Pass storeAs keys
+      );
+      processedBlocks = blockResult.blocks;
+      externalPoms = blockResult.externalPoms;
+    } else if (!hasBlocks) {
+      legacyAssertions = {
+        visible: screen.visible || [],
+        hidden: screen.hidden || [],
+        checks: screen.checks || {},
+        hasVisible: (screen.visible || []).length > 0,
+        hasHidden: (screen.hidden || []).length > 0,
+        hasTextChecks: Object.keys(screen.checks?.text || {}).length > 0,
+      };
+    }
+
+    // ───────────────────────────────────────────────────────
+    // Calculate POM path using _pomSource or screen property
+    // ───────────────────────────────────────────────────────
+    let pomPathValue = null;
+    let pomClassName = null;
+
+    console.log(`\n🔍 DEBUG POM PATH for ${screenKey}:`);
+    console.log(
+      `   screen._pomSource:`,
+      JSON.stringify(screen._pomSource, null, 2)
+    );
+    console.log(`   screen.screen:`, screen.screen);
+    console.log(`   platform:`, platform);
+    console.log(`   this.implFilePath:`, this.implFilePath);
+
+    if (screen._pomSource?.path && this.implFilePath) {
+      pomPathValue = this._calculateScreenObjectPath(
+        this.implFilePath,
+        screen._pomSource.path,
+        platform
+      );
+      pomClassName =
+        screen._pomSource.className ||
+        this._toPascalCase(
+          (screen._pomSource.name || screenKey)
+            .replace(/\./g, "")
+            .replace(/screen$/i, "")
+        );
+      console.log(
+        `      📁 POM from _pomSource: ${pomClassName} → ${pomPathValue}`
+      );
+    } else if (screen.screen && this.implFilePath) {
+      // Priority 2: Use screen property and calculate path
+      pomPathValue = this._calculateScreenObjectPath(
+        this.implFilePath,
+        screen.screen,
+        platform
+      );
+      pomClassName = this._toPascalCase(
+        screen.screen
+          .replace(/\.screen$/i, "")
+          .replace(/\.wrapper$/i, "")
+          .replace(/\./g, "")
+          .replace(/\//g, "")
+      );
+      console.log(
+        `      📁 POM from screen: ${pomClassName} → ${pomPathValue}`
+      );
+    } else {
+      // Priority 3: No path info - use screenKey for class name
+      pomClassName = this._toPascalCase(screenKey);
+      console.log(
+        `      📁 POM from screenKey only: ${pomClassName} (no path available)`
+      );
+    }
+
+    // ───────────────────────────────────────────────────────
+    // Build screen object
+    // ───────────────────────────────────────────────────────
+    screens.push({
+      screenKey,
+      order,
+
+      // POM info
+      pomClassName: pomClassName,
+      pomPath: pomPathValue,
+      pomInstance: screen.instance || this._toCamelCase(screenKey),
+      hasPom: !!pomPathValue,
+
+      // Navigation
+      hasNavigation: !!navigation,
+      navigation,
+
+      // Block info
+      hasBlocks: hasBlocks,
+      blocks: processedBlocks,
+      blockCount: processedBlocks.length,
+
+      // External POMs for function calls
+      externalPoms: externalPoms,
+      hasExternalPoms: externalPoms.length > 0,
+
+      // Validation mode flags
+      useRawValidation: useRawValidation,
+      useExpectImplication: hasBlocks && !useRawValidation,
+      rawValidationReason: rawValidationReason,
+
+      // Legacy support (no blocks)
+      hasLegacyAssertions:
+        !hasBlocks &&
+        !!legacyAssertions &&
+        (legacyAssertions.hasVisible ||
+          legacyAssertions.hasHidden ||
+          legacyAssertions.hasTextChecks),
+      legacyAssertions,
+      useLegacyValidation: !hasBlocks,
+
+      // Platform
+      platformKey,
+      isPlaywright,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // PASS 2: Sort by order and add position info
+  // ═══════════════════════════════════════════════════════════
+  screens.sort((a, b) => a.order - b.order);
+
+  screens.forEach((screen, index) => {
+    screen.position = index + 1;
+    screen.totalScreens = screens.length;
+    screen.isFirst = index === 0;
+    screen.isLast = index === screens.length - 1;
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // PASS 3: Collect unique POM requires (DEDUPLICATION FIX)
+  // ═══════════════════════════════════════════════════════════
+  const uniquePomRequires = new Map();
+
+  for (const screen of screens) {
+    // Add screen's own POM
+    if (screen.pomPath && screen.pomClassName) {
+      if (!uniquePomRequires.has(screen.pomClassName)) {
+        uniquePomRequires.set(screen.pomClassName, {
+          className: screen.pomClassName,
+          path: screen.pomPath,
+          isScreenPom: true,
+        });
+      }
+    }
+
+    // Add external POMs from function calls
+    if (screen.externalPoms && screen.externalPoms.length > 0) {
+      for (const pom of screen.externalPoms) {
+        if (!uniquePomRequires.has(pom.className)) {
+          uniquePomRequires.set(pom.className, {
+            className: pom.className,
+            path: pom.pomPath,
+            isScreenPom: false,
+          });
+        }
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Build result
+  // ═══════════════════════════════════════════════════════════
+  result.hasOrderedScreens = screens.length > 0;
+  result.orderedScreens = screens;
+  result.orderedScreenCount = screens.length;
+  result.uniquePomRequires = Array.from(uniquePomRequires.values());
+
+  // Summary
+  const rawCount = screens.filter((s) => s.useRawValidation).length;
+  const expectCount = screens.filter((s) => s.useExpectImplication).length;
+  const legacyCount = screens.filter((s) => s.useLegacyValidation).length;
+  console.log(`\n   ✅ Prepared ${screens.length} screen(s):`);
+  console.log(`      - ${expectCount} ExpectImplication`);
+  console.log(`      - ${rawCount} Raw validation`);
+  console.log(`      - ${legacyCount} Legacy`);
+  console.log(
+    `      - ${result.uniquePomRequires.length} unique POM(s) to require`
+  );
+
+  return result;
+}
+
+ _processBlocksForTemplate(blocks, screenKey, isPlaywright, storeAsKeys = new Set()) {
+  console.log(`\n🔍 _processBlocksForTemplate for ${screenKey}`);
+  if (storeAsKeys.size > 0) {
+    console.log(`   💾 storeAs keys: ${[...storeAsKeys].join(', ')}`);
+  }
+
+  if (!Array.isArray(blocks)) return { blocks: [], externalPoms: [] };
+
+  const processed = [];
+  const screenInstance = this._toCamelCase(screenKey);
+
+  // Track external POMs that need to be required
+  const externalPoms = new Map();
+
+  // ═══════════════════════════════════════════════════════════
+  // Helper: Parse field with index notation
+  // ═══════════════════════════════════════════════════════════
+  const parseFieldWithIndex = (fieldStr) => {
+    const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
+    if (!match) {
+      return { field: fieldStr, indexType: "", customIndex: "" };
+    }
+    const idx = match[2];
+    if (idx === "0") {
+      return { field: match[1], indexType: "first", customIndex: "" };
+    } else if (["last", "all", "any"].includes(idx)) {
+      return { field: match[1], indexType: idx, customIndex: "" };
+    } else {
+      return { field: match[1], indexType: "custom", customIndex: idx };
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // Helper: Generate locator code based on index type
+  // ═══════════════════════════════════════════════════════════
+  const generateLocatorCode = (screenInst, field, indexType, customIndex) => {
+    const base = `${screenInst}.${field}`;
+
+    switch (indexType) {
+      case "first":
+        return `${base}.first()`;
+      case "last":
+        return `${base}.last()`;
+      case "any":
+        return `${base}.first()`; // For visibility, check first exists
+      case "all":
+        return base; // Will use different assertion pattern
+      case "custom":
+        return `${base}.nth(${customIndex})`;
+      default:
+        return base;
+    }
+  };
+
+  const enabledBlocks = blocks
+    .filter((block) => block.enabled !== false)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  enabledBlocks.forEach((block, index) => {
+    const blockType = block.type || "ui-assertion";
+    const blockData = block.data || block;
+
+    switch (blockType) {
+      // ═══════════════════════════════════════════════════════════
+      // UI-ASSERTION BLOCK - WITH ARRAY INDEX SUPPORT
+      // ═══════════════════════════════════════════════════════════
+      case "ui-assertion": {
+        const assertions = [];
+        const timeout = blockData.timeout || 30000;
+
+        // ───────────────────────────────────────────────────────
+        // VISIBLE assertions
+        // ───────────────────────────────────────────────────────
+        const visibleFields = blockData.visible || block.visible || [];
+        if (Array.isArray(visibleFields) && visibleFields.length > 0) {
+          for (const field of visibleFields) {
+            const safeFieldRaw = this._sanitizeFieldName(field);
+            const {
+              field: baseField,
+              indexType,
+              customIndex,
+            } = parseFieldWithIndex(safeFieldRaw);
+            const safeField = this._sanitizeFieldName(baseField);
+
+            if (indexType === "all") {
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check ALL ${safeField} elements are visible`,
+              });
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                expectCode: `const ${safeField}VisibleCount = await ${screenInstance}.${safeField}.count();`,
+              });
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                expectCode: `expect(${safeField}VisibleCount).toBeGreaterThan(0);`,
+              });
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}VisibleCount; i++) {`,
+              });
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeVisible({ timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toBeDisplayed();`,
+              });
+              assertions.push({
+                assertionType: "visible-all",
+                field: safeField,
+                expectCode: `}`,
+              });
+            } else if (indexType === "any") {
+              assertions.push({
+                assertionType: "visible-any",
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check at least one ${safeField} is visible`,
+              });
+              assertions.push({
+                assertionType: "visible-any",
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toBeVisible({ timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).toBeDisplayed();`,
+              });
+            } else {
+              const locator = generateLocatorCode(
+                screenInstance,
+                safeField,
+                indexType,
+                customIndex
+              );
+              assertions.push({
+                assertionType: "visible",
+                field: safeField,
+                originalField: field,
+                indexType: indexType || "single",
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toBeVisible({ timeout: ${timeout} });`
+                  : `await expect(${locator}).toBeDisplayed();`,
               });
             }
           }
+        }
 
-          let callCode;
-          if (storeAs) {
-            callCode = `const ${storeAs} = await ${instanceName}.${method}(${argsString});`;
-          } else {
-            callCode = `await ${instanceName}.${method}(${argsString});`;
+        // ───────────────────────────────────────────────────────
+        // HIDDEN assertions
+        // ───────────────────────────────────────────────────────
+        const hiddenFields = blockData.hidden || block.hidden || [];
+        if (Array.isArray(hiddenFields) && hiddenFields.length > 0) {
+          for (const field of hiddenFields) {
+            const safeFieldRaw = this._sanitizeFieldName(field);
+            const {
+              field: baseField,
+              indexType,
+              customIndex,
+            } = parseFieldWithIndex(safeFieldRaw);
+            const safeField = this._sanitizeFieldName(baseField);
+
+            if (indexType === "all") {
+              assertions.push({
+                assertionType: "hidden-all",
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check ALL ${safeField} elements are hidden`,
+              });
+              assertions.push({
+                assertionType: "hidden-all",
+                field: safeField,
+                expectCode: `const ${safeField}HiddenCount = await ${screenInstance}.${safeField}.count();`,
+              });
+              assertions.push({
+                assertionType: "hidden-all",
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}HiddenCount; i++) {`,
+              });
+              assertions.push({
+                assertionType: "hidden-all",
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toBeHidden({ timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).not.toBeDisplayed();`,
+              });
+              assertions.push({
+                assertionType: "hidden-all",
+                field: safeField,
+                expectCode: `}`,
+              });
+            } else if (indexType === "any") {
+              assertions.push({
+                assertionType: "hidden-any",
+                field: safeField,
+                originalField: field,
+                expectCode: `// Check at least one ${safeField} is hidden`,
+              });
+              assertions.push({
+                assertionType: "hidden-any",
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toBeHidden({ timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).not.toBeDisplayed();`,
+              });
+            } else {
+              const locator = generateLocatorCode(
+                screenInstance,
+                safeField,
+                indexType,
+                customIndex
+              );
+              assertions.push({
+                assertionType: "hidden",
+                field: safeField,
+                originalField: field,
+                indexType: indexType || "single",
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toBeHidden({ timeout: ${timeout} });`
+                  : `await expect(${locator}).not.toBeDisplayed();`,
+              });
+            }
           }
+        }
 
+        // ───────────────────────────────────────────────────────
+        // TEXT checks (exact match) - with index support
+        // ───────────────────────────────────────────────────────
+        const checks = blockData.checks || block.checks || {};
+        if (checks.text && typeof checks.text === "object") {
+          for (const [field, expectedText] of Object.entries(checks.text)) {
+            const {
+              field: baseField,
+              indexType,
+              customIndex,
+            } = parseFieldWithIndex(field);
+            const safeField = this._sanitizeFieldName(baseField);
+            const resolvedText = this._resolveTemplateArg(expectedText, storeAsKeys);
+
+            if (indexType === "all") {
+              assertions.push({
+                assertionType: "text-all",
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check ALL ${safeField} elements have exact text`,
+              });
+              assertions.push({
+                assertionType: "text-all",
+                field: safeField,
+                expectCode: `const ${safeField}TextCount = await ${screenInstance}.${safeField}.count();`,
+              });
+              assertions.push({
+                assertionType: "text-all",
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}TextCount; i++) {`,
+              });
+              assertions.push({
+                assertionType: "text-all",
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText}, { timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveText(${resolvedText});`,
+              });
+              assertions.push({
+                assertionType: "text-all",
+                field: safeField,
+                expectCode: `}`,
+              });
+            } else {
+              const locator = generateLocatorCode(
+                screenInstance,
+                safeField,
+                indexType,
+                customIndex
+              );
+              assertions.push({
+                assertionType: "text",
+                field: safeField,
+                expectedText: resolvedText,
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toHaveText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${locator}).toHaveText(${resolvedText});`,
+              });
+            }
+          }
+        }
+
+        // ───────────────────────────────────────────────────────
+        // CONTAINS checks - with index support
+        // ───────────────────────────────────────────────────────
+        if (checks.contains && typeof checks.contains === "object") {
+          for (const [field, expectedText] of Object.entries(checks.contains)) {
+            const {
+              field: baseField,
+              indexType,
+              customIndex,
+            } = parseFieldWithIndex(field);
+            const safeField = this._sanitizeFieldName(baseField);
+            const resolvedText = this._resolveTemplateArg(expectedText, storeAsKeys);
+
+            if (indexType === "all") {
+              assertions.push({
+                assertionType: "contains-all",
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check ALL ${safeField} elements contain text`,
+              });
+              assertions.push({
+                assertionType: "contains-all",
+                field: safeField,
+                expectCode: `const ${safeField}ContainsCount = await ${screenInstance}.${safeField}.count();`,
+              });
+              assertions.push({
+                assertionType: "contains-all",
+                field: safeField,
+                expectCode: `for (let i = 0; i < ${safeField}ContainsCount; i++) {`,
+              });
+              assertions.push({
+                assertionType: "contains-all",
+                field: safeField,
+                expectCode: isPlaywright
+                  ? `  await expect(${screenInstance}.${safeField}.nth(i)).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `  await expect(${screenInstance}.${safeField}.nth(i)).toHaveTextContaining(${resolvedText});`,
+              });
+              assertions.push({
+                assertionType: "contains-all",
+                field: safeField,
+                expectCode: `}`,
+              });
+            } else if (indexType === "any") {
+              assertions.push({
+                assertionType: "contains-any",
+                field: safeField,
+                expectedText: resolvedText,
+                expectCode: `// Check at least one ${safeField} contains text`,
+              });
+              assertions.push({
+                assertionType: "contains-any",
+                field: safeField,
+                locator: `${screenInstance}.${safeField}.first()`,
+                expectCode: isPlaywright
+                  ? `await expect(${screenInstance}.${safeField}.first()).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${screenInstance}.${safeField}.first()).toHaveTextContaining(${resolvedText});`,
+              });
+            } else {
+              const locator = generateLocatorCode(
+                screenInstance,
+                safeField,
+                indexType,
+                customIndex
+              );
+              assertions.push({
+                assertionType: "contains",
+                field: safeField,
+                expectedText: resolvedText,
+                locator: locator,
+                expectCode: isPlaywright
+                  ? `await expect(${locator}).toContainText(${resolvedText}, { timeout: ${timeout} });`
+                  : `await expect(${locator}).toHaveTextContaining(${resolvedText});`,
+              });
+            }
+          }
+        }
+
+        // ───────────────────────────────────────────────────────
+        // TRUTHY function checks
+        // ───────────────────────────────────────────────────────
+        const truthyFields = blockData.truthy || [];
+        if (Array.isArray(truthyFields) && truthyFields.length > 0) {
+          for (const funcName of truthyFields) {
+            const safeFn = this._sanitizeFieldName(funcName);
+            assertions.push({
+              assertionType: "truthy",
+              field: safeFn,
+              expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeTruthy();`,
+            });
+          }
+        }
+
+        // ───────────────────────────────────────────────────────
+        // FALSY function checks
+        // ───────────────────────────────────────────────────────
+        const falsyFields = blockData.falsy || [];
+        if (Array.isArray(falsyFields) && falsyFields.length > 0) {
+          for (const funcName of falsyFields) {
+            const safeFn = this._sanitizeFieldName(funcName);
+            assertions.push({
+              assertionType: "falsy",
+              field: safeFn,
+              expectCode: `expect(await ${screenInstance}.${safeFn}()).toBeFalsy();`,
+            });
+          }
+        }
+
+        // ───────────────────────────────────────────────────────
+        // FUNCTION-BASED assertions (fn + expect format)
+        // ───────────────────────────────────────────────────────
+        const fnAssertions = blockData.assertions || [];
+if (Array.isArray(fnAssertions) && fnAssertions.length > 0) {
+  for (const assertion of fnAssertions) {
+    const { fn, expect: expectType, value, args, type: assertionType, storeAs: rawStoreAs } = assertion;
+
+            // ✅ Handle storeAs as string or object
+            let storeAs = null;
+            if (typeof rawStoreAs === 'string') {
+              storeAs = rawStoreAs;
+            } else if (typeof rawStoreAs === 'object' && rawStoreAs?.key) {
+              storeAs = rawStoreAs.key;
+            }
+
+            if (!fn || !expectType) continue;
+
+            // Build args string
+            let argsStr = "";
+            if (args && Array.isArray(args)) {
+              argsStr = args
+                .map((a) => this._resolveTemplateArg(a, storeAsKeys))
+                .join(", ");
+            }
+
+            // ✅ FIX: Resolve the value for assertions that need it
+            const resolvedValue = value !== undefined ? this._resolveTemplateArg(value, storeAsKeys) : null;
+
+            // Build the function call - ✅ ALWAYS include () for method calls
+            // Build the function call - only add () for methods, not locators
+let fnCall;
+if (assertionType === 'locator') {
+  // Locator - no parentheses (it's a property that returns a Locator)
+  fnCall = `${screenInstance}.${fn}`;
+} else {
+  // Method (default) - include parentheses  
+  fnCall = `${screenInstance}.${fn}(${argsStr})`;
+}
+
+            let expectCode = "";
+
+            switch (expectType) {
+              // ─────────────────────────────────────────────────────────
+              // TEXT ASSERTIONS - Use locator directly (no await on locator)
+              // ─────────────────────────────────────────────────────────
+              case "toContainText":
+                if (resolvedValue) {
+                  expectCode = isPlaywright
+                    ? `await expect(${fnCall}).toContainText(${resolvedValue}, { timeout: ${timeout} });`
+                    : `await expect(${fnCall}).toHaveTextContaining(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toContainText assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              case "toHaveText":
+                if (resolvedValue) {
+                  expectCode = isPlaywright
+                    ? `await expect(${fnCall}).toHaveText(${resolvedValue}, { timeout: ${timeout} });`
+                    : `await expect(${fnCall}).toHaveText(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toHaveText assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              // ─────────────────────────────────────────────────────────
+              // VALUE COMPARISONS - Need to await the function result
+              // ─────────────────────────────────────────────────────────
+              case "toBe":
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).toBe(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toBe assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              case "toEqual":
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).toEqual(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toEqual assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              case "toContain":
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).toContain(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toContain assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              case "toBeGreaterThan":
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).toBeGreaterThan(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toBeGreaterThan assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              case "toBeLessThan":
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).toBeLessThan(${resolvedValue});`;
+                } else {
+                  console.warn(`   ⚠️ toBeLessThan assertion for ${fn} missing value, skipping`);
+                  continue;
+                }
+                break;
+
+              // ─────────────────────────────────────────────────────────
+              // VISIBILITY ASSERTIONS - Use locator directly
+              // ─────────────────────────────────────────────────────────
+              case "toBeHidden":
+              case "not.toBeDisplayed":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeHidden({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).not.toBeDisplayed();`;
+                break;
+
+              case "toBeVisible":
+              case "toBeDisplayed":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeVisible({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toBeDisplayed();`;
+                break;
+
+              case "toExist":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeAttached({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toExist();`;
+                break;
+
+              case "not.toExist":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).not.toBeAttached({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).not.toExist();`;
+                break;
+
+              case "toBeEnabled":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeEnabled({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toBeEnabled();`;
+                break;
+
+              case "toBeDisabled":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeDisabled({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toBeDisabled();`;
+                break;
+
+              case "toBeChecked":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeChecked({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toBeSelected();`;
+                break;
+
+              case "toBeFocused":
+                expectCode = isPlaywright
+                  ? `await expect(${fnCall}).toBeFocused({ timeout: ${timeout} });`
+                  : `await expect(${fnCall}).toBeFocused();`;
+                break;
+
+              // ─────────────────────────────────────────────────────────
+              // BOOLEAN ASSERTIONS - Need to await the function result
+              // ─────────────────────────────────────────────────────────
+              case "toBeTruthy":
+                expectCode = `expect(await ${fnCall}).toBeTruthy();`;
+                break;
+
+              case "toBeFalsy":
+                expectCode = `expect(await ${fnCall}).toBeFalsy();`;
+                break;
+
+              case "toBeNull":
+                expectCode = `expect(await ${fnCall}).toBeNull();`;
+                break;
+
+              case "toBeDefined":
+                expectCode = `expect(await ${fnCall}).toBeDefined();`;
+                break;
+
+              case "toBeUndefined":
+                expectCode = `expect(await ${fnCall}).toBeUndefined();`;
+                break;
+
+              default:
+                // Generic expect - pass through as-is with value if present
+                if (resolvedValue !== null) {
+                  expectCode = `expect(await ${fnCall}).${expectType}(${resolvedValue});`;
+                } else {
+                  expectCode = `expect(await ${fnCall}).${expectType}();`;
+                }
+            }
+
+            // ✅ Handle storeAs if provided
+            if (storeAs && expectCode) {
+              expectCode = `const ${storeAs} = await ${fnCall};\n      ${expectCode.replace(fnCall, storeAs).replace(`await ${storeAs}`, storeAs)}`;
+            }
+
+            assertions.push({
+              assertionType: "function-assertion",
+              field: fn,
+              expectType: expectType,
+              value: resolvedValue,
+              expectCode: expectCode,
+            });
+          }
+        }
+
+        if (assertions.length > 0) {
           processed.push({
-            blockType: "function-call",
+            blockType: "ui-assertion",
             position: index + 1,
-            description:
-              block.label ||
-              block.description ||
-              `Call ${instanceName}.${method}()`,
-            instance: instanceName,
-            rawInstance: rawInstance,
-            method,
-            args,
-            argsString,
-            storeAs,
-            callCode,
-            isExternal,
+            description: block.label || block.description || "UI assertions",
+            assertions,
+            assertionCount: assertions.length,
             enabled: true,
           });
           console.log(
-            `   ✅ Added function-call block: ${instanceName}.${method}()${isExternal ? " (EXTERNAL)" : ""}`
+            `   ✅ Added ui-assertion block with ${assertions.length} assertion(s)`
+          );
+        } else {
+          console.log(
+            `   ⚠️  Skipping empty UI assertion block at position ${index + 1}`
+          );
+        }
+        break;
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // FUNCTION-CALL BLOCK
+      // ═══════════════════════════════════════════════════════════
+      case "function-call": {
+        const rawInstance = blockData.instance || block.instance || null;
+        const method = blockData.method || block.method || "doSomething";
+        const storeAs = blockData.storeAs || block.storeAs || null;
+        const args = (blockData.args || block.args || []).map((arg) =>
+          this._resolveTemplateArg(arg, storeAsKeys)
+        );
+        const argsString = args.join(", ");
+
+        // Determine if this is the same POM or an external one
+        let instanceName;
+        let isExternal = false;
+
+        if (!rawInstance || this._isSamePom(rawInstance, screenKey)) {
+          instanceName = screenInstance;
+        } else {
+          isExternal = true;
+          const cleanName = rawInstance.replace(
+            /\.(wrapper|screen|page)$/i,
+            ""
+          );
+          instanceName = this._toCamelCase(cleanName);
+
+          if (!externalPoms.has(instanceName)) {
+            externalPoms.set(instanceName, {
+              instanceName,
+              className: this._toPascalCase(cleanName) + "Wrapper",
+              rawInstance: rawInstance,
+              pomPath: `../../../screenObjects/${cleanName}.wrapper.js`,
+            });
+          }
+        }
+
+        let callCode;
+        if (storeAs) {
+          callCode = `const ${storeAs} = await ${instanceName}.${method}(${argsString});`;
+        } else {
+          callCode = `await ${instanceName}.${method}(${argsString});`;
+        }
+
+        processed.push({
+          blockType: "function-call",
+          position: index + 1,
+          description:
+            block.label ||
+            block.description ||
+            `Call ${instanceName}.${method}()`,
+          instance: instanceName,
+          rawInstance: rawInstance,
+          method,
+          args,
+          argsString,
+          storeAs,
+          callCode,
+          isExternal,
+          enabled: true,
+        });
+        console.log(
+          `   ✅ Added function-call block: ${instanceName}.${method}()${isExternal ? " (EXTERNAL)" : ""}`
+        );
+        break;
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // CUSTOM-CODE BLOCK
+      // ═══════════════════════════════════════════════════════════
+      case "custom-code": {
+        const code = block.code || blockData.code || "";
+
+        if (!code.trim()) {
+          console.log(
+            `   ⚠️  Skipping empty custom-code block at position ${index + 1}`
           );
           break;
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // CUSTOM-CODE BLOCK (unchanged)
-        // ═══════════════════════════════════════════════════════════
-        case "custom-code": {
-          const code = block.code || blockData.code || "";
+        const baseIndent = block.wrapInTestStep ? "        " : "      ";
+        const formattedCode = code
+          .split("\n")
+          .map((line) => `${baseIndent}${line}`)
+          .join("\n");
 
-          if (!code.trim()) {
-            console.log(
-              `   ⚠️  Skipping empty custom-code block at position ${index + 1}`
-            );
-            break;
-          }
-
-          const baseIndent = block.wrapInTestStep ? "        " : "      ";
-          const formattedCode = code
-            .split("\n")
-            .map((line) => `${baseIndent}${line}`)
-            .join("\n");
-
-          processed.push({
-            blockType: "custom-code",
-            position: index + 1,
-            description: block.label || block.description || "Custom code",
-            code: code,
-            formattedCode: formattedCode,
-            testStepName: block.testStepName || null,
-            wrapInTestStep: block.wrapInTestStep || false,
-            enabled: true,
-          });
-          console.log(`   ✅ Added custom-code block`);
-          break;
-        }
-
-        default:
-          console.warn(`⚠️  Unknown block type: ${blockType}`);
+        processed.push({
+          blockType: "custom-code",
+          position: index + 1,
+          description: block.label || block.description || "Custom code",
+          code: code,
+          formattedCode: formattedCode,
+          testStepName: block.testStepName || null,
+          wrapInTestStep: block.wrapInTestStep || false,
+          enabled: true,
+        });
+        console.log(`   ✅ Added custom-code block`);
+        break;
       }
-    });
 
-    // Renumber positions after filtering
-    processed.forEach((block, idx) => {
-      block.position = idx + 1;
-    });
+      default:
+        console.warn(`⚠️  Unknown block type: ${blockType}`);
+    }
+  });
 
-    console.log(
-      `   📊 Processed ${processed.length} block(s), ${externalPoms.size} external POM(s)`
-    );
+  // Renumber positions after filtering
+  processed.forEach((block, idx) => {
+    block.position = idx + 1;
+  });
 
-    return {
-      blocks: processed,
-      externalPoms: Array.from(externalPoms.values()),
-    };
-  }
+  console.log(
+    `   📊 Processed ${processed.length} block(s), ${externalPoms.size} external POM(s)`
+  );
 
+  return {
+    blocks: processed,
+    externalPoms: Array.from(externalPoms.values()),
+  };
+}
   // Helper: Sanitize field name for valid JS property access
   _sanitizeFieldName(field) {
     if (!field) return field;
@@ -1417,52 +1503,72 @@ if (typeof rawStoreAs === 'string') {
     );
   }
 
-  /**
-   * Resolve template argument
-   *
-   * Converts:
-   * - "{{ctx.data.x}}" → "ctx.data.x"
-   * - "{{email}}" → "ctx.data.email"
-   * - "ctx.data.x" → "ctx.data.x"
-   * - "result.data.x" → "result.data.x"
-   * - "literal" → "'literal'"
-   *
-   * @param {string} arg - Argument to resolve
-   * @returns {string} Resolved argument
-   */
-  _resolveTemplateArg(arg) {
-    if (typeof arg !== "string") return String(arg);
+ /**
+ * Resolve template argument
+ *
+ * Converts:
+ * - "{{cardResultPrice}}" (storeAs key) → "result.data.cardResultPrice"
+ * - "{{email}}" (testData field) → "ctx.data.email"
+ * - "{{ctx.data.x}}" → "ctx.data.x"
+ * - "{{result.data.x}}" → "result.data.x"
+ *
+ * @param {string} arg - Argument to resolve
+ * @param {Set} storeAsKeys - Set of storeAs variable names
+ * @returns {string} Resolved argument
+ */
+/**
+ * Resolve template argument
+ *
+ * Converts:
+ * - "{{cardResultPrice}}" (storeAs key) → "result.data.cardResultPrice"
+ * - "{{email}}" (testData field) → "ctx.data.email"
+ * - "{{ctx.data.x}}" → "ctx.data.x"
+ * - "{{result.data.x}}" → "result.data.x"
+ *
+ * @param {string} arg - Argument to resolve
+ * @param {Set} storeAsKeys - Set of storeAs variable names
+ * @returns {string} Resolved argument
+ */
+_resolveTemplateArg(arg, storeAsKeys = new Set()) {
+  if (typeof arg !== "string") return String(arg);
 
-    // Template variable: {{ctx.data.x}} → ctx.data.x
-    if (arg.startsWith("{{") && arg.endsWith("}}")) {
-      const inner = arg.slice(2, -2);
-      // If it's already ctx.data or result.data, use as-is
-      if (inner.startsWith("ctx.data.") || inner.startsWith("result.data.")) {
-        return inner;
-      }
-      // Otherwise, assume it's a data field
-      return `ctx.data.${inner}`;
+  // Template variable: {{x}}
+  if (arg.startsWith("{{") && arg.endsWith("}}")) {
+    const inner = arg.slice(2, -2);
+    
+    // Already has explicit context prefix - use as-is
+    if (inner.startsWith("ctx.data.") || inner.startsWith("result.data.")) {
+      return inner;
     }
-
-    // Already a context reference - use as-is
-    if (arg.startsWith("ctx.data.") || arg.startsWith("result.data.")) {
-      return arg;
+    
+    // ✅ Check if this is a storeAs key → use result.data
+    if (storeAsKeys.has(inner)) {
+      console.log(`   🔄 Resolved {{${inner}}} → result.data.${inner} (storeAs)`);
+      return `result.data.${inner}`;
     }
-
-    // Number - use as-is
-    if (!isNaN(arg)) {
-      return arg;
-    }
-
-    // Boolean - use as-is
-    if (arg === "true" || arg === "false") {
-      return arg;
-    }
-
-    // Literal string - wrap in quotes
-    return `'${arg}'`;
+    
+    // Otherwise, it's a testData field → use ctx.data
+    return `ctx.data.${inner}`;
   }
 
+  // Already a context reference - use as-is
+  if (arg.startsWith("ctx.data.") || arg.startsWith("result.data.")) {
+    return arg;
+  }
+
+  // Number - use as-is
+  if (!isNaN(arg)) {
+    return arg;
+  }
+
+  // Boolean - use as-is
+  if (arg === "true" || arg === "false") {
+    return arg;
+  }
+
+  // Literal string - wrap in quotes
+  return `'${arg}'`;
+}
   /**
    * Determine if this is an INDUCER or VERIFY test
    *

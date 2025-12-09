@@ -351,7 +351,7 @@ router.get('/navigation/:className', async (req, res) => {
 
 /**
  * GET /api/poms/functions
- * Get functions for a specific POM
+ * Get functions AND locators for a specific POM
  */
 router.get('/functions', async (req, res) => {
   try {
@@ -361,23 +361,75 @@ router.get('/functions', async (req, res) => {
       return res.status(400).json({ error: 'projectPath and pomName required' });
     }
     
-    console.log(`📦 Getting functions for POM: ${pomName}`);
+    console.log(`📦 Getting functions & locators for POM: ${pomName}`);
     
     const discovery = new POMDiscovery(projectPath);
     await discovery.discover();
     
-    const functions = discovery.getFunctions(pomName);
+    const pom = discovery.pomCache.get(pomName);
+    if (!pom) {
+      return res.json({ success: true, functions: [], locators: [] });
+    }
     
-    console.log(`   ✅ Found ${functions.length} functions`);
+    const functions = [];
+    const locators = [];
+    
+    for (const cls of pom.classes) {
+      // Methods/functions
+      if (cls.functions) {
+        for (const fn of cls.functions) {
+          functions.push({
+            name: fn.name,
+            type: 'method',
+            signature: fn.signature,
+            parameters: fn.parameters || [],
+            returns: fn.returns
+          });
+        }
+      }
+      
+      // Getters (locators)
+      if (cls.getters) {
+        for (const getter of cls.getters) {
+          locators.push({
+            name: getter.name,
+            type: 'locator',
+            signature: getter.name,  // No () for getters
+            async: getter.async
+          });
+        }
+      }
+      
+      // Direct properties (also locators)
+      if (cls.properties) {
+        for (const prop of cls.properties) {
+          if (prop.type === 'property') {
+            locators.push({
+              name: prop.name,
+              type: 'locator',
+              signature: prop.name
+            });
+          }
+        }
+      }
+    }
+    
+    console.log(`   ✅ Found ${functions.length} functions, ${locators.length} locators`);
     
     res.json({ 
       success: true, 
-      functions: functions.map(f => f.name || f)
+      // Legacy format for backward compat
+      functions: functions.map(f => f.name),
+      // New format with full info
+      methods: functions,
+      locators: locators,
+      // Combined for easy dropdown
+      all: [...locators, ...functions]
     });
     
   } catch (error) {
     console.error('Error getting POM functions:', error);
-    res.json({ success: true, functions: [] });
+    res.json({ success: true, functions: [], locators: [], methods: [], all: [] });
   }
 });
 
@@ -440,6 +492,83 @@ router.get('/:pomName', async (req, res) => {
     res.status(500).json({
       error: error.message
     });
+  }
+});
+
+/**
+ * GET /api/poms/:pomName/locators
+ * Get locators (getters) for a specific POM
+ */
+router.get('/:pomName/locators', async (req, res) => {
+  try {
+    const projectPath = req.query.projectPath || process.env.GUEST_PROJECT_PATH;
+    const { pomName } = req.params;
+    const instanceName = req.query.instance || null;
+
+    if (!projectPath) {
+      return res.status(400).json({ error: 'No project path provided' });
+    }
+
+    const discovery = new POMDiscovery(projectPath);
+    await discovery.discover();
+
+    const pom = discovery.pomCache.get(pomName);
+    if (!pom) {
+      return res.status(404).json({ error: `POM "${pomName}" not found` });
+    }
+
+    // Extract locators (getters) from all classes
+    const locators = [];
+    
+    for (const cls of pom.classes) {
+      // Direct getters
+      for (const getter of cls.getters || []) {
+        locators.push({
+          name: getter.name,
+          type: 'getter',
+          className: cls.name,
+          path: getter.name
+        });
+      }
+      
+      // Constructor field properties (this.btn = page.locator(...))
+      for (const prop of cls.properties || []) {
+        if (prop.type === 'property') {
+          locators.push({
+            name: prop.name,
+            type: 'property',
+            className: cls.name,
+            path: prop.name
+          });
+        }
+      }
+    }
+
+    // If instanceName provided, get instance-specific locators
+    if (instanceName) {
+      const instanceLocators = discovery.getAvailablePaths(pomName, instanceName);
+      return res.json({
+        success: true,
+        pomName,
+        instance: instanceName,
+        locators: instanceLocators.map(path => ({
+          name: path.split('.').pop(),
+          path,
+          type: 'instance-getter'
+        }))
+      });
+    }
+
+    res.json({
+      success: true,
+      pomName,
+      count: locators.length,
+      locators
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to get locators:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
