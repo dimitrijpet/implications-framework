@@ -1,19 +1,32 @@
 import { glob } from 'glob';
 import path from 'path';
-import { parseFile, hasPattern } from './astParser.js';
+import fs from 'fs-extra';
+import { parseFile, hasPattern, extractXStateTransitions, extractXStateMetadata, extractUIImplications, extractXStateContext } from './astParser.js';
 import { isImplication, extractImplicationMetadata } from '../../../core/src/patterns/implications.js';
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
 import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discovery.js';
-
 /**
  * Discover all patterns in a project
  */
 export async function discoverProject(projectPath) {
+  const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+if (fs.existsSync(cacheDir)) {
+  console.log('🗑️ Clearing discovery cache for fresh scan...');
+  fs.rmSync(cacheDir, { recursive: true, force: true });
+}
   console.log(`🔍 Discovering project at: ${projectPath}`);
   
   const result = new DiscoveryResult();
   result.projectPath = projectPath;
+  
+  // Add transitions array
+  result.transitions = [];
+  
+  // ✅ CREATE CACHE OBJECT
+  const cache = {
+    baseFiles: {}
+  };
   
   try {
     // Find all JavaScript files
@@ -39,8 +52,40 @@ export async function discoverProject(projectPath) {
           continue;
         }
         
-        // Check what type of file this is
-        await classifyFile(parsed, result);
+        // Check what type of file this is - PASS CACHE
+       await classifyFile(parsed, result, projectPath, cache);
+
+// NEW: Extract transitions if it's an implication
+if (isImplication(parsed)) {
+  const fileName = path.basename(filePath);
+  console.log(`🔍 Checking transitions for: ${fileName}`);
+  
+  const metadata = await extractImplicationMetadata(
+    parsed,
+    extractXStateMetadata,
+    (content) => extractUIImplications(content, projectPath, cache),
+    extractXStateContext
+  );
+  
+  console.log(`   Class: ${metadata.className}`);
+  console.log(`   hasXStateConfig: ${metadata.hasXStateConfig}`);
+  
+  if (metadata.hasXStateConfig) {
+    console.log(`   📤 Calling extractXStateTransitions...`);
+    const transitions = extractXStateTransitions(parsed, metadata.className);
+    console.log(`   📥 Got ${transitions.length} transition(s)`);
+    
+    if (transitions.length > 0) {
+      transitions.forEach(t => {
+        console.log(`      ✅ ${t.from} → ${t.to} (${t.event})`);
+      });
+    }
+    
+    result.transitions.push(...transitions);
+  } else {
+    console.log(`   ⚠️ No xstateConfig found`);
+  }
+}
         
         // Check for patterns
         if (hasPattern(parsed, 'xstate')) result.patterns.hasXState = true;
@@ -61,13 +106,33 @@ export async function discoverProject(projectPath) {
     
     // Calculate statistics
     result.statistics = calculateStatistics(result);
-    
-    console.log(`✅ Discovery complete`);
-    console.log(`   - Implications: ${result.files.implications.length}`);
-    console.log(`   - Sections: ${result.files.sections.length}`);
-    console.log(`   - Screens: ${result.files.screens.length}`);
-    console.log(`   - Project Type: ${result.projectType}`);
-    
+
+// ✨ NEW: Build and write state registry
+if (result.files.implications.length > 0) {
+  result.stateRegistry = buildAndWriteStateRegistry(
+    result.files.implications,
+    projectPath
+  );
+}
+
+// ✅ ADD THIS: Save discovery result to cache
+console.log('\n💾 Saving discovery cache...');
+const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+fs.ensureDirSync(cacheDir);
+
+const cacheFile = path.join(cacheDir, 'discovery-result.json');
+fs.writeJsonSync(cacheFile, result, { spaces: 2 });
+
+console.log(`   ✅ Cache saved: ${cacheFile}`);
+
+console.log(`✅ Discovery complete`);
+console.log(`✅ Discovery complete`);
+console.log(`   - Implications: ${result.files.implications.length}`);
+console.log(`   - Sections: ${result.files.sections.length}`);
+console.log(`   - Screens: ${result.files.screens.length}`);
+console.log(`   - Project Type: ${result.projectType}`);
+console.log(`   - Transitions: ${result.transitions.length}`);
+console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`)
     return result;
     
   } catch (error) {
@@ -77,14 +142,69 @@ export async function discoverProject(projectPath) {
 }
 
 /**
+ * ✅ Parse a single implication file (for fast refresh)
+ * @param {string} filePath - Absolute path to file
+ * @param {string} projectPath - Project root path
+ * @returns {Object} Parsed implication data
+ */
+export async function parseImplicationFile(filePath, projectPath) {
+  try {
+    console.log(`⚡ Parsing single file: ${path.basename(filePath)}`);
+    
+    const parsed = await parseFile(filePath);
+    
+    if (parsed.error) {
+      throw new Error(`Parse error: ${parsed.error}`);
+    }
+    
+    if (!isImplication(parsed)) {
+      throw new Error('File is not an implication');
+    }
+    
+    // Create cache for this single parse
+    const cache = { baseFiles: {} };
+    
+    // Extract metadata with UI implications
+    const metadata = await extractImplicationMetadata(
+      parsed,
+      extractXStateMetadata,
+      (content) => extractUIImplications(content, projectPath, cache),
+      extractXStateContext
+    );
+    
+    const relativePath = path.relative(projectPath, filePath);
+    
+    console.log(`✅ Parsed: ${metadata.className}`);
+    
+    return {
+      path: relativePath,
+      type: 'implication',
+      fileName: path.basename(filePath),
+      className: metadata.className,
+      metadata
+    };
+    
+  } catch (error) {
+    console.error(`❌ Error parsing ${path.basename(filePath)}:`, error.message);
+    throw error;
+  }
+}
+
+/**
  * Classify a parsed file
  */
-async function classifyFile(parsed, result) {
+async function classifyFile(parsed, result, projectPath, cache) {
   const relativePath = path.relative(result.projectPath, parsed.path);
   
   // Check for Implication
   if (isImplication(parsed)) {
-    const metadata = extractImplicationMetadata(parsed);
+    const metadata = await extractImplicationMetadata(
+      parsed, 
+      extractXStateMetadata, 
+      (content) => extractUIImplications(content, projectPath, cache),
+      extractXStateContext
+    );
+    
     result.files.implications.push(new DiscoveredFile({
       path: relativePath,
       type: 'implication',
@@ -93,7 +213,7 @@ async function classifyFile(parsed, result) {
     }));
     return;
   }
-  
+
   // Check for Section
   if (isSection(parsed)) {
     const metadata = extractSectionMetadata(parsed);
@@ -178,4 +298,51 @@ function calculateStatistics(result) {
     totalClasses,
     totalMethods: 0, // TODO: Sum from metadata
   };
+}
+
+/**
+ * Build and write state registry to disk
+ * 
+ * @param {Array} implications - Array of discovered implications
+ * @param {string} projectPath - Root path of project
+ * @returns {Object} State registry mapping
+ */
+export function buildAndWriteStateRegistry(implications, projectPath) {
+  console.log('\n🗺️  Building State Registry...');
+  console.log('🗺️  Building State Registry (strategy: auto)...');
+  
+  const registry = {};
+  
+  implications.forEach(imp => {
+    const metadata = imp.metadata || {};
+    
+    if (metadata.hasXStateConfig && metadata.status) {
+      // Map status -> className
+      registry[metadata.status] = metadata.className;
+      console.log(`  📌 Mapped: "${metadata.status}" → "${metadata.className}"`);
+      
+      // Also map normalized version (remove underscores, lowercase)
+      const normalized = metadata.status.replace(/_/g, '').toLowerCase();
+      if (normalized !== metadata.status) {
+        registry[normalized] = metadata.className;
+      }
+    }
+  });
+  
+  console.log(`✅ State Registry built: ${Object.keys(registry).length} mappings\n`);
+  
+  // Write to each directory containing Implications
+ 
+
+// ✅ Write to canonical location in the PROJECT being scanned
+const registryPath = path.join(projectPath, 'tests/implications/.state-registry.json');
+const registryDir = path.dirname(registryPath);
+
+// Ensure directory exists
+fs.ensureDirSync(registryDir);
+
+// Write registry
+fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+console.log(`   💾 Wrote registry: ${registryPath}`);
+  return registry;
 }

@@ -1,0 +1,354 @@
+// ═══════════════════════════════════════════════════════════
+// AUTO-GENERATED UNIT TEST
+// ═══════════════════════════════════════════════════════════
+// Generated at: {{timestamp}}
+// From: {{implClassName}}
+// Platform: {{platform}}
+// Target Status: {{targetStatus}}
+// ═══════════════════════════════════════════════════════════
+
+{{#if isPlaywright}}
+const { test, expect } = require('@playwright/test');
+{{else}}
+const { expect } = require('@wdio/globals');
+{{/if}}
+const TestContext = require('{{testContextPath}}');
+const {{implClassName}} = require('./{{implClassName}}.js');
+const TestPlanner = require('{{testPlannerPath}}');
+const TestSetup = require('{{testSetupPath}}');
+{{#if hasUIValidation}}
+const ExpectImplication = require('{{expectImplicationPath}}');
+{{/if}}
+
+/**
+ * ✅ EXPORTED FUNCTION - {{actionDescription}}
+ * 
+ * This function induces the "{{targetStatus}}" state by:
+ * 1. Loading test data
+ * 2. Smart navigation (only if needed)
+ * 3. Performing the state-inducing action
+ * 4. Saving the state change with delta
+ * 
+ * @param {string} testDataPath - Path to testData JSON file
+ * @param {object} options - Options
+{{#if isPlaywright}}
+ * @param {Page} options.page - Playwright page object
+{{/if}}
+{{#each optionParams}}
+ * @param {{type}} options.{{name}} - {{description}}
+{{/each}}
+ * @returns {Promise<TestContext>} Updated context
+ */
+const {{actionName}} = async (testDataPath, options = {}) => {
+  {{#if isPlaywright}}
+  const { page } = options;
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 1: Load TestData
+  // ────────────────────────────────────────────────────────
+  const ctx = TestContext.load({{implClassName}}, testDataPath);
+  
+  console.log('\n🎯 Starting: {{actionDescription}}');
+  console.log(`   Target Status: {{targetStatus}}`);
+  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 2: Smart Navigation (only if needed)
+  // ────────────────────────────────────────────────────────
+  const currentUrl = page.url();
+  // ✅ Check if already on app (adjust pattern for your domain)
+  const needsNavigation = !currentUrl || 
+    (!currentUrl.includes('voyages.leclerc') && 
+     !currentUrl.includes('localhost') &&
+     !currentUrl.includes('127.0.0.1'));
+  
+  if (needsNavigation) {
+    console.log('🚀 Navigating to application...');
+    await TestSetup.navigateToApp(page, ctx.config);
+  } else {
+    console.log('✅ Already on application, skipping navigation');
+  }
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 3: Determine Action Scope
+  // ────────────────────────────────────────────────────────
+  {{#if hasEntityLogic}}
+  let targets = [];
+  let isGlobalAction = false;
+  
+  // Check if this is entity-based or global
+  if (!ctx.data.{{entityName}}s || !Array.isArray(ctx.data.{{entityName}}s) || ctx.data.{{entityName}}s.length === 0) {
+    // Global action (affects session/user state)
+    console.log('\n✅ Global state action');
+    isGlobalAction = true;
+    targets = [{ isGlobal: true }];
+  } else {
+    // Entity-based action (affects specific {{entityName}}s)
+    if (options.indices && Array.isArray(options.indices)) {
+      targets = options.indices.map(i => ctx.data.{{entityName}}s[i]);
+    } else if (options.index !== undefined) {
+      targets = [ctx.data.{{entityName}}s[options.index]];
+    } else {
+      // Default: first entity matching {{previousStatus}}
+      {{#if previousStatus}}
+      const matchingEntities = ctx.data.{{entityName}}s.filter(e => e.status === '{{previousStatus}}');
+      if (!matchingEntities || matchingEntities.length === 0) {
+        // Fall back to global if no matching entities
+        console.log('\n✅ No matching entities, treating as global action');
+        isGlobalAction = true;
+        targets = [{ isGlobal: true }];
+      } else {
+        targets = [matchingEntities[0]];
+        console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
+      }
+      {{else}}
+      targets = [ctx.data.{{entityName}}s[0]];
+      console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
+      {{/if}}
+    }
+  }
+  {{else}}
+  // Global state action (no entity filtering needed)
+  console.log('\n✅ Global state action');
+  let isGlobalAction = true;
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 4: Perform Action
+  // ────────────────────────────────────────────────────────
+  
+{{#if hasActionDetails}}
+// ═══════════════════════════════════════════════════════════
+// 🎬 ACTION LOGIC - Generated from actionDetails
+// ═══════════════════════════════════════════════════════════
+
+{{#if actionDetails.imports}}
+// Initialize screen objects
+{{#each actionDetails.imports}}
+const {{className}} = require('{{{relativePath}}}');
+const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+{{/each}}
+{{/if}}
+
+console.log('\n🎬 Executing action: {{actionDescription}}');
+
+{{#if actionDetails.steps}}
+{{#each actionDetails.steps}}
+
+// Step {{add @index 1}}: {{description}}
+await {{instance}}.{{method}}({{{args}}});
+
+{{/each}}
+{{/if}}
+
+console.log('✅ Action steps completed');
+{{else}}
+  // TODO: Navigate to the screen where you perform this action
+  {{#if navigationExample}}
+  {{{navigationExample}}}
+  {{else}}
+  // await navigateToScreen();
+  {{/if}}
+  
+  // TODO: Perform the state-inducing action
+  {{#if actionExample}}
+  // Example:
+  {{{actionExample}}}
+  {{else}}
+  {{#if triggerButton}}
+  // Example:
+  // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
+  {{/if}}
+  {{/if}}
+  
+  console.log('   ⚠️  Action logic not implemented - see comments above');
+{{/if}}
+  
+  console.log('\n✅ Action completed');
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 5: Save Changes (Delta)
+  // ────────────────────────────────────────────────────────
+  return ctx.executeAndSave(
+    '{{changeLogLabel}}',
+    '{{testFileName}}',
+    async () => {
+      const delta = {};
+      const now = new Date().toISOString();
+      
+      {{#if hasDeltaLogic}}
+      // ✨ Generated delta from entry: assign
+      {{#if hasEntityLogic}}
+      if (isGlobalAction) {
+        // Global state change
+        {{#each deltaFields}}
+        delta.{{name}} = {{{value}}};
+        {{/each}}
+      } else {
+        // Entity-based state change
+        for (const target of targets) {
+          const entityPath = `{{entityName}}s[${target.index || 0}]`;
+          delta[entityPath] = {
+        {{#each deltaFields}}
+            {{name}}: {{{value}}},
+        {{/each}}
+          };
+        }
+      }
+      {{else}}
+      // Global state change
+      {{#each deltaFields}}
+      delta.{{name}} = {{{value}}};
+      {{/each}}
+      {{/if}}
+      {{else}}
+      // TODO: Customize delta based on what changed
+      // Example:
+      // delta.status = '{{targetStatus}}';
+      // delta.{{targetStatus}}At = now;
+      {{/if}}
+      
+      return { delta };
+    }
+  );
+};
+
+{{#if hasHelperFunctions}}
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+{{#each helperFunctions}}
+/**
+ * {{description}}
+ */
+async function {{name}}({{params}}) {
+  {{#if code}}
+  {{code}}
+  {{else}}
+  // TODO: Implement {{name}}
+  throw new Error('Helper function not implemented: {{name}}');
+  {{/if}}
+}
+
+{{/each}}
+{{/if}}
+
+// ═══════════════════════════════════════════════════════════
+// TEST REGISTRATION
+// ═══════════════════════════════════════════════════════════
+
+const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
+
+if (!shouldSkipRegistration) {
+  {{#if isPlaywright}}
+  test.describe("UNIT: {{targetStatus}} State Transition", () => {
+    test.setTimeout(120000);
+    
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    test("Process first {{entityName}}", async ({ page }) => {
+      // ✅ Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { 
+        page,
+        index: 0
+      });
+      
+      {{#if hasUIValidation}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+        {{#each validationScreens}}
+        console.log('   🔍 Validating {{screenKey}}...');
+        
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+          result.data,
+          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+        );
+        console.log('   ✅ {{screenKey}} validation passed');
+        {{/each}}
+      });
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    
+    test("Process multiple {{entityName}}s", async ({ page }) => {
+      // ✅ Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { 
+        page,
+        indices: [0, 1, 2]
+      });
+      
+      {{#if hasUIValidation}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+        {{#each validationScreens}}
+        console.log('   🔍 Validating {{screenKey}}...');
+        
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+          result.data,
+          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+        );
+        console.log('   ✅ {{screenKey}} validation passed');
+        {{/each}}
+      });
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    
+  });
+  {{else}}
+  describe("UNIT: {{testDescription}}", () => {
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    {{#each testCases}}
+    it("{{description}}", async () => {
+      await {{../actionName}}(testDataPath{{#if params}}, { {{params}} }{{/if}});
+    });
+    
+    {{/each}}
+  });
+  {{/if}}
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════
+
+module.exports = { {{actionName}} };

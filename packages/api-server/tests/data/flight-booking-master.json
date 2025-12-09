@@ -1,0 +1,31 @@
+{
+  "_note": "Example master testData file for testing Phase 1 Intelligence System",
+  "_description": "Flight booking flow - Use this to test intelligent field suggestions",
+  
+  "agencyId": "SANDBOX",
+  "agencyName": "SANDBOX AGENCY",
+  
+  "departure": "CDG",
+  "destination": "JFK",
+  "departureDate": "01/12/2025",
+  "returnDate": "08/12/2025",
+  
+  "passengers": 2,
+  "cabinClass": "economy",
+  
+  "searchId": "SEARCH_123",
+  "flightId": "FL_456",
+  "bookingId": "BOOK_789",
+  
+  "price": 1250.00,
+  "currency": "EUR",
+  
+  "status": "initial",
+  
+  "_config": {
+    "device": "desktop",
+    "lang": "en",
+    "baseUrl": "https://example.com",
+    "timeout": 30000
+  }
+}

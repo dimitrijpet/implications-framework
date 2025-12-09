@@ -11,19 +11,25 @@
     "./utils": "./src/utils/index.js",
     "./patterns/implications": "./src/patterns/implications.js",
     "./patterns/sections": "./src/patterns/sections.js",
-    "./patterns/screens": "./src/patterns/screens.js"
+    "./patterns/screens": "./src/patterns/screens.js",
+    "./registry": "./src/registry/StateRegistry.js",
+    "./discovery/POMDiscovery": "./src/discovery/POMDiscovery.js"
   },
   "scripts": {
     "build": "echo 'No build needed for core'",
     "lint": "eslint src --ext .js",
-    "test": "echo 'Tests coming soon'",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "clean": "rm -rf node_modules"
   },
   "dependencies": {
+    "@babel/parser": "^7.28.4",
+    "@babel/traverse": "^7.28.4",
     "fs-extra": "^11.2.0",
+    "handlebars": "^4.7.8",
     "joi": "^17.11.0"
   },
   "devDependencies": {
-    "eslint": "^8.55.0"
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0"
   }
 }

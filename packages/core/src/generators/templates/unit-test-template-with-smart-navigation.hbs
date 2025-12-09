@@ -1,0 +1,159 @@
+// ═══════════════════════════════════════════════════════════
+// AUTO-GENERATED UNIT TEST
+// ═══════════════════════════════════════════════════════════
+// Generated at: {{timestamp}}
+// From: {{implClassName}}
+// Platform: {{platform}}
+// Target Status: {{targetStatus}}
+// ═══════════════════════════════════════════════════════════
+
+const { test, expect } = require('@playwright/test');
+const TestContext = require('{{testContextPath}}');
+const {{implClassName}} = require('./{{implClassName}}.js');
+const TestPlanner = require('{{testPlannerPath}}');
+const TestSetup = require('../../../helpers/TestSetup');
+const ExpectImplication = require('../../../ai-testing/utils/ExpectImplication');
+
+/**
+ * ✅ EXPORTED FUNCTION - {{actionDescription}}
+ * 
+ * This function induces the "{{targetStatus}}" state by:
+ * 1. Loading test data
+ * 2. Smart navigation (only if needed)
+ * 3. Performing the state-inducing action
+ * 4. Saving the state change with delta
+ * 
+ * @param {string} testDataPath - Path to testData JSON file
+ * @param {object} options - Options
+ * @param {Page} options.page - Playwright page object
+ * @returns {Promise<TestContext>} Updated context
+ */
+const {{actionName}} = async (testDataPath, options = {}) => {
+  const { page } = options;
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 1: Load TestData
+  // ────────────────────────────────────────────────────────
+  const ctx = TestContext.load({{implClassName}}, testDataPath);
+  
+  console.log('\n🎯 Starting: {{actionDescription}}');
+  console.log(`   Target Status: {{targetStatus}}`);
+  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 2: Smart Navigation (only if needed)
+  // ────────────────────────────────────────────────────────
+  const currentUrl = page.url();
+  const needsNavigation = !currentUrl || !currentUrl.includes('YOUR_APP_URL_PATTERN');
+  
+  if (needsNavigation) {
+    console.log('🚀 Navigating to application...');
+    await TestSetup.navigateToApp(page, ctx.config);
+  } else {
+    console.log('✅ Already on correct page, skipping navigation');
+  }
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 3: Perform Action
+  // ────────────────────────────────────────────────────────
+  
+{{#if hasActionDetails}}
+  // ═══════════════════════════════════════════════════════════
+  // 🎬 ACTION LOGIC - Generated from actionDetails
+  // ═══════════════════════════════════════════════════════════
+  
+  // Initialize screen objects
+  // TODO: Add your screen object imports and initialization
+  
+  console.log('\n🎬 Executing action: {{actionDescription}}');
+  
+  // TODO: Add your action steps here
+  {{actionExample}}
+  
+  console.log('✅ Action steps completed');
+{{else}}
+  // TODO: Implement action logic
+  // Add your screen object initialization and action steps here
+  console.log('   ⚠️  TODO: Implement action logic');
+{{/if}}
+  
+  console.log('\n✅ Action completed');
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 4: Save Changes (Delta)
+  // ────────────────────────────────────────────────────────
+  return ctx.executeAndSave(
+    '{{targetStatus}} State',
+    '{{testFileName}}',
+    async () => {
+      const delta = {};
+      const now = new Date().toISOString();
+      
+{{#if hasDeltaLogic}}
+  {{#each deltaFields}}
+      delta['{{field}}'] = {{value}};
+  {{/each}}
+{{else}}
+      // TODO: Add delta fields based on what changed
+      delta['status'] = '{{targetStatus}}';
+{{/if}}
+      
+      return { delta };
+    }
+  );
+};
+
+
+// ═══════════════════════════════════════════════════════════
+// TEST REGISTRATION
+// ═══════════════════════════════════════════════════════════
+
+const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
+
+if (!shouldSkipRegistration) {
+  test.describe("UNIT: {{targetStatus}} State Transition", () => {
+    test.setTimeout(120000);
+    
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    test("Execute {{targetStatus}} transition", async ({ page }) => {
+      // Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { page });
+      
+      // ✅ Validate UI
+{{#if mirrorsOn}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+  {{#each mirrorsOn.screens}}
+        console.log('   🔍 Validating {{screenName}}...');
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenName}},
+          result.data,
+          page
+        );
+        
+        console.log('   ✅ {{screenName}} validation passed');
+  {{/each}}
+      });
+{{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════
+
+module.exports = { {{actionName}} };

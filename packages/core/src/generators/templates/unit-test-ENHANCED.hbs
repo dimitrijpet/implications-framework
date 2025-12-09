@@ -1,0 +1,322 @@
+// ═══════════════════════════════════════════════════════════
+// AUTO-GENERATED UNIT TEST
+// ═══════════════════════════════════════════════════════════
+// Generated at: {{timestamp}}
+// From: {{implClassName}}
+// Platform: {{platform}}
+// Target Status: {{targetStatus}}
+// ═══════════════════════════════════════════════════════════
+
+{{#if isPlaywright}}
+const { test, expect } = require('@playwright/test');
+{{else}}
+const { expect } = require('@wdio/globals');
+{{/if}}
+const TestContext = require('{{testContextPath}}');
+const {{implClassName}} = require('./{{implClassName}}.js');
+const TestPlanner = require('{{testPlannerPath}}');
+{{#if testSetupPath}}
+const TestSetup = require('{{testSetupPath}}');
+{{/if}}
+{{#if hasUIValidation}}
+const ExpectImplication = require('{{testContextPath}}'.replace('/TestContext', '/ExpectImplication'));
+{{/if}}
+{{#if hasPrerequisites}}
+{{#each prerequisiteImports}}
+const { {{actionName}} } = require('{{path}}');
+{{/each}}
+{{/if}}
+
+/**
+ * ✅ EXPORTED FUNCTION - {{actionDescription}}
+ * 
+ * This function induces the "{{targetStatus}}" state by:
+ * 1. Loading test data and validating prerequisites
+ * 2. Checking if the test can run (TestPlanner)
+ * 3. Navigating to the correct screen
+ * 4. Performing the state-inducing action
+ * 5. Saving the state change with delta
+ * 
+ * @param {string} testDataPath - Path to testData JSON file
+ * @param {object} options - Options
+{{#if isPlaywright}}
+ * @param {Page} options.page - Playwright page object
+{{/if}}
+{{#each optionParams}}
+ * @param {{type}} options.{{name}} - {{description}}
+{{/each}}
+ * @returns {Promise<TestContext>} Updated context
+ */
+const {{actionName}} = async (testDataPath, options = {}) => {
+  {{#if isPlaywright}}
+  const { page } = options;
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 1: Load TestData
+  // ────────────────────────────────────────────────────────
+  const ctx = TestContext.load({{implClassName}}, testDataPath);
+  
+  console.log('\n🎯 Starting: {{actionDescription}}');
+  console.log(`   Target Status: {{targetStatus}}`);
+  console.log(`   Current Status: ${ctx.data.status || 'Unknown'}`);
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 2: Prerequisites Check (CRITICAL!)
+  // ────────────────────────────────────────────────────────
+  {{#if requiresPrerequisites}}
+  TestPlanner.checkOrThrow({{implClassName}}, ctx.data);
+  {{else}}
+  console.log('ℹ️  No prerequisites required for this state');
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 3: Get Target Entities
+  // ────────────────────────────────────────────────────────
+  {{#if hasEntityLogic}}
+  // TODO: Customize based on your entity (booking, user, etc.)
+  let targets = [];
+  
+  if (options.indices && Array.isArray(options.indices)) {
+    // Multiple entities by indices
+    targets = options.indices.map(i => ctx.data.{{entityName}}s[i]);
+  } else if (options.index !== undefined) {
+    // Single entity by index
+    targets = [ctx.data.{{entityName}}s[options.index]];
+  } else {
+    // Default: first entity matching {{previousStatus}}
+    {{#if previousStatus}}
+    const matchingEntities = ctx.data.{{entityName}}s?.filter(e => e.status === '{{previousStatus}}');
+    if (!matchingEntities || matchingEntities.length === 0) {
+      throw new Error('❌ No {{previousStatus}} {{entityName}}s found');
+    }
+    targets = [matchingEntities[0]];
+    {{else}}
+    targets = [ctx.data.{{entityName}}s?.[0]];
+    {{/if}}
+  }
+  
+  console.log(`\n✅ Processing ${targets.length} {{entityName}}(s)...`);
+  {{/if}}
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 4: Navigate to Screen & Perform Action
+  // ────────────────────────────────────────────────────────
+  
+  {{#if isPlaywright}}
+  // ✅ Navigate to application
+  await TestSetup.navigateToApp(page, ctx.config);
+  {{/if}}
+  
+  {{#if hasActionDetails}}
+  // ✨ Generated action steps:
+  console.log('\n🎬 Executing action: {{actionDetails.description}}');
+  
+  {{#each actionDetails.steps}}
+  // Step {{@index}}: {{description}}
+  {{#if code}}
+  {{code}}
+  {{else if method}}
+  {{#if screen}}
+  await {{../appObjectName}}.{{screen}}.{{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{else}}
+  await {{method}}({{#each args}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  {{/if}}
+  {{/if}}
+  
+  {{/each}}
+  {{else}}
+  // TODO: Navigate to the screen where you perform this action
+  // Example navigation:
+  {{#if navigationExample}}
+  {{{navigationExample}}}
+  {{else}}
+  // await navigateToScreen();
+  {{/if}}
+  
+  // TODO: Perform the state-inducing action
+  // This is where you interact with the UI to trigger the state change
+  {{#if actionExample}}
+  // Example:
+  {{{actionExample}}}
+  {{else}}
+  {{#if triggerButton}}
+  // Example:
+  // await page.getByRole('button', { name: '{{triggerButton}}' }).click();
+  {{/if}}
+  {{/if}}
+  
+  console.log('   ⚠️  TODO: Implement action logic');
+  console.log('   📝 Add your navigation and action code here');
+  {{/if}}
+  
+  console.log('\n✅ Action completed');
+  
+  // ────────────────────────────────────────────────────────
+  // STEP 5: Save Changes (Delta)
+  // ────────────────────────────────────────────────────────
+  return ctx.executeAndSave(
+    '{{changeLogLabel}}',
+    '{{testFileName}}',
+    async () => {
+      const delta = {};
+      const now = new Date().toISOString();
+      
+      {{#if hasDeltaLogic}}
+      // ✨ Generated delta from entry: assign
+      {{#if hasEntityLogic}}
+      for (const target of targets) {
+        const entityPath = `{{entityName}}s[${target.index || 0}]`;
+        delta[entityPath] = {
+      {{#each deltaFields}}
+          {{name}}: {{value}},
+      {{/each}}
+        };
+      }
+      {{else}}
+      // Update single entity or root fields
+      {{#each deltaFields}}
+      delta['{{name}}'] = {{value}};
+      {{/each}}
+      {{/if}}
+      {{else}}
+      // TODO: Customize delta based on what changed
+      // Example:
+      // delta['status'] = '{{targetStatus}}';
+      // delta['{{targetStatus}}At'] = now;
+      {{/if}}
+      
+      return { delta };
+    }
+  );
+};
+
+{{#if hasHelperFunctions}}
+// ═══════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════
+
+{{#each helperFunctions}}
+/**
+ * {{description}}
+ */
+async function {{name}}({{params}}) {
+  {{#if code}}
+  {{code}}
+  {{else}}
+  // TODO: Implement {{name}}
+  throw new Error('Helper function not implemented: {{name}}');
+  {{/if}}
+}
+
+{{/each}}
+{{/if}}
+
+// ═══════════════════════════════════════════════════════════
+// OPTIONAL TEST REGISTRATION
+// ═══════════════════════════════════════════════════════════
+// Set SKIP_UNIT_TEST_REGISTRATION=true to skip these tests
+// and only use the exported function
+
+const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
+
+if (!shouldSkipRegistration) {
+  {{#if isPlaywright}}
+  test.describe("UNIT: {{testDescription}}", () => {
+    test.setTimeout(120000);
+    
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    {{#each testCases}}
+    test("{{description}}", async ({ page }) => {
+      const ctx = await {{../actionName}}(testDataPath, { 
+        page{{#if params}},
+        {{params}}{{/if}}
+      });
+      
+      {{#if ../hasUIValidation}}
+      // ✅ Validate UI implications
+      await test.step('Validate {{../targetStatus}} State UI ({{../platform}})', async () => {
+        {{#each ../validationScreens}}
+        {{#if hasFunctions}}
+        // ═══════════════════════════════════════════════════════════
+        // 🎯 {{screenKey}}: Call Functions & Store Results
+        // ═══════════════════════════════════════════════════════════
+        const screen = {{pomClassName}} ? new {{pomClassName}}(page) : null;
+        
+        {{#each functions}}
+        // Call: {{signature}}
+        const return{{pascalCase name}} = await screen.{{name}}({{#each parameterValues}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+        console.log('   ⚡ Called {{name}}() → stored as return{{pascalCase name}}');
+        {{/each}}
+        
+        {{/if}}
+        // ═══════════════════════════════════════════════════════════
+        // ✅ {{screenKey}}: Visibility & Text Checks
+        // ═══════════════════════════════════════════════════════════
+        
+        {{#if hasRegularFields}}
+        // Regular fields (direct POM properties)
+        {{#each visibleRegularFields}}
+        await expect(screen.{{this}}).toBeVisible();
+        {{/each}}
+        {{#each hiddenRegularFields}}
+        await expect(screen.{{this}}).toBeHidden();
+        {{/each}}
+        {{/if}}
+        
+        {{#if hasFunctionChecks}}
+        // Function-based checks (using stored results)
+        {{#each visibleFunctions}}
+        await expect(return{{pascalCase this}}).toBeVisible();
+        console.log('   ✅ return{{pascalCase this}} is visible');
+        {{/each}}
+        {{#each hiddenFunctions}}
+        await expect(return{{pascalCase this}}).toBeHidden();
+        console.log('   ✅ return{{pascalCase this}} is hidden');
+        {{/each}}
+        {{/if}}
+        
+        {{#if hasTextChecks}}
+        // Text checks
+        {{#each textChecks}}
+        {{#if isFunction}}
+        await expect(return{{pascalCase fieldName}}).toHaveText('{{expectedText}}');
+        console.log('   ✅ return{{pascalCase fieldName}} has text: "{{expectedText}}"');
+        {{else}}
+        await expect(screen.{{fieldName}}).toHaveText('{{expectedText}}');
+        console.log('   ✅ {{fieldName}} has text: "{{expectedText}}"');
+        {{/if}}
+        {{/each}}
+        {{/if}}
+        
+        {{/each}}
+      });
+      {{/if}}
+      
+      // ✅ Save state to disk
+      ctx.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    
+    {{/each}}
+  });
+  {{else}}
+  describe("UNIT: {{testDescription}}", () => {
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    {{#each testCases}}
+    it("{{description}}", async () => {
+      await {{../actionName}}(testDataPath{{#if params}}, { {{params}} }{{/if}});
+    });
+    
+    {{/each}}
+  });
+  {{/if}}
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════
+
+module.exports = { {{actionName}} };

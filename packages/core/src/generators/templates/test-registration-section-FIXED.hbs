@@ -1,0 +1,152 @@
+// ═══════════════════════════════════════════════════════════
+// TEST REGISTRATION - REPLACE LINES 113-169 in unit-test.hbs
+// ═══════════════════════════════════════════════════════════
+
+const shouldSkipRegistration = process.env.SKIP_UNIT_TEST_REGISTRATION === 'true';
+
+if (!shouldSkipRegistration) {
+  {{#if isPlaywright}}
+  test.describe("UNIT: {{targetStatus}} State Transition", () => {
+    test.setTimeout(120000);
+    
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    {{#if hasEntityLogic}}
+    test("Process first {{entityName}}", async ({ page }) => {
+      // ✅ Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { 
+        page,
+        index: 0
+      });
+      
+      {{#if hasUIValidation}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+        {{#each validationScreens}}
+        console.log('   🔍 Validating {{screenKey}}...');
+        
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+          result.data,
+          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+        );
+        console.log('   ✅ {{screenKey}} validation passed');
+        {{/each}}
+      });
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    
+    test("Process multiple {{entityName}}s", async ({ page }) => {
+      // ✅ Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { 
+        page,
+        indices: [0, 1, 2]
+      });
+      
+      {{#if hasUIValidation}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+        {{#each validationScreens}}
+        console.log('   🔍 Validating {{screenKey}}...');
+        
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+          result.data,
+          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+        );
+        console.log('   ✅ {{screenKey}} validation passed');
+        {{/each}}
+      });
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    {{else}}
+    test("Execute {{targetStatus}} transition", async ({ page }) => {
+      // ✅ Load context
+      const ctx = TestContext.load({{implClassName}}, testDataPath);
+      
+      // ✅ AUTO-EXECUTE prerequisites if needed
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+        page, 
+        testDataPath 
+      });
+      
+      // ✅ Call function (handles navigation internally)
+      const result = await {{actionName}}(testDataPath, { page });
+      
+      {{#if hasUIValidation}}
+      await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+        {{#each validationScreens}}
+        console.log('   🔍 Validating {{screenKey}}...');
+        
+        {{#if @first}}
+        // ✅ Get screen object for validation
+        {{#with ../actionDetails.imports.[0]}}
+        const {{varName}} = new {{className}}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop');
+        {{/with}}
+        {{/if}}
+        
+        await ExpectImplication.validateImplications(
+          {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+          result.data,
+          {{#with ../actionDetails.imports.[0]}}{{varName}}{{/with}}
+        );
+        console.log('   ✅ {{screenKey}} validation passed');
+        {{/each}}
+      });
+      {{/if}}
+      
+      result.save(testDataPath);
+      console.log('   💾 State saved to:', testDataPath);
+    });
+    {{/if}}
+    
+  });
+  {{else}}
+  describe("UNIT: {{testDescription}}", () => {
+    const testDataPath = process.env.TEST_DATA_PATH || "{{defaultTestDataPath}}";
+    
+    {{#each testCases}}
+    it("{{description}}", async () => {
+      await {{../actionName}}(testDataPath{{#if params}}, { {{params}} }{{/if}});
+    });
+    
+    {{/each}}
+  });
+  {{/if}}
+}

@@ -1,5 +1,9 @@
+// packages/web-app/src/App.jsx
+
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import Visualizer from './pages/Visualizer';
+import Settings from './pages/Settings'; // NEW
 
 function Dashboard() {
   return (
@@ -50,6 +54,10 @@ function App() {
                 <Link to="/visualizer" className="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
                   Visualizer
                 </Link>
+                {/* NEW: Settings Link */}
+                <Link to="/settings" className="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+                  ⚙️ Settings
+                </Link>
               </div>
             </div>
           </div>
@@ -59,7 +67,9 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/projects" element={<div className="p-8">Projects (coming soon)</div>} />
-            <Route path="/visualizer" element={<div className="p-8">Visualizer (coming soon)</div>} />
+            <Route path="/visualizer" element={<Visualizer />} />
+            {/* NEW: Settings Route */}
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
       </div>

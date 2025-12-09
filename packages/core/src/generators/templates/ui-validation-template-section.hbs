@@ -1,0 +1,97 @@
+{{!-- 
+  ═══════════════════════════════════════════════════════════
+  UI VALIDATION SECTION - Two Modes
+  ═══════════════════════════════════════════════════════════
+  
+  MODE 1 (useExpectImplication=true): Clean, uses ExpectImplication
+  MODE 2 (useExpectImplication=false): Explicit inline expects
+--}}
+
+{{#if hasUIValidation}}
+await test.step('Validate {{targetStatus}} State UI ({{platform}})', async () => {
+  {{#if useExpectImplication}}
+  {{!-- ═══════════════════════════════════════════════════════════
+       MODE 1: ExpectImplication (CLEAN & RECOMMENDED)
+       ═══════════════════════════════════════════════════════════ --}}
+  
+  // ✅ Validate UI using ExpectImplication
+  // This automatically:
+  // - Loads the POM
+  // - Calls any functions defined in mirrorsOn
+  // - Validates visible/hidden elements
+  // - Checks text content
+  
+  {{#each validationScreens}}
+  console.log('   🔍 Validating {{screenKey}}...');
+  
+  await ExpectImplication.validateImplications(
+    {{../implClassName}}.mirrorsOn.UI.{{../platform}}.{{screenKey}},
+    ctx.data,
+    page
+  );
+  
+  console.log('   ✅ {{screenKey}} validation passed');
+  {{/each}}
+  
+  {{else}}
+  {{!-- ═══════════════════════════════════════════════════════════
+       MODE 2: Explicit Inline Expects (VERBOSE BUT GUARANTEED)
+       ═══════════════════════════════════════════════════════════ --}}
+  
+  {{#each validationScreens}}
+  {{#if hasFunctions}}
+  // ═══════════════════════════════════════════════════════════
+  // 🎯 {{screenKey}}: Call Functions & Store Results
+  // ═══════════════════════════════════════════════════════════
+  const screen = {{pomClassName}} ? new {{pomClassName}}(page) : null;
+  
+  {{#each functions}}
+  // Call: {{signature}}
+  const return{{pascalCase name}} = await screen.{{name}}({{#each parameterValues}}{{#if @first}}{{this}}{{else}}, {{this}}{{/if}}{{/each}});
+  console.log('   ⚡ Called {{name}}() → stored as return{{pascalCase name}}');
+  {{/each}}
+  
+  {{/if}}
+  // ═══════════════════════════════════════════════════════════
+  // ✅ {{screenKey}}: Visibility & Text Checks
+  // ═══════════════════════════════════════════════════════════
+  
+  {{#if hasRegularFields}}
+  // Regular fields (direct POM properties)
+  {{#each visibleRegularFields}}
+  await expect(screen.{{this}}).toBeVisible();
+  {{/each}}
+  {{#each hiddenRegularFields}}
+  await expect(screen.{{this}}).toBeHidden();
+  {{/each}}
+  {{/if}}
+  
+  {{#if hasFunctionChecks}}
+  // Function-based checks (using stored results)
+  {{#each visibleFunctions}}
+  await expect(return{{pascalCase this}}).toBeVisible();
+  console.log('   ✅ return{{pascalCase this}} is visible');
+  {{/each}}
+  {{#each hiddenFunctions}}
+  await expect(return{{pascalCase this}}).toBeHidden();
+  console.log('   ✅ return{{pascalCase this}} is hidden');
+  {{/each}}
+  {{/if}}
+  
+  {{#if hasTextChecks}}
+  // Text checks
+  {{#each textChecks}}
+  {{#if isFunction}}
+  await expect(return{{pascalCase fieldName}}).toHaveText('{{expectedText}}');
+  console.log('   ✅ return{{pascalCase fieldName}} has text: "{{expectedText}}"');
+  {{else}}
+  await expect(screen.{{fieldName}}).toHaveText('{{expectedText}}');
+  console.log('   ✅ {{fieldName}} has text: "{{expectedText}}"');
+  {{/if}}
+  {{/each}}
+  {{/if}}
+  
+  {{/each}}
+  {{/if}}
+});
+{{/if}}

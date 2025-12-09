@@ -1,0 +1,42 @@
+/* packages/web-app/src/components/DynamicContextFields/DynamicContextFields.css */
+
+.dynamic-context-fields {
+  width: 100%;
+}
+
+.context-field-group {
+  width: 100%;
+}
+
+/* Hover effect for display mode */
+.field-value-display.group:hover {
+  border-color: var(--primary-color, #3b82f6) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.field-value-display.group:hover .edit-hint {
+  opacity: 1 !important;
+}
+
+/* Smooth transitions */
+.field-value-display {
+  transition: all 0.2s ease;
+}
+
+/* Input focus styles */
+.dynamic-context-fields input:focus,
+.dynamic-context-fields textarea:focus,
+.dynamic-context-fields select:focus {
+  outline: none;
+  border-color: var(--primary-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Button hover effects */
+.dynamic-context-fields button {
+  transition: all 0.2s ease;
+}
+
+.dynamic-context-fields button:active {
+  transform: scale(0.98);
+}

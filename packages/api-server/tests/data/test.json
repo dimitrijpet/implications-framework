@@ -1,0 +1,13 @@
+{
+  "agencyId": "SANDBOX",
+  "agencyName": "SANDBOX AGENCY",
+  "departure": "CDG",
+  "destination": "JFK",
+  "departureDate": "01/12/2025",
+  "passengers": 2,
+  "status": "initial",
+  "_config": {
+    "device": "desktop",
+    "lang": "en"
+  }
+}

@@ -1,27 +1,17 @@
 {
   "name": "@implications/cli",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
+  "description": "CLI for generating implications-based tests",
+  "main": "src/cli.js",
   "bin": {
-    "implications": "./bin/implications.js"
+    "implications": "src/cli.js"
   },
   "scripts": {
-    "dev": "echo 'CLI ready. Run: pnpm implications <command>'",
-    "start": "node bin/implications.js",
-    "build": "echo 'No build needed for CLI'",
-    "lint": "eslint src --ext .js",
-    "clean": "rm -rf node_modules"
+    "start": "node src/cli.js"
   },
-  "dependencies": {
-    "@implications/core": "workspace:*",
-    "commander": "^11.1.0",
-    "inquirer": "^9.2.12",
-    "chalk": "^5.3.0",
-    "ora": "^7.0.1",
-    "fs-extra": "^11.2.0"
-  },
-  "devDependencies": {
-    "eslint": "^8.55.0"
-  }
+  "keywords": ["testing", "implications", "cli"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
 }
