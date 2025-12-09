@@ -1302,9 +1302,19 @@ if (assertionType === 'locator') {
             }
 
             // ✅ Handle storeAs if provided
-            if (storeAs && expectCode) {
-              expectCode = `const ${storeAs} = await ${fnCall};\n      ${expectCode.replace(fnCall, storeAs).replace(`await ${storeAs}`, storeAs)}`;
-            }
+            // ✅ Handle storeAs if provided - store assertion result (true/false)
+if (storeAs && expectCode) {
+  expectCode = `let ${storeAs} = false;
+      try {
+        ${expectCode}
+        ${storeAs} = true;
+      } catch (e) {
+        ${storeAs} = false;
+      }
+      ExpectImplication.storeValue('${storeAs}', ${storeAs});
+      result.data.${storeAs} = ${storeAs};
+      console.log('   💾 Stored ${storeAs}:', ${storeAs});`;
+}
 
             assertions.push({
               assertionType: "function-assertion",

@@ -2095,6 +2095,7 @@ function buildScreenObjectAstWithBlocks(screen) {
     if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
     // ✅ ADD TYPE FIELD
     if (assertion.type) assertProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(assertion.type)));
+    if (assertion.storeAs) assertProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(assertion.storeAs)));
     if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
     if (assertion.value !== undefined) {
       assertProps.push(t.objectProperty(
@@ -2264,6 +2265,9 @@ if (block.data.assertions?.length > 0) {
     if (a.fn) aProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(a.fn)));
     // ✅ ADD TYPE FIELD
     if (a.type) aProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(a.type)));
+    if (a.storeAs) aProps.push(
+  t.objectProperty(t.identifier('storeAs'), t.stringLiteral(a.storeAs))
+);
     if (a.expect) aProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(a.expect)));
     if (a.value !== undefined) {
       aProps.push(t.objectProperty(t.identifier('value'),
@@ -2847,6 +2851,14 @@ function buildScreenObjectAst(screen) {
           t.stringLiteral(assertion.type)
         ));
       }
+
+      // storeAs (for storing assertion result)
+if (assertion.storeAs) {
+  assertionProps.push(t.objectProperty(
+    t.identifier('storeAs'),
+    t.stringLiteral(assertion.storeAs)
+  ));
+}
       
       // expect (required)
       assertionProps.push(t.objectProperty(
@@ -2965,6 +2977,7 @@ function buildScreenAst(screen, screenName, platformName, className) {
       if (assertion.fn) assertProps.push(t.objectProperty(t.identifier('fn'), t.stringLiteral(assertion.fn)));
       // ✅ type (locator or method)
       if (assertion.type) assertProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(assertion.type)));
+      if (assertion.storeAs) assertProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(assertion.storeAs)));
       if (assertion.expect) assertProps.push(t.objectProperty(t.identifier('expect'), t.stringLiteral(assertion.expect)));
       if (assertion.value !== undefined) {
         assertProps.push(t.objectProperty(
