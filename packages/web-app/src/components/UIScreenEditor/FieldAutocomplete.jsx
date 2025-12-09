@@ -59,6 +59,8 @@ export default function FieldAutocomplete({
   }, [projectPath, pomName]);
 
   // ✨ ENHANCED: Merge POM fields + function names
+ const functionNamesKey = JSON.stringify(Object.keys(functions || {}).sort());
+  
   useEffect(() => {
     if (!pomDetails) {
       setAvailableFields([]);
@@ -70,7 +72,6 @@ export default function FieldAutocomplete({
     if (instanceName && pomDetails.instancePaths[instanceName]) {
       pomFields = pomDetails.instancePaths[instanceName];
     } else {
-      // No instance selected - show ALL fields
       const allFields = new Set();
       Object.values(pomDetails.instancePaths || {}).forEach(paths => {
         paths.forEach(path => allFields.add(path));
@@ -79,9 +80,8 @@ export default function FieldAutocomplete({
     }
     
     // ✨ Add function names
-    const functionNames = Object.keys(functions);
+    const functionNames = Object.keys(functions || {});
     
-    // 🐛 DEBUG: Log what we're merging
     console.log('🔍 FieldAutocomplete merging:', {
       pomFields: pomFields.length,
       functionNames: functionNames.length,
@@ -89,13 +89,11 @@ export default function FieldAutocomplete({
       instanceName
     });
     
-    // Combine (functions first for prominence)
     const allFields = [...functionNames, ...pomFields];
-    
     setAvailableFields(allFields);
     
-    console.log('📋 Available fields:', allFields.length, '(', functionNames.length, 'functions +', pomFields.length, 'POM fields)');
-  }, [pomDetails, instanceName, functions]);
+    console.log('📋 Available fields:', allFields.length);
+  }, [pomDetails, instanceName, functionNamesKey]);
 
   // Validate field when it changes
   useEffect(() => {

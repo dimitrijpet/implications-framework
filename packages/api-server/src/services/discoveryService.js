@@ -6,11 +6,15 @@ import { isImplication, extractImplicationMetadata } from '../../../core/src/pat
 import { isSection, extractSectionMetadata } from '../../../core/src/patterns/sections.js';
 import { isScreen, extractScreenMetadata } from '../../../core/src/patterns/screens.js';
 import { DiscoveryResult, DiscoveredFile } from '../../../core/src/types/discovery.js';
-
 /**
  * Discover all patterns in a project
  */
 export async function discoverProject(projectPath) {
+  const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+if (fs.existsSync(cacheDir)) {
+  console.log('🗑️ Clearing discovery cache for fresh scan...');
+  fs.rmSync(cacheDir, { recursive: true, force: true });
+}
   console.log(`🔍 Discovering project at: ${projectPath}`);
   
   const result = new DiscoveryResult();
@@ -111,15 +115,24 @@ if (result.files.implications.length > 0) {
   );
 }
 
+// ✅ ADD THIS: Save discovery result to cache
+console.log('\n💾 Saving discovery cache...');
+const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
+fs.ensureDirSync(cacheDir);
+
+const cacheFile = path.join(cacheDir, 'discovery-result.json');
+fs.writeJsonSync(cacheFile, result, { spaces: 2 });
+
+console.log(`   ✅ Cache saved: ${cacheFile}`);
+
 console.log(`✅ Discovery complete`);
-    console.log(`✅ Discovery complete`);
-    console.log(`   - Implications: ${result.files.implications.length}`);
-    console.log(`   - Sections: ${result.files.sections.length}`);
-    console.log(`   - Screens: ${result.files.screens.length}`);
-    console.log(`   - Project Type: ${result.projectType}`);
-    console.log(`   - Transitions: ${result.transitions.length}`);
-    console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`);
-    
+console.log(`✅ Discovery complete`);
+console.log(`   - Implications: ${result.files.implications.length}`);
+console.log(`   - Sections: ${result.files.sections.length}`);
+console.log(`   - Screens: ${result.files.screens.length}`);
+console.log(`   - Project Type: ${result.projectType}`);
+console.log(`   - Transitions: ${result.transitions.length}`);
+console.log(`   💾 Cache: ${Object.keys(cache.baseFiles).length} base files cached`)
     return result;
     
   } catch (error) {
@@ -319,19 +332,17 @@ export function buildAndWriteStateRegistry(implications, projectPath) {
   console.log(`✅ State Registry built: ${Object.keys(registry).length} mappings\n`);
   
   // Write to each directory containing Implications
-  const directories = new Set();
-  implications.forEach(imp => {
-    if (imp.metadata?.hasXStateConfig) {
-      const dir = path.dirname(imp.path);
-      directories.add(dir);
-    }
-  });
-  
-  directories.forEach(dir => {
-    const registryPath = path.join(projectPath, dir, '.state-registry.json');
-    fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
-    console.log(`   💾 Wrote registry: ${registryPath}`);
-  });
-  
+ 
+
+// ✅ Write to canonical location in the PROJECT being scanned
+const registryPath = path.join(projectPath, 'tests/implications/.state-registry.json');
+const registryDir = path.dirname(registryPath);
+
+// Ensure directory exists
+fs.ensureDirSync(registryDir);
+
+// Write registry
+fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+console.log(`   💾 Wrote registry: ${registryPath}`);
   return registry;
 }

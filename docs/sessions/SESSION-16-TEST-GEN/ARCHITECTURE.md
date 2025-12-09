@@ -218,7 +218,7 @@ await ExpectImplication.validateSingleImplication(
 
 **Platform support:**
 - Playwright (web, cms)
-- Appium/WebdriverIO (mobile-dancer, mobile-manager)
+- Appium/WebdriverIO (dancer, manager)
 
 ---
 
@@ -248,7 +248,7 @@ const analysis = planner.analyze(implication, testData);
     status: 'Pending',
     actionName: 'requestBooking',
     testFile: 'PendingBooking-Dancer-UNIT.spec.js',
-    platform: 'mobile-dancer'
+    platform: 'dancer'
   },
   stepsRemaining: 1
 }
@@ -679,7 +679,7 @@ class AcceptedBookingImplications {
     },
     {
       description: "Accept via mobile manager",
-      platform: "mobile-manager",
+      platform: "manager",
       action: async (testDataPath, options) => {
         const { acceptBooking } = require('./AcceptBooking-Manager-UNIT.spec.js');
         return acceptBooking(testDataPath, options);
@@ -756,7 +756,7 @@ class NotificationsImplications {
 
 ```
 ❌ CANNOT MIX IN SAME TEST:
-   Playwright (web) + Appium (mobile-dancer, mobile-manager)
+   Playwright (web) + Appium (dancer, manager)
 
 ✅ CAN MIX IN SAME TEST:
    Playwright (web) + Playwright (cms)
@@ -801,7 +801,7 @@ test.describe.serial('Complete Flow', () => {
     execSync(`TEST_DATA_PATH="${path}" npx playwright test Create-Web-UNIT.spec.js`);
   });
   
-  test('Step 2: Request (mobile-dancer)', async () => {
+  test('Step 2: Request (dancer)', async () => {
     execSync(`TEST_DATA_PATH="${path}" npx wdio Pending-Dancer-UNIT.spec.js`);
   });
   
@@ -1118,7 +1118,7 @@ allStates.forEach(targetState => {
     "status": "Pending",
     "actionName": "requestBooking",
     "testFile": "PendingBooking-Dancer-UNIT.spec.js",
-    "platform": "mobile-dancer"
+    "platform": "dancer"
   },
   "stepsRemaining": 1
 }
@@ -1304,7 +1304,7 @@ app.post('/api/generate/unit-test', async (req, res) => {
     projectPath: Joi.string().required(),
     implName: Joi.string().pattern(/^[A-Z][a-zA-Z]*Implications$/).required(),
     options: Joi.object({
-      platform: Joi.string().valid('web', 'mobile-dancer', 'mobile-manager'),
+      platform: Joi.string().valid('web', 'dancer', 'manager'),
       preview: Joi.boolean()
     })
   });

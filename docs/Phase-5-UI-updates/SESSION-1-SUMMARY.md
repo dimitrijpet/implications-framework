@@ -159,8 +159,8 @@ export const defaultTheme = {
     border: '#1f2937'
   },
   platforms: {
-    'mobile-dancer': { color: '#8b5cf6', icon: '📱', name: 'Dancer App' },
-    'mobile-manager': { color: '#3b82f6', icon: '📲', name: 'Manager App' },
+    'dancer': { color: '#8b5cf6', icon: '📱', name: 'Dancer App' },
+    'manager': { color: '#3b82f6', icon: '📲', name: 'Manager App' },
     'web': { color: '#60a5fa', icon: '🌐', name: 'Web' }
   }
 };
@@ -255,7 +255,7 @@ StateDetailModal shows full data
 - **Nodes in Graph:** 5 states
 - **Edges:** 11 transitions
 - **UI Screens:** 12 (6 dancer, 5 clubApp, 1 web)
-- **Platforms Supported:** 3 (mobile-dancer, mobile-manager, web)
+- **Platforms Supported:** 3 (dancer, manager, web)
 - **Lines of Code:** ~2000 (web-app + api-server)
 
 ---

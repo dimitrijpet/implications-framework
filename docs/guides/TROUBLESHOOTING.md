@@ -808,7 +808,7 @@ implications.mjs
 
 ### Wrong screen count showing (0 instead of 12)
 
-**Problem:** Dropdown shows "rejected (mobile-manager, 0 screens)" when it should show 12
+**Problem:** Dropdown shows "rejected (manager, 0 screens)" when it should show 12
 
 **Cause:** Data structure mismatch
 ```javascript

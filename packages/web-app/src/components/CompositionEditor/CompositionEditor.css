@@ -1,0 +1,49 @@
+/* packages/web-app/src/components/CompositionEditor/CompositionEditor.css */
+
+.composition-editor {
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.composition-editor .hover\:brightness-110:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.composition-editor select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.composition-editor input[type="checkbox"]:focus {
+  outline: 2px solid rgba(99, 102, 241, 0.5);
+  outline-offset: 2px;
+}
+
+/* Scrollbar styling for behaviors list */
+.composition-editor > div > div::-webkit-scrollbar {
+  width: 8px;
+}
+
+.composition-editor > div > div::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+.composition-editor > div > div::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.composition-editor > div > div::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
