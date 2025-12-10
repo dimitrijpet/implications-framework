@@ -4281,22 +4281,62 @@ _extractDeltaFields(entryAssign, targetStatus) {
     // (Don't call _extractMetadata again - that causes recursion!)
     const entity = this.currentMetadata?.meta?.entity || null;
 
-    // Process steps with storeAs parsing, args format, AND entity
-    if (processed.steps) {
-      const storeAsFields = []; // Collect for delta generation
+   // Process steps with storeAs parsing, args format, AND entity
+if (processed.steps) {
+  const storeAsFields = []; // Collect for delta generation
 
-      processed.steps = processed.steps.map((step, index) => {
-        const argsArray = Array.isArray(step.args)
-          ? step.args
-          : (step.args || "")
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
+  processed.steps = processed.steps.map((step, index) => {
+    // ✅ Helper: Convert {{ctx.data.x}} to ctx.data.x (valid JS)
+    const resolveArg = (arg) => {
+      if (typeof arg !== 'string') return String(arg);
+      const trimmed = arg.trim();
+      
+      // Template variable: {{something}} → something
+      const templateMatch = trimmed.match(/^\{\{(.+?)\}\}$/);
+      if (templateMatch) {
+        return templateMatch[1].trim();
+      }
+      
+      // Number - use as-is
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        return trimmed;
+      }
+      
+      // Boolean - use as-is
+      if (trimmed === 'true' || trimmed === 'false') {
+        return trimmed;
+      }
+      
+      // null/undefined - use as-is
+      if (trimmed === 'null' || trimmed === 'undefined') {
+        return trimmed;
+      }
+      
+      // Object literal (starts with { but not {{)
+      if (trimmed.startsWith('{') && !trimmed.startsWith('{{')) {
+        return trimmed;
+      }
+      
+      // Already a JS expression (has dots, starts with ctx., etc.)
+      if (trimmed.startsWith('ctx.') || trimmed.startsWith('result.') || trimmed.startsWith('storedVars.')) {
+        return trimmed;
+      }
+      
+      // Literal string - wrap in quotes
+      const escaped = trimmed.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `'${escaped}'`;
+    };
 
-        const argsString = Array.isArray(step.args)
-          ? step.args.join(", ")
-          : step.args || "";
+    const rawArgsArray = Array.isArray(step.args)
+      ? step.args
+      : (step.args || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
 
+    // ✅ Resolve each arg to valid JS
+    const argsArray = rawArgsArray.map(resolveArg);
+    const argsString = argsArray.join(", ");
         // ✅ Parse storeAs config
         const storeAsConfig = this._parseStoreAsConfig(step.storeAs);
 

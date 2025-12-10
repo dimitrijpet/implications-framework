@@ -1042,14 +1042,43 @@ const handleAddStep = () => {
   };
 
   // Update step field
-  const handleStepChange = (index, field, value) => {
-    setFormData((prev) => ({
-      ...prev,
-      steps: prev.steps.map((step, i) =>
-        i === index ? { ...step, [field]: value } : step
-      ),
-    }));
-  };
+ const handleStepChange = (index, field, value) => {
+  setFormData((prev) => {
+    const newSteps = prev.steps.map((step, i) =>
+      i === index ? { ...step, [field]: value } : step
+    );
+    
+    // ✅ AUTO-ADD IMPORT when selecting screen for inline action
+    if (field === 'screen' && value && ['click', 'fill', 'getText', 'waitFor'].includes(newSteps[index].type)) {
+      const alreadyImported = prev.imports.some(imp => imp.className === value);
+      
+      if (!alreadyImported) {
+        const pom = availablePOMs.find(p => p.className === value);
+        if (pom) {
+          const varName = value.charAt(0).toLowerCase() + value.slice(1);
+          const newImport = {
+            className: value,
+            varName: varName,
+            path: pom.path || pom.filePath,
+            constructor: `new ${value}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+            selectedPOM: value,
+            functions: pom.classes?.[0]?.functions || [],
+          };
+          
+          console.log(`✅ Auto-adding import for inline action: ${value}`);
+          
+          return {
+            ...prev,
+            steps: newSteps,
+            imports: [...prev.imports, newImport],
+          };
+        }
+      }
+    }
+    
+    return { ...prev, steps: newSteps };
+  });
+};
 
   // Update step args with assignment detection
   const handleStepArgsChange = (index, value) => {
@@ -1191,68 +1220,155 @@ formData.steps.forEach((step, index) => {
 const handleSubmit = async (e) => {
   e.preventDefault();
   
-  console.log('🔥 handleSubmit called!');  // ← ADD THIS
-  console.log('🔥 formData:', JSON.stringify(formData, null, 2));  // ← ADD THIS
-
   if (!validateForm()) {
-    console.log('❌ Validation failed:', errors);  // ← ADD THIS
+    console.log('❌ Validation failed:', errors);
     return;
   }
   
-  console.log('✅ Validation passed, submitting...');  // ← ADD THIS
   setLoading(true);
 
   try {
-const submitData = {
-  event: formData.event.trim(),
-  platform: formData.platform,
-  isObserver: formData.isObserver || undefined,
-  mode: formData.isObserver ? 'observer' : undefined,
-  requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
-  conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
-  actionDetails: formData.hasActionDetails
-    ? {
-        description: formData.description.trim(),
-        platform: formData.platform,
-        navigationMethod: formData.navigationMethod || null,
-        navigationFile: formData.navigationFile || null,
-        imports: formData.imports.map((imp) => ({
-          className: imp.className,
-          varName: imp.varName,
-          path: imp.path,
-          constructor: imp.constructor,
-        })),
-        steps: formData.steps.map((step) => ({
-          type: step.type || 'pom-method',
-          description: step.description,
-          // POM method fields
-          ...((step.type === 'pom-method' || !step.type) && {
-            instance: step.instance,
-            method: step.method,
-            args: step.args?.join(', ') || '',
-            argsArray: step.args || [],
-          }),
-          // Inline action fields
-            ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
-            screen: step.screen,
-            locator: step.locator,
-            elementIndex: step.elementIndex || undefined,  // ✅ NEW
-            customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,  // ✅ NEW
-            ...(step.type === 'fill' && { value: step.value }),
-            ...(step.type === 'waitFor' && { waitState: step.waitState }),
-          }),
-          // Custom code
-          ...(step.type === 'custom' && {
-            code: step.code,
-          }),
-          // Common fields - ENHANCED with persistStoreAs
-          storeAs: step.storeAs || undefined,
-          persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,  // ✅ NEW
-          conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
-        })),
+    // ✅ Helper: Build imports including any screens used in inline actions
+    const buildImports = () => {
+      const imports = [...formData.imports];
+      const importedClassNames = new Set(imports.map(imp => imp.className));
+      
+      // Check if any inline action steps use a screen that's not imported
+      for (const step of formData.steps) {
+        if (['click', 'fill', 'getText', 'waitFor'].includes(step.type) && step.screen) {
+          if (!importedClassNames.has(step.screen)) {
+            // Find the POM in availablePOMs
+            const pom = availablePOMs.find(p => p.className === step.screen);
+            if (pom) {
+              const varName = step.screen.charAt(0).toLowerCase() + step.screen.slice(1);
+              imports.push({
+                className: step.screen,
+                varName: varName,
+                path: pom.path || pom.filePath,
+                constructor: `new ${step.screen}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+              });
+              importedClassNames.add(step.screen);
+              console.log(`✅ Auto-added import for ${step.screen}`);
+            }
+          }
+        }
       }
-    : null,
-};
+      
+      return imports.map(imp => ({
+        className: imp.className,
+        varName: imp.varName,
+        path: imp.path,
+        constructor: imp.constructor,
+      }));
+    };
+
+    // ✅ Helper: Build step with proper instance/method for inline actions
+    const buildStep = (step) => {
+      const baseStep = {
+        type: step.type || 'pom-method',
+        description: step.description,
+        storeAs: step.storeAs || undefined,
+        persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,
+        conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+      };
+      
+      // POM method - keep as-is
+      if (step.type === 'pom-method' || !step.type) {
+        return {
+          ...baseStep,
+          instance: step.instance,
+          method: step.method,
+          args: step.args?.join(', ') || '',
+          argsArray: step.args || [],
+        };
+      }
+      
+      // Custom code - keep as-is
+      if (step.type === 'custom') {
+        return {
+          ...baseStep,
+          code: step.code,
+        };
+      }
+      
+      // ✅ INLINE ACTIONS: Convert to instance/method format
+      if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
+        const screenName = step.screen || '';
+        const locatorName = step.locator || '';
+        const instanceName = screenName 
+          ? screenName.charAt(0).toLowerCase() + screenName.slice(1) 
+          : '';
+        
+        // Build locator chain with index
+        let locatorChain = locatorName;
+        if (step.elementIndex === 'first') {
+          locatorChain = `${locatorName}.first()`;
+        } else if (step.elementIndex === 'last') {
+          locatorChain = `${locatorName}.last()`;
+        } else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
+          locatorChain = `${locatorName}.nth(${step.customIndex})`;
+        }
+        
+        // Build method name based on action type
+        let methodName;
+        let argsArray = [];
+        
+        switch (step.type) {
+          case 'click':
+            methodName = `${locatorChain}.click`;
+            break;
+          case 'fill':
+            methodName = `${locatorChain}.fill`;
+            argsArray = step.value ? [step.value] : [];
+            break;
+          case 'getText':
+            methodName = `${locatorChain}.textContent`;
+            break;
+          case 'waitFor':
+            methodName = `${locatorChain}.waitFor`;
+            argsArray = [`{ state: '${step.waitState || 'visible'}' }`];
+            break;
+        }
+        
+        return {
+          ...baseStep,
+          // ✅ KEY: These fields make the test generator work!
+          instance: instanceName,
+          method: methodName,
+          args: argsArray.join(', '),
+          argsArray: argsArray,
+          // Keep original fields for UI round-trip editing
+          screen: screenName,
+          locator: locatorName,
+          elementIndex: step.elementIndex || undefined,
+          customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+          ...(step.type === 'fill' && { value: step.value }),
+          ...(step.type === 'waitFor' && { waitState: step.waitState }),
+        };
+      }
+      
+      return baseStep;
+    };
+
+    const submitData = {
+      event: formData.event.trim(),
+      platform: formData.platform,
+      isObserver: formData.isObserver || undefined,
+      mode: formData.isObserver ? 'observer' : undefined,
+      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
+      actionDetails: formData.hasActionDetails
+        ? {
+            description: formData.description.trim(),
+            platform: formData.platform,
+            navigationMethod: formData.navigationMethod || null,
+            navigationFile: formData.navigationFile || null,
+            imports: buildImports(),  // ✅ Use helper
+            steps: formData.steps.map(buildStep),  // ✅ Use helper
+          }
+        : null,
+    };
+
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
