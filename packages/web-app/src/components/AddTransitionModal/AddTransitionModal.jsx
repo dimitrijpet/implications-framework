@@ -1134,18 +1134,41 @@ const handleAddStep = () => {
         }
       });
 
-      formData.steps.forEach((step, index) => {
-        if (!step.description.trim()) {
-          newErrors[`step_${index}_description`] =
-            "Step description is required";
-        }
-        if (!step.instance.trim()) {
-          newErrors[`step_${index}_instance`] = "Instance name is required";
-        }
-        if (!step.method.trim()) {
-          newErrors[`step_${index}_method`] = "Method name is required";
-        }
-      });
+formData.steps.forEach((step, index) => {
+  if (!step.description?.trim()) {
+    newErrors[`step_${index}_description`] = "Step description is required";
+  }
+  
+  // Only validate instance/method for pom-method type
+  if (!step.type || step.type === 'pom-method') {
+    if (!step.instance?.trim()) {
+      newErrors[`step_${index}_instance`] = "Instance name is required";
+    }
+    if (!step.method?.trim()) {
+      newErrors[`step_${index}_method`] = "Method name is required";
+    }
+  }
+  
+  // Validate inline action types
+  if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
+    if (!step.screen?.trim()) {
+      newErrors[`step_${index}_screen`] = "Screen object is required";
+    }
+    if (!step.locator?.trim()) {
+      newErrors[`step_${index}_locator`] = "Locator is required";
+    }
+    if (step.type === 'fill' && !step.value?.trim()) {
+      newErrors[`step_${index}_value`] = "Value is required for fill";
+    }
+  }
+  
+  // Validate custom code
+  if (step.type === 'custom') {
+    if (!step.code?.trim()) {
+      newErrors[`step_${index}_code`] = "Code is required for custom step";
+    }
+  }
+});
     }
 
     setErrors(newErrors);
@@ -1167,14 +1190,16 @@ const handleAddStep = () => {
   // Handle submit
 const handleSubmit = async (e) => {
   e.preventDefault();
-
-  // ✅ ADD THIS DEBUG LOG
-  console.log('📋 Form conditions before submit:', JSON.stringify(formData.conditions, null, 2));
+  
+  console.log('🔥 handleSubmit called!');  // ← ADD THIS
+  console.log('🔥 formData:', JSON.stringify(formData, null, 2));  // ← ADD THIS
 
   if (!validateForm()) {
+    console.log('❌ Validation failed:', errors);  // ← ADD THIS
     return;
   }
-
+  
+  console.log('✅ Validation passed, submitting...');  // ← ADD THIS
   setLoading(true);
 
   try {
@@ -1208,9 +1233,11 @@ const submitData = {
             argsArray: step.args || [],
           }),
           // Inline action fields
-          ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
+            ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
             screen: step.screen,
             locator: step.locator,
+            elementIndex: step.elementIndex || undefined,  // ✅ NEW
+            customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,  // ✅ NEW
             ...(step.type === 'fill' && { value: step.value }),
             ...(step.type === 'waitFor' && { waitState: step.waitState }),
           }),
@@ -2227,25 +2254,79 @@ const submitData = {
                   </div>
                 )}
 
-                {/* Code Preview */}
-                <div 
-                  className="p-2 rounded text-xs font-mono"
-                  style={{ backgroundColor: defaultTheme.colors.background.primary }}
-                >
-                  <span style={{ color: defaultTheme.colors.accents.blue }}>await </span>
-                  <span style={{ color: defaultTheme.colors.accents.purple }}>
-                    {step.screen ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) : 'screen'}
-                  </span>
-                  <span>.</span>
-                  <span style={{ color: defaultTheme.colors.accents.green }}>{step.locator || 'locator'}</span>
-                  <span>.</span>
-                  <span style={{ color: defaultTheme.colors.accents.yellow }}>
-                    {step.type === 'click' && 'click()'}
-                    {step.type === 'fill' && `fill(${step.value || "'...'"} )`}
-                    {step.type === 'getText' && 'textContent()'}
-                    {step.type === 'waitFor' && `waitFor({ state: '${step.waitState}' })`}
-                  </span>
+                {/* ✅ NEW: Element Index Selector */}
+                <div className="mb-2">
+                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+                    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
+                  </label>
+                  <div className="flex gap-2 items-center">
+                    <select
+                      value={step.elementIndex || ""}
+                      onChange={(e) => handleStepChange(index, 'elementIndex', e.target.value)}
+                      className="flex-1 px-3 py-1 rounded text-sm"
+                      style={{
+                        backgroundColor: defaultTheme.colors.background.tertiary,
+                        color: defaultTheme.colors.text.primary,
+                        border: `1px solid ${defaultTheme.colors.border}`,
+                      }}
+                    >
+                      <option value="">Single element (no index)</option>
+                      <option value="first">First [0] → .first()</option>
+                      <option value="last">Last → .last()</option>
+                      <option value="custom">Custom index → .nth(N)</option>
+                    </select>
+                    {step.elementIndex === 'custom' && (
+                      <input
+                        type="number"
+                        min="0"
+                        value={step.customIndex || 0}
+                        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-20 px-2 py-1 rounded text-sm font-mono"
+                        style={{
+                          backgroundColor: defaultTheme.colors.background.tertiary,
+                          color: defaultTheme.colors.text.primary,
+                          border: `1px solid ${defaultTheme.colors.border}`,
+                        }}
+                      />
+                    )}
+                  </div>
+                  {step.elementIndex && (
+                    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
+                      💡 Use when locator returns multiple elements (e.g., list items, cards)
+                    </p>
+                  )}
                 </div>
+
+               {/* Code Preview */}
+<div 
+  className="p-2 rounded text-xs font-mono"
+  style={{ backgroundColor: defaultTheme.colors.background.primary }}
+>
+  <span style={{ color: defaultTheme.colors.accents.blue }}>await </span>
+  <span style={{ color: defaultTheme.colors.accents.purple }}>
+    {step.screen ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) : 'screen'}
+  </span>
+  <span>.</span>
+  <span style={{ color: defaultTheme.colors.accents.green }}>{step.locator || 'locator'}</span>
+  {/* Element index */}
+  {/* Code Preview */}
+{step.elementIndex && (
+  <span style={{ color: defaultTheme.colors.accents.yellow }}>
+    {step.elementIndex === 'first' ? '.first()' : 
+     step.elementIndex === 'last' ? '.last()' : 
+     step.elementIndex === 'custom' ? `.nth(${step.customIndex || 0})` :
+     `.nth(${step.elementIndex})`}
+  </span>
+)}
+  <span>.</span>
+  <span style={{ color: defaultTheme.colors.accents.yellow }}>
+    {step.type === 'click' && 'click()'}
+    {step.type === 'fill' && `fill(${step.value || "'...'"} )`}
+    {step.type === 'getText' && 'textContent()'}
+    {step.type === 'waitFor' && `waitFor({ state: '${step.waitState}' })`}
+  </span>
+</div>
               </>
             )}
 

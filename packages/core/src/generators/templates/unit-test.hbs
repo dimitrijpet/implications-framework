@@ -331,9 +331,80 @@ const {{actionName}} = async (testDataPath, options = {}) => {
 {{/if}}
 {{!-- STEP TYPE: click --}}
 {{else if (eq type 'click')}}
+{{#if elementIndex}}
+{{#if (eq elementIndex 'first')}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().click();
+{{else if (eq elementIndex 'last')}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().click();
+{{else if (eq elementIndex 'custom')}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).click();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).click();
+{{/if}}
+{{else}}
   await {{instanceFromScreen screen}}.{{locator}}.click();
+{{/if}}
 {{!-- STEP TYPE: fill --}}
 {{else if (eq type 'fill')}}
+{{#if elementIndex}}
+{{#if (eq elementIndex 'first')}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{else if (eq elementIndex 'last')}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{else if (eq elementIndex 'custom')}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{else}}
+{{#if (isContextField value)}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).fill(ctx.data.{{removeCtxDataPrefix value}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).setValue(ctx.data.{{removeCtxDataPrefix value}});
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).fill({{{value}}});
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).setValue({{{value}}});
+{{/if}}
+{{/if}}
+{{/if}}
+{{else}}
 {{#if (isContextField value)}}
 {{#if ../isPlaywright}}
   await {{instanceFromScreen screen}}.{{locator}}.fill(ctx.data.{{removeCtxDataPrefix value}});
@@ -347,13 +418,42 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   await {{instanceFromScreen screen}}.{{locator}}.setValue({{{value}}});
 {{/if}}
 {{/if}}
+{{/if}}
 {{!-- STEP TYPE: getText --}}
 {{else if (eq type 'getText')}}
 {{#if storeAs}}
+{{#if elementIndex}}
+{{#if (eq elementIndex 'first')}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.first().textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.first().getText();
+{{/if}}
+{{else if (eq elementIndex 'last')}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.last().textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.last().getText();
+{{/if}}
+{{else if (eq elementIndex 'custom')}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).getText();
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).textContent();
+{{else}}
+  const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).getText();
+{{/if}}
+{{/if}}
+{{else}}
 {{#if ../isPlaywright}}
   const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.textContent();
 {{else}}
   const {{storeAs}} = await {{instanceFromScreen screen}}.{{locator}}.getText();
+{{/if}}
 {{/if}}
   // 💾 Store captured text
   ExpectImplication.storeValue('{{storeAs}}', {{storeAs}});
@@ -361,14 +461,93 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   ctx.data.{{storeAs}} = {{storeAs}};
   console.log('   💾 Stored {{storeAs}}:', {{storeAs}});
 {{else}}
+{{#if elementIndex}}
+{{#if (eq elementIndex 'first')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().getText();
+{{/if}}
+{{else if (eq elementIndex 'last')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().getText();
+{{/if}}
+{{else if (eq elementIndex 'custom')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).getText();
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).textContent();
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).getText();
+{{/if}}
+{{/if}}
+{{else}}
 {{#if ../isPlaywright}}
   await {{instanceFromScreen screen}}.{{locator}}.textContent();
 {{else}}
   await {{instanceFromScreen screen}}.{{locator}}.getText();
 {{/if}}
 {{/if}}
+{{/if}}
 {{!-- STEP TYPE: waitFor --}}
 {{else if (eq type 'waitFor')}}
+{{#if elementIndex}}
+{{#if (eq elementIndex 'first')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().waitForDisplayed({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.first().waitForDisplayed();
+{{/if}}
+{{/if}}
+{{else if (eq elementIndex 'last')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().waitForDisplayed({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.last().waitForDisplayed();
+{{/if}}
+{{/if}}
+{{else if (eq elementIndex 'custom')}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).waitForDisplayed({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{customIndex}}).waitForDisplayed();
+{{/if}}
+{{/if}}
+{{else}}
+{{#if ../isPlaywright}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).waitFor({ state: '{{waitState}}' });
+{{else}}
+{{#if (eq waitState 'visible')}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).waitForDisplayed();
+{{else if (eq waitState 'hidden')}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).waitForDisplayed({ reverse: true });
+{{else}}
+  await {{instanceFromScreen screen}}.{{locator}}.nth({{elementIndex}}).waitForDisplayed();
+{{/if}}
+{{/if}}
+{{/if}}
+{{else}}
 {{#if ../isPlaywright}}
   await {{instanceFromScreen screen}}.{{locator}}.waitFor({ state: '{{waitState}}' });
 {{else}}
@@ -382,6 +561,7 @@ const {{actionName}} = async (testDataPath, options = {}) => {
   await {{instanceFromScreen screen}}.{{locator}}.waitForExist({ reverse: true });
 {{else}}
   await {{instanceFromScreen screen}}.{{locator}}.waitForDisplayed();
+{{/if}}
 {{/if}}
 {{/if}}
 {{!-- ═══════════════════════════════════════════════════════════════════════════ --}}
