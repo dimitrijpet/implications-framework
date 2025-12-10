@@ -852,6 +852,11 @@ if (!shouldSkipRegistration) {
 {{#each assertions}}
       {{{expectCode}}}
 {{/each}}
+{{else if (eq blockType 'data-assertion')}}
+      // Block {{position}}: {{description}}
+{{#each assertions}}
+      {{{expectCode}}}
+{{/each}}
 {{/if}}
 {{/each}}
 {{else if hasLegacyAssertions}}

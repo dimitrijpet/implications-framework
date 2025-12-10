@@ -2328,6 +2328,40 @@ if (block.data.assertions?.length > 0) {
           blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
         }
       }
+
+      // ─────────────────────────────────────────────────────────
+// Handle DATA-ASSERTION block
+// ─────────────────────────────────────────────────────────
+if (block.type === 'data-assertion' && block.assertions) {
+  const assertionElements = block.assertions.map(assertion => {
+    const assertProps = [];
+    
+    if (assertion.left) {
+      assertProps.push(t.objectProperty(t.identifier('left'), t.stringLiteral(assertion.left)));
+    }
+    if (assertion.operator) {
+      assertProps.push(t.objectProperty(t.identifier('operator'), t.stringLiteral(assertion.operator)));
+    }
+    if (assertion.right !== undefined) {
+      assertProps.push(t.objectProperty(
+        t.identifier('right'),
+        typeof assertion.right === 'number' ? t.numericLiteral(assertion.right) :
+        typeof assertion.right === 'boolean' ? t.booleanLiteral(assertion.right) :
+        t.stringLiteral(String(assertion.right))
+      ));
+    }
+    if (assertion.message) {
+      assertProps.push(t.objectProperty(t.identifier('message'), t.stringLiteral(assertion.message)));
+    }
+    
+    return t.objectExpression(assertProps);
+  });
+  
+  blockProps.push(t.objectProperty(
+    t.identifier('assertions'),
+    t.arrayExpression(assertionElements)
+  ));
+}
       
       return t.objectExpression(blockProps);
     });
@@ -3314,6 +3348,8 @@ if (block.data.checks.contains && Object.keys(block.data.checks.contains).length
           ));
         }
       }
+
+      
       
       // ─────────────────────────────────────────────────────────
       // Handle FUNCTION-CALL block
@@ -3374,6 +3410,40 @@ if (block.data.checks.contains && Object.keys(block.data.checks.contains).length
       t.arrayExpression(blockElements)
     ));
   }
+
+  // ─────────────────────────────────────────────────────────
+// Handle DATA-ASSERTION block
+// ─────────────────────────────────────────────────────────
+if (block.type === 'data-assertion' && block.assertions) {
+  const assertionElements = block.assertions.map(assertion => {
+    const assertProps = [];
+    
+    if (assertion.left) {
+      assertProps.push(t.objectProperty(t.identifier('left'), t.stringLiteral(assertion.left)));
+    }
+    if (assertion.operator) {
+      assertProps.push(t.objectProperty(t.identifier('operator'), t.stringLiteral(assertion.operator)));
+    }
+    if (assertion.right !== undefined) {
+      assertProps.push(t.objectProperty(
+        t.identifier('right'),
+        typeof assertion.right === 'number' ? t.numericLiteral(assertion.right) :
+        typeof assertion.right === 'boolean' ? t.booleanLiteral(assertion.right) :
+        t.stringLiteral(String(assertion.right))
+      ));
+    }
+    if (assertion.message) {
+      assertProps.push(t.objectProperty(t.identifier('message'), t.stringLiteral(assertion.message)));
+    }
+    
+    return t.objectExpression(assertProps);
+  });
+  
+  blockProps.push(t.objectProperty(
+    t.identifier('assertions'),
+    t.arrayExpression(assertionElements)
+  ));
+}
   // ═══════════════════════════════════════════════════════════
   // END BLOCKS SUPPORT
   // ═══════════════════════════════════════════════════════════

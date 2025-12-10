@@ -1412,6 +1412,29 @@ if (storeAs && expectCode) {
         break;
       }
 
+        // ═══════════════════════════════════════════════════════════
+      // DATA-ASSERTION BLOCK
+      // ═══════════════════════════════════════════════════════════
+      case "data-assertion": {
+        const assertions = (block.assertions || []).map(assertion => {
+          return {
+            expectCode: this._generateDataAssertionCode(assertion)
+          };
+        });
+        
+        processed.push({
+          blockType: "data-assertion",
+          position: index + 1,
+          description: block.label || block.description || "Data assertions",
+          assertions,
+          enabled: true,
+        });
+        console.log(`   ✅ Added data-assertion block with ${assertions.length} assertions`);
+        break;
+      }
+
+
+      
       // ═══════════════════════════════════════════════════════════
       // CUSTOM-CODE BLOCK
       // ═══════════════════════════════════════════════════════════
@@ -1511,6 +1534,95 @@ if (storeAs && expectCode) {
       normalizedInstance.includes(normalizedScreen) ||
       normalizedScreen.includes(normalizedInstance)
     );
+  }
+
+  /**
+   * Generate assertion code for data-assertion blocks
+   */
+  _generateDataAssertionCode(assertion) {
+    const { left, operator, right, message } = assertion;
+    
+    const leftCode = this._resolveDataAssertionOperand(left);
+    const rightCode = right ? this._resolveDataAssertionOperand(right) : null;
+    
+    switch (operator) {
+      case 'equals':
+        return `expect(${leftCode}).toBe(${rightCode});`;
+      case 'notEquals':
+        return `expect(${leftCode}).not.toBe(${rightCode});`;
+      case 'contains':
+        return `expect(${leftCode}).toContain(${rightCode});`;
+      case 'notContains':
+        return `expect(${leftCode}).not.toContain(${rightCode});`;
+      case 'greaterThan':
+        return `expect(Number(${leftCode})).toBeGreaterThan(Number(${rightCode}));`;
+      case 'lessThan':
+        return `expect(Number(${leftCode})).toBeLessThan(Number(${rightCode}));`;
+      case 'greaterOrEqual':
+        return `expect(Number(${leftCode})).toBeGreaterThanOrEqual(Number(${rightCode}));`;
+      case 'lessOrEqual':
+        return `expect(Number(${leftCode})).toBeLessThanOrEqual(Number(${rightCode}));`;
+      case 'matches':
+        return `expect(${leftCode}).toMatch(${rightCode});`;
+      case 'startsWith':
+        return `expect(String(${leftCode}).startsWith(${rightCode})).toBe(true);`;
+      case 'endsWith':
+        return `expect(String(${leftCode}).endsWith(${rightCode})).toBe(true);`;
+      case 'isDefined':
+        return `expect(${leftCode}).toBeDefined();`;
+      case 'isUndefined':
+        return `expect(${leftCode}).toBeUndefined();`;
+      case 'isTruthy':
+        return `expect(${leftCode}).toBeTruthy();`;
+      case 'isFalsy':
+        return `expect(${leftCode}).toBeFalsy();`;
+      case 'lengthEquals':
+        return `expect(${leftCode}.length).toBe(${rightCode});`;
+      case 'lengthGreaterThan':
+        return `expect(${leftCode}.length).toBeGreaterThan(${rightCode});`;
+      default:
+        return `// Unknown operator: ${operator}`;
+    }
+  }
+
+  /**
+   * Resolve a data assertion operand to code
+   */
+  _resolveDataAssertionOperand(operand) {
+    if (!operand) return 'undefined';
+    
+    // Handle stored variables: {{varName}}
+    if (operand.startsWith('{{') && operand.endsWith('}}')) {
+      const varPath = operand.slice(2, -2);
+      return `storedVars.${varPath}`;
+    }
+    
+    // Handle ctx.data.field syntax
+    if (operand.startsWith('ctx.data.')) {
+      return operand;
+    }
+    
+    // Handle regex patterns
+    if (operand.startsWith('/') && operand.lastIndexOf('/') > 0) {
+      return operand;
+    }
+    
+    // Handle numeric literals
+    if (!isNaN(operand) && operand.trim() !== '') {
+      return operand;
+    }
+    
+    // Handle boolean literals
+    if (operand === 'true' || operand === 'false') {
+      return operand;
+    }
+    
+    // Default: treat as string literal
+    if (!operand.startsWith("'") && !operand.startsWith('"')) {
+      return `'${operand.replace(/'/g, "\\'")}'`;
+    }
+    
+    return operand;
   }
 
  /**

@@ -31,6 +31,7 @@ import {
   createUIAssertionBlock,
   createCustomCodeBlock,
   createFunctionCallBlock,
+  createDataAssertionBlock,  // ← ADD THIS
   addBlockAtPosition,
   deleteBlock,
   duplicateBlock,
@@ -216,7 +217,7 @@ const variablesByBlockIndex = useMemo(() => {
     onBlocksChange(newBlocks);
   };
 
-  const handleAddBlock = (type) => {
+const handleAddBlock = (type) => {
     let newBlock;
     switch (type) {
       case BLOCK_TYPES.UI_ASSERTION:
@@ -233,6 +234,12 @@ const variablesByBlockIndex = useMemo(() => {
         newBlock = createFunctionCallBlock({
           label: `Function ${blocks.filter(b => b.type === type).length + 1}`,
           instance: instanceName || ''
+        });
+        break;
+      // ↓↓↓ ADD THIS CASE ↓↓↓
+      case BLOCK_TYPES.DATA_ASSERTION:
+        newBlock = createDataAssertionBlock({
+          label: `Data Check ${blocks.filter(b => b.type === type).length + 1}`
         });
         break;
       default:

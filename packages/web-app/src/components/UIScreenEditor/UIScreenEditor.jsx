@@ -14,6 +14,7 @@ import BlockList from './BlockList';
 import { migrateToBlocksFormat, blocksToLegacyFormat, isLegacyFormat } from './blockUtils';
 import { collectVariablesFromUIValidations } from './collectVariablesFromUIValidations';
 import useProjectConfig from '../../hooks/useProjectConfig';
+import DataAssertionContent from './DataAssertionContent';
 // ✅ ADD these imports
 import PlatformSectionWithOrdering from './PlatformSectionWithOrdering';
 import { screensObjectToArray, screensArrayToObject } from './screenOrderingUtils';

@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { BLOCK_TYPES, BLOCK_TYPE_META } from './blockUtils';
 import FunctionCallContent from './FunctionCallContent';
 import UIAssertionContent from './UIAssertionContent';
+import DataAssertionContent from './DataAssertionContent';
 
 /**
  * BlockRenderer - Renders a single block with collapse/expand, enable/disable
@@ -44,7 +45,7 @@ export default function BlockRenderer({
   const color = theme.colors.accents[colorKey] || theme.colors.accents.blue;
 
   // Render different content based on block type
-  const renderBlockContent = () => {
+ const renderBlockContent = () => {
     switch (block.type) {
       case BLOCK_TYPES.UI_ASSERTION:
         return (
@@ -80,6 +81,18 @@ export default function BlockRenderer({
             pomName={pomName}
             projectPath={projectPath}
             storedVariables={storedVariables}
+          />
+        );
+      
+      // ↓↓↓ ADD THIS ENTIRE CASE ↓↓↓
+      case BLOCK_TYPES.DATA_ASSERTION:
+        return (
+          <DataAssertionContent
+            block={block}
+            onChange={(updated) => onUpdate(updated)}
+            theme={theme}
+            storedVariables={storedVariables}
+            editMode={editMode}
           />
         );
       
@@ -270,6 +283,12 @@ function getBlockSummary(block) {
         return storeAs ? `${storeAs} = ${instance}.${method}()` : `${instance}.${method}()`;
       }
       return 'Not configured';
+    }
+    
+    // ↓↓↓ ADD THIS CASE ↓↓↓
+    case BLOCK_TYPES.DATA_ASSERTION: {
+      const count = block.assertions?.length || 0;
+      return `${count} assertion${count !== 1 ? 's' : ''}`;
     }
     
     default:
