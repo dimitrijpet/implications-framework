@@ -42,7 +42,7 @@ class POMDiscovery {
     for (const filePath of pomFiles) {
       try {
         const structure = await this._extractPOMStructure(filePath);
-        if (structure) {
+      if (structure) {
   poms.push(structure);
   this.pomCache.set(structure.name, structure);
   
@@ -50,9 +50,9 @@ class POMDiscovery {
   for (const cls of structure.classes) {
     if (cls.name) {
       this.pomCache.set(cls.name, structure);
+      console.log(`      📍 Also cached as: ${cls.name}`);  // ← ADD THIS
     }
   }
-
           
           // ✅ NEW: Check if this is a navigation file
           if (this._isNavigationFile(filePath, structure)) {
@@ -269,6 +269,20 @@ async _findPOMFiles() {
 }
 
 /**
+ * ✅ NEW: Check if a method name looks like a locator getter
+ * Methods like card(), title(), btnFavourite() that take an index
+ */
+_looksLikeLocatorMethod(name) {
+  const locatorPatterns = [
+    /^(btn|button|link|input|card|title|heading|text|label|icon|image|img)/i,
+    /^(get|find|locate)/i,
+    /(element|locator|selector)$/i
+  ];
+  
+  return locatorPatterns.some(pattern => pattern.test(name));
+}
+
+/**
  * ✅ NEW: Load POM patterns from ai-testing.config.js or use defaults
  */
 async _loadPOMPatterns() {
@@ -417,32 +431,48 @@ async _loadPOMPatterns() {
           name: member.key.name,
           async: member.async || false
         });
-      } else if (member.kind === 'method' && member.key.name !== 'constructor') {
-        // ✨ Extract parameters
-        const params = this._extractParameters(member.params);
-        
-        // ✨ NEW: Extract return keys from function body
-        const returns = this._extractReturnKeys(member.body);
-        
-        // Add to methods array (legacy format)
-        classInfo.methods.push({
-          name: member.key.name,
-          async: member.async || false
-        });
-        
-        // ✅ Add ALL methods to functions array with return info
-        classInfo.functions.push({
-          name: member.key.name,
-          async: member.async || false,
-          parameters: params,
-          paramNames: params.map(p => p.name),
-          signature: this._buildSignature(member.key.name, params),
-          returns: returns  // ✨ NEW: { type: 'object', keys: ['index', 'price', ...] }
-        });
-      }
+      } 
+
+else if (member.kind === 'method' && member.key.name !== 'constructor') {
+  const params = this._extractParameters(member.params);
+  const returns = this._extractReturnKeys(member.body);
+  
+  // Add to methods array (legacy format)
+  classInfo.methods.push({
+    name: member.key.name,
+    async: member.async || false
+  });
+  
+  // ✅ Add ALL methods to functions array with return info
+  classInfo.functions.push({
+    name: member.key.name,
+    async: member.async || false,
+    parameters: params,
+    paramNames: params.map(p => p.name),
+    signature: this._buildSignature(member.key.name, params),
+    returns: returns
+  });
+  
+  // ✅ NEW: Also add methods WITH parameters as "locators" if they seem like element getters
+  // This handles card(nth), title(nth), btnFavourite(nth), etc.
+  if (params.length > 0 && this._looksLikeLocatorMethod(member.key.name)) {
+    classInfo.getters.push({
+      name: member.key.name,
+      async: member.async || false,
+      isMethod: true,  // Flag to indicate this needs () when called
+      parameters: params
+    });
+  }
+}
     }
 
-    return classInfo;
+     // ✅ ADD DEBUG AT THE END:
+  console.log(`\n📦 Extracted class: ${classInfo.name}`);
+  console.log(`   Getters (${classInfo.getters.length}):`, classInfo.getters.map(g => g.name));
+  console.log(`   Properties (${classInfo.properties.length}):`, classInfo.properties.map(p => `${p.name}(${p.type})`));
+  console.log(`   Functions (${classInfo.functions.length}):`, classInfo.functions.map(f => f.name));
+
+  return classInfo;
   }
 
   

@@ -104,43 +104,71 @@ export default function UIAssertionContent({
   const [typedLocatorOptions, setTypedLocatorOptions] = useState([]);
 
   // Load locators when POM changes
-  useEffect(() => {
-    const loadLocators = async () => {
-      if (!pomName && !instanceName) {
-        setLocatorOptions([]);
-        setTypedLocatorOptions([]);
-        return;
+useEffect(() => {
+  const loadLocators = async () => {
+    // ✅ DEBUG: Log what we're getting
+    console.log('🔍 loadLocators called:', { pomName, instanceName, projectPath });
+    
+    if (!pomName) {
+      console.log('⚠️ No pomName, skipping');
+      setLocatorOptions([]);
+      setTypedLocatorOptions([]);
+      return;
+    }
+    
+    if (!projectPath) {
+      console.log('⚠️ No projectPath, skipping');
+      setLocatorOptions([]);
+      setTypedLocatorOptions([]);
+      return;
+    }
+
+    setLoadingLocators(true);
+    try {
+      const url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
+      console.log('🌐 Fetching:', url);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load POM: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('📦 API Response:', data);
+      
+      // Get locators from instancePaths.default (or specific instance)
+     // Get locators - for flat POMs they're in 'default'
+const locatorNames = data.instancePaths?.default || [];
+console.log('📍 Locator names:', locatorNames);;
+      
+      // Set string locators (for visible/hidden/text checks)
+      setLocatorOptions(locatorNames.map(name => ({
+        value: name,
+        label: name
+      })));
 
-      setLoadingLocators(true);
-      try {
-        // Get string locators for simple fields (visible/hidden/text)
-        const locators = await getPOMLocators(pomName, instanceName);
-        setLocatorOptions(locators.map(loc => ({
-          value: loc,
-          label: loc
-        })));
+      // Set typed locators (for assertions section)
+      setTypedLocatorOptions(locatorNames.map(name => ({
+        value: name,
+        label: name,
+        type: 'locator',
+        signature: name
+      })));
 
-        // ✅ NEW: Get typed locators from sync method
-        const typedLocs = getPOMLocatorsSync(pomName);
-        setTypedLocatorOptions(typedLocs.map(loc => ({
-          value: loc.name,
-          label: loc.name,
-          type: 'locator',  // ✅ Always 'locator' for getters/properties
-          signature: loc.signature
-        })));
+      console.log(`✅ Loaded ${locatorNames.length} locators for ${pomName}`);
 
-      } catch (err) {
-        console.error('Failed to load locators:', err);
-        setLocatorOptions([]);
-        setTypedLocatorOptions([]);
-      } finally {
-        setLoadingLocators(false);
-      }
-    };
+    } catch (err) {
+      console.error('❌ Failed to load locators:', err);
+      setLocatorOptions([]);
+      setTypedLocatorOptions([]);
+    } finally {
+      setLoadingLocators(false);
+    }
+  };
 
-    loadLocators();
-  }, [pomName, instanceName, getPOMLocators, getPOMLocatorsSync]);
+  loadLocators();
+}, [pomName, instanceName, projectPath]);
 
   // Load functions when POM changes
   useEffect(() => {

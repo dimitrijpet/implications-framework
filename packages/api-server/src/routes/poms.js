@@ -446,38 +446,89 @@ router.get('/:pomName', async (req, res) => {
     const projectPath = req.query.projectPath || process.env.GUEST_PROJECT_PATH;
     const { pomName } = req.params;
 
-    if (!projectPath) {
-      return res.status(400).json({
-        error: 'No project path provided'
-      });
-    }
-
     const discovery = new POMDiscovery(projectPath);
     await discovery.discover();
 
-    const instances = discovery.getInstances(pomName);
-    const functions = discovery.getFunctions(pomName);
-
-    const isFlatPOM = instances.length === 0;
-
-    const instancePaths = {};
-    
-    if (isFlatPOM) {
-      const directPaths = discovery.getAvailablePaths(pomName);
-      if (directPaths.length > 0) {
-        instancePaths['default'] = directPaths;
-      }
-    } else {
-      for (const instance of instances) {
-        instancePaths[instance.name] = discovery.getAvailablePaths(pomName, instance.name); 
-      }
-      
-      const directGetters = discovery.getDirectGetters(pomName);
-      if (directGetters.length > 0) {
-        instancePaths['default'] = directGetters;
-        console.log(`   ✅ Added ${directGetters.length} direct getters to 'default' instance`);
+    // ✅ DEBUG: What's actually in the cache?
+    console.log('\n🐛 DEBUG CACHE:');
+    for (const [key, value] of discovery.pomCache.entries()) {
+      if (key.toLowerCase().includes('product') || key.toLowerCase().includes('card')) {
+        console.log(`   Key: "${key}"`);
+        console.log(`   Classes:`, value.classes?.map(c => c.name));
+        console.log(`   First class getters:`, value.classes?.[0]?.getters?.map(g => g.name));
+        console.log(`   First class properties:`, value.classes?.[0]?.properties?.map(p => p.name));
+        console.log('');
       }
     }
+    // ✅ FIX: Try multiple lookup strategies
+    let pom = discovery.pomCache.get(pomName);
+    
+    if (!pom) {
+      // Try case-insensitive search
+      for (const [key, cachedPom] of discovery.pomCache.entries()) {
+        if (key.toLowerCase() === pomName.toLowerCase()) {
+          pom = cachedPom;
+          break;
+        }
+        // Also check class names
+        if (cachedPom.classes?.some(cls => cls.name === pomName)) {
+          pom = cachedPom;
+          break;
+        }
+      }
+    }
+
+    if (!pom) {
+      console.log(`   ⚠️ POM "${pomName}" not found`);
+      console.log(`   📦 Available:`, [...discovery.pomCache.keys()].slice(0, 20));
+      return res.json({
+        success: true,
+        pomName,
+        instances: [],
+        instancePaths: {},
+        functions: []
+      });
+    }
+
+    // ✅ Extract directly from pom object
+    const instances = [];
+    const functions = [];
+    const locators = [];
+    
+    for (const cls of pom.classes || []) {
+      for (const prop of cls.properties || []) {
+        if (prop.type === 'instance') {
+          instances.push({ name: prop.name, className: prop.className });
+        }
+      }
+      
+      if (cls.functions) {
+        functions.push(...cls.functions);
+      }
+      
+      for (const getter of cls.getters || []) {
+        locators.push(getter.name);
+      }
+      for (const prop of cls.properties || []) {
+        if (prop.type === 'property') {
+          locators.push(prop.name);
+        }
+      }
+    }
+
+    const instancePaths = {};
+    if (instances.length === 0 && locators.length > 0) {
+      instancePaths['default'] = locators;
+    } else {
+      for (const inst of instances) {
+        instancePaths[inst.name] = discovery.getAvailablePaths(pom.name, inst.name);
+      }
+      if (locators.length > 0) {
+        instancePaths['default'] = locators;
+      }
+    }
+
+    console.log(`   ✅ ${pomName}: ${functions.length} functions, ${locators.length} locators`);
 
     res.json({
       success: true,
@@ -489,9 +540,7 @@ router.get('/:pomName', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Failed to get POM details:', error);
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
