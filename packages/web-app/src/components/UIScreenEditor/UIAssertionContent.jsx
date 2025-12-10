@@ -1,5 +1,5 @@
 // packages/web-app/src/components/UIScreenEditor/UIAssertionContent.jsx
-// ✅ ENHANCED: AssertionsSection now supports function arguments
+// ✅ ENHANCED: AssertionsSection now supports function arguments AND index modes for methods
 //
 // Features:
 // - Visible/Hidden: Index selector (first, last, all, any, nth)
@@ -8,6 +8,7 @@
 // - Custom assertions: Index selector for function/locator
 // - ✅ NEW: Function arguments support with variable suggestions
 // - ✅ NEW: Type field (locator vs method) for assertions
+// - ✅ NEW: Index mode for methods with index params (title(nth) with [all])
 // - Timeout configuration
 
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -23,7 +24,32 @@ const INDEX_OPTIONS = [
   { value: 'any', label: 'any', description: 'At least one must match' },
   { value: 'all', label: 'all', description: 'All elements must match' },
   { value: 'custom', label: 'nth...', description: 'Specific index number' },
+  { value: 'variable', label: '{{var}}', description: 'Use a variable' },  // ✅ ADD THIS
 ];
+
+// ✅ NEW: Check if parameter name is an index-type parameter
+const isIndexParameter = (paramName) => {
+  if (!paramName) return false;
+  const indexPatterns = /^(nth|index|idx|i|n|num|number|position|pos)$/i;
+  return indexPatterns.test(paramName);
+};
+
+// ✅ NEW: Check if a function takes an index parameter as first arg
+const hasIndexParameter = (funcInfo) => {
+  if (!funcInfo?.parameters?.length) return false;
+  const firstParam = funcInfo.parameters[0];
+  return isIndexParameter(firstParam.name);
+};
+
+// ✅ NEW: Get the index parameter name from a function
+const getIndexParamName = (funcInfo) => {
+  if (!funcInfo?.parameters?.length) return null;
+  const firstParam = funcInfo.parameters[0];
+  if (isIndexParameter(firstParam.name)) {
+    return firstParam.name;
+  }
+  return null;
+};
 
 /**
  * Parse field name to extract index notation
@@ -32,13 +58,21 @@ const INDEX_OPTIONS = [
 const parseFieldWithIndex = (fieldStr) => {
   if (!fieldStr) return { field: '', indexType: '', customIndex: '' };
   
-  const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
+  // Check for variable pattern: field[{{varName}}]
+  const varMatch = fieldStr.match(/^(.+)\[\{\{([^}]+)\}\}\]$/);
+  if (varMatch) {
+    return { field: varMatch[1], indexType: 'variable', customIndex: varMatch[2] };
+  }
+  
+  const match = fieldStr.match(/^(.+)\[(\d+|first|last|all|any)\]$/);
   if (!match) {
     return { field: fieldStr, indexType: '', customIndex: '' };
   }
   
   const idx = match[2];
   if (idx === '0') {
+    return { field: match[1], indexType: 'first', customIndex: '' };
+  } else if (idx === 'first') {
     return { field: match[1], indexType: 'first', customIndex: '' };
   } else if (['last', 'all', 'any'].includes(idx)) {
     return { field: match[1], indexType: idx, customIndex: '' };
@@ -53,7 +87,8 @@ const parseFieldWithIndex = (fieldStr) => {
 const buildFieldWithIndex = (field, indexType, customIndex) => {
   if (!field) return '';
   if (!indexType || indexType === '') return field;
-  if (indexType === 'first') return `${field}[0]`;
+  if (indexType === 'first') return `${field}[first]`;
+  if (indexType === 'variable') return `${field}[{{${customIndex}}}]`;  // ✅ ADD THIS
   if (indexType === 'custom') return `${field}[${customIndex || '0'}]`;
   return `${field}[${indexType}]`;
 };
@@ -63,7 +98,8 @@ const buildFieldWithIndex = (field, indexType, customIndex) => {
  */
 const getIndexLabel = (indexType, customIndex) => {
   if (!indexType) return null;
-  if (indexType === 'first') return '[0]';
+  if (indexType === 'first') return '[first]';
+  if (indexType === 'variable') return `[{{${customIndex}}}]`;  // ✅ ADD THIS
   if (indexType === 'custom') return `[${customIndex}]`;
   return `[${indexType}]`;
 };
@@ -104,71 +140,69 @@ export default function UIAssertionContent({
   const [typedLocatorOptions, setTypedLocatorOptions] = useState([]);
 
   // Load locators when POM changes
-useEffect(() => {
-  const loadLocators = async () => {
-    // ✅ DEBUG: Log what we're getting
-    console.log('🔍 loadLocators called:', { pomName, instanceName, projectPath });
-    
-    if (!pomName) {
-      console.log('⚠️ No pomName, skipping');
-      setLocatorOptions([]);
-      setTypedLocatorOptions([]);
-      return;
-    }
-    
-    if (!projectPath) {
-      console.log('⚠️ No projectPath, skipping');
-      setLocatorOptions([]);
-      setTypedLocatorOptions([]);
-      return;
-    }
-
-    setLoadingLocators(true);
-    try {
-      const url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
-      console.log('🌐 Fetching:', url);
+  useEffect(() => {
+    const loadLocators = async () => {
+      console.log('🔍 loadLocators called:', { pomName, instanceName, projectPath });
       
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to load POM: ${response.status}`);
+      if (!pomName) {
+        console.log('⚠️ No pomName, skipping');
+        setLocatorOptions([]);
+        setTypedLocatorOptions([]);
+        return;
       }
       
-      const data = await response.json();
-      console.log('📦 API Response:', data);
-      
-      // Get locators from instancePaths.default (or specific instance)
-     // Get locators - for flat POMs they're in 'default'
-const locatorNames = data.instancePaths?.default || [];
-console.log('📍 Locator names:', locatorNames);;
-      
-      // Set string locators (for visible/hidden/text checks)
-      setLocatorOptions(locatorNames.map(name => ({
-        value: name,
-        label: name
-      })));
+      if (!projectPath) {
+        console.log('⚠️ No projectPath, skipping');
+        setLocatorOptions([]);
+        setTypedLocatorOptions([]);
+        return;
+      }
 
-      // Set typed locators (for assertions section)
-      setTypedLocatorOptions(locatorNames.map(name => ({
-        value: name,
-        label: name,
-        type: 'locator',
-        signature: name
-      })));
+      setLoadingLocators(true);
+      try {
+        const url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
+        console.log('🌐 Fetching:', url);
+        
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to load POM: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('📦 API Response:', data);
+        
+        // Get locators - for flat POMs they're in 'default'
+        const locatorNames = data.instancePaths?.default || [];
+        console.log('📍 Locator names:', locatorNames);
+        
+        // Set string locators (for visible/hidden/text checks)
+        setLocatorOptions(locatorNames.map(name => ({
+          value: name,
+          label: name
+        })));
 
-      console.log(`✅ Loaded ${locatorNames.length} locators for ${pomName}`);
+        // Set typed locators (for assertions section)
+        setTypedLocatorOptions(locatorNames.map(name => ({
+          value: name,
+          label: name,
+          type: 'locator',
+          signature: name
+        })));
 
-    } catch (err) {
-      console.error('❌ Failed to load locators:', err);
-      setLocatorOptions([]);
-      setTypedLocatorOptions([]);
-    } finally {
-      setLoadingLocators(false);
-    }
-  };
+        console.log(`✅ Loaded ${locatorNames.length} locators for ${pomName}`);
 
-  loadLocators();
-}, [pomName, instanceName, projectPath]);
+      } catch (err) {
+        console.error('❌ Failed to load locators:', err);
+        setLocatorOptions([]);
+        setTypedLocatorOptions([]);
+      } finally {
+        setLoadingLocators(false);
+      }
+    };
+
+    loadLocators();
+  }, [pomName, instanceName, projectPath]);
 
   // Load functions when POM changes
   useEffect(() => {
@@ -181,12 +215,15 @@ console.log('📍 Locator names:', locatorNames);;
     setFunctionOptions(functions.map(fn => ({
       value: fn.name,
       label: fn.name,
-      type: 'method',  // ✅ Always 'method' for functions
+      type: 'method',
       description: fn.signature,
       async: fn.async,
       parameters: fn.parameters || [],
       paramNames: fn.paramNames || [],
-      returns: fn.returns
+      returns: fn.returns,
+      // ✅ NEW: Flag if this method has an index parameter
+      hasIndexParam: hasIndexParameter(fn),
+      indexParamName: getIndexParamName(fn)
     })));
   }, [pomName, getPOMFunctions]);
 
@@ -223,31 +260,33 @@ console.log('📍 Locator names:', locatorNames);;
     <div className="space-y-4">
       {/* Visible/Hidden Fields Row */}
       <div className="grid grid-cols-2 gap-4">
-        {/* Visible Fields */}
-        <MultiSelectWithIndex
-          values={data.visible || []}
-          onChange={(vals) => updateData('visible', vals)}
-          options={locatorOptions}
-          placeholder="Add visible fields..."
-          disabled={!editMode}
-          theme={theme}
-          label={`👁 Visible (${summary.visible})`}
-          color="green"
-          loading={loadingLocators}
-        />
+    {/* Visible Fields */}
+<MultiSelectWithIndex
+  values={data.visible || []}
+  onChange={(vals) => updateData('visible', vals)}
+  options={locatorOptions}
+  placeholder="Add visible fields..."
+  disabled={!editMode}
+  theme={theme}
+  label={`👁 Visible (${summary.visible})`}
+  color="green"
+  loading={loadingLocators}
+  storedVariables={storedVariables}  // ✅ ADD THIS
+/>
 
-        {/* Hidden Fields */}
-        <MultiSelectWithIndex
-          values={data.hidden || []}
-          onChange={(vals) => updateData('hidden', vals)}
-          options={locatorOptions}
-          placeholder="Add hidden fields..."
-          disabled={!editMode}
-          theme={theme}
-          label={`🚫 Hidden (${summary.hidden})`}
-          color="red"
-          loading={loadingLocators}
-        />
+{/* Hidden Fields */}
+<MultiSelectWithIndex
+  values={data.hidden || []}
+  onChange={(vals) => updateData('hidden', vals)}
+  options={locatorOptions}
+  placeholder="Add hidden fields..."
+  disabled={!editMode}
+  theme={theme}
+  label={`🚫 Hidden (${summary.hidden})`}
+  color="red"
+  loading={loadingLocators}
+  storedVariables={storedVariables}  // ✅ ADD THIS
+/>
       </div>
 
       {/* Text Checks Section */}
@@ -260,6 +299,7 @@ console.log('📍 Locator names:', locatorNames);;
         locatorOptions={locatorOptions}
         onTextChange={(val) => updateChecks('text', val)}
         onContainsChange={(val) => updateChecks('contains', val)}
+        
       />
 
       {/* Truthy/Falsy Section */}
@@ -274,6 +314,7 @@ console.log('📍 Locator names:', locatorNames);;
             theme={theme}
             label={`✓ Truthy (${summary.truthy})`}
             color="blue"
+            storedVariables={storedVariables}  
           />
           <MultiSelectWithIndex
             values={data.falsy || []}
@@ -284,18 +325,19 @@ console.log('📍 Locator names:', locatorNames);;
             theme={theme}
             label={`✗ Falsy (${summary.falsy})`}
             color="orange"
+            storedVariables={storedVariables}  
           />
         </div>
       )}
 
-      {/* Assertions Section - ✅ NOW WITH TYPE SUPPORT */}
+      {/* Assertions Section - ✅ NOW WITH TYPE AND INDEX MODE SUPPORT */}
       {(editMode || summary.assertions > 0) && (
         <AssertionsSection
           assertions={data.assertions || []}
           editMode={editMode}
           theme={theme}
           functionOptions={functionOptions}
-          locatorOptions={typedLocatorOptions}  // ✅ Pass typed locators
+          locatorOptions={typedLocatorOptions}
           storedVariables={storedVariables}
           onChange={(vals) => updateData('assertions', vals)}
         />
@@ -374,7 +416,8 @@ function MultiSelectWithIndex({
   theme,
   label,
   color = 'blue',
-  loading = false
+  loading = false,
+  storedVariables = []  // ✅ ADD THIS
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -554,13 +597,15 @@ function MultiSelectWithIndex({
         )}
       </div>
 
-      {/* Index Selector Popup */}
-      {pendingItem && (
-        <IndexSelectorPopup
-          item={pendingItem}
-          theme={theme}
-          accentColor={accentColor}
-          onSelect={(indexType, customIndex) => {
+{/* Index Selector Popup */}
+{pendingItem && (
+  <IndexSelectorPopup
+    item={pendingItem}
+    theme={theme}
+    accentColor={accentColor}
+    storedVariables={storedVariables}  // ✅ ADD THIS
+    onSelect={(indexType, customIndex) => {
+
             const baseField = parseFieldWithIndex(pendingItem.value).field;
             if (pendingItem.isEdit) {
               handleUpdateIndex(pendingItem.value, indexType, customIndex);
@@ -613,17 +658,27 @@ function MultiSelectWithIndex({
 // INDEX SELECTOR POPUP
 // ═══════════════════════════════════════════════════════════
 
-function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
+function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel, storedVariables = [] }) {
   const [indexType, setIndexType] = useState(item.indexType || '');
   const [customIndex, setCustomIndex] = useState(item.customIndex || '');
   
   const baseField = parseFieldWithIndex(item.value).field;
 
   const handleSelect = (type) => {
-    if (type === 'custom') {
-      setIndexType('custom');
+    if (type === 'custom' || type === 'variable') {
+      setIndexType(type);
+      setCustomIndex('');
     } else {
       onSelect(type, '');
+    }
+  };
+
+  const handleApply = () => {
+    if (indexType === 'variable' && customIndex) {
+      // Pass variable without {{ }} - buildFieldWithIndex will add them
+      onSelect('variable', customIndex);
+    } else if (indexType === 'custom' && customIndex) {
+      onSelect('custom', customIndex);
     }
   };
 
@@ -633,7 +688,7 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
       style={{
         background: theme.colors.background.secondary,
         border: `1px solid ${accentColor}`,
-        minWidth: '260px'
+        minWidth: '280px'
       }}
     >
       <div className="text-xs font-semibold mb-2" style={{ color: theme.colors.text.secondary }}>
@@ -641,6 +696,7 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         <span className="font-mono ml-1" style={{ color: accentColor }}>{baseField}</span>
       </div>
       
+      {/* Index type buttons */}
       <div className="flex flex-wrap gap-1 mb-2">
         {INDEX_OPTIONS.map(opt => (
           <button
@@ -657,6 +713,7 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         ))}
       </div>
       
+      {/* Custom number input */}
       {indexType === 'custom' && (
         <div className="flex gap-2 mb-2">
           <input
@@ -674,8 +731,9 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
             autoFocus
           />
           <button
-            onClick={() => onSelect('custom', customIndex)}
-            className="px-3 py-1 rounded text-sm font-semibold"
+            onClick={handleApply}
+            disabled={!customIndex}
+            className="px-3 py-1 rounded text-sm font-semibold disabled:opacity-50"
             style={{ background: accentColor, color: theme.colors.background.primary }}
           >
             Apply
@@ -683,12 +741,63 @@ function IndexSelectorPopup({ item, theme, accentColor, onSelect, onCancel }) {
         </div>
       )}
       
+      {/* Variable selector */}
+      {indexType === 'variable' && (
+        <div className="space-y-2 mb-2">
+          <select
+            value={customIndex}
+            onChange={(e) => setCustomIndex(e.target.value)}
+            className="w-full px-2 py-1 rounded text-sm font-mono"
+            style={{
+              background: theme.colors.background.primary,
+              border: `1px solid ${theme.colors.accents.purple}`,
+              color: theme.colors.accents.purple
+            }}
+            autoFocus
+          >
+            <option value="">Select variable...</option>
+            {storedVariables.map((v, i) => (
+              <option key={i} value={v.path || v.name}>
+                {v.path || v.name}
+              </option>
+            ))}
+          </select>
+          
+          {/* Or type custom variable */}
+          <input
+            type="text"
+            value={customIndex}
+            onChange={(e) => setCustomIndex(e.target.value)}
+            placeholder="Or type: fieldName (e.g., cardIndex)"
+            className="w-full px-2 py-1 rounded text-sm font-mono"
+            style={{
+              background: theme.colors.background.primary,
+              border: `1px solid ${theme.colors.border}`,
+              color: theme.colors.accents.purple
+            }}
+          />
+          
+          <button
+            onClick={handleApply}
+            disabled={!customIndex}
+            className="w-full px-3 py-1 rounded text-sm font-semibold disabled:opacity-50"
+            style={{ background: accentColor, color: theme.colors.background.primary }}
+          >
+            Apply
+          </button>
+        </div>
+      )}
+      
+      {/* Result preview */}
       <div 
         className="p-2 rounded text-xs font-mono mb-2"
         style={{ background: theme.colors.background.primary, color: theme.colors.text.secondary }}
       >
         Result: <span style={{ color: accentColor }}>
-          {buildFieldWithIndex(baseField, indexType, customIndex) || baseField}
+          {indexType === 'variable' && customIndex 
+            ? `${baseField}[{{${customIndex}}}]`
+            : buildFieldWithIndex(baseField, indexType, customIndex) || baseField
+          }
         </span>
       </div>
       
@@ -1009,7 +1118,7 @@ function TextChecksSection({
 }
 
 // ═══════════════════════════════════════════════════════════
-// ✅ ENHANCED ASSERTIONS SECTION WITH TYPE SUPPORT
+// ✅ ENHANCED ASSERTIONS SECTION WITH TYPE AND INDEX MODE SUPPORT
 // ═══════════════════════════════════════════════════════════
 
 function AssertionsSection({ 
@@ -1021,16 +1130,9 @@ function AssertionsSection({
   storedVariables = [],
   onChange 
 }) {
-  console.log('🔍 DEBUG AssertionsSection:', {
-    assertionsCount: assertions.length,
-    locatorOptionsCount: locatorOptions.length,
-    functionOptionsCount: functionOptions.length,
-    hasTypeMissing: assertions.some(a => !a.type),
-    firstLocator: locatorOptions[0]
-  });
   const [isAdding, setIsAdding] = useState(false);
   const [newFn, setNewFn] = useState('');
-  const [newType, setNewType] = useState('');  // ✅ Track selected type
+  const [newType, setNewType] = useState('');
   const [newIndexType, setNewIndexType] = useState('');
   const [newCustomIndex, setNewCustomIndex] = useState('');
   const [newExpect, setNewExpect] = useState('toBe');
@@ -1045,10 +1147,25 @@ function AssertionsSection({
     return functionOptions.find(f => f.value === newFn);
   }, [newFn, functionOptions]);
 
+  // ✅ NEW: Check if selected function has an index parameter
+  const functionHasIndexParam = useMemo(() => {
+    return selectedFunctionInfo?.hasIndexParam || false;
+  }, [selectedFunctionInfo]);
+
+  // ✅ NEW: Get the index parameter name
+  const indexParamName = useMemo(() => {
+    return selectedFunctionInfo?.indexParamName || 'nth';
+  }, [selectedFunctionInfo]);
+
   // Initialize args when function is selected
   useEffect(() => {
     if (selectedFunctionInfo?.parameters?.length > 0) {
-      setNewArgs(selectedFunctionInfo.parameters.map(p => ({
+      // ✅ If function has index param and we're using index mode, skip first param
+      const paramsToShow = (functionHasIndexParam && newIndexType) 
+        ? selectedFunctionInfo.parameters.slice(1)  // Skip index param
+        : selectedFunctionInfo.parameters;
+      
+      setNewArgs(paramsToShow.map(p => ({
         name: p.name,
         value: p.hasDefault ? String(p.defaultValue || '') : '',
         useVar: false,
@@ -1058,45 +1175,41 @@ function AssertionsSection({
     } else {
       setNewArgs([]);
     }
-  }, [selectedFunctionInfo]);
+  }, [selectedFunctionInfo, functionHasIndexParam, newIndexType]);
 
-const justUpdatedRef = useRef(false);
+  const justUpdatedRef = useRef(false);
 
-useEffect(() => {
-  // Skip if we just triggered an update
-  if (justUpdatedRef.current) {
-    justUpdatedRef.current = false;
-    return;
-  }
-
-  const needsTypeUpdate = assertions.some(a => !a.type);
-  if (!needsTypeUpdate) return;
-  
-  const updated = assertions.map(assertion => {
-    if (assertion.type) return assertion;
-    
-    const baseFn = parseFieldWithIndex(assertion.fn).field;
-    
-    // Check if it's in locatorOptions (if available)
-    if (locatorOptions.length > 0) {
-      const isLocator = locatorOptions.some(l => l.value === baseFn);
-      return { ...assertion, type: isLocator ? 'locator' : 'method' };
+  useEffect(() => {
+    if (justUpdatedRef.current) {
+      justUpdatedRef.current = false;
+      return;
     }
+
+    const needsTypeUpdate = assertions.some(a => !a.type);
+    if (!needsTypeUpdate) return;
     
-    // Fallback: infer from naming patterns
-    const methodPatterns = /^(click|get|set|fill|select|wait|scroll|drag|drop|hover|focus|blur|submit|clear|check|uncheck|toggle|open|close|show|hide|enable|disable|validate|verify|assert|is|has|can|should)/i;
+    const updated = assertions.map(assertion => {
+      if (assertion.type) return assertion;
+      
+      const baseFn = parseFieldWithIndex(assertion.fn).field;
+      
+      if (locatorOptions.length > 0) {
+        const isLocator = locatorOptions.some(l => l.value === baseFn);
+        return { ...assertion, type: isLocator ? 'locator' : 'method' };
+      }
+      
+      const methodPatterns = /^(click|get|set|fill|select|wait|scroll|drag|drop|hover|focus|blur|submit|clear|check|uncheck|toggle|open|close|show|hide|enable|disable|validate|verify|assert|is|has|can|should)/i;
+      
+      if (methodPatterns.test(baseFn)) {
+        return { ...assertion, type: 'method' };
+      }
+      
+      return { ...assertion, type: 'locator' };
+    });
     
-    if (methodPatterns.test(baseFn)) {
-      return { ...assertion, type: 'method' };
-    }
-    
-    // Default to locator (most UI elements are locators)
-    return { ...assertion, type: 'locator' };
-  });
-  
-  justUpdatedRef.current = true;
-  onChange(updated);
-}, [assertions, locatorOptions, onChange]);
+    justUpdatedRef.current = true;
+    onChange(updated);
+  }, [assertions, locatorOptions, onChange]);
 
   // Categorized expectation types
   const EXPECTATION_TYPES = {
@@ -1169,16 +1282,24 @@ useEffect(() => {
     setNewArgs(updated);
   };
 
-  // ✅ Handle selection from dropdown - sets both fn and type
+  // Handle selection from dropdown
   const handleSelectItem = (value, type) => {
     setNewFn(value);
     setNewType(type);
+    // ✅ Reset index when changing function
+    setNewIndexType('');
+    setNewCustomIndex('');
   };
 
   const handleAdd = () => {
     if (!newFn.trim()) return;
     
-    const finalFn = buildFieldWithIndex(newFn.trim(), newIndexType, newCustomIndex);
+    // ✅ For methods with index mode, use the index notation on fn name
+    const finalFn = (newType === 'method' && functionHasIndexParam && newIndexType)
+      ? buildFieldWithIndex(newFn.trim(), newIndexType, newCustomIndex)
+      : (newType === 'locator' && newIndexType)
+        ? buildFieldWithIndex(newFn.trim(), newIndexType, newCustomIndex)
+        : newFn.trim();
     
     // Handle expectation value
     let finalValue = newValue;
@@ -1188,7 +1309,7 @@ useEffect(() => {
       finalValue = Number(newValue);
     }
     
-    // Build args array
+    // Build args array (excluding index param if using index mode)
     const argsArray = newArgs.map(arg => {
       if (arg.useVar && arg.value) {
         return `{{${arg.value}}}`;
@@ -1196,16 +1317,21 @@ useEffect(() => {
       return arg.value;
     }).filter(v => v !== '');
     
-    // ✅ Use the tracked type, or infer from options
     const finalType = newType || (locatorOptions.some(l => l.value === newFn.trim()) ? 'locator' : 'method');
     
     const newAssertion = {
       fn: finalFn,
-      type: finalType,  // ✅ Always include type
+      type: finalType,
       expect: newExpect,
       ...(!noValueExpectations.includes(newExpect) && finalValue !== '' && { value: finalValue }),
       ...(newStoreAs.trim() && { storeAs: newStoreAs.trim() }),
-      ...(argsArray.length > 0 && { args: argsArray })
+      ...(argsArray.length > 0 && { args: argsArray }),
+      // ✅ NEW: Store index mode info for methods
+      ...(finalType === 'method' && functionHasIndexParam && newIndexType && {
+        indexMode: newIndexType,
+        ...(newIndexType === 'custom' && { customIndex: newCustomIndex }),
+        indexParamName: indexParamName
+      })
     };
     
     onChange([...assertions, newAssertion]);
@@ -1242,6 +1368,21 @@ useEffect(() => {
 
   const color = theme.colors.accents.purple;
 
+  // ✅ Helper to render index mode badge
+  const renderIndexModeBadge = (assertion) => {
+    const parsed = parseFieldWithIndex(assertion.fn);
+    if (!parsed.indexType) return null;
+    
+    return (
+      <span 
+        className="px-1 py-0.5 rounded text-[10px] font-bold"
+        style={{ background: color, color: theme.colors.background.primary }}
+      >
+        {getIndexLabel(parsed.indexType, parsed.customIndex)}
+      </span>
+    );
+  };
+
   return (
     <div>
       {/* Header */}
@@ -1275,7 +1416,7 @@ useEffect(() => {
               >
                 {/* Main assertion line */}
                 <div className="flex items-center gap-1 font-mono flex-wrap">
-                  {/* ✅ Type badge */}
+                  {/* Type badge */}
                   <span 
                     className="text-[10px] px-1.5 py-0.5 rounded font-mono"
                     style={{ 
@@ -1306,21 +1447,26 @@ useEffect(() => {
                     {expectType.returnsValue || expectType.returnsBoolean ? '' : 'expect('}
                   </span>
                   <span style={{ color }}>{parsed.field}</span>
-                  {parsed.indexType && (
-                    <span 
-                      className="px-1 py-0.5 rounded text-[10px] font-bold"
-                      style={{ background: color, color: theme.colors.background.primary }}
-                    >
-                      {getIndexLabel(parsed.indexType, parsed.customIndex)}
-                    </span>
-                  )}
                   
-                  {/* ✅ Show () only for methods */}
+                  {/* ✅ Index mode badge */}
+                  {renderIndexModeBadge(assertion)}
+                  
+                  {/* Show () for methods */}
                   {assertion.type === 'method' && (
                     <>
                       <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                      {/* ✅ Show index mode as first arg if applicable */}
+                      {parsed.indexType && (
+                        <span 
+                          className="px-1 py-0.5 rounded text-[10px]"
+                          style={{ background: `${theme.colors.accents.orange}30`, color: theme.colors.accents.orange }}
+                        >
+                          {parsed.indexType === 'custom' ? parsed.customIndex : parsed.indexType}
+                        </span>
+                      )}
                       {assertion.args && assertion.args.length > 0 && (
                         <span style={{ color: theme.colors.accents.cyan }}>
+                          {parsed.indexType && ', '}
                           {assertion.args.map((arg, i) => (
                             <span key={i}>
                               {i > 0 && ', '}
@@ -1433,13 +1579,12 @@ useEffect(() => {
           className="p-3 rounded space-y-3"
           style={{ background: theme.colors.background.tertiary, border: `1px solid ${color}40` }}
         >
-          {/* ✅ ENHANCED: Function/Locator selector with categorized dropdown */}
+          {/* Function/Locator selector */}
           <div className="flex gap-2">
             <select
               value={newFn}
               onChange={(e) => {
                 const selectedValue = e.target.value;
-                // Find in locators first
                 const locator = locatorOptions.find(l => l.value === selectedValue);
                 if (locator) {
                   handleSelectItem(selectedValue, 'locator');
@@ -1456,7 +1601,6 @@ useEffect(() => {
             >
               <option value="">Select function/locator...</option>
               
-              {/* ✅ Locators group */}
               {locatorOptions.length > 0 && (
                 <optgroup label="📍 Locators (getters)">
                   {locatorOptions.map(opt => (
@@ -1467,12 +1611,11 @@ useEffect(() => {
                 </optgroup>
               )}
               
-              {/* ✅ Methods group */}
               {functionOptions.length > 0 && (
                 <optgroup label="ƒ Methods (functions)">
                   {functionOptions.map(opt => (
                     <option key={`fn-${opt.value}`} value={opt.value}>
-                      {opt.description || opt.label}{opt.async ? ' (async)' : ''}
+                      {opt.description || opt.label}{opt.async ? ' (async)' : ''}{opt.hasIndexParam ? ' 🔢' : ''}
                     </option>
                   ))}
                 </optgroup>
@@ -1484,8 +1627,7 @@ useEffect(() => {
               value={newFn}
               onChange={(e) => {
                 setNewFn(e.target.value);
-                // When typing manually, we need to infer type
-                setNewType('');  // Will be inferred on add
+                setNewType('');
               }}
               placeholder="or type name"
               className="w-32 px-2 py-1.5 rounded text-sm font-mono"
@@ -1496,7 +1638,6 @@ useEffect(() => {
               }}
             />
             
-            {/* ✅ Show selected type badge */}
             {newType && (
               <span 
                 className="flex items-center px-2 py-1 rounded text-xs font-semibold"
@@ -1514,8 +1655,105 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Function arguments (only for methods with params) */}
-          {selectedFunctionInfo?.parameters?.length > 0 && (
+          {/* ✅ NEW: Index selector for locators OR methods with index params */}
+          {(newType === 'locator' || functionHasIndexParam) && (
+            <div 
+              className="p-3 rounded space-y-2"
+              style={{ 
+                background: `${theme.colors.accents.orange}10`,
+                border: `1px solid ${theme.colors.accents.orange}40`
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold" style={{ color: theme.colors.accents.orange }}>
+                  🔢 {functionHasIndexParam ? `Index for "${indexParamName}" parameter` : 'Array Index'}
+                </span>
+                {functionHasIndexParam && (
+                  <span 
+                    className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: `${theme.colors.accents.purple}30`, color: theme.colors.accents.purple }}
+                  >
+                    Method takes index param
+                  </span>
+                )}
+              </div>
+              
+              <div className="flex gap-1 flex-wrap items-center">
+                {INDEX_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      setNewIndexType(opt.value);
+                      if (opt.value !== 'custom') setNewCustomIndex('');
+                    }}
+                    className="px-2 py-1 rounded text-xs font-semibold transition"
+                    style={{ 
+                      background: newIndexType === opt.value 
+                        ? theme.colors.accents.orange 
+                        : `${theme.colors.accents.orange}30`,
+                      color: newIndexType === opt.value 
+                        ? theme.colors.background.primary 
+                        : theme.colors.accents.orange
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                {newIndexType === 'custom' && (
+                  <input
+                    type="number"
+                    min="0"
+                    value={newCustomIndex}
+                    onChange={(e) => setNewCustomIndex(e.target.value)}
+                    placeholder="0"
+                    className="w-16 px-2 py-1 rounded text-xs"
+                    style={{
+                      background: theme.colors.background.primary,
+                      border: `1px solid ${theme.colors.border}`,
+                      color: theme.colors.text.primary
+                    }}
+                  />
+                )}
+              </div>
+              
+              {/* ✅ Explain what each mode does for methods */}
+              {functionHasIndexParam && newIndexType && (
+                <div 
+                  className="text-[10px] p-2 rounded"
+                  style={{ background: theme.colors.background.secondary, color: theme.colors.text.tertiary }}
+                >
+                  {newIndexType === 'all' && (
+                    <>
+                      <strong>[all]</strong>: Will loop through all elements, calling <code>{newFn}(i)</code> for each
+                    </>
+                  )}
+                  {newIndexType === 'any' && (
+                    <>
+                      <strong>[any]</strong>: Will pick a random element and call <code>{newFn}(randomIndex)</code>
+                    </>
+                  )}
+                  {newIndexType === 'first' && (
+                    <>
+                      <strong>[first]</strong>: Will call <code>{newFn}(0)</code>
+                    </>
+                  )}
+                  {newIndexType === 'last' && (
+                    <>
+                      <strong>[last]</strong>: Will call <code>{newFn}(count - 1)</code>
+                    </>
+                  )}
+                  {newIndexType === 'custom' && (
+                    <>
+                      <strong>[{newCustomIndex || '?'}]</strong>: Will call <code>{newFn}({newCustomIndex || '?'})</code>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Function arguments (skip index param if using index mode) */}
+          {newArgs.length > 0 && (
             <div 
               className="p-3 rounded space-y-2"
               style={{ 
@@ -1525,10 +1763,7 @@ useEffect(() => {
             >
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-semibold" style={{ color: theme.colors.accents.cyan }}>
-                  📝 Function Arguments ({selectedFunctionInfo.parameters.length})
-                </span>
-                <span className="text-xs font-mono" style={{ color: theme.colors.text.tertiary }}>
-                  {selectedFunctionInfo.signature}
+                  📝 {functionHasIndexParam && newIndexType ? 'Other Arguments' : 'Function Arguments'} ({newArgs.length})
                 </span>
               </div>
 
@@ -1676,46 +1911,6 @@ useEffect(() => {
             </div>
           )}
 
-          {/* Index selector */}
-          <div>
-            <label className="text-xs mb-1 block" style={{ color: theme.colors.text.tertiary }}>
-              Array Index (optional)
-            </label>
-            <div className="flex gap-1 flex-wrap items-center">
-              {INDEX_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    setNewIndexType(opt.value);
-                    if (opt.value !== 'custom') setNewCustomIndex('');
-                  }}
-                  className="px-2 py-1 rounded text-xs font-semibold transition"
-                  style={{ 
-                    background: newIndexType === opt.value ? color : `${color}30`,
-                    color: newIndexType === opt.value ? theme.colors.background.primary : color
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-              {newIndexType === 'custom' && (
-                <input
-                  type="number"
-                  min="0"
-                  value={newCustomIndex}
-                  onChange={(e) => setNewCustomIndex(e.target.value)}
-                  placeholder="0"
-                  className="w-16 px-2 py-1 rounded text-xs"
-                  style={{
-                    background: theme.colors.background.primary,
-                    border: `1px solid ${theme.colors.border}`,
-                    color: theme.colors.text.primary
-                  }}
-                />
-              )}
-            </div>
-          </div>
-
           {/* Expectation type */}
           <div className="flex gap-2 flex-wrap">
             <select
@@ -1771,7 +1966,6 @@ useEffect(() => {
               </optgroup>
             </select>
             
-            {/* Value input (if needed) */}
             {selectedExpectType.needsValue && (
               <div className="flex-1 flex gap-2 items-center">
                 {useVariable ? (
@@ -1862,7 +2056,6 @@ useEffect(() => {
             className="p-2 rounded text-xs font-mono"
             style={{ background: theme.colors.background.primary }}
           >
-            {/* ✅ Show type in preview */}
             <span 
               className="text-[10px] px-1 py-0.5 rounded mr-2"
               style={{
@@ -1877,17 +2070,32 @@ useEffect(() => {
               {(newType || 'method') === 'locator' ? '📍' : 'ƒ'}
             </span>
             
+            {/* ✅ Show index mode in preview */}
+            {newIndexType && (
+              <span 
+                className="text-[10px] px-1 py-0.5 rounded mr-2"
+                style={{ background: theme.colors.accents.orange, color: 'white' }}
+              >
+                [{newIndexType === 'custom' ? newCustomIndex : newIndexType}]
+              </span>
+            )}
+            
             {selectedExpectType.returnsValue || selectedExpectType.returnsBoolean ? (
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>const result = await </span>
-                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
-                {/* ✅ Show () only for methods */}
+                <span style={{ color }}>{newFn || 'fn'}</span>
                 {(newType || 'method') === 'method' && (
                   <>
                     <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                    {/* Show index arg for methods */}
+                    {functionHasIndexParam && newIndexType && (
+                      <span style={{ color: theme.colors.accents.orange }}>
+                        {newIndexType === 'custom' ? newCustomIndex : newIndexType === 'first' ? '0' : `<${newIndexType}>`}
+                      </span>
+                    )}
                     {newArgs.filter(a => a.value).map((arg, i) => (
                       <span key={i}>
-                        {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                        {(functionHasIndexParam && newIndexType) || i > 0 ? <span style={{ color: theme.colors.text.tertiary }}>, </span> : null}
                         <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
                           {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
                         </span>
@@ -1906,14 +2114,18 @@ useEffect(() => {
             ) : (
               <>
                 <span style={{ color: theme.colors.text.tertiary }}>expect(</span>
-                <span style={{ color }}>{buildFieldWithIndex(newFn || 'fn', newIndexType, newCustomIndex)}</span>
-                {/* ✅ Show () only for methods */}
+                <span style={{ color }}>{newFn || 'fn'}</span>
                 {(newType || 'method') === 'method' && (
                   <>
                     <span style={{ color: theme.colors.text.tertiary }}>(</span>
+                    {functionHasIndexParam && newIndexType && (
+                      <span style={{ color: theme.colors.accents.orange }}>
+                        {newIndexType === 'custom' ? newCustomIndex : newIndexType === 'first' ? '0' : `<${newIndexType}>`}
+                      </span>
+                    )}
                     {newArgs.filter(a => a.value).map((arg, i) => (
                       <span key={i}>
-                        {i > 0 && <span style={{ color: theme.colors.text.tertiary }}>, </span>}
+                        {(functionHasIndexParam && newIndexType) || i > 0 ? <span style={{ color: theme.colors.text.tertiary }}>, </span> : null}
                         <span style={{ color: arg.useVar ? theme.colors.accents.yellow : theme.colors.accents.green }}>
                           {arg.useVar ? `{{${arg.value}}}` : `"${arg.value}"`}
                         </span>
