@@ -1299,15 +1299,18 @@ const handleSubmit = async (e) => {
           ? screenName.charAt(0).toLowerCase() + screenName.slice(1) 
           : '';
         
-        // Build locator chain with index
-        let locatorChain = locatorName;
-        if (step.elementIndex === 'first') {
-          locatorChain = `${locatorName}.first()`;
-        } else if (step.elementIndex === 'last') {
-          locatorChain = `${locatorName}.last()`;
-        } else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
-          locatorChain = `${locatorName}.nth(${step.customIndex})`;
-        }
+       // Build locator chain with index
+let locatorChain = locatorName;
+if (step.elementIndex === 'first') {
+  locatorChain = `${locatorName}.first()`;
+} else if (step.elementIndex === 'last') {
+  locatorChain = `${locatorName}.last()`;
+} else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
+  locatorChain = `${locatorName}.nth(${step.customIndex})`;
+} else if (step.elementIndex === 'variable' && step.indexVariable) {
+  // Variable index - generates actual JS code like .nth(ctx.data.cardIndex)
+  locatorChain = `${locatorName}.nth(${step.indexVariable})`;
+}
         
         // Build method name based on action type
         let methodName;
@@ -1341,7 +1344,8 @@ const handleSubmit = async (e) => {
           screen: screenName,
           locator: locatorName,
           elementIndex: step.elementIndex || undefined,
-          customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+indexVariable: step.elementIndex === 'variable' ? step.indexVariable : undefined,
           ...(step.type === 'fill' && { value: step.value }),
           ...(step.type === 'waitFor' && { waitState: step.waitState }),
         };
@@ -2370,49 +2374,131 @@ const handleSubmit = async (e) => {
                   </div>
                 )}
 
-                {/* ✅ NEW: Element Index Selector */}
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
-                  </label>
-                  <div className="flex gap-2 items-center">
-                    <select
-                      value={step.elementIndex || ""}
-                      onChange={(e) => handleStepChange(index, 'elementIndex', e.target.value)}
-                      className="flex-1 px-3 py-1 rounded text-sm"
-                      style={{
-                        backgroundColor: defaultTheme.colors.background.tertiary,
-                        color: defaultTheme.colors.text.primary,
-                        border: `1px solid ${defaultTheme.colors.border}`,
-                      }}
-                    >
-                      <option value="">Single element (no index)</option>
-                      <option value="first">First [0] → .first()</option>
-                      <option value="last">Last → .last()</option>
-                      <option value="custom">Custom index → .nth(N)</option>
-                    </select>
-                    {step.elementIndex === 'custom' && (
-                      <input
-                        type="number"
-                        min="0"
-                        value={step.customIndex || 0}
-                        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
-                        placeholder="0"
-                        className="w-20 px-2 py-1 rounded text-sm font-mono"
-                        style={{
-                          backgroundColor: defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${defaultTheme.colors.border}`,
-                        }}
-                      />
-                    )}
-                  </div>
-                  {step.elementIndex && (
-                    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
-                      💡 Use when locator returns multiple elements (e.g., list items, cards)
-                    </p>
-                  )}
-                </div>
+               {/* ✅ Element Index Selector with Variable Support */}
+<div className="mb-2">
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
+  </label>
+  <div className="flex gap-2 items-center">
+    <select
+      value={step.elementIndex || ""}
+      onChange={(e) => {
+        handleStepChange(index, 'elementIndex', e.target.value);
+        // Clear when switching away from custom/variable
+        if (e.target.value !== 'custom' && e.target.value !== 'variable') {
+          handleStepChange(index, 'customIndex', undefined);
+          handleStepChange(index, 'indexVariable', undefined);
+        }
+      }}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">Single element (no index)</option>
+      <option value="first">First [0] → .first()</option>
+      <option value="last">Last → .last()</option>
+      <option value="custom">Custom index → .nth(N)</option>
+      <option value="variable">Variable → .nth(ctx.data.X)</option>
+    </select>
+    
+    {/* Custom numeric index input */}
+    {step.elementIndex === 'custom' && (
+      <input
+        type="number"
+        min="0"
+        value={step.customIndex || 0}
+        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
+        placeholder="0"
+        className="w-20 px-2 py-1 rounded text-sm font-mono"
+        style={{
+          backgroundColor: defaultTheme.colors.background.tertiary,
+          color: defaultTheme.colors.text.primary,
+          border: `1px solid ${defaultTheme.colors.border}`,
+        }}
+      />
+    )}
+    
+{/* Variable selector for dynamic index */}
+{step.elementIndex === 'variable' && (
+  <div className="flex-1 flex gap-2">
+    {/* Dropdown for quick selection */}
+    <select
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: step.indexVariable ? defaultTheme.colors.accents.yellow : defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">-- Quick select or type →</option>
+      
+      {/* Test Data Fields (ctx.data) */}
+      {testDataSchema.length > 0 && (
+        <optgroup label="📋 Test Data (ctx.data)">
+          {testDataSchema.map((field, i) => {
+            const fieldName = field.name || field;
+            return (
+              <option key={`data-${i}`} value={`ctx.data.${fieldName}`}>
+                ctx.data.{fieldName}
+              </option>
+            );
+          })}
+        </optgroup>
+      )}
+      
+      {/* Stored Variables from Previous Steps */}
+      {allStoredVariables.length > 0 && (
+        <optgroup label="💾 Stored Variables">
+          {allStoredVariables.map((v, i) => (
+            <option key={`stored-${i}`} value={`storedVars.${v.name}`}>
+              storedVars.{v.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+    
+    {/* Free text input for custom expressions */}
+    <input
+      type="text"
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      placeholder="ctx.data.cardIndex"
+      className="flex-1 px-2 py-1 rounded text-sm font-mono"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.accents.yellow,
+        border: `1px solid ${defaultTheme.colors.accents.yellow}`,
+      }}
+    />
+  </div>
+)}
+  </div>
+  
+  {step.elementIndex && (
+    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
+      💡 Use when locator returns multiple elements (e.g., list items, cards)
+    </p>
+  )}
+  
+  {/* Variable index preview */}
+  {step.elementIndex === 'variable' && step.indexVariable && (
+    <div 
+      className="text-xs mt-1 p-1.5 rounded font-mono"
+      style={{ 
+        backgroundColor: `${defaultTheme.colors.accents.yellow}15`,
+        color: defaultTheme.colors.accents.yellow 
+      }}
+    >
+      → .nth({step.indexVariable})
+    </div>
+  )}
+</div>
 
                {/* Code Preview */}
 <div 
@@ -2432,6 +2518,7 @@ const handleSubmit = async (e) => {
     {step.elementIndex === 'first' ? '.first()' : 
      step.elementIndex === 'last' ? '.last()' : 
      step.elementIndex === 'custom' ? `.nth(${step.customIndex || 0})` :
+     step.elementIndex === 'variable' ? `.nth(${step.indexVariable || 'ctx.data.index'})` :
      `.nth(${step.elementIndex})`}
   </span>
 )}

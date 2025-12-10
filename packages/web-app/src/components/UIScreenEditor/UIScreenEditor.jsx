@@ -32,6 +32,7 @@ const INDEX_OPTIONS = [
   { value: 'first', label: 'first' },
   { value: 'last', label: 'last' },
   { value: 'custom', label: 'index...' },
+  { value: 'variable', label: '{{var}}' },  // ✅ NEW
 ];
 
 // ============================================
@@ -160,7 +161,13 @@ const [testDataSchema, setTestDataSchema] = useState([]);
     screenIndex: -1
   });
 
-  const parseFieldWithIndex = (fieldStr) => {
+const parseFieldWithIndex = (fieldStr) => {
+  // Check for variable pattern: field[{{varName}}]
+  const varMatch = fieldStr.match(/^(.+)\[\{\{([^}]+)\}\}\]$/);
+  if (varMatch) {
+    return { field: varMatch[1], indexType: 'variable', customIndex: varMatch[2] };
+  }
+  
   const match = fieldStr.match(/^(.+)\[(\d+|last|all|any)\]$/);
   if (!match) {
     return { field: fieldStr, indexType: '', customIndex: '' };
@@ -176,9 +183,11 @@ const [testDataSchema, setTestDataSchema] = useState([]);
 };
 
 // Build field string with index
+// Update buildFieldWithIndex to handle variable indexes
 const buildFieldWithIndex = (field, indexType, customIndex) => {
   if (!indexType || indexType === '') return field;
   if (indexType === 'first') return `${field}[0]`;
+  if (indexType === 'variable') return `${field}[{{${customIndex}}}]`;  // ✅ NEW
   if (indexType === 'custom') return `${field}[${customIndex}]`;
   return `${field}[${indexType}]`;
 };
@@ -1111,16 +1120,17 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
 
           {/* Legacy View (existing sections) */}
           {viewMode === 'legacy' && hasLegacyData && (
-            <LegacyScreenContent
-              screen={screen}
-              editMode={editMode}
-              theme={theme}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              storedVariables={storedVariables}
-              onUpdate={onUpdate}
-            />
+<LegacyScreenContent
+  screen={screen}
+  editMode={editMode}
+  theme={theme}
+  pomName={pomName}
+  instanceName={instanceName}
+  projectPath={projectPath}
+  storedVariables={storedVariables}
+  testDataSchema={testDataSchema}  // ✅ ADD - need to get this from parent
+  onUpdate={onUpdate}
+/>
           )}
 
           {/* Action Buttons */}
@@ -1152,7 +1162,17 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
  * LegacyScreenContent - Renders the old section-based format
  * This preserves backward compatibility and allows viewing old data
  */
-function LegacyScreenContent({ screen, editMode, theme, pomName, instanceName, projectPath, storedVariables, onUpdate }) {
+function LegacyScreenContent({ 
+  screen, 
+  editMode, 
+  theme, 
+  pomName, 
+  instanceName, 
+  projectPath, 
+  storedVariables, 
+  testDataSchema,  // ✅ ADD
+  onUpdate 
+}) {
   const topLevelVisible = screen.visible || [];
   const topLevelHidden = screen.hidden || [];
   const checksVisible = screen.checks?.visible || [];
@@ -1169,19 +1189,21 @@ function LegacyScreenContent({ screen, editMode, theme, pomName, instanceName, p
       {/* Visible Elements */}
       {(allVisibleElements.length > 0 || editMode) && (
         editMode ? (
-          <ElementSection
-            title="✅ Visible Elements"
-            elements={allVisibleElements}
-            color={theme.colors.accents.green}
-            editMode={editMode}
-            pomName={pomName}
-            instanceName={instanceName}
-            projectPath={projectPath}
-            functions={functions}
-            onChange={(newElements) => onUpdate({ visible: newElements })}
-            theme={theme}
-            screen={screen}
-          />
+<ElementSection
+  title="✅ Visible Elements"
+  elements={allVisibleElements}
+  color={theme.colors.accents.green}
+  editMode={editMode}
+  pomName={pomName}
+  instanceName={instanceName}
+  projectPath={projectPath}
+  functions={functions}
+  onChange={(newElements) => onUpdate({ visible: newElements })}
+  theme={theme}
+  screen={screen}
+  storedVariables={storedVariables}  // ✅ ADD
+  testDataSchema={testDataSchema}     // ✅ ADD (need to pass this down)
+/>
         ) : (
           <ElementList
             elements={allVisibleElements}
@@ -1320,12 +1342,40 @@ const buildFieldWithIndex = (field, indexType, customIndex) => {
   return `${field}[${indexType}]`;
 };
 
-function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme, screen }) {
+function ElementSection({ title, elements, color, editMode, pomName, instanceName, projectPath, functions = {}, onChange, theme, screen, storedVariables = [], testDataSchema = [] }) {
   const [isAdding, setIsAdding] = useState(false);
   const [newElement, setNewElement] = useState('');
   const [newIndexType, setNewIndexType] = useState('');
   const [newCustomIndex, setNewCustomIndex] = useState('');
   const [fieldValidation, setFieldValidation] = useState(null);
+
+  // Build variable options for index
+  const indexVariableOptions = useMemo(() => {
+    const options = [];
+    
+    // From stored variables
+    storedVariables.forEach(v => {
+      options.push({
+        value: v.name || v.path,
+        label: v.name || v.path,
+        source: v.fromState || 'stored'
+      });
+    });
+    
+    // From test data schema
+    testDataSchema.forEach(field => {
+      const name = field.name || field;
+      if (!options.some(o => o.value === name)) {
+        options.push({
+          value: name,
+          label: name,
+          source: 'testData'
+        });
+      }
+    });
+    
+    return options;
+  }, [storedVariables, testDataSchema]);
 
   const handleAddElement = () => {
     if (!newElement.trim()) return;
@@ -1346,11 +1396,6 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
     onChange(elements.filter(el => el !== element));
   };
 
-  const handleUpdateElement = (oldElement, newField, newIdxType, newCustomIdx) => {
-    const finalElement = buildFieldWithIndex(newField, newIdxType, newCustomIdx);
-    onChange(elements.map(el => el === oldElement ? finalElement : el));
-  };
-
   return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
       <div className="flex items-center justify-between mb-2">
@@ -1368,8 +1413,17 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                 {parsed.field}
               </span>
               {parsed.indexType && (
-                <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ background: color, color: 'white' }}>
-                  [{parsed.indexType === 'first' ? '0' : parsed.indexType === 'custom' ? parsed.customIndex : parsed.indexType}]
+                <span 
+                  className="px-2 py-0.5 rounded text-xs font-semibold" 
+                  style={{ 
+                    background: parsed.indexType === 'variable' ? theme.colors.accents.purple : color, 
+                    color: 'white' 
+                  }}
+                >
+                  [{parsed.indexType === 'first' ? '0' : 
+                    parsed.indexType === 'variable' ? `{{${parsed.customIndex}}}` :
+                    parsed.indexType === 'custom' ? parsed.customIndex : 
+                    parsed.indexType}]
                 </span>
               )}
               {editMode && (
@@ -1416,7 +1470,10 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
               {/* Index selector */}
               <select
                 value={newIndexType}
-                onChange={(e) => setNewIndexType(e.target.value)}
+                onChange={(e) => {
+                  setNewIndexType(e.target.value);
+                  setNewCustomIndex('');  // Reset when changing type
+                }}
                 className="px-2 py-1 rounded border text-sm"
                 style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
               >
@@ -1425,7 +1482,7 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                 ))}
               </select>
               
-              {/* Custom index input */}
+              {/* Custom index input (number) */}
               {newIndexType === 'custom' && (
                 <input
                   type="number"
@@ -1437,12 +1494,43 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
                   style={{ background: theme.colors.background.primary, borderColor: theme.colors.border, color: theme.colors.text.primary }}
                 />
               )}
+              
+              {/* ✅ NEW: Variable index dropdown */}
+              {newIndexType === 'variable' && (
+                <select
+                  value={newCustomIndex}
+                  onChange={(e) => setNewCustomIndex(e.target.value)}
+                  className="px-2 py-1 rounded border text-sm font-mono"
+                  style={{ 
+                    background: theme.colors.background.primary, 
+                    borderColor: theme.colors.accents.purple, 
+                    color: theme.colors.accents.purple 
+                  }}
+                >
+                  <option value="">Select variable...</option>
+                  {indexVariableOptions.map((opt, i) => (
+                    <option key={i} value={opt.value}>
+                      {opt.label} ({opt.source})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
+            
+            {/* Preview of what will be added */}
+            {newElement && (
+              <div 
+                className="text-xs font-mono p-2 rounded"
+                style={{ background: theme.colors.background.primary, color: theme.colors.text.tertiary }}
+              >
+                Preview: {buildFieldWithIndex(newElement, newIndexType, newCustomIndex)}
+              </div>
+            )}
             
             <div className="flex gap-2">
               <button 
                 onClick={handleAddElement}
-                disabled={fieldValidation === false || !newElement.trim()}
+                disabled={fieldValidation === false || !newElement.trim() || (newIndexType === 'variable' && !newCustomIndex)}
                 className="px-3 py-1 rounded text-sm font-semibold transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ 
                   background: fieldValidation === false ? '#94a3b8' : color,

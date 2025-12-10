@@ -3977,8 +3977,7 @@ function buildActionDetailsAST(actionDetails) {
     );
   }
   
-  // Steps ✅ ENHANCED with storeAs
-  // Steps ✅ ENHANCED with storeAs AND persistStoreAs
+  // Steps ✅ ENHANCED with ALL fields for round-trip editing
   if (actionDetails.steps && actionDetails.steps.length > 0) {
     const stepsArray = t.arrayExpression(
       actionDetails.steps.map(step => {
@@ -3991,28 +3990,82 @@ function buildActionDetailsAST(actionDetails) {
           : (step.args ? step.args.split(',').map(s => s.trim()) : []);
         
         // Build step properties dynamically
-        const stepProperties = [
-          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description || '')),
-          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance || '')),
-          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method || '')),
-          t.objectProperty(
-            t.identifier('args'),
-            t.stringLiteral(argsString)
-          ),
-          t.objectProperty(
-            t.identifier('argsArray'),
-            t.arrayExpression(argsArrayValue.map(arg => t.stringLiteral(arg)))
-          )
-        ];
+        const stepProperties = [];
         
-        // ✅ Add storeAs if present
+        // ✅ TYPE - Critical for edit mode to know which UI to show!
+        if (step.type) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('type'), t.stringLiteral(step.type))
+          );
+        }
+        
+        // Basic fields (always present)
+        stepProperties.push(
+          t.objectProperty(t.identifier('description'), t.stringLiteral(step.description || ''))
+        );
+        stepProperties.push(
+          t.objectProperty(t.identifier('instance'), t.stringLiteral(step.instance || ''))
+        );
+        stepProperties.push(
+          t.objectProperty(t.identifier('method'), t.stringLiteral(step.method || ''))
+        );
+        stepProperties.push(
+          t.objectProperty(t.identifier('args'), t.stringLiteral(argsString))
+        );
+        stepProperties.push(
+          t.objectProperty(t.identifier('argsArray'), t.arrayExpression(argsArrayValue.map(arg => t.stringLiteral(arg))))
+        );
+        
+        // ✅ INLINE ACTION FIELDS - for round-trip editing
+        if (step.screen) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('screen'), t.stringLiteral(step.screen))
+          );
+        }
+        if (step.locator) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('locator'), t.stringLiteral(step.locator))
+          );
+        }
+        if (step.elementIndex) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('elementIndex'), t.stringLiteral(step.elementIndex))
+          );
+        }
+        if (step.customIndex !== undefined && step.customIndex !== null) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('customIndex'), t.numericLiteral(Number(step.customIndex)))
+          );
+        }
+        if (step.indexVariable) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('indexVariable'), t.stringLiteral(step.indexVariable))
+          );
+        }
+        if (step.value !== undefined && step.value !== '') {
+          stepProperties.push(
+            t.objectProperty(t.identifier('value'), t.stringLiteral(step.value))
+          );
+        }
+        if (step.waitState) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('waitState'), t.stringLiteral(step.waitState))
+          );
+        }
+        if (step.code) {
+          stepProperties.push(
+            t.objectProperty(t.identifier('code'), t.stringLiteral(step.code))
+          );
+        }
+        
+        // ✅ storeAs (existing - keep as-is)
         if (step.storeAs) {
           console.log(`   💾 Adding storeAs to step: ${step.storeAs}`);
           stepProperties.push(
             t.objectProperty(t.identifier('storeAs'), t.stringLiteral(step.storeAs))
           );
           
-          // ✅ NEW: Add persistStoreAs (defaults to true if not specified)
+          // persistStoreAs (defaults to true if not specified)
           const persistValue = step.persistStoreAs !== false;
           stepProperties.push(
             t.objectProperty(t.identifier('persistStoreAs'), t.booleanLiteral(persistValue))
@@ -4020,7 +4073,7 @@ function buildActionDetailsAST(actionDetails) {
           console.log(`   💾 persistStoreAs: ${persistValue}`);
         }
         
-        // ✅ Add conditions if present (block-based system)
+        // ✅ conditions (existing - keep as-is)
         if (step.conditions && step.conditions.blocks && step.conditions.blocks.length > 0) {
           console.log(`   🔒 Adding conditions to step: ${step.conditions.blocks.length} blocks`);
           stepProperties.push(
