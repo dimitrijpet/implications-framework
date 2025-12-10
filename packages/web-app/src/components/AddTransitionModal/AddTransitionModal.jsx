@@ -1237,7 +1237,6 @@ const handleSubmit = async (e) => {
       for (const step of formData.steps) {
         if (['click', 'fill', 'getText', 'waitFor'].includes(step.type) && step.screen) {
           if (!importedClassNames.has(step.screen)) {
-            // Find the POM in availablePOMs
             const pom = availablePOMs.find(p => p.className === step.screen);
             if (pom) {
               const varName = step.screen.charAt(0).toLowerCase() + step.screen.slice(1);
@@ -1262,8 +1261,30 @@ const handleSubmit = async (e) => {
       }));
     };
 
+    // ✅ Helper: Transform {{varName}} to storedVars.varName or ctx.data.varName
+    const transformVariableRefs = (value, allSteps) => {
+      if (!value || typeof value !== 'string') return value;
+      
+      return value.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+        // Check if this variable was stored by a previous step
+        const sourceStep = allSteps.find(s => s.storeAs === varName);
+        
+        if (sourceStep) {
+          // If persisted, use ctx.data; otherwise use storedVars
+          if (sourceStep.persistStoreAs !== false) {
+            return `ctx.data.${varName}`;
+          } else {
+            return `storedVars.${varName}`;
+          }
+        }
+        
+        // Default: assume it's a storedVar from current test
+        return `storedVars.${varName}`;
+      });
+    };
+
     // ✅ Helper: Build step with proper instance/method for inline actions
-    const buildStep = (step) => {
+    const buildStep = (step, allSteps) => {
       const baseStep = {
         type: step.type || 'pom-method',
         description: step.description,
@@ -1272,26 +1293,28 @@ const handleSubmit = async (e) => {
         conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
       };
       
-      // POM method - keep as-is
+      // POM method - transform args
       if (step.type === 'pom-method' || !step.type) {
+        const transformedArgs = (step.args || []).map(arg => transformVariableRefs(arg, allSteps));
+        
         return {
           ...baseStep,
           instance: step.instance,
           method: step.method,
-          args: step.args?.join(', ') || '',
-          argsArray: step.args || [],
+          args: transformedArgs.join(', '),
+          argsArray: transformedArgs,
         };
       }
       
-      // Custom code - keep as-is
+      // Custom code - transform variable refs in code
       if (step.type === 'custom') {
         return {
           ...baseStep,
-          code: step.code,
+          code: transformVariableRefs(step.code, allSteps),
         };
       }
       
-      // ✅ INLINE ACTIONS: Convert to instance/method format
+      // INLINE ACTIONS: click, fill, getText, waitFor
       if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
         const screenName = step.screen || '';
         const locatorName = step.locator || '';
@@ -1299,18 +1322,19 @@ const handleSubmit = async (e) => {
           ? screenName.charAt(0).toLowerCase() + screenName.slice(1) 
           : '';
         
-       // Build locator chain with index
-let locatorChain = locatorName;
-if (step.elementIndex === 'first') {
-  locatorChain = `${locatorName}.first()`;
-} else if (step.elementIndex === 'last') {
-  locatorChain = `${locatorName}.last()`;
-} else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
-  locatorChain = `${locatorName}.nth(${step.customIndex})`;
-} else if (step.elementIndex === 'variable' && step.indexVariable) {
-  // Variable index - generates actual JS code like .nth(ctx.data.cardIndex)
-  locatorChain = `${locatorName}.nth(${step.indexVariable})`;
-}
+        // Build locator chain with index
+        let locatorChain = locatorName;
+        if (step.elementIndex === 'first') {
+          locatorChain = `${locatorName}.first()`;
+        } else if (step.elementIndex === 'last') {
+          locatorChain = `${locatorName}.last()`;
+        } else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
+          locatorChain = `${locatorName}.nth(${step.customIndex})`;
+        } else if (step.elementIndex === 'variable' && step.indexVariable) {
+          // Transform variable reference if it uses {{}} syntax
+          const transformedIndex = transformVariableRefs(step.indexVariable, allSteps);
+          locatorChain = `${locatorName}.nth(${transformedIndex})`;
+        }
         
         // Build method name based on action type
         let methodName;
@@ -1322,7 +1346,7 @@ if (step.elementIndex === 'first') {
             break;
           case 'fill':
             methodName = `${locatorChain}.fill`;
-            argsArray = step.value ? [step.value] : [];
+            argsArray = step.value ? [transformVariableRefs(step.value, allSteps)] : [];
             break;
           case 'getText':
             methodName = `${locatorChain}.textContent`;
@@ -1335,7 +1359,6 @@ if (step.elementIndex === 'first') {
         
         return {
           ...baseStep,
-          // ✅ KEY: These fields make the test generator work!
           instance: instanceName,
           method: methodName,
           args: argsArray.join(', '),
@@ -1344,9 +1367,11 @@ if (step.elementIndex === 'first') {
           screen: screenName,
           locator: locatorName,
           elementIndex: step.elementIndex || undefined,
-customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
-indexVariable: step.elementIndex === 'variable' ? step.indexVariable : undefined,
-          ...(step.type === 'fill' && { value: step.value }),
+          customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+          indexVariable: step.elementIndex === 'variable' 
+            ? transformVariableRefs(step.indexVariable, allSteps) 
+            : undefined,
+          ...(step.type === 'fill' && { value: transformVariableRefs(step.value, allSteps) }),
           ...(step.type === 'waitFor' && { waitState: step.waitState }),
         };
       }
@@ -1367,8 +1392,8 @@ indexVariable: step.elementIndex === 'variable' ? step.indexVariable : undefined
             platform: formData.platform,
             navigationMethod: formData.navigationMethod || null,
             navigationFile: formData.navigationFile || null,
-            imports: buildImports(),  // ✅ Use helper
-            steps: formData.steps.map(buildStep),  // ✅ Use helper
+            imports: buildImports(),
+            steps: formData.steps.map(step => buildStep(step, formData.steps)),  // ✅ Pass allSteps
           }
         : null,
     };
