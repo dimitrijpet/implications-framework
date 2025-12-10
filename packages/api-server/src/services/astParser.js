@@ -1162,6 +1162,22 @@ function extractBlockFromNode(blockNode) {
         }
       });
     }
+    // ═══════════════════════════════════════════════════════════
+    // ✅ ADD THIS: Handle assertions at block's TOP LEVEL
+    // (for data-assertion blocks which store assertions directly)
+    // ═══════════════════════════════════════════════════════════
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      block.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(el => {
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            assertion[k] = extractValueFromNode(p.value);
+          });
+          return assertion;
+        });
+    }
   });
   
   return block;
