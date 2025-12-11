@@ -815,7 +815,7 @@ if (!shouldSkipRegistration) {
       console.log('✅ Cleanup complete');
     });
 
-    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
+      test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
 {{#if isVerify}}
@@ -825,13 +825,21 @@ if (!shouldSkipRegistration) {
       
       const result = await {{actionName}}(testDataPath, { page });
 {{else}}
-      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+      const checkResult = await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         page, 
         testDataPath 
       });
       
+      // ✅ If already executed in subprocess (cross-platform completion), skip
+      if (checkResult.skipped || checkResult.executedInSubprocess) {
+        console.log('✅ Test already completed in subprocess - skipping duplicate execution');
+        testPassed = true;
+        return;
+      }
+      
       const result = await {{actionName}}(testDataPath, { page });
 {{/if}}
+
 
 {{#if useOrderedScreens}}
       // ═══════════════════════════════════════════════════════════
@@ -998,7 +1006,7 @@ if (!shouldSkipRegistration) {
       console.log('✅ Cleanup complete');
     });
     
-    it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
+it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
 {{#if isVerify}}
@@ -1008,10 +1016,17 @@ if (!shouldSkipRegistration) {
       
       const result = await {{actionName}}(testDataPath, { driver });
 {{else}}
-    await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+      const checkResult = await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         driver,
         testDataPath 
       });
+      
+      // ✅ If already executed in subprocess (cross-platform completion), skip
+      if (checkResult.skipped || checkResult.executedInSubprocess) {
+        console.log('✅ Test already completed in subprocess - skipping duplicate execution');
+        testPassed = true;
+        return;
+      }
       
       const result = await {{actionName}}(testDataPath, { driver });
 {{/if}}

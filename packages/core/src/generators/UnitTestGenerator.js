@@ -497,6 +497,17 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // ✅ FIX: Force ExpectImplication for WebdriverIO/Appium
+    // Raw validation code uses Playwright-only APIs (.count(), .nth(), .first(), .last())
+    // ExpectImplication is now cross-platform safe!
+    // ═══════════════════════════════════════════════════════════
+    if (!isPlaywright && useRawValidation) {
+      console.log(`      ⚠️ WebdriverIO detected - switching to ExpectImplication (raw validation uses Playwright-only APIs)`);
+      useRawValidation = false;
+      rawValidationReason = null;
+    }
+
     console.log(
       `      🎯 Validation mode: ${useRawValidation ? "RAW" : "ExpectImplication"}${rawValidationReason ? ` (${rawValidationReason})` : ""}`
     );
@@ -504,6 +515,7 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     // ───────────────────────────────────────────────────────
     // Process blocks (for raw mode) OR legacy assertions
     // ───────────────────────────────────────────────────────
+
     let processedBlocks = [];
     let externalPoms = [];
     let legacyAssertions = null;
