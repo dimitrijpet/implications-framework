@@ -226,14 +226,11 @@ _detectPlatform(filePath) {
     return [];
   }
 
-/**
- * ✅ GENERIC: Find all POM files using config patterns OR defaults
- */
 async _findPOMFiles() {
-  // Try to load config from project
   const patterns = await this._loadPOMPatterns();
   
   console.log(`   🔍 Using ${patterns.length} pattern(s) for POM discovery`);
+  console.log(`   🚫 Ignore patterns: ${this._ignorePatterns?.length || 0}`);
 
   const pomFiles = [];
 
@@ -244,7 +241,7 @@ async _findPOMFiles() {
       const files = await glob(pattern, {
         cwd: this.projectPath,
         absolute: true,
-        ignore: [
+        ignore: this._ignorePatterns || [  // ✅ USE LOADED PATTERNS
           '**/node_modules/**',
           '**/dist/**',
           '**/build/**',
@@ -261,7 +258,6 @@ async _findPOMFiles() {
     }
   }
 
-  // Deduplicate
   const uniqueFiles = [...new Set(pomFiles)];
   console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
   
@@ -283,38 +279,65 @@ _looksLikeLocatorMethod(name) {
 }
 
 /**
- * ✅ NEW: Load POM patterns from ai-testing.config.js or use defaults
+ * ✅ FIXED: Load POM patterns AND ignore patterns from ai-testing.config.js
  */
 async _loadPOMPatterns() {
   const configPath = path.join(this.projectPath, 'ai-testing.config.js');
   
+  let patterns = [];
+  let ignorePatterns = [
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.next/**',
+  ];
+  
   try {
-    // Check if config exists
     await fs.access(configPath);
     
     // Dynamic import for ESM compatibility
     const configModule = await import(`file://${configPath}`);
     const config = configModule.default || configModule;
     
+    // Load patterns
     if (config.discovery?.poms && config.discovery.poms.length > 0) {
-      console.log(`   ✅ Loaded ${config.discovery.poms.length} POM pattern(s) from ai-testing.config.js`);
-      return config.discovery.poms;
+      patterns = config.discovery.poms;
+      console.log(`   ✅ Loaded ${patterns.length} POM pattern(s) from config.discovery.poms`);
+    } else if (config.screenObjectsPaths && config.screenObjectsPaths.length > 0) {
+      patterns = config.screenObjectsPaths;
+      console.log(`   ✅ Loaded ${patterns.length} POM pattern(s) from config.screenObjectsPaths`);
     }
+    
+    // ✅ NEW: Load ignore patterns
+    if (config.screenPaths?.ignore && config.screenPaths.ignore.length > 0) {
+      ignorePatterns = [...ignorePatterns, ...config.screenPaths.ignore];
+      console.log(`   ✅ Loaded ${config.screenPaths.ignore.length} ignore pattern(s) from config.screenPaths.ignore`);
+    } else if (config.discovery?.ignore && config.discovery.ignore.length > 0) {
+      ignorePatterns = [...ignorePatterns, ...config.discovery.ignore];
+      console.log(`   ✅ Loaded ${config.discovery.ignore.length} ignore pattern(s) from config.discovery.ignore`);
+    }
+    
   } catch (error) {
-    // Config doesn't exist or can't be loaded
     console.log(`   ℹ️  No ai-testing.config.js found, using default patterns`);
   }
   
-  // Default patterns (generic, should work for most projects)
-  return [
-    '**/screenObjects/**/*.js',
-    '**/pages/**/*.js',
-    '**/screens/**/*.js',
-    '**/pom/**/*.js',
-    '**/pageObjects/**/*.js',
-    '**/*.page.js',
-    '**/*.screen.js',
-  ];
+  // Use defaults if no patterns found
+  if (patterns.length === 0) {
+    patterns = [
+      '**/screenObjects/**/*.js',
+      '**/pages/**/*.js',
+      '**/screens/**/*.js',
+      '**/pom/**/*.js',
+      '**/pageObjects/**/*.js',
+      '**/*.page.js',
+      '**/*.screen.js',
+    ];
+  }
+  
+  // ✅ Store ignore patterns for use in _findPOMFiles
+  this._ignorePatterns = ignorePatterns;
+  
+  return patterns;
 }
 
   /**
