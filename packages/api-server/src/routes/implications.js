@@ -21,6 +21,7 @@ const __dirname = dirname(__filename);
 
 // ← ADD THIS
 const traverse = babelTraverse.default || babelTraverse;
+const generate = babelGenerate.default || babelGenerate;
 
 const router = express.Router();
 
@@ -240,6 +241,682 @@ async function extractUIFromSource(sourceFilePath) {
     console.error('Failed to extract UI from source:', error);
     return { uiStructure: null, needsImplicationHelper: false };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function insertNodeHandler(req, res) {
+  try {
+    const {
+      projectPath,
+      sourceState,
+      targetState,
+      insertState,
+      originalEvent,
+      keepEventOn,
+      newEventName,
+      platforms,
+      copyActionDetails = true
+    } = req.body;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    if (!projectPath || !sourceState || !targetState || !insertState || !originalEvent || !newEventName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: projectPath, sourceState, targetState, insertState, originalEvent, newEventName'
+      });
+    }
+
+    if (!['first', 'second'].includes(keepEventOn)) {
+      return res.status(400).json({
+        success: false,
+        error: 'keepEventOn must be "first" or "second"'
+      });
+    }
+
+    // Validate event name format
+    if (!/^[A-Z][A-Z0-9_]*$/.test(newEventName)) {
+      return res.status(400).json({
+        success: false,
+        error: 'newEventName must be UPPER_SNAKE_CASE (e.g., APPROVE_BOOKING)'
+      });
+    }
+
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('🔗 INSERT NODE BETWEEN EDGES');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   Source:  ${sourceState}`);
+    console.log(`   Insert:  ${insertState}`);
+    console.log(`   Target:  ${targetState}`);
+    console.log(`   Original Event: ${originalEvent}`);
+    console.log(`   Keep Event On: ${keepEventOn}`);
+    console.log(`   New Event: ${newEventName}`);
+    console.log(`   Platforms: ${platforms?.join(', ') || 'inherit'}`);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIND FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const sourceFile = await findImplicationFile(projectPath, sourceState);
+    const insertFile = await findImplicationFile(projectPath, insertState);
+    const targetFile = await findImplicationFile(projectPath, targetState);
+
+    if (!sourceFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Source state file not found: ${sourceState}`
+      });
+    }
+
+    if (!insertFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Insert state file not found: ${insertState}`
+      });
+    }
+
+    if (!targetFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Target state file not found: ${targetState}`
+      });
+    }
+
+    console.log('📁 Files found:');
+    console.log(`   Source: ${path.basename(sourceFile)}`);
+    console.log(`   Insert: ${path.basename(insertFile)}`);
+    console.log(`   Target: ${path.basename(targetFile)}`);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // READ AND PARSE FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    const insertContent = await fs.readFile(insertFile, 'utf-8');
+    const targetContent = await fs.readFile(targetFile, 'utf-8');
+
+    const sourceAst = parser.parse(sourceContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    const insertAst = parser.parse(insertContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    const targetAst = parser.parse(targetContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EXTRACT ORIGINAL TRANSITION DATA
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const originalTransition = extractTransitionData(sourceAst, originalEvent);
+    
+    if (!originalTransition) {
+      return res.status(404).json({
+        success: false,
+        error: `Transition "${originalEvent}" not found in ${sourceState}`
+      });
+    }
+
+    console.log('📋 Original transition data:', {
+      event: originalEvent,
+      target: originalTransition.target,
+      platforms: originalTransition.platforms,
+      hasActionDetails: !!originalTransition.actionDetails
+    });
+
+    // Determine platforms for new transition
+    const effectivePlatforms = platforms || originalTransition.platforms || ['web'];
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 1: UPDATE SOURCE FILE
+    // Change original transition target from targetState → insertState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n1️⃣ Updating source file...');
+    
+    const firstEvent = keepEventOn === 'first' ? originalEvent : newEventName;
+    const secondEvent = keepEventOn === 'first' ? newEventName : originalEvent;
+
+    // Modify source: Change target of original transition
+    const sourceModified = modifyTransitionTarget(
+      sourceAst, 
+      originalEvent, 
+      insertState,
+      keepEventOn === 'second' ? newEventName : null  // Rename if moving event to second segment
+    );
+
+    if (!sourceModified) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to modify source file transition'
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 2: UPDATE INSERT FILE
+    // Add new transition from insertState → targetState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n2️⃣ Updating insert file...');
+
+    // Build actionDetails for the new transition
+    const newActionDetails = copyActionDetails && keepEventOn === 'second' 
+      ? originalTransition.actionDetails 
+      : null;
+
+    // Add transition to insert file
+    const insertTransitionAdded = addTransitionToFile(
+      insertAst,
+      secondEvent,
+      targetState,
+      effectivePlatforms,
+      newActionDetails
+    );
+
+    if (!insertTransitionAdded) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to add transition to insert file'
+      });
+    }
+
+    // Add setup entry to insert file (pointing back to source)
+    const insertSetupAdded = addSetupEntry(
+      insertAst,
+      sourceState,
+      insertState,
+      firstEvent,
+      effectivePlatforms[0] || 'web'
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: UPDATE TARGET FILE
+    // Change setup entry's previousStatus from sourceState → insertState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n3️⃣ Updating target file...');
+
+    const targetSetupUpdated = updateSetupPreviousStatus(
+      targetAst,
+      sourceState,    // Old previousStatus
+      insertState,    // New previousStatus
+      secondEvent     // Update event name in testFile path if needed
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CREATE BACKUPS AND WRITE FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n4️⃣ Creating backups and writing files...');
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const changes = {};
+
+    // Source file
+    const sourceBackup = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, sourceBackup);
+    const sourceCode = generate(sourceAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(sourceFile, sourceCode, 'utf-8');
+    changes.sourceFile = {
+      path: sourceFile,
+      backup: sourceBackup,
+      modification: `Changed ${originalEvent} target: ${targetState} → ${insertState}`
+    };
+    console.log(`   ✅ Source: ${path.basename(sourceFile)}`);
+
+    // Insert file
+    const insertBackup = `${insertFile}.backup-${timestamp}`;
+    await fs.copy(insertFile, insertBackup);
+    const insertCode = generate(insertAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(insertFile, insertCode, 'utf-8');
+    changes.insertFile = {
+      path: insertFile,
+      backup: insertBackup,
+      modification: `Added transition ${secondEvent} → ${targetState}, setup from ${sourceState}`
+    };
+    console.log(`   ✅ Insert: ${path.basename(insertFile)}`);
+
+    // Target file
+    const targetBackup = `${targetFile}.backup-${timestamp}`;
+    await fs.copy(targetFile, targetBackup);
+    const targetCode = generate(targetAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(targetFile, targetCode, 'utf-8');
+    changes.targetFile = {
+      path: targetFile,
+      backup: targetBackup,
+      modification: `Updated setup previousStatus: ${sourceState} → ${insertState}`
+    };
+    console.log(`   ✅ Target: ${path.basename(targetFile)}`);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUCCESS RESPONSE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n═══════════════════════════════════════════════════════════');
+    console.log('✅ NODE INSERTED SUCCESSFULLY');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   Before: ${sourceState} ──${originalEvent}──▶ ${targetState}`);
+    console.log(`   After:  ${sourceState} ──${firstEvent}──▶ ${insertState} ──${secondEvent}──▶ ${targetState}`);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    res.json({
+      success: true,
+      changes,
+      result: {
+        firstSegment: {
+          from: sourceState,
+          event: firstEvent,
+          to: insertState
+        },
+        secondSegment: {
+          from: insertState,
+          event: secondEvent,
+          to: targetState
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Insert node failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+}
+
+/**
+ * Find implication file for a given state name
+ */
+async function findImplicationFile(projectPath, stateName) {
+  // Convert state_name to PascalCase for class name
+  const pascalCase = stateName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+
+  // Try various patterns
+  const patterns = [
+    `**/implications/**/${pascalCase}*Implications.js`,
+    `**/implications/**/*${pascalCase}Implications.js`,
+    `**/${pascalCase}Implications.js`,
+    `**/${pascalCase}BookingImplications.js`
+  ];
+
+  for (const pattern of patterns) {
+    const files = await glob(pattern, {
+      cwd: projectPath,
+      absolute: true,
+      ignore: ['**/node_modules/**', '**/.backup*']
+    });
+
+    if (files.length > 0) {
+      return files[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract transition data from AST
+ */
+function extractTransitionData(ast, eventName) {
+  let transitionData = null;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find 'on' property
+        const onProp = findProperty(configValue, 'on');
+        if (!onProp?.value?.properties) return;
+
+        // Find the specific transition
+        const transitionProp = onProp.value.properties.find(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (!transitionProp) return;
+
+        // Extract data
+        transitionData = extractTransitionValue(transitionProp.value);
+      }
+    }
+  });
+
+  return transitionData;
+}
+
+/**
+ * Find property in ObjectExpression
+ */
+function findProperty(objExpr, name) {
+  return objExpr.properties.find(
+    p => t.isObjectProperty(p) && (p.key.name === name || p.key.value === name)
+  );
+}
+
+/**
+ * Modify transition target in AST
+ */
+function modifyTransitionTarget(ast, eventName, newTarget, newEventName = null) {
+  let modified = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        const onProp = findProperty(configValue, 'on');
+        if (!onProp?.value?.properties) return;
+
+        // Find the transition
+        const transitionIndex = onProp.value.properties.findIndex(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (transitionIndex === -1) return;
+
+        const transitionProp = onProp.value.properties[transitionIndex];
+
+        // Update target
+        if (t.isStringLiteral(transitionProp.value)) {
+          // Simple string target
+          transitionProp.value = t.stringLiteral(newTarget);
+          modified = true;
+        } else if (t.isObjectExpression(transitionProp.value)) {
+          // Object with target property
+          const targetProp = transitionProp.value.properties.find(
+            p => p.key?.name === 'target'
+          );
+          if (targetProp) {
+            targetProp.value = t.stringLiteral(newTarget);
+            modified = true;
+          }
+        } else if (t.isArrayExpression(transitionProp.value)) {
+          // Array of transitions - update all
+          transitionProp.value.elements.forEach(el => {
+            if (t.isObjectExpression(el)) {
+              const targetProp = el.properties.find(p => p.key?.name === 'target');
+              if (targetProp) {
+                targetProp.value = t.stringLiteral(newTarget);
+                modified = true;
+              }
+            }
+          });
+        }
+
+        // Rename event if needed
+        if (newEventName && modified) {
+          transitionProp.key = t.identifier(newEventName);
+          console.log(`   📝 Renamed event: ${eventName} → ${newEventName}`);
+        }
+      }
+    }
+  });
+
+  if (modified) {
+    console.log(`   ✅ Updated transition target: ${eventName} → ${newTarget}`);
+  }
+
+  return modified;
+}
+
+/**
+ * Add transition to file
+ */
+function addTransitionToFile(ast, eventName, target, platforms, actionDetails) {
+  let added = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find or create 'on' property
+        let onProp = findProperty(configValue, 'on');
+        
+        if (!onProp) {
+          onProp = t.objectProperty(
+            t.identifier('on'),
+            t.objectExpression([])
+          );
+          configValue.properties.push(onProp);
+        }
+
+        // Check if transition already exists
+        const existing = onProp.value.properties.find(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (existing) {
+          console.log(`   ⚠️ Transition ${eventName} already exists, skipping`);
+          return;
+        }
+
+        // Build transition object
+        const transitionProps = [
+          t.objectProperty(t.identifier('target'), t.stringLiteral(target))
+        ];
+
+        if (platforms && platforms.length > 0) {
+          transitionProps.push(
+            t.objectProperty(
+              t.identifier('platforms'),
+              t.arrayExpression(platforms.map(p => t.stringLiteral(p)))
+            )
+          );
+        }
+
+        if (actionDetails) {
+          transitionProps.push(
+            t.objectProperty(
+              t.identifier('actionDetails'),
+              createValueNode(actionDetails)
+            )
+          );
+        }
+
+        // Add transition
+        onProp.value.properties.push(
+          t.objectProperty(
+            t.identifier(eventName),
+            t.objectExpression(transitionProps)
+          )
+        );
+
+        added = true;
+        console.log(`   ✅ Added transition: ${eventName} → ${target}`);
+      }
+    }
+  });
+
+  return added;
+}
+
+/**
+ * Add setup entry to file
+ */
+function addSetupEntry(ast, previousStatus, currentStatus, event, platform) {
+  let added = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find or create meta
+        let metaProp = findProperty(configValue, 'meta');
+        
+        if (!metaProp) {
+          metaProp = t.objectProperty(
+            t.identifier('meta'),
+            t.objectExpression([])
+          );
+          configValue.properties.unshift(metaProp);
+        }
+
+        // Find or create setup array
+        let setupProp = findProperty(metaProp.value, 'setup');
+        
+        if (!setupProp) {
+          setupProp = t.objectProperty(
+            t.identifier('setup'),
+            t.arrayExpression([])
+          );
+          metaProp.value.properties.push(setupProp);
+        }
+
+        // Check if entry already exists
+        const existing = setupProp.value.elements.find(el => {
+          if (!t.isObjectExpression(el)) return false;
+          const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevProp?.value?.value === previousStatus;
+        });
+
+        if (existing) {
+          console.log(`   ⚠️ Setup entry for ${previousStatus} already exists, skipping`);
+          return;
+        }
+
+        // Build test file path
+        const toPascal = (str) => str
+          .split('_')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join('');
+        
+        const currentPascal = toPascal(currentStatus);
+        const prevPascal = toPascal(previousStatus);
+        const platformCap = platform.charAt(0).toUpperCase() + platform.slice(1);
+        
+        const testFile = `tests/implications/bookings/status/${currentPascal}Via${prevPascal}-${event}-${platformCap}-UNIT.spec.js`;
+        const actionName = `${currentStatus.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${prevPascal}`;
+
+        // Create setup entry
+        const setupEntry = t.objectExpression([
+          t.objectProperty(t.identifier('testFile'), t.stringLiteral(testFile)),
+          t.objectProperty(t.identifier('actionName'), t.stringLiteral(actionName)),
+          t.objectProperty(t.identifier('platform'), t.stringLiteral(platform)),
+          t.objectProperty(t.identifier('previousStatus'), t.stringLiteral(previousStatus))
+        ]);
+
+        setupProp.value.elements.push(setupEntry);
+        added = true;
+        console.log(`   ✅ Added setup entry: previousStatus=${previousStatus}`);
+      }
+    }
+  });
+
+  return added;
+}
+
+/**
+ * Update setup entry's previousStatus
+ */
+function updateSetupPreviousStatus(ast, oldPreviousStatus, newPreviousStatus, newEvent) {
+  let updated = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        const metaProp = findProperty(configValue, 'meta');
+        if (!metaProp?.value?.properties) return;
+
+        const setupProp = findProperty(metaProp.value, 'setup');
+        if (!setupProp?.value?.elements) return;
+
+        // Find entry with old previousStatus
+        setupProp.value.elements.forEach(el => {
+          if (!t.isObjectExpression(el)) return;
+
+          const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          if (prevProp?.value?.value !== oldPreviousStatus) return;
+
+          // Update previousStatus
+          prevProp.value = t.stringLiteral(newPreviousStatus);
+          
+          // Update testFile path if needed
+          const testFileProp = el.properties.find(p => p.key?.name === 'testFile');
+          if (testFileProp?.value?.value) {
+            // Replace old status with new in path
+            const oldPath = testFileProp.value.value;
+            const toPascal = (str) => str
+              .split('_')
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join('');
+            
+            const oldPascal = toPascal(oldPreviousStatus);
+            const newPascal = toPascal(newPreviousStatus);
+            
+            let newPath = oldPath.replace(`Via${oldPascal}`, `Via${newPascal}`);
+            
+            // Also update event name in path if provided
+            if (newEvent && oldPath.includes('-')) {
+              const parts = newPath.split('-');
+              if (parts.length >= 2) {
+                // Find the event part (usually second segment)
+                const eventIndex = parts.findIndex(p => p === p.toUpperCase() && !p.includes('.'));
+                if (eventIndex > 0) {
+                  parts[eventIndex] = newEvent;
+                  newPath = parts.join('-');
+                }
+              }
+            }
+            
+            testFileProp.value = t.stringLiteral(newPath);
+          }
+
+          // Update actionName
+          const actionProp = el.properties.find(p => p.key?.name === 'actionName');
+          if (actionProp?.value?.value) {
+            const toPascal = (str) => str
+              .split('_')
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join('');
+            
+            const oldPascal = toPascal(oldPreviousStatus);
+            const newPascal = toPascal(newPreviousStatus);
+            
+            actionProp.value = t.stringLiteral(
+              actionProp.value.value.replace(`Via${oldPascal}`, `Via${newPascal}`)
+            );
+          }
+
+          updated = true;
+          console.log(`   ✅ Updated setup entry: previousStatus ${oldPreviousStatus} → ${newPreviousStatus}`);
+        });
+      }
+    }
+  });
+
+  return updated;
 }
 
 /**
@@ -601,35 +1278,72 @@ router.get('/get-transition', async (req, res) => {
   }
 });
 
+/**
+ * Extract value from transition AST node
+ */
 function extractTransitionValue(node) {
   if (t.isStringLiteral(node)) {
-    // Simple: EVENT: "target"
     return { target: node.value };
   }
-  
+
   if (t.isObjectExpression(node)) {
-    // Complex: EVENT: { target: "...", platforms: [...], actionDetails: {...} }
     const result = {};
     
     node.properties.forEach(prop => {
-      if (t.isObjectProperty(prop)) {
-        const key = prop.key.name || prop.key.value;
-        result[key] = extractValueFromNode(prop.value);
+      if (!t.isObjectProperty(prop)) return;
+      
+      const key = prop.key.name || prop.key.value;
+      
+      if (key === 'target' && t.isStringLiteral(prop.value)) {
+        result.target = prop.value.value;
+      } else if (key === 'platforms' && t.isArrayExpression(prop.value)) {
+        result.platforms = prop.value.elements
+          .filter(el => t.isStringLiteral(el))
+          .map(el => el.value);
+      } else if (key === 'actionDetails') {
+        result.actionDetails = extractObjectFromAST(prop.value);
+      } else if (key === 'requires') {
+        result.requires = extractObjectFromAST(prop.value);
       }
     });
     
     return result;
   }
-  
-  if (t.isArrayExpression(node)) {
-    // Array of transitions: EVENT: [{...}, {...}]
-    // Return first one for now (or could return all)
-    if (node.elements.length > 0) {
-      return extractTransitionValue(node.elements[0]);
-    }
-    return null;
+
+  // Handle array (multiple platform variants)
+  if (t.isArrayExpression(node) && node.elements.length > 0) {
+    return extractTransitionValue(node.elements[0]);
   }
-  
+
+  return null;
+}
+
+/**
+ * Extract JavaScript object from AST node
+ */
+function extractObjectFromAST(node) {
+  if (!node) return null;
+
+  if (t.isStringLiteral(node)) return node.value;
+  if (t.isNumericLiteral(node)) return node.value;
+  if (t.isBooleanLiteral(node)) return node.value;
+  if (t.isNullLiteral(node)) return null;
+
+  if (t.isArrayExpression(node)) {
+    return node.elements.map(el => extractObjectFromAST(el));
+  }
+
+  if (t.isObjectExpression(node)) {
+    const obj = {};
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        obj[key] = extractObjectFromAST(prop.value);
+      }
+    });
+    return obj;
+  }
+
   return null;
 }
 
@@ -4969,43 +5683,24 @@ function detectFieldType(value) {
  * Create a Babel AST node from a JavaScript value
  */
 function createValueNode(value) {
-  if (value === null) {
-    return t.nullLiteral();
-  }
-  
-  if (value === undefined) {
-    return t.identifier('undefined');
-  }
-  
-  if (typeof value === 'boolean') {
-    return t.booleanLiteral(value);
-  }
-  
-  if (typeof value === 'number') {
-    return t.numericLiteral(value);
-  }
-  
-  if (typeof value === 'string') {
-    return t.stringLiteral(value);
-  }
+  if (value === null) return t.nullLiteral();
+  if (value === undefined) return t.identifier('undefined');
+  if (typeof value === 'boolean') return t.booleanLiteral(value);
+  if (typeof value === 'number') return t.numericLiteral(value);
+  if (typeof value === 'string') return t.stringLiteral(value);
   
   if (Array.isArray(value)) {
-    return t.arrayExpression(
-      value.map(item => createValueNode(item))
-    );
+    return t.arrayExpression(value.map(v => createValueNode(v)));
   }
   
   if (typeof value === 'object') {
-    const properties = Object.entries(value).map(([key, val]) =>
-      t.objectProperty(
-        t.identifier(key),
-        createValueNode(val)
+    return t.objectExpression(
+      Object.entries(value).map(([k, v]) =>
+        t.objectProperty(t.identifier(k), createValueNode(v))
       )
     );
-    return t.objectExpression(properties);
   }
   
-  // Fallback
   return t.stringLiteral(String(value));
 }
 
@@ -5861,7 +6556,7 @@ router.post('/delete-transition', async (req, res) => {
       backup: backupPath
     });
     
-  } catch (error) {
+ } catch (error) {
     console.error('❌ Delete transition failed:', error);
     res.status(500).json({ 
       error: error.message,
@@ -5870,5 +6565,8 @@ router.post('/delete-transition', async (req, res) => {
   }
 });
 
+// Register the insert-node route directly on the router
+router.post('/graph/insert-node', insertNodeHandler);
+console.log('✅ Registered: POST /api/implications/graph/insert-node');
 
 export default router;

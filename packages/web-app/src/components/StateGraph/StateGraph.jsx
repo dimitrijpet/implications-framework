@@ -229,7 +229,9 @@ export default function StateGraph({
   activeFilters,
   projectPath,
   loadedTestData,
-  transitionMode = { enabled: false, source: null }  // ← ADD DEFAULT
+  transitionMode = { enabled: false, source: null },  // ← ADD DEFAULT
+  onEdgeClick,           // ← NEW: Handle edge clicks for insert node
+  editMode = false,      // ← NEW: Enable edit mode for edge clicking
 }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
@@ -632,6 +634,48 @@ cy.on('mouseout', 'node', () => {
     cyRef.current.container().style.cursor = transitionMode?.enabled ? 'crosshair' : 'default';
   }
 });
+
+ // ========================================
+    // EDGE CLICK HANDLER (for edit mode)
+    // ========================================
+    cy.on('tap', 'edge', (event) => {
+      if (!editMode || !onEdgeClick) return;
+      
+      const edge = event.target;
+      const edgeData = edge.data();
+      
+      console.log('🔗 Edge clicked:', edgeData);
+      
+      onEdgeClick({
+        source: edgeData.source,
+        target: edgeData.target,
+        event: edgeData.label,
+        platforms: edgeData.platforms || [edgeData.platform]
+      });
+    });
+
+    // Edge hover effects in edit mode
+    cy.on('mouseover', 'edge', (event) => {
+      if (editMode && cyRef.current) {
+        const container = cyRef.current.container();
+        container.style.cursor = 'pointer';
+        event.target.style('line-color', theme.colors.accents.orange);
+        event.target.style('target-arrow-color', theme.colors.accents.orange);
+        event.target.style('width', 4);
+      }
+    });
+
+    cy.on('mouseout', 'edge', (event) => {
+      if (editMode && cyRef.current) {
+        const container = cyRef.current.container();
+        container.style.cursor = 'default';
+        // Restore original color
+        const platformColor = event.target.data('platformColor');
+        event.target.style('line-color', platformColor);
+        event.target.style('target-arrow-color', platformColor);
+        event.target.style('width', theme.graph.edgeWidth);
+      }
+    });
     
     // ========================================
     // DRAG HANDLING - Update group boxes & save positions
@@ -657,7 +701,7 @@ cy.on('mouseout', 'node', () => {
         cyRef.current.destroy();
       }
     };
-  }, [graphData, onNodeClick, theme, showScreenGroups, screenGroups, transitionMode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced]);
+  }, [graphData, onNodeClick, onEdgeClick, editMode, theme, showScreenGroups, screenGroups, transitionMode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced]);
   
   // ========================================
   // UPDATE SELECTED NODE STYLING
