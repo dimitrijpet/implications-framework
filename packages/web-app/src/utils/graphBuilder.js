@@ -243,36 +243,42 @@ export function buildGraphFromDiscovery(discoveryResult) {
           ? formatRequiresLabel(transition.requires)
           : "";
 
-        edges.push({
-          data: {
-            id: edgeId,
-            source: fromState,
-            target: toState,
-            label: transition.isObserver
-              ? `👁️ ${transition.event}`
-              : transition.event, // ← MODIFIED
-            isObserver: transition.isObserver || false, // ← ADD
-            mode: transition.mode, // ← ADD
-            platformColor: platformColor,
-            platform: sourceNode?.data.platform || "web",
-            platforms: transition.platforms || null,
+   edges.push({
+  data: {
+    id: edgeId,
+    source: fromState,
+    target: toState,
+    label: transition.isObserver
+      ? `👁️ ${transition.event}`
+      : transition.event,
+    isObserver: transition.isObserver || false,
+    mode: transition.mode,
+    platformColor: platformColor,
+    platform: sourceNode?.data.platform || "web",
+    platforms: transition.platforms || null,
 
-            // ✅ Requires/conditions data
-            requires: transition.requires || null,
-            hasRequires: !!(
-              transition.requires && Object.keys(transition.requires).length > 0
-            ),
-            requiresLabel: requiresLabel,
-            requiresColor: requiresColor,
-            // ✅ Conditions data (block-based system)
-            conditions: transition.conditions || null,
-            hasConditions: !!(transition.conditions?.blocks?.length > 0),
-            conditionsLabel:
-              transition.conditions?.blocks?.length > 0
-                ? `🔒 ${transition.conditions.blocks.length} condition${transition.conditions.blocks.length > 1 ? "s" : ""}`
-                : "",
-          },
-        });
+    // ✅ Requires/conditions data
+    requires: transition.requires || null,
+    hasRequires: !!(
+      transition.requires && Object.keys(transition.requires).length > 0
+    ),
+    requiresLabel: requiresLabel,
+    requiresColor: requiresColor,
+    // ✅ Conditions data (block-based system)
+    conditions: transition.conditions || null,
+    hasConditions: !!(transition.conditions?.blocks?.length > 0),
+    conditionsLabel:
+      transition.conditions?.blocks?.length > 0
+        ? `🔒 ${transition.conditions.blocks.length} condition${transition.conditions.blocks.length > 1 ? "s" : ""}`
+        : "",
+    
+    // ✨ NEW: Regeneration indicator
+    needsRegeneration: transition.needsRegeneration || false,
+    regenerationReason: transition.regenerationReason || null,
+    hasTestFile: transition.hasTestFile || false,
+    testFile: transition.testFile || null,
+  },
+});
       }
     });
   }

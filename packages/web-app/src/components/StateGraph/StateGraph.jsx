@@ -478,13 +478,20 @@ if (Object.keys(tagGroups).length > 0) {
             'control-point-step-size': 60,
             'line-style': 'solid',
             'z-index': 5,
-         'label': (ele) => {
+       'label': (ele) => {
   const event = ele.data('label');
   const platforms = ele.data('platforms');
   const requiresLabel = ele.data('requiresLabel');
-  const conditionsLabel = ele.data('conditionsLabel');  // ← ADD
+  const conditionsLabel = ele.data('conditionsLabel');
+  const needsRegeneration = ele.data('needsRegeneration');
   
   let label = event;
+  
+  // Add warning icon if needs regeneration
+  if (needsRegeneration) {
+    label = '⚠️ ' + label;
+  }
+  
   if (platforms && platforms.length > 0) {
     const badges = platforms.map(p => p === 'web' ? '🌐' : '📱').join('');
     label += ` ${badges}`;
@@ -492,7 +499,7 @@ if (Object.keys(tagGroups).length > 0) {
   if (requiresLabel) {
     label += `\n${requiresLabel}`;
   }
-  if (conditionsLabel) {  // ← ADD
+  if (conditionsLabel) {
     label += `\n${conditionsLabel}`;
   }
   return label;
@@ -558,6 +565,20 @@ if (Object.keys(tagGroups).length > 0) {
     'target-arrow-color': '#a855f7',
     'width': 4,
     'z-index': 998
+  }
+},
+
+// ============================================
+// EDGES NEEDING REGENERATION
+// ============================================
+{
+  selector: 'edge[?needsRegeneration]',
+  style: {
+    'line-style': 'dotted',
+    'line-dash-pattern': [4, 4],
+    'line-color': '#f59e0b',  // Warning orange
+    'target-arrow-color': '#f59e0b',
+    'width': 3,
   }
 }
 
