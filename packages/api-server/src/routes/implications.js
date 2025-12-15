@@ -2371,6 +2371,73 @@ const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, class
   }
 });
 
+/**
+ * Build conditions AST node from conditions data
+ * @param {Object} conditions - { mode: 'all'|'any', blocks: [...] }
+ * @returns {t.ObjectExpression|null}
+ */
+function buildConditionsAST(conditions) {
+  if (!conditions?.blocks?.length) return null;
+  
+  const conditionProps = [];
+  
+  // mode: 'all' or 'any'
+  conditionProps.push(
+    t.objectProperty(t.identifier('mode'), t.stringLiteral(conditions.mode || 'all'))
+  );
+  
+  // blocks array
+  const blockElements = conditions.blocks.map(block => {
+    const blockProps = [];
+    
+    if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+    if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+    if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+    if (block.mode) blockProps.push(t.objectProperty(t.identifier('mode'), t.stringLiteral(block.mode)));
+    
+    // data.checks array
+    if (block.data?.checks?.length > 0) {
+      const checkElements = block.data.checks.map(check => {
+        const checkProps = [];
+        
+        if (check.id) checkProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(check.id)));
+        if (check.field) checkProps.push(t.objectProperty(t.identifier('field'), t.stringLiteral(check.field)));
+        if (check.operator) checkProps.push(t.objectProperty(t.identifier('operator'), t.stringLiteral(check.operator)));
+        
+        // value - handle different types
+        if (check.value !== undefined && check.value !== null) {
+          const valueNode = typeof check.value === 'number' ? t.numericLiteral(check.value)
+                         : typeof check.value === 'boolean' ? t.booleanLiteral(check.value)
+                         : Array.isArray(check.value) ? t.arrayExpression(check.value.map(v => t.stringLiteral(String(v))))
+                         : t.stringLiteral(String(check.value));
+          checkProps.push(t.objectProperty(t.identifier('value'), valueNode));
+        }
+        
+        if (check.valueType) checkProps.push(t.objectProperty(t.identifier('valueType'), t.stringLiteral(check.valueType)));
+        
+        return t.objectExpression(checkProps);
+      });
+      
+      blockProps.push(
+        t.objectProperty(
+          t.identifier('data'),
+          t.objectExpression([
+            t.objectProperty(t.identifier('checks'), t.arrayExpression(checkElements))
+          ])
+        )
+      );
+    }
+    
+    return t.objectExpression(blockProps);
+  });
+  
+  conditionProps.push(
+    t.objectProperty(t.identifier('blocks'), t.arrayExpression(blockElements))
+  );
+  
+  return t.objectExpression(conditionProps);
+}
+
 
 
 /**
@@ -2931,18 +2998,26 @@ if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
     console.log(`    🧱 Including ${screen.blocks.length} blocks`);
     
     const blockElements = screen.blocks.map(block => {
-      const blockProps = [];
-      
-      // Basic block properties
-      if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
-      if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
-      if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
-      if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
-      if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
-      if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
-      
-      // UI-ASSERTION block data
-      if (block.type === 'ui-assertion' && block.data) {
+  const blockProps = [];
+  
+  // Basic block properties
+  if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+  if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+  if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
+  if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
+  if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
+  if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+  
+  // ✅ NEW: Block conditions
+  if (block.conditions?.blocks?.length > 0) {
+    const conditionsNode = buildConditionsAST(block.conditions);
+    if (conditionsNode) {
+      blockProps.push(t.objectProperty(t.identifier('conditions'), conditionsNode));
+    }
+  }
+  
+  // UI-ASSERTION block data
+  if (block.type === 'ui-assertion' && block.data) {
         const dataProps = [];
         
         if (block.data.visible?.length > 0) {

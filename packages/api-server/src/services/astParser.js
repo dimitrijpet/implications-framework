@@ -1178,9 +1178,65 @@ function extractBlockFromNode(blockNode) {
           return assertion;
         });
     }
+    else if (key === 'conditions' && prop.value?.type === 'ObjectExpression') {
+  block.conditions = extractConditionsFromNode(prop.value);
+}
   });
   
   return block;
+}
+
+/**
+ * Extract conditions from AST node
+ */
+function extractConditionsFromNode(conditionsNode) {
+  const conditions = { mode: 'all', blocks: [] };
+  
+  conditionsNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    if (key === 'mode') {
+      conditions.mode = extractValueFromNode(prop.value) || 'all';
+    }
+    else if (key === 'blocks' && prop.value?.type === 'ArrayExpression') {
+      conditions.blocks = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(blockNode => {
+          const block = { type: 'condition-check', data: { checks: [] } };
+          
+          blockNode.properties.forEach(blockProp => {
+            const blockKey = blockProp.key?.name;
+            
+            if (blockKey === 'id' || blockKey === 'type' || blockKey === 'mode') {
+              block[blockKey] = extractValueFromNode(blockProp.value);
+            }
+            else if (blockKey === 'enabled') {
+              block.enabled = extractValueFromNode(blockProp.value);
+            }
+            else if (blockKey === 'data' && blockProp.value?.type === 'ObjectExpression') {
+              blockProp.value.properties.forEach(dataProp => {
+                if (dataProp.key?.name === 'checks' && dataProp.value?.type === 'ArrayExpression') {
+                  block.data.checks = dataProp.value.elements
+                    .filter(el => el?.type === 'ObjectExpression')
+                    .map(checkNode => {
+                      const check = {};
+                      checkNode.properties.forEach(checkProp => {
+                        const checkKey = checkProp.key?.name;
+                        check[checkKey] = extractValueFromNode(checkProp.value);
+                      });
+                      return check;
+                    });
+                }
+              });
+            }
+          });
+          
+          return block;
+        });
+    }
+  });
+  
+  return conditions;
 }
 
 /**

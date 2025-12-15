@@ -3,6 +3,7 @@
 //
 // Each block receives storedVariables from ALL PREVIOUS blocks
 // So Block 3 can use variables stored in Block 1 and Block 2
+import BlockConditionsEditor from './BlockConditionsEditor';
 
 import { useState, useMemo } from 'react';
 import {
@@ -57,7 +58,8 @@ function SortableBlock({
   pomName,
   instanceName,
   projectPath,
-  storedVariables
+  storedVariables,
+  testDataSchema  // ✅ ADD THIS
 }) {
   const {
     attributes,
@@ -77,19 +79,20 @@ function SortableBlock({
 
   return (
     <div ref={setNodeRef} style={style}>
-      <BlockRenderer
-        block={block}
-        editMode={editMode}
-        theme={theme}
-        onUpdate={onUpdate}
-        onDelete={onDelete}
-        onDuplicate={onDuplicate}
-        pomName={pomName}
-        instanceName={instanceName}
-        projectPath={projectPath}
-        storedVariables={storedVariables}
-        dragHandleProps={editMode ? { ...attributes, ...listeners } : {}}
-      />
+       <BlockRenderer
+  block={block}
+  editMode={editMode}
+  theme={theme}
+  onUpdate={onUpdate}
+  onDelete={onDelete}
+  onDuplicate={onDuplicate}
+  pomName={pomName}
+  instanceName={instanceName}
+  projectPath={projectPath}
+  storedVariables={storedVariables}
+  testDataSchema={testDataSchema}  // ✅ ADD THIS
+  dragHandleProps={editMode ? { ...attributes, ...listeners } : {}}
+/>
     </div>
   );
 }
@@ -374,22 +377,23 @@ const handleAddBlock = (type) => {
             strategy={verticalListSortingStrategy}
           >
             <div className="space-y-2">
-              {blocks.map((block, index) => (
-                <SortableBlock
-                  key={block.id}
-                  block={block}
-                  blockIndex={index}
-                  editMode={editMode}
-                  theme={theme}
-                  onUpdate={(updates) => handleUpdateBlock(block.id, updates)}
-                  onDelete={() => handleDeleteBlock(block.id)}
-                  onDuplicate={() => handleDuplicateBlock(block.id)}
-                  pomName={pomName}
-                  instanceName={instanceName}
-                  projectPath={projectPath}
-                  storedVariables={variablesByBlockIndex[index] || []}  // ✅ Pass variables for THIS position
-                />
-              ))}
+{blocks.map((block, index) => (
+  <SortableBlock
+    key={block.id}
+    block={block}
+    blockIndex={index}
+    editMode={editMode}
+    theme={theme}
+    onUpdate={(updates) => handleUpdateBlock(block.id, updates)}
+    onDelete={() => handleDeleteBlock(block.id)}
+    onDuplicate={() => handleDuplicateBlock(block.id)}
+    pomName={pomName}
+    instanceName={instanceName}
+    projectPath={projectPath}
+    storedVariables={variablesByBlockIndex[index] || []}
+    testDataSchema={testDataSchema}  // ✅ ADD THIS
+  />
+))}
             </div>
           </SortableContext>
 

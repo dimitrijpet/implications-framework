@@ -10,6 +10,7 @@ import { BLOCK_TYPES, BLOCK_TYPE_META } from './blockUtils';
 import FunctionCallContent from './FunctionCallContent';
 import UIAssertionContent from './UIAssertionContent';
 import DataAssertionContent from './DataAssertionContent';
+import BlockConditionsEditor from './BlockConditionsEditor';
 
 /**
  * BlockRenderer - Renders a single block with collapse/expand, enable/disable
@@ -38,7 +39,8 @@ export default function BlockRenderer({
   pomName,
   instanceName,
   projectPath,
-  storedVariables = []
+  storedVariables = [],
+  testDataSchema = []  // ✅ ADD THIS
 }) {
   const meta = BLOCK_TYPE_META[block.type] || {};
   const colorKey = meta.color || 'blue';
@@ -245,12 +247,59 @@ export default function BlockRenderer({
         </div>
       </div>
 
-      {/* Block Content (when expanded) */}
-      {block.expanded && (
-        <div className="p-3">
-          {renderBlockContent()}
-        </div>
-      )}
+     {/* Conditions Badge (collapsed state, view mode) */}
+{!block.expanded && !editMode && block.conditions?.blocks?.length > 0 && (
+  <div 
+    className="px-3 py-1 flex items-center gap-2 text-xs"
+    style={{ 
+      background: `${theme.colors.accents.purple}10`,
+      borderTop: `1px solid ${theme.colors.border}`
+    }}
+  >
+    <span>🔒</span>
+    <span style={{ color: theme.colors.accents.purple }}>
+      {block.conditions.blocks.reduce((sum, b) => sum + (b.data?.checks?.length || 0), 0)} condition(s)
+    </span>
+  </div>
+)}
+
+{/* Block Content (when expanded) */}
+{block.expanded && (
+  <div className="p-3 space-y-3">
+    {/* ✅ NEW: Conditions Editor (only in edit mode) */}
+    {editMode && (
+      <BlockConditionsEditor
+        conditions={block.conditions}
+        onChange={(newConditions) => onUpdate({ conditions: newConditions })}
+        theme={theme}
+        availableFields={testDataSchema}
+        storedVariables={storedVariables}
+        collapsed={!block.conditions?.blocks?.length}
+      />
+    )}
+    
+    {/* Conditions Badge (expanded state, view mode) */}
+    {!editMode && block.conditions?.blocks?.length > 0 && (
+      <div 
+        className="p-2 rounded flex items-center gap-2 text-xs"
+        style={{ 
+          background: `${theme.colors.accents.purple}10`,
+          border: `1px solid ${theme.colors.accents.purple}30`
+        }}
+      >
+        <span>🔒</span>
+        <span style={{ color: theme.colors.accents.purple }}>
+          {block.conditions.blocks.reduce((sum, b) => sum + (b.data?.checks?.length || 0), 0)} condition(s)
+        </span>
+        <span style={{ color: theme.colors.text.tertiary }}>
+          ({block.conditions.mode === 'any' ? 'ANY' : 'ALL'} must match)
+        </span>
+      </div>
+    )}
+    
+    {renderBlockContent()}
+  </div>
+)}
     </div>
   );
 }
@@ -259,6 +308,8 @@ export default function BlockRenderer({
  * Get a brief summary of block content for collapsed state
  */
 function getBlockSummary(block) {
+  let summary = '';
+  
   switch (block.type) {
     case BLOCK_TYPES.UI_ASSERTION: {
       const parts = [];
@@ -269,31 +320,46 @@ function getBlockSummary(block) {
       if (v) parts.push(`${v} visible`);
       if (h) parts.push(`${h} hidden`);
       if (t) parts.push(`${t} text`);
-      return parts.join(', ') || 'Empty';
+      summary = parts.join(', ') || 'Empty';
+      break;
     }
     
     case BLOCK_TYPES.CUSTOM_CODE: {
       const lines = (block.code || '').split('\n').length;
-      return `${lines} line${lines !== 1 ? 's' : ''}`;
+      summary = `${lines} line${lines !== 1 ? 's' : ''}`;
+      break;
     }
     
     case BLOCK_TYPES.FUNCTION_CALL: {
       const { instance, method, storeAs } = block.data || {};
       if (instance && method) {
-        return storeAs ? `${storeAs} = ${instance}.${method}()` : `${instance}.${method}()`;
+        summary = storeAs ? `${storeAs} = ${instance}.${method}()` : `${instance}.${method}()`;
+      } else {
+        summary = 'Not configured';
       }
-      return 'Not configured';
+      break;
     }
     
-    // ↓↓↓ ADD THIS CASE ↓↓↓
     case BLOCK_TYPES.DATA_ASSERTION: {
       const count = block.assertions?.length || 0;
-      return `${count} assertion${count !== 1 ? 's' : ''}`;
+      summary = `${count} assertion${count !== 1 ? 's' : ''}`;
+      break;
     }
     
     default:
-      return '';
+      summary = '';
   }
+  
+  // ✅ ADD: Append conditions indicator
+  const conditionCount = block.conditions?.blocks?.reduce(
+    (sum, b) => sum + (b.data?.checks?.length || 0), 0
+  ) || 0;
+  
+  if (conditionCount > 0) {
+    summary += summary ? ` • 🔒${conditionCount}` : `🔒${conditionCount} conditions`;
+  }
+  
+  return summary;
 }
 
 /**
