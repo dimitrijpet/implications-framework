@@ -1381,7 +1381,7 @@ const disableTransitionMode = () => {
         )}
 
         {/* State Registry Panel */}
-        {stateRegistry && (
+        {/* {stateRegistry && (
           <div className="mb-6">
             <StateRegistryPanel 
               stateRegistry={stateRegistry}
@@ -1389,7 +1389,7 @@ const disableTransitionMode = () => {
               onRefresh={handleScan}
             />
           </div>
-        )}
+        )} */}
 
         {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>

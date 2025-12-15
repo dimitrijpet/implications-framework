@@ -1272,7 +1272,7 @@ const handleSave = async () => {
             )}
 
             {/* TEST DATA REQUIREMENTS */}
-            <div>
+            {/* <div>
               <h2 
                 className="text-2xl font-bold mb-4"
                 style={{ color: theme.colors.accents.purple }}
@@ -1285,10 +1285,10 @@ const handleSave = async () => {
                 projectPath={projectPath}
                 theme={theme}
               />
-            </div>
+            </div> */}
             
             {/* COMPOSITION ARCHITECTURE */}
-            <div>
+            {/* <div>
               <h2 
                 className="text-2xl font-bold mb-4"
                 style={{ color: theme.colors.accents.purple }}
@@ -1347,7 +1347,7 @@ const handleSave = async () => {
                   </button>
                 </div>
               )}
-            </div>
+            </div> */}
 {/* TAGS */}
 <div className="flex flex-wrap gap-4 mt-2">
   {/* Screen Tags */}
