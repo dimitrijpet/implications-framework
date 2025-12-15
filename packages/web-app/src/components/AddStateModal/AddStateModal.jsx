@@ -14,6 +14,7 @@ export default function AddStateModal({
   onCreate, 
   existingStates,
   existingTags = { screen: [], group: [] },  // ✅ ADD THIS with default
+  existingEntities = [],
   theme, 
   projectPath 
 }) {
@@ -36,6 +37,7 @@ const [formData, setFormData] = useState({
   setupActions: [],
   requiredFields: [],
   contextFields: {},
+  entity: '',
   tags: {           // ✅ NEW
     screen: '',
     group: ''
@@ -115,7 +117,12 @@ const [formData, setFormData] = useState({
       notificationKey: '',
       setupActions: [],
       requiredFields: [],
-      contextFields: {}  // Reset context too
+      contextFields: {},  // Reset context too
+      entity: '',
+      tags: {           // ✅ NEW
+        screen: '',
+        group: ''
+      }
     });
     setErrors({});
     setShowAdvanced(false);
@@ -147,7 +154,12 @@ const [formData, setFormData] = useState({
         notificationKey: data.notificationKey || '',
         setupActions: data.setupActions || [],
         requiredFields: data.requiredFields || [],
-        contextFields: data.context || {}  // NEW: Copy context too
+        contextFields: data.context || {},  // NEW: Copy context too
+         entity: data.entity || '',
+        tags: {
+          screen: data.tags?.screen || '',
+          group: data.tags?.group || ''
+        }
       }));
     } catch (error) {
       console.error('❌ Failed to load copy preview:', error);
@@ -243,12 +255,14 @@ const handleCreate = () => {
     ...formData,
     displayName,
     context: formData.contextFields,
-    tags: Object.keys(cleanTags).length > 0 ? cleanTags : null  // ✅ Only include if non-empty
+    entity: formData.entity?.trim() || null,  // ✅ ADD THIS
+    tags: Object.keys(cleanTags).length > 0 ? cleanTags : null
   };
 
   console.log('✅ Creating state with data:', stateData);
   onCreate(stateData);
 };
+
 
 
   const updateField = (field, value) => {
@@ -486,7 +500,8 @@ const handleCreate = () => {
     showAdvanced={showAdvanced}
     setShowAdvanced={setShowAdvanced}
     theme={theme}
-    existingTags={existingTags}  // ✅ ADD THIS
+    existingTags={existingTags}
+    existingEntities={existingEntities}  // ✅ ADD THIS
   />
 )}
 
@@ -987,7 +1002,8 @@ function CustomBuildMode({
   showAdvanced, 
   setShowAdvanced, 
   theme,
-  existingTags  // ✅ ADD THIS
+  existingTags,
+  existingEntities  // ✅ ADD THIS
 }) {
   return (
     <>
@@ -1037,6 +1053,91 @@ function CustomBuildMode({
           }}
         />
       </FormGroup>
+
+      
+{/* Entity Field */}
+<FormGroup 
+  label="Entity" 
+  helper="Primary data entity (e.g., booking, club, dancer)"
+  theme={theme}
+>
+  <div style={{ display: 'flex', gap: '8px' }}>
+    <input
+      type="text"
+      list="entity-suggestions"
+      value={formData.entity || ''}
+      onChange={(e) => updateField('entity', e.target.value)}
+      placeholder="e.g., booking, club, dancer"
+      style={{
+        flex: 1,
+        background: theme.colors.background.tertiary,
+        color: theme.colors.accents.cyan,
+        border: `1px solid ${formData.entity ? theme.colors.accents.cyan + '50' : theme.colors.border}`,
+        padding: '10px',
+        borderRadius: '6px'
+      }}
+    />
+    <datalist id="entity-suggestions">
+      {existingEntities?.map((entity, idx) => (
+        <option key={idx} value={entity} />
+      ))}
+    </datalist>
+    
+    {formData.entity && (
+      <button
+        type="button"
+        onClick={() => updateField('entity', '')}
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${theme.colors.border}`,
+          borderRadius: '6px',
+          padding: '0 12px',
+          color: theme.colors.accents.red,
+          cursor: 'pointer'
+        }}
+        title="Clear entity"
+      >
+        ✕
+      </button>
+    )}
+  </div>
+  
+  {/* Common entities quick-pick */}
+  {!formData.entity && existingEntities?.length > 0 && (
+    <div style={{ 
+      marginTop: '8px',
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '6px'
+    }}>
+      <span style={{ 
+        fontSize: '12px', 
+        color: theme.colors.text.tertiary,
+        marginRight: '4px'
+      }}>
+        Quick pick:
+      </span>
+      {existingEntities.slice(0, 5).map((entity, idx) => (
+        <button
+          key={idx}
+          type="button"
+          onClick={() => updateField('entity', entity)}
+          style={{
+            padding: '2px 8px',
+            fontSize: '12px',
+            background: `${theme.colors.accents.cyan}15`,
+            border: `1px solid ${theme.colors.accents.cyan}30`,
+            borderRadius: '4px',
+            color: theme.colors.accents.cyan,
+            cursor: 'pointer'
+          }}
+        >
+          {entity}
+        </button>
+      ))}
+    </div>
+  )}
+</FormGroup>
 
       {/* Description Field */}
       <FormGroup label="Description" helper="What this state represents" theme={theme}>

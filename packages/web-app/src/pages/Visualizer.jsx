@@ -121,6 +121,19 @@ const existingTags = useMemo(() => {
   };
 }, [discoveryResult, discoveredTags]);
 
+const existingEntities = useMemo(() => {
+  const entities = new Set();
+  
+  discoveryResult?.files?.implications?.forEach(imp => {
+    const entity = imp.metadata?.xstateConfig?.meta?.entity || imp.metadata?.entity;
+    if (entity) {
+      entities.add(entity);
+    }
+  });
+  
+  return Array.from(entities).sort();
+}, [discoveryResult]);
+
 
 
   // Clear cache and reset state
@@ -1878,6 +1891,7 @@ const disableTransitionMode = () => {
       })
     || []}
     existingTags={existingTags}  // ✅ ADD THIS
+    existingEntities={existingEntities}
     projectPath={projectPath}
     theme={defaultTheme}
   />

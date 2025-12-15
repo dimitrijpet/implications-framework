@@ -1780,6 +1780,104 @@ router.post('/update-metadata', async (req, res) => {
   }
 });
 
+router.post('/update-entity', async (req, res) => {
+  try {
+    const { filePath, entity } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`🎯 Updating entity in: ${path.basename(filePath)}`);
+    console.log(`   New entity: ${entity || '(empty)'}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse(ast, {
+      ClassProperty(classPath) {
+        if (classPath.node.key?.name === 'xstateConfig' && classPath.node.static) {
+          const configObj = classPath.node.value;
+          
+          if (configObj?.type === 'ObjectExpression') {
+            // Find meta property
+            const metaProp = configObj.properties.find(p => p.key?.name === 'meta');
+            
+            if (metaProp && metaProp.value?.type === 'ObjectExpression') {
+              // Find or create entity property
+              const entityProp = metaProp.value.properties.find(p => p.key?.name === 'entity');
+              
+              if (entity) {
+                // Set or update entity
+                if (entityProp) {
+                  entityProp.value = t.stringLiteral(entity);
+                } else {
+                  // Add entity property after status/platform if they exist
+                  const insertIndex = metaProp.value.properties.findIndex(
+                    p => p.key?.name === 'statusLabel' || p.key?.name === 'platform'
+                  );
+                  
+                  const newProp = t.objectProperty(
+                    t.identifier('entity'),
+                    t.stringLiteral(entity)
+                  );
+                  
+                  if (insertIndex >= 0) {
+                    metaProp.value.properties.splice(insertIndex + 1, 0, newProp);
+                  } else {
+                    metaProp.value.properties.push(newProp);
+                  }
+                }
+              } else {
+                // Remove entity if empty
+                if (entityProp) {
+                  const idx = metaProp.value.properties.indexOf(entityProp);
+                  if (idx >= 0) {
+                    metaProp.value.properties.splice(idx, 1);
+                  }
+                }
+              }
+              
+              modified = true;
+            }
+          }
+        }
+      }
+    });
+    
+    if (!modified) {
+      return res.status(400).json({ error: 'Could not find xstateConfig.meta in file' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    // Backup
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Entity updated successfully');
+    
+    res.json({ success: true, entity });
+    
+  } catch (error) {
+    console.error('❌ Entity update failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post('/update-tags', async (req, res) => {
   try {
     const { filePath, tags } = req.body;

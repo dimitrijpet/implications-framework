@@ -95,6 +95,8 @@ export default function StateDetailModal({
 const [tagsData, setTagsData] = useState({ screen: [], group: [] });
 const [tagsChanges, setTagsChanges] = useState({});
 const [projectConfig, setProjectConfig] = useState(null);
+const [entityData, setEntityData] = useState('');
+const [entityChanges, setEntityChanges] = useState(false);
   
   // Get suggestions for metadata
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
@@ -207,6 +209,19 @@ const existingTags = useMemo(() => {
     screen: Array.from(screenTags).sort(),
     group: Array.from(groupTags).sort()
   };
+}, [discoveryResult]);
+
+const existingEntities = useMemo(() => {
+  const entities = new Set();
+  
+  discoveryResult?.files?.implications?.forEach(imp => {
+    const entity = imp.metadata?.xstateConfig?.meta?.entity || imp.metadata?.entity;
+    if (entity) {
+      entities.add(entity);
+    }
+  });
+  
+  return Array.from(entities).sort();
 }, [discoveryResult]);
 
 // Add useEffect to fetch config (after other useEffects, around line 180)
@@ -367,6 +382,10 @@ useEffect(() => {
     screen: Array.isArray(tags.screen) ? tags.screen : (tags.screen ? [tags.screen] : []),
     group: Array.isArray(tags.group) ? tags.group : (tags.group ? [tags.group] : [])
   });
+  
+  // ✅ NEW: Load entity
+  const entity = state?.meta?.xstateConfig?.meta?.entity || state?.meta?.entity || '';
+  setEntityData(entity);
 }, [state]);
 
 
@@ -752,6 +771,12 @@ const handleRemoveTransition = async (index) => {
   setHasChanges(true);
 };
 
+const handleEntityChange = (value) => {
+  setEntityData(value);
+  setEntityChanges(true);
+  setHasChanges(true);
+};
+
 const handleTransitionSubmit = async (transitionData) => {
   console.log('💾 Saving transition:', transitionMode, transitionData);
 
@@ -929,6 +954,27 @@ const handleSave = async () => {
       
       console.log('✅ Tags saved');
     }
+
+    // ✅ NEW: Save entity if changed
+if (entityChanges) {
+  console.log('🏷️ Saving entity change...');
+  
+  const entityResponse = await fetch('http://localhost:3000/api/implications/update-entity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filePath: state.files.implication,
+      entity: entityData
+    })
+  });
+  
+  if (!entityResponse.ok) {
+    const result = await entityResponse.json();
+    throw new Error(result.error || 'Failed to save entity');
+  }
+  
+  console.log('✅ Entity saved');
+}
     
     if (Object.keys(contextChanges).length > 0) {
       console.log('2️⃣ Saving context changes...');
@@ -953,17 +999,18 @@ const handleSave = async () => {
     }
     
     // ✅ FIX 1: Include tagsChanges in the check
-    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0 && Object.keys(tagsChanges).length === 0) {
-      alert('ℹ️ No changes to save');
-      setIsSaving(false);
-      return;
-    }
+    if (!hasMetadataChanges && Object.keys(contextChanges).length === 0 && Object.keys(tagsChanges).length === 0 && !entityChanges) {
+  alert('ℹ️ No changes to save');
+  setIsSaving(false);
+  return;
+}
     
     alert('✅ Changes saved successfully!');
     setHasChanges(false);
     setContextChanges({});
     setTagsChanges({});  // ✅ FIX 2: Reset tagsChanges
     setIsEditMode(false);
+    setEntityChanges(false);
     
     await loadContextData();
     
@@ -1478,6 +1525,63 @@ const handleSave = async () => {
   console.log('🗺️ allStatesMap["logged_in"]?.xstateConfig?.on:', allStatesMap['logged_in']?.xstateConfig?.on);
   return null;
 })()}
+
+{/* ENTITY */}
+<div className="flex items-center gap-3 mb-4">
+  <span className="text-sm" style={{ color: theme.colors.text.tertiary }}>🎯 Entity:</span>
+  
+  {isEditMode ? (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        list="entity-list"
+        value={entityData}
+        onChange={(e) => handleEntityChange(e.target.value)}
+        placeholder="e.g., booking, club, dancer"
+        className="px-3 py-1.5 rounded text-sm"
+        style={{
+          background: theme.colors.background.tertiary,
+          border: `1px solid ${entityData ? theme.colors.accents.cyan : theme.colors.border}`,
+          color: theme.colors.accents.cyan,
+          minWidth: '150px'
+        }}
+      />
+      <datalist id="entity-list">
+        {existingEntities.map(e => (
+          <option key={e} value={e} />
+        ))}
+      </datalist>
+      
+      {entityData && (
+        <button
+          onClick={() => handleEntityChange('')}
+          className="p-1 rounded hover:bg-red-500/20"
+          style={{ color: theme.colors.accents.red }}
+          title="Clear entity"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  ) : (
+    entityData ? (
+      <span 
+        className="px-3 py-1 rounded-full text-sm font-semibold"
+        style={{
+          background: `${theme.colors.accents.cyan}20`,
+          color: theme.colors.accents.cyan,
+          border: `1px solid ${theme.colors.accents.cyan}`
+        }}
+      >
+        {entityData}
+      </span>
+    ) : (
+      <span className="text-xs italic" style={{ color: theme.colors.text.tertiary }}>
+        No entity (click Edit to set)
+      </span>
+    )
+  )}
+</div>
 
 {/* PATH ANALYSIS */}
 <PathDataFlowPanel
