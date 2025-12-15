@@ -1,7 +1,13 @@
 // packages/web-app/src/utils/computePathDataFlow.js
 // Utility to compute cumulative data context along a path of states
 
+// packages/web-app/src/hooks/usePathAvailableData.js
+
+import { useMemo } from 'react';
+import { findAllPaths, computePathDataFlow } from '../utils/computePathDataFlow';
 import { extractDataFlow } from './extractDataFlow';
+
+
 
 /**
  * Compute the cumulative data flow for a path through the state machine
@@ -191,11 +197,9 @@ function findTransition(fromState, toState, allTransitions, allStates) {
   }
   
   if (directTransition) {
-    // If direct has actionDetails, use it; otherwise use stateTransition if available
     if (directTransition.actionDetails) {
       return directTransition;
     }
-    // Merge: use directTransition as base, add actionDetails from stateTransition
     if (stateTransition) {
       return {
         ...directTransition,
@@ -209,6 +213,7 @@ function findTransition(fromState, toState, allTransitions, allStates) {
   
   return stateTransition || null;
 }
+
 
 /**
  * Build formData structure from transition for extractDataFlow
@@ -241,11 +246,6 @@ function isCommonConfigField(field) {
 
 /**
  * Find all possible paths between two states (BFS)
- * @param {string} startState - Starting state ID
- * @param {string} endState - Target state ID
- * @param {Array} allTransitions - All transitions
- * @param {number} maxDepth - Maximum path length to search
- * @returns {Array} Array of paths, each path is array of state IDs
  */
 export function findAllPaths(startState, endState, allTransitions, maxDepth = 10) {
   const paths = [];
@@ -262,7 +262,6 @@ export function findAllPaths(startState, endState, allTransitions, maxDepth = 10
       continue;
     }
     
-    // Find all outgoing transitions from current state
     const outgoing = allTransitions?.filter(t => 
       t.from.toLowerCase() === currentState.toLowerCase()
     ) || [];
@@ -270,7 +269,6 @@ export function findAllPaths(startState, endState, allTransitions, maxDepth = 10
     for (const transition of outgoing) {
       const nextState = transition.to;
       
-      // Avoid cycles
       if (currentPath.some(s => s.toLowerCase() === nextState.toLowerCase())) {
         continue;
       }
@@ -284,10 +282,6 @@ export function findAllPaths(startState, endState, allTransitions, maxDepth = 10
 
 /**
  * Analyze multiple paths and compare their data requirements
- * @param {Array} paths - Array of paths from findAllPaths
- * @param {Array} allTransitions - All transitions
- * @param {Object} allStates - State map
- * @returns {Object} Comparison of path requirements
  */
 export function comparePathRequirements(paths, allTransitions, allStates) {
   const pathAnalyses = paths.map((path, index) => {
@@ -299,7 +293,6 @@ export function comparePathRequirements(paths, allTransitions, allStates) {
     };
   });
   
-  // Find common requirements across all paths
   const allInitialRequired = pathAnalyses.map(p => new Set(p.initialRequired));
   const commonRequired = allInitialRequired.length > 0
     ? Array.from(allInitialRequired[0]).filter(field =>
@@ -307,12 +300,10 @@ export function comparePathRequirements(paths, allTransitions, allStates) {
       )
     : [];
   
-  // Find path with fewest requirements
   const easiestPath = pathAnalyses.reduce((min, curr) => 
     curr.initialRequired.length < min.initialRequired.length ? curr : min
   , pathAnalyses[0]);
   
-  // Find path with most issues
   const problematicPath = pathAnalyses.reduce((max, curr) =>
     curr.issues.length > max.issues.length ? curr : max
   , pathAnalyses[0]);
@@ -333,7 +324,10 @@ export function comparePathRequirements(paths, allTransitions, allStates) {
       issues: problematicPath.issues
     } : null
   };
+
 }
+
+// export default usePathAvailableData;
 
 export default {
   computePathDataFlow,

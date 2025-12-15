@@ -450,52 +450,52 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     let useRawValidation = forceRawValidation;
     let rawValidationReason = forceRawValidation ? "forced by user" : null;
 
-    // Only do auto-detection if NOT forced
-    if (!forceRawValidation && hasBlocks) {
-      const screenPomName = (screen.screen || screenKey)
-        .toLowerCase()
-        .replace(/\.(wrapper|screen|page)$/i, "")
-        .replace(/\//g, "");
+    // // Only do auto-detection if NOT forced
+    // if (!forceRawValidation && hasBlocks) {
+    //   const screenPomName = (screen.screen || screenKey)
+    //     .toLowerCase()
+    //     .replace(/\.(wrapper|screen|page)$/i, "")
+    //     .replace(/\//g, "");
 
-      for (const block of screen.blocks) {
-        if (block.enabled === false) continue;
+    //   for (const block of screen.blocks) {
+    //     if (block.enabled === false) continue;
 
-        // Check 1: Custom code blocks always need raw
-        if (block.type === "custom-code" && block.code?.trim()) {
-          useRawValidation = true;
-          rawValidationReason = "custom-code block";
-          break;
-        }
+    //     // Check 1: Custom code blocks always need raw
+    //     if (block.type === "custom-code" && block.code?.trim()) {
+    //       useRawValidation = true;
+    //       rawValidationReason = "custom-code block";
+    //       break;
+    //     }
 
-        // ✅ NEW Check 2: ui-assertion with assertions array needs raw
-        if (
-          block.type === "ui-assertion" &&
-          block.data?.assertions?.length > 0
-        ) {
-          useRawValidation = true;
-          rawValidationReason = "function-based assertions";
-          break;
-        }
+    //     // ✅ NEW Check 2: ui-assertion with assertions array needs raw
+    //     if (
+    //       block.type === "ui-assertion" &&
+    //       block.data?.assertions?.length > 0
+    //     ) {
+    //       useRawValidation = true;
+    //       rawValidationReason = "function-based assertions";
+    //       break;
+    //     }
 
-        // Check 3: Function calls to DIFFERENT POMs need raw
-        if (block.type === "function-call") {
-          const blockInstance = (block.data?.instance || "")
-            .toLowerCase()
-            .replace(/\.(wrapper|screen|page)$/i, "")
-            .replace(/\//g, "");
+    //     // Check 3: Function calls to DIFFERENT POMs need raw
+    //     if (block.type === "function-call") {
+    //       const blockInstance = (block.data?.instance || "")
+    //         .toLowerCase()
+    //         .replace(/\.(wrapper|screen|page)$/i, "")
+    //         .replace(/\//g, "");
 
-          if (
-            blockInstance &&
-            !screenPomName.includes(blockInstance) &&
-            !blockInstance.includes(screenPomName)
-          ) {
-            useRawValidation = true;
-            rawValidationReason = `external function call to ${block.data?.instance}`;
-            break;
-          }
-        }
-      }
-    }
+    //       if (
+    //         blockInstance &&
+    //         !screenPomName.includes(blockInstance) &&
+    //         !blockInstance.includes(screenPomName)
+    //       ) {
+    //         useRawValidation = true;
+    //         rawValidationReason = `external function call to ${block.data?.instance}`;
+    //         break;
+    //       }
+    //     }
+    //   }
+    // }
 
     // ═══════════════════════════════════════════════════════════
     // ✅ FIX: Force ExpectImplication for WebdriverIO/Appium

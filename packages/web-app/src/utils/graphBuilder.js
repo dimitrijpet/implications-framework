@@ -94,17 +94,16 @@ export function buildGraphFromDiscovery(discoveryResult) {
   const implications = files.implications || [];
   const projectPath = discoveryResult.projectPath;
 
-  // Get graph colors from config (passed from backend)
-  const graphColors =
-    discoveryResult.config?.graphColors || DEFAULT_GRAPH_COLORS;
+  const graphColors = discoveryResult.config?.graphColors || DEFAULT_GRAPH_COLORS;
 
   const nodes = [];
   const edges = [];
-  const stateMap = new Map();
+  const stateMap = new Map();  // ← Make sure this exists
   const allTags = {};
+  const screenGroups = {};  // ← Make sure this exists or is defined elsewhere
 
   // Filter to stateful implications only
-  const statefulImplications = implications.filter(
+ const statefulImplications = implications.filter(
     (imp) => imp.metadata?.hasXStateConfig === true
   );
 
@@ -286,15 +285,12 @@ export function buildGraphFromDiscovery(discoveryResult) {
   console.log(`✅ Built graph: ${nodes.length} nodes, ${edges.length} edges`);
 
   // Filter out edges that reference non-existent nodes
-  const nodeIds = new Set(nodes.map((n) => n.data.id));
+const nodeIds = new Set(nodes.map((n) => n.data.id));
   const validEdges = edges.filter((edge) => {
     const hasSource = nodeIds.has(edge.data.source);
     const hasTarget = nodeIds.has(edge.data.target);
-
     if (!hasSource || !hasTarget) {
-      console.warn(
-        `REMOVED invalid edge: ${edge.data.source} to ${edge.data.target}`
-      );
+      console.warn(`REMOVED invalid edge: ${edge.data.source} to ${edge.data.target}`);
       return false;
     }
     return true;
@@ -304,19 +300,35 @@ export function buildGraphFromDiscovery(discoveryResult) {
     `Valid edges: ${validEdges.length} (removed ${edges.length - validEdges.length} invalid)`
   );
 
+   // ✅ Build statesMap AFTER nodes are created
+  const statesMap = {};
+  nodes.forEach((node) => {
+    if (node.data.type === "state") {
+      const stateId = node.data.id;
+      statesMap[stateId] = {
+        id: stateId,
+        xstateConfig: node.data.metadata?.xstateConfig || null,
+        ...node.data,
+      };
+    }
+  });
+
   // Convert tag Sets to sorted arrays
-  const discoveredTags = {};
+ const discoveredTags = {};
   Object.entries(allTags).forEach(([category, values]) => {
     discoveredTags[category] = Array.from(values).sort();
   });
 
+  console.log(`✅ Built graph: ${nodes.length} nodes, ${validEdges.length} edges, ${Object.keys(statesMap).length} states in map`);
+
   console.log(`🏷️ Discovered tags:`, discoveredTags);
 
-  return {
+   return {
     nodes,
     edges: validEdges,
+    screenGroups,
     discoveredTags,
-    graphColors,
+    statesMap,
   };
 }
 

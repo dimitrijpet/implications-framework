@@ -1907,6 +1907,8 @@ const disableTransitionMode = () => {
   targetState={transitionModalData.target}
   projectPath={projectPath}
   availablePlatforms={projectConfig?.platforms || ["web"]}
+  allTransitions={discoveryResult?.transitions || []}
+  allStates={graphData?.statesMap || {}}
 />
     
     </div>

@@ -13,6 +13,7 @@ import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVari
 import useProjectConfig from '../../hooks/useProjectConfig';
 import DataFlowSummary from './DataFlowSummary';
 import usePOMData from '../../hooks/usePOMData';
+import { usePathAvailableData } from '../../hooks/usePathAvailableData';
 import {
   DndContext,
   closestCenter,
@@ -238,11 +239,21 @@ export default function AddTransitionModal({
   projectPath,
   mode = 'add',
   initialData = null,
-  // ❌ REMOVE: availablePlatforms = ["web"],
+  allTransitions = [],  // ✅ ADD
+  allStates = {},       // ✅ ADD
 }) {
   // ✅ ADD: Load platforms from config
-  const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
-  const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
+const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+
+// ✅ ADD: Path analysis for available data
+const { availableFields: pathAvailableFields, pathUsed, analysis: pathAnalysis } = usePathAvailableData(
+  sourceState?.id || sourceState?.meta?.status,
+  allTransitions,
+  allStates,
+  'initial'
+);
+
 
 const [formData, setFormData] = useState({
   event: "",
@@ -404,10 +415,15 @@ const allStoredVariables = useMemo(() => {
     }
   };
   
-  // 1. Variables from current form steps (storeAs)
+  // 1. Variables from PATH (produced by earlier transitions) ✅ NEW
+  if (pathAvailableFields?.length > 0) {
+    pathAvailableFields.forEach(addVar);
+  }
+  
+  // 2. Variables from current form steps (storeAs)
   availableStoreAsVars.forEach(addVar);
   
-  // 2. Variables from source state's UI validations (storeAs)
+  // 3. Variables from source state's UI validations (storeAs)
   if (sourceState) {
     const uiVars = collectVariablesFromUIValidations(sourceState);
     uiVars.forEach(v => {
@@ -418,7 +434,7 @@ const allStoredVariables = useMemo(() => {
   }
   
   return vars;
-}, [availableStoreAsVars, sourceState]);  // ✅ Remove storedVariables from deps
+}, [pathAvailableFields, availableStoreAsVars, sourceState]);
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
