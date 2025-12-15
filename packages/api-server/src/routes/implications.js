@@ -2961,23 +2961,30 @@ if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
         // checks
         if (block.data.checks) {
           const checksProps = [];
-       if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
-  const textProps = Object.entries(block.data.checks.text).map(([k, v]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? t.identifier(k) : t.stringLiteral(k),
-      t.stringLiteral(String(v))
-    )
-  );
-            checksProps.push(t.objectProperty(t.identifier('text'), t.objectExpression(textProps)));
+           if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([key, value]) =>
+              t.objectProperty(
+                /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+                t.stringLiteral(String(value))
+              )
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('text'),
+              t.objectExpression(textProps)
+            ));
           }
-if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
-  const containsProps = Object.entries(block.data.checks.contains).map(([k, v]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? t.identifier(k) : t.stringLiteral(k),
-      t.stringLiteral(String(v))
-    )
-  );
-            checksProps.push(t.objectProperty(t.identifier('contains'), t.objectExpression(containsProps)));
+          
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([key, value]) =>
+              t.objectProperty(
+                /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+                t.stringLiteral(String(value))
+              )
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('contains'),
+              t.objectExpression(containsProps)
+            ));
           }
           if (checksProps.length > 0) {
             dataProps.push(t.objectProperty(t.identifier('checks'), t.objectExpression(checksProps)));
@@ -3468,21 +3475,20 @@ function buildScreenObjectAst(screen) {
     }
     
    // checks.text
-  if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
-  const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+   if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(value)
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
       ));
     }
     
-    // ✅ ADD THIS: checks.contains
-     if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
       const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
         t.objectProperty(
           /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
@@ -3775,26 +3781,26 @@ function buildScreenAst(screen, screenName, platformName, className) {
       ));
     }
     
-    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
-  const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+  if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(String(value))
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
       ));
     }
     
-   if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
-  const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(String(value))
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('contains'),
         t.objectExpression(containsProps)
@@ -4510,7 +4516,7 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       } else {
         valueNode = t.stringLiteral(String(value));
       }
-      return t.objectProperty(t.identifier(key), valueNode);
+      return t.objectProperty(t.stringLiteral(key), valueNode);
     });
     
     transitionObj.properties.push(
@@ -4970,7 +4976,7 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
             } else {
               valueNode = t.stringLiteral(String(value));
             }
-            return t.objectProperty(t.identifier(key), valueNode);
+            return t.objectProperty(t.stringLiteral(key), valueNode);
           });
           
           setupEntryProps.push(
@@ -5787,7 +5793,7 @@ function updateSetupEntryRequiresInAST(ast, sourceStateName, requires, mode) {
               } else {
                 valueNode = t.stringLiteral(String(value));
               }
-              return t.objectProperty(t.identifier(key), valueNode);
+              return t.objectProperty(t.stringLiteral(key), valueNode);
             });
             
             const requiresNode = t.objectProperty(
@@ -6185,7 +6191,7 @@ console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
                 } else {
                   valueNode = t.stringLiteral(String(value));
                 }
-                return t.objectProperty(t.identifier(key), valueNode);
+                return t.objectProperty(t.stringLiteral(key), valueNode);
               });
               
               transitionProperties.push(
