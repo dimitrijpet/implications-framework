@@ -336,7 +336,13 @@ function extractTags(metadata, autoInfer = false) {
     tags = { ...tags, ...metadata.xstateConfig.meta.tags };
   }
 
-  // 3. Only auto-infer if requested (disabled by default)
+  // 3. Entity from xstateConfig.meta or direct metadata
+  const entity = metadata.xstateConfig?.meta?.entity || metadata.entity;
+  if (entity) {
+    tags.entity = entity;
+  }
+
+  // 4. Only auto-infer if requested (disabled by default)
   if (autoInfer) {
     if (!tags.platform && metadata.platform) {
       tags.platform = metadata.platform;
