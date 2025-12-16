@@ -201,6 +201,7 @@ export default function PlatformSectionWithOrdering({
           pomName={pomName}
           instanceName={instanceName}
           projectPath={projectPath}
+          platform={platformName}
           storedVariables={storedVariables}
         />
 

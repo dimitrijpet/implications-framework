@@ -39,8 +39,9 @@ export default function BlockRenderer({
   pomName,
   instanceName,
   projectPath,
+  platform,             // ✅ ADD THIS LINE
   storedVariables = [],
-  testDataSchema = []  // ✅ ADD THIS
+  testDataSchema = []
 }) {
   const meta = BLOCK_TYPE_META[block.type] || {};
   const colorKey = meta.color || 'blue';
@@ -59,6 +60,7 @@ export default function BlockRenderer({
             pomName={pomName}
             instanceName={instanceName}
             projectPath={projectPath}
+            platform={platform}        // ✅ ADD THIS LINE
             storedVariables={storedVariables}
           />
         );
@@ -82,6 +84,7 @@ export default function BlockRenderer({
             onUpdate={onUpdate}
             pomName={pomName}
             projectPath={projectPath}
+            platform={platform}  // ✅ ADD THIS
             storedVariables={storedVariables}
           />
         );

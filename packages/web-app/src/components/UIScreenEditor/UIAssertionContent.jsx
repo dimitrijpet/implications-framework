@@ -116,6 +116,7 @@ export default function UIAssertionContent({
   pomName,
   instanceName,
   projectPath,
+  platform,  // ✅ ADD THIS PROP
   storedVariables = []
 }) {
   const data = block.data || {};
@@ -141,29 +142,24 @@ export default function UIAssertionContent({
 
   // Load locators when POM changes
   useEffect(() => {
-    const loadLocators = async () => {
-      console.log('🔍 loadLocators called:', { pomName, instanceName, projectPath });
-      
-      if (!pomName) {
-        console.log('⚠️ No pomName, skipping');
-        setLocatorOptions([]);
-        setTypedLocatorOptions([]);
-        return;
-      }
-      
-      if (!projectPath) {
-        console.log('⚠️ No projectPath, skipping');
-        setLocatorOptions([]);
-        setTypedLocatorOptions([]);
-        return;
-      }
+  const loadLocators = async () => {
+    if (!pomName || !projectPath) {
+      setLocatorOptions([]);
+      setTypedLocatorOptions([]);
+      return;
+    }
 
-      setLoadingLocators(true);
-      try {
-        const url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
-        console.log('🌐 Fetching:', url);
-        
-        const response = await fetch(url);
+    setLoadingLocators(true);
+    try {
+      // ✅ ADD PLATFORM TO URL
+      let url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
+      if (platform) {
+        url += `&platform=${encodeURIComponent(platform)}`;
+      }
+      
+      console.log('🌐 Fetching POM:', url);
+      
+      const response = await fetch(url);
         
         if (!response.ok) {
           throw new Error(`Failed to load POM: ${response.status}`);
@@ -202,7 +198,7 @@ export default function UIAssertionContent({
     };
 
     loadLocators();
-  }, [pomName, instanceName, projectPath]);
+  }, [pomName, instanceName, projectPath, platform]);
 
   // Load functions when POM changes
   useEffect(() => {

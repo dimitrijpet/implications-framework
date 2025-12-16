@@ -32,8 +32,10 @@ export default function FunctionCallContent({
   onUpdate, 
   pomName,
   projectPath,
+  platform,  // ✅ ADD THIS
   storedVariables = []
 }) {
+
   const data = block.data || {};
   
   // Load POM data
@@ -42,7 +44,7 @@ export default function FunctionCallContent({
     loading: pomsLoading,
     getPOMFunctions,
     getMethodReturnKeys 
-  } = usePOMData(projectPath);
+  } = usePOMData(projectPath, platform);  // ✅ PASS PLATFORM
 
   // Local state for method suggestions (with full parameter info)
   const [methodSuggestions, setMethodSuggestions] = useState([]);

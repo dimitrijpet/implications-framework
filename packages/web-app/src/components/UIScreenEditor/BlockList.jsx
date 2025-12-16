@@ -58,8 +58,9 @@ function SortableBlock({
   pomName,
   instanceName,
   projectPath,
+  platform,           // ✅ ADD THIS LINE
   storedVariables,
-  testDataSchema  // ✅ ADD THIS
+  testDataSchema
 }) {
   const {
     attributes,
@@ -89,8 +90,9 @@ function SortableBlock({
   pomName={pomName}
   instanceName={instanceName}
   projectPath={projectPath}
+  platform={platform}              // ✅ ADD THIS LINE
   storedVariables={storedVariables}
-  testDataSchema={testDataSchema}  // ✅ ADD THIS
+  testDataSchema={testDataSchema}
   dragHandleProps={editMode ? { ...attributes, ...listeners } : {}}
 />
     </div>
@@ -109,8 +111,9 @@ export default function BlockList({
   pomName,
   instanceName,
   projectPath,
+  platform,             // ✅ ADD THIS LINE
   testDataSchema = null,
-  storedVariables = []  // ✅ ADD THIS - transition variables from parent
+  storedVariables = []
 }) {
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeId, setActiveId] = useState(null);
@@ -390,8 +393,9 @@ const handleAddBlock = (type) => {
     pomName={pomName}
     instanceName={instanceName}
     projectPath={projectPath}
+    platform={platform}              // ✅ ADD THIS LINE
     storedVariables={variablesByBlockIndex[index] || []}
-    testDataSchema={testDataSchema}  // ✅ ADD THIS
+    testDataSchema={testDataSchema}
   />
 ))}
             </div>

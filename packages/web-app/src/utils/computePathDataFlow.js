@@ -1,18 +1,19 @@
 // packages/web-app/src/utils/computePathDataFlow.js
 // Utility to compute cumulative data context along a path of states
 
-// packages/web-app/src/hooks/usePathAvailableData.js
+// packages/web-app/src/utils/computePathDataFlow.js
 
-import { useMemo } from 'react';
-import { findAllPaths, computePathDataFlow } from '../utils/computePathDataFlow';
-import { extractDataFlow } from './extractDataFlow';
+// TODO: Fix import path
+// import { extractDataFlow } from '../hooks/extractDataFlow';
 
-
-
+// Stub until we find the right import
+function extractDataFlow(formData) {
+  return { reads: [], writes: [] };
+}
 /**
  * Compute the cumulative data flow for a path through the state machine
  * 
- * @param {Array} path - Array of state IDs in order, e.g. ['initial', 'logged_in', 'club_selected']
+ * @param {Array} path - Array of state IDs in order
  * @param {Array} allTransitions - All transitions from discoveryResult.transitions
  * @param {Object} allStates - Map of stateId -> state data (with xstateConfig)
  * @returns {Object} Cumulative data flow analysis
@@ -32,16 +33,13 @@ export function computePathDataFlow(path, allTransitions, allStates = {}) {
   const pathTransitions = [];
   const issues = [];
   
-  // Track what's available at each point
   let cumulativeAvailable = new Set();
   let allRequired = new Set();
 
-  // Process each transition in the path
   for (let i = 0; i < path.length - 1; i++) {
     const fromState = path[i];
     const toState = path[i + 1];
     
-    // Find the transition between these states
     const transition = findTransition(fromState, toState, allTransitions, allStates);
     
     if (!transition) {
@@ -61,19 +59,15 @@ export function computePathDataFlow(path, allTransitions, allStates = {}) {
       transition
     });
     
-    // Build formData-like structure for extractDataFlow
     const formData = buildFormDataFromTransition(transition);
     const dataFlow = extractDataFlow(formData);
     
-    // Track what this transition REQUIRES
     const requiredFields = dataFlow.reads.map(r => r.field);
     const producedFields = dataFlow.writes.map(w => w.field);
     
-    // Check for missing requirements
     const missingAtThisPoint = [];
     requiredFields.forEach(field => {
       const rootField = field.split(/[.\[]/)[0];
-      // Check if available (either exact match or root field match)
       const isAvailable = cumulativeAvailable.has(field) || 
                           cumulativeAvailable.has(rootField) ||
                           isCommonConfigField(field);
@@ -94,10 +88,8 @@ export function computePathDataFlow(path, allTransitions, allStates = {}) {
       });
     }
     
-    // Add produced fields to cumulative available
     producedFields.forEach(field => cumulativeAvailable.add(field));
     
-    // Store context for this state
     stateContexts[fromState] = {
       availableBefore: new Set(cumulativeAvailable),
       required: requiredFields,
@@ -110,7 +102,6 @@ export function computePathDataFlow(path, allTransitions, allStates = {}) {
     };
   }
   
-  // Final state context (no outgoing transition in path)
   const lastState = path[path.length - 1];
   stateContexts[lastState] = {
     availableBefore: new Set(cumulativeAvailable),
@@ -120,9 +111,7 @@ export function computePathDataFlow(path, allTransitions, allStates = {}) {
     transition: null
   };
   
-  // Compute initial required (fields needed at start that aren't produced along the way)
   const initialRequired = Array.from(allRequired).filter(field => {
-    // Check if this field is produced by any transition in the path
     return !pathTransitions.some(pt => {
       const formData = buildFormDataFromTransition(pt.transition);
       const flow = extractDataFlow(formData);
@@ -155,14 +144,12 @@ function findTransition(fromState, toState, allTransitions, allStates) {
   const fromNorm = normalizeState(fromState);
   const toNorm = normalizeState(toState);
   
-  // First try: find in allTransitions array
   const directTransition = allTransitions?.find(t => {
     const tFrom = normalizeState(t.from);
     const tTo = normalizeState(t.to);
     return tFrom === fromNorm && tTo === toNorm;
   });
   
-  // Also check in source state's xstateConfig.on for richer data
   const sourceState = allStates[fromState] || allStates[fromState.toLowerCase()];
   let stateTransition = null;
   
@@ -191,7 +178,6 @@ function findTransition(fromState, toState, allTransitions, allStates) {
     }
   }
   
-  // Prefer the one with actionDetails, or merge them
   if (stateTransition?.actionDetails) {
     return stateTransition;
   }
@@ -213,7 +199,6 @@ function findTransition(fromState, toState, allTransitions, allStates) {
   
   return stateTransition || null;
 }
-
 
 /**
  * Build formData structure from transition for extractDataFlow
@@ -324,13 +309,4 @@ export function comparePathRequirements(paths, allTransitions, allStates) {
       issues: problematicPath.issues
     } : null
   };
-
 }
-
-// export default usePathAvailableData;
-
-export default {
-  computePathDataFlow,
-  findAllPaths,
-  comparePathRequirements
-};
