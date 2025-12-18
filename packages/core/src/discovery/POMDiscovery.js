@@ -651,48 +651,61 @@ else if (member.kind === 'method' && member.key.name !== 'constructor') {
     return `${name}(${paramStrings.join(', ')})`;
   }
 
-  /**
-   * Get available paths for a POM
-   */
-  getAvailablePaths(pomName, instanceName = null) {
-    const pom = this.pomCache.get(pomName);
-    if (!pom) return [];
+/**
+ * Get available paths for a POM
+ * ✅ FIXED: Always include direct getters, even if POM has instances
+ */
+getAvailablePaths(pomName, instanceName = null) {
+  const pom = this.pomCache.get(pomName);
+  if (!pom) return [];
 
-    const paths = [];
-    
-    for (const cls of pom.classes) {
-      if (instanceName) {
-        const instanceProp = cls.properties.find(
-          p => p.name === instanceName && p.type === 'instance'
-        );
+  const paths = [];
+  
+  for (const cls of pom.classes) {
+    if (instanceName) {
+      // Looking for a specific instance's paths
+      const instanceProp = cls.properties.find(
+        p => p.name === instanceName && p.type === 'instance'
+      );
+      
+      if (instanceProp) {
+        // Try to find the instance's class in our cache
+        const instancePom = this.pomCache.get(instanceProp.className);
         
-        if (instanceProp) {
-          const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
-          if (instanceClass) {
-            for (const getter of instanceClass.getters) {
+        if (instancePom) {
+          // Get getters from the instance's class
+          for (const instanceCls of instancePom.classes) {
+            for (const getter of instanceCls.getters || []) {
               paths.push(`${instanceName}.${getter.name}`);
             }
-          }
-        }
-      } else {
-        const hasInstances = cls.properties.some(p => p.type === 'instance');
-        
-        if (!hasInstances) {
-          for (const getter of cls.getters) {
-            paths.push(getter.name);
-          }
-          
-          for (const prop of cls.properties) {
-            if (prop.type === 'property') {
-              paths.push(prop.name);
+            for (const prop of instanceCls.properties || []) {
+              if (prop.type === 'property') {
+                paths.push(`${instanceName}.${prop.name}`);
+              }
             }
           }
         }
       }
+    } else {
+      // ✅ FIXED: Always include direct getters from main class
+      // (regardless of whether it has instance properties)
+      for (const getter of cls.getters || []) {
+        if (!paths.includes(getter.name)) {
+          paths.push(getter.name);
+        }
+      }
+      
+      // Include direct properties (not instances)
+      for (const prop of cls.properties || []) {
+        if (prop.type === 'property' && !paths.includes(prop.name)) {
+          paths.push(prop.name);
+        }
+      }
     }
-
-    return paths;
   }
+
+  return paths;
+}
 
   /**
    * ✅ FIXED: Get ALL functions for a POM (including ones without params)

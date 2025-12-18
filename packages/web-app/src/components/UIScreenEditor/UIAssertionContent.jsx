@@ -114,11 +114,19 @@ export default function UIAssertionContent({
   theme, 
   onUpdate, 
   pomName,
+  pomPath,      // ✅ Is this being passed?
   instanceName,
   projectPath,
-  platform,  // ✅ ADD THIS PROP
+  platform,
   storedVariables = []
 }) {
+  // ✅ ADD THIS DEBUG
+  console.log('🔍 UIAssertionContent props:', {
+    pomName,
+    pomPath,
+    instanceName,
+    platform
+  });
   const data = block.data || {};
   
   // Load POM data
@@ -151,10 +159,15 @@ export default function UIAssertionContent({
 
     setLoadingLocators(true);
     try {
-      // ✅ ADD PLATFORM TO URL
       let url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
+      
       if (platform) {
         url += `&platform=${encodeURIComponent(platform)}`;
+      }
+      
+      // ✅ ADD: If we have exact path, pass it!
+      if (pomPath) {
+        url += `&pomPath=${encodeURIComponent(pomPath)}`;
       }
       
       console.log('🌐 Fetching POM:', url);

@@ -56,9 +56,10 @@ function SortableBlock({
   onDelete,
   onDuplicate,
   pomName,
+  pomPath,         // ✅ ADD THIS
   instanceName,
   projectPath,
-  platform,           // ✅ ADD THIS LINE
+  platform,
   storedVariables,
   testDataSchema
 }) {
@@ -80,7 +81,7 @@ function SortableBlock({
 
   return (
     <div ref={setNodeRef} style={style}>
-       <BlockRenderer
+<BlockRenderer
   block={block}
   editMode={editMode}
   theme={theme}
@@ -88,9 +89,10 @@ function SortableBlock({
   onDelete={onDelete}
   onDuplicate={onDuplicate}
   pomName={pomName}
+  pomPath={pomPath}              // ✅ ADD THIS (instead of screen._pomSource?.path)
   instanceName={instanceName}
   projectPath={projectPath}
-  platform={platform}              // ✅ ADD THIS LINE
+  platform={platform}
   storedVariables={storedVariables}
   testDataSchema={testDataSchema}
   dragHandleProps={editMode ? { ...attributes, ...listeners } : {}}
@@ -391,9 +393,10 @@ const handleAddBlock = (type) => {
     onDelete={() => handleDeleteBlock(block.id)}
     onDuplicate={() => handleDuplicateBlock(block.id)}
     pomName={pomName}
+    pomPath={screen._pomSource?.path}  // ✅ MOVE HERE - BlockList has access to screen
     instanceName={instanceName}
     projectPath={projectPath}
-    platform={platform}              // ✅ ADD THIS LINE
+    platform={platform}
     storedVariables={variablesByBlockIndex[index] || []}
     testDataSchema={testDataSchema}
   />

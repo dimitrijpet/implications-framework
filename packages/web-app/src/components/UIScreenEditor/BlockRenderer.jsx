@@ -37,6 +37,7 @@ export default function BlockRenderer({
   onDuplicate,
   dragHandleProps = {},
   pomName,
+  pomPath,        // ✅ ADD THIS
   instanceName,
   projectPath,
   platform,
@@ -76,6 +77,7 @@ export default function BlockRenderer({
             pomName={pomName}
             instanceName={instanceName}
             projectPath={projectPath}
+            pomPath={pomPath}
             platform={platform}
             storedVariables={storedVariables}
           />

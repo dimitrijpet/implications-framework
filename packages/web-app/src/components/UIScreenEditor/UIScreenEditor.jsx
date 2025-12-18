@@ -1107,15 +1107,16 @@ function ScreenCard({ screen, editMode, projectPath, platform, onUpdate, onCopy,
 
           {/* Block-based View (new) */}
           {(viewMode === 'blocks' || !hasLegacyData) && (
-            <BlockList
+<BlockList
   screen={screen}
   editMode={editMode}
   theme={theme}
   onBlocksChange={handleBlocksChange}
   pomName={pomName}
+  pomPath={screen._pomSource?.path}  // ✅ ADD THIS
   instanceName={instanceName}
   projectPath={projectPath}
-  platform={platform}           // ✅ ADD THIS
+  platform={platform}
   storedVariables={storedVariables}
 />
           )}

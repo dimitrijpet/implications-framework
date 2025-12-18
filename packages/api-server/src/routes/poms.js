@@ -431,12 +431,13 @@ router.get('/functions', async (req, res) => {
 router.get('/:pomName', async (req, res) => {
   try {
     const projectPath = req.query.projectPath || process.env.GUEST_PROJECT_PATH;
-    const platform = req.query.platform || null;  // ✅ NEW: Accept platform
+    const platform = req.query.platform || null;
+    const pomPath = req.query.pomPath || null;  // ✅ Accept exact path
     const { pomName } = req.params;
 
     console.log(`\n📦 Getting POM details: ${pomName}`);
-    if (platform) {
-      console.log(`   📱 Platform filter: ${platform}`);
+    if (pomPath) {
+      console.log(`   📄 Exact path requested: ${pomPath}`);
     }
 
     const discovery = new POMDiscovery(projectPath);
@@ -444,9 +445,35 @@ router.get('/:pomName', async (req, res) => {
 
     let pom = null;
     
+    // ✅ PRIORITY 1: If exact path provided, use it!
+    if (pomPath) {
+  const normalizedPomPath = pomPath.replace(/\\/g, '/');
+  
+  for (const [cacheKey, cachedPom] of discovery.pomCache.entries()) {
+    const cachedPath = (cachedPom.path || '').replace(/\\/g, '/');
+    
+    if (cachedPath === normalizedPomPath || 
+        cachedPath.endsWith(normalizedPomPath) ||
+        normalizedPomPath.endsWith(cachedPath)) {
+      console.log(`   ✅ Found by exact path: ${cachedPom.path}`);
+      pom = cachedPom;
+      break;
+    }
+  }
+  
+  if (pom) {
+    console.log(`   🎯 Using exact path match - skipping fuzzy search`);
+  } else {
+    console.log(`   ⚠️ Exact path "${pomPath}" not found, falling back`);
+  }
+}
+
+    
     // ✅ NEW: If platform specified, find POM from correct platform path
-    if (platform) {
-      const config = await loadProjectConfig(projectPath);
+   
+// ✅ FIX: Only do platform search if we DIDN'T find by exact path
+if (!pom && platform) {   // ← ADD !pom && HERE
+  const config = await loadProjectConfig(projectPath)
       const platformPatterns = config?.screenPaths?.[platform] || [];
       const ignorePatterns = config?.screenPaths?.ignore || [];
       
@@ -567,17 +594,23 @@ router.get('/:pomName', async (req, res) => {
       }
     }
 
-    const instancePaths = {};
-    if (instances.length === 0 && locators.length > 0) {
-      instancePaths['default'] = locators;
-    } else {
-      for (const inst of instances) {
-        instancePaths[inst.name] = discovery.getAvailablePaths(pom.name, inst.name);
-      }
-      if (locators.length > 0) {
-        instancePaths['default'] = locators;
-      }
-    }
+const instancePaths = {};
+
+// ✅ ALWAYS include direct locators as 'default'
+if (locators.length > 0) {
+  instancePaths['default'] = locators;
+}
+
+// ✅ ALSO include instance paths (if any)
+for (const inst of instances) {
+  const instPaths = discovery.getAvailablePaths(pom.name, inst.name);
+  if (instPaths.length > 0) {
+    instancePaths[inst.name] = instPaths;
+  }
+}
+
+console.log(`   📍 Instance paths:`, Object.keys(instancePaths));
+console.log(`   📍 Default locators: ${instancePaths['default']?.length || 0}`);
 
     console.log(`   ✅ ${pomName}: ${functions.length} functions, ${locators.length} locators`);
     console.log(`   📄 Source file: ${pom.path}`);
