@@ -149,7 +149,7 @@ export default function UIAssertionContent({
   const [typedLocatorOptions, setTypedLocatorOptions] = useState([]);
 
   // Load locators when POM changes
-  useEffect(() => {
+useEffect(() => {
   const loadLocators = async () => {
     if (!pomName || !projectPath) {
       setLocatorOptions([]);
@@ -159,59 +159,71 @@ export default function UIAssertionContent({
 
     setLoadingLocators(true);
     try {
-      let url = `http://localhost:3000/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
+      // ✅ FIX: Remove API_URL - use relative URL
+      let url = `/api/poms/${encodeURIComponent(pomName)}?projectPath=${encodeURIComponent(projectPath)}`;
       
       if (platform) {
         url += `&platform=${encodeURIComponent(platform)}`;
       }
       
-      // ✅ ADD: If we have exact path, pass it!
       if (pomPath) {
         url += `&pomPath=${encodeURIComponent(pomPath)}`;
       }
       
       console.log('🌐 Fetching POM:', url);
-      
       const response = await fetch(url);
-        
-        if (!response.ok) {
-          throw new Error(`Failed to load POM: ${response.status}`);
-        }
-        
+
+      if (response.ok) {
         const data = await response.json();
         console.log('📦 API Response:', data);
+        console.log('📦 instancePaths keys:', Object.keys(data.instancePaths || {}));
+        console.log('📦 Looking for instanceName:', instanceName);
         
-        // Get locators - for flat POMs they're in 'default'
-        const locatorNames = data.instancePaths?.default || [];
-        console.log('📍 Locator names:', locatorNames);
+        // ✅ FIX: Use instanceName to get correct locators
+        let locatorNames = [];
         
-        // Set string locators (for visible/hidden/text checks)
-        setLocatorOptions(locatorNames.map(name => ({
-          value: name,
-          label: name
-        })));
+        if (data.instancePaths) {
+          if (instanceName && data.instancePaths[instanceName]) {
+            // Use specific instance's locators
+            locatorNames = data.instancePaths[instanceName];
+            console.log(`📍 Using locators from instance "${instanceName}":`, locatorNames.length);
+          } else if (data.instancePaths['default']) {
+            // Fallback to default
+            locatorNames = data.instancePaths['default'];
+            console.log(`📍 Using default locators:`, locatorNames.length);
+          } else {
+            // Last resort: merge all
+            locatorNames = Object.values(data.instancePaths).flat();
+            console.log(`📍 Using all locators (merged):`, locatorNames.length);
+          }
+        }
 
-        // Set typed locators (for assertions section)
-        setTypedLocatorOptions(locatorNames.map(name => ({
+        // Build options
+        const options = locatorNames.map(name => ({
           value: name,
           label: name,
-          type: 'locator',
-          signature: name
-        })));
+          raw: name
+        }));
 
-        console.log(`✅ Loaded ${locatorNames.length} locators for ${pomName}`);
-
-      } catch (err) {
-        console.error('❌ Failed to load locators:', err);
+        setLocatorOptions(options);
+        setTypedLocatorOptions(options);
+        console.log(`✅ Loaded ${options.length} locators for ${pomName} (instance: ${instanceName || 'default'})`);
+      } else {
+        console.error('Failed to fetch POM:', response.status);
         setLocatorOptions([]);
         setTypedLocatorOptions([]);
-      } finally {
-        setLoadingLocators(false);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching locators:', error);
+      setLocatorOptions([]);
+      setTypedLocatorOptions([]);
+    } finally {
+      setLoadingLocators(false);
+    }
+  };
 
-    loadLocators();
-  }, [pomName, instanceName, projectPath, platform]);
+  loadLocators();
+}, [pomName, instanceName, projectPath, platform, pomPath]);
 
   // Load functions when POM changes
   useEffect(() => {

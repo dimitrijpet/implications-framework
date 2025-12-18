@@ -869,17 +869,28 @@ if (!shouldSkipRegistration) {
 {{/if}}
       
 {{#if hasPom}}
+{{#unless skipInstantiation}}
       // Initialize screen instance
       const {{pomInstance}} = new {{pomClassName}}(page, result.data.lang || 'en', result.data.device || 'desktop');
+{{/unless}}
 {{/if}}
       
 {{#if useExpectImplication}}
       // ✅ ExpectImplication handles blocks internally
+{{#if isNestedInstance}}
+      const {{screenKey}}_instance = {{pomInstance}}.{{nestedInstance}} || {{pomInstance}};
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{screenKey}}_instance
+      );
+{{else}}
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,
         {{pomInstance}}
       );
+{{/if}}
 {{else if useRawValidation}}
       // 🔧 Raw validation ({{rawValidationReason}})
 {{#if hasExternalPoms}}
@@ -1059,17 +1070,28 @@ it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", asy
 {{/if}}
       
 {{#if hasPom}}
+{{#unless skipInstantiation}}
       // Initialize screen instance
       const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
+{{/unless}}
 {{/if}}
       
 {{#if useExpectImplication}}
       // ✅ ExpectImplication handles blocks internally
+{{#if isNestedInstance}}
+      const {{screenKey}}_instance = {{pomInstance}}.{{nestedInstance}} || {{pomInstance}};
+      await ExpectImplication.validateImplications(
+        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
+        result.data,
+        {{screenKey}}_instance
+      );
+{{else}}
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,
         {{pomInstance}}
       );
+{{/if}}
 {{else if useRawValidation}}
       // 🔧 Raw validation ({{rawValidationReason}})
 {{#if hasExternalPoms}}

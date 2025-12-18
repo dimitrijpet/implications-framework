@@ -596,6 +596,34 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       );
     }
 
+    
+
+   // ───────────────────────────────────────────────────────
+    // Detect if instance is a nested instance
+    // ───────────────────────────────────────────────────────
+    const mainClassName = screen._pomSource?.className || pomClassName;
+    const defaultInstanceName = mainClassName 
+      ? mainClassName.charAt(0).toLowerCase() + mainClassName.slice(1)
+      : this._toCamelCase(screenKey);
+    
+    const configuredInstance = screen.instance || defaultInstanceName;
+    
+    // Is this a nested instance? (different from default)
+    const isNestedInstance = configuredInstance !== defaultInstanceName;
+    const nestedInstanceName = isNestedInstance ? configuredInstance : null;
+    
+    // The main POM instance name (always use default for instantiation)
+    const mainPomInstance = defaultInstanceName;
+
+    console.log(`      📦 Instance detection:`);
+    console.log(`         className: ${mainClassName}`);
+    console.log(`         defaultInstance: ${defaultInstanceName}`);
+    console.log(`         configuredInstance: ${configuredInstance}`);
+    console.log(`         isNested: ${isNestedInstance}`);
+    if (isNestedInstance) {
+      console.log(`         nestedInstance: ${nestedInstanceName}`);
+    }
+
     // ───────────────────────────────────────────────────────
     // Build screen object
     // ───────────────────────────────────────────────────────
@@ -606,7 +634,9 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       // POM info
       pomClassName: pomClassName,
       pomPath: pomPathValue,
-      pomInstance: screen.instance || this._toCamelCase(screenKey),
+      pomInstance: mainPomInstance,  // ✅ CHANGED: Always main instance for new()
+      nestedInstance: nestedInstanceName,  // ✅ NEW: Nested instance if different
+      isNestedInstance: isNestedInstance,  // ✅ NEW: Flag for template
       hasPom: !!pomPathValue,
 
       // Navigation
@@ -643,18 +673,29 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
   // PASS 2: Sort by order and add position info
   // ═══════════════════════════════════════════════════════════
   screens.sort((a, b) => a.order - b.order);
+
+  // ✅ Track which POM instances have already been created
+  const createdInstances = new Set();
 
   screens.forEach((screen, index) => {
     screen.position = index + 1;
     screen.totalScreens = screens.length;
     screen.isFirst = index === 0;
     screen.isLast = index === screens.length - 1;
-  });
 
+    // ✅ Check if this POM instance was already created by a previous screen
+    if (screen.pomInstance && createdInstances.has(screen.pomInstance)) {
+      screen.skipInstantiation = true;
+      console.log(`      ♻️  Reusing existing instance: ${screen.pomInstance}`);
+    } else if (screen.pomInstance) {
+      screen.skipInstantiation = false;
+      createdInstances.add(screen.pomInstance);
+    }
+  });
   // ═══════════════════════════════════════════════════════════
   // PASS 3: Collect unique POM requires (DEDUPLICATION FIX)
   // ═══════════════════════════════════════════════════════════

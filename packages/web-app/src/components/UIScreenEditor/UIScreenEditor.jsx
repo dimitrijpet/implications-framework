@@ -1398,6 +1398,7 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   const handleRemoveElement = (element) => {
     onChange(elements.filter(el => el !== element));
   };
+  
 
   return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>
