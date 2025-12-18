@@ -22,6 +22,7 @@ import TestLockPanel from './TestLockPanel';
 import PathDataFlowPanel from './PathDataFlowPanel';
 import NotesSection from '../Notes/NotesSection';
 import { useNotes } from '../../hooks/useNotes';
+import TransitionsPanel from './TransitionsPanel';
 
 
 function transformPlatformsData(platforms) {
@@ -780,6 +781,83 @@ const handleRemoveTransition = async (index) => {
   }
 };
 
+const handleEditIncomingTransition = async (transition, sourceFile) => {
+  console.log('✏️ Editing INCOMING transition:', transition);
+  console.log('   Source file:', sourceFile);
+  
+  try {
+    const response = await fetch(
+      `http://localhost:3000/api/implications/get-transition?` +
+      `filePath=${encodeURIComponent(sourceFile)}&` +
+      `event=${encodeURIComponent(transition.event)}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ Full incoming transition data:', data.transition);
+      
+      const fullTransitionData = {
+        event: transition.event,
+        target: transition.to || state.meta?.status,
+        platforms: data.transition.platforms,
+        actionDetails: data.transition.actionDetails,
+        requires: data.transition.requires || {},
+        conditions: data.transition.conditions || null,
+        isObserver: data.transition.isObserver || false,
+        mode: data.transition.mode || null,
+        _sourceFile: sourceFile,
+        _sourceState: transition.from,
+        _isIncoming: true,
+      };
+      
+      setTransitionMode('edit');
+      setEditingTransition(fullTransitionData);
+      setEditingTransitionIndex(null);
+      setShowTransitionModal(true);
+    } else {
+      throw new Error('Failed to fetch transition data');
+    }
+  } catch (error) {
+    console.error('❌ Error fetching incoming transition:', error);
+    alert(`❌ Failed to load transition: ${error.message}`);
+  }
+};
+
+// Handle delete for INCOMING transition
+const handleDeleteIncomingTransition = async (transition, sourceFile) => {
+  console.log('🗑️ Deleting INCOMING transition:', transition);
+  console.log('   Source file:', sourceFile);
+  
+  try {
+    const response = await fetch('http://localhost:3000/api/implications/delete-transition', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceFile: sourceFile,
+        targetFile: state.files.implication,
+        event: transition.event
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to delete transition');
+    }
+
+    console.log('✅ Incoming transition deleted');
+
+    if (window.refreshDiscovery) {
+      await window.refreshDiscovery();
+    }
+
+    alert('✅ Incoming transition deleted successfully!');
+
+  } catch (error) {
+    console.error('❌ Delete failed:', error);
+    alert(`❌ Failed to delete transition: ${error.message}`);
+  }
+};
+
   const handleTagChange = (field, value) => {
   setTagsData(prev => ({ ...prev, [field]: value }));
   setTagsChanges(prev => ({ ...prev, [field]: value }));
@@ -801,75 +879,83 @@ const handleTransitionSubmit = async (transitionData) => {
       alert('Please use the graph to create transitions');
       return;
       
-    } else {
-      // ✅ Get the target file path from the transition target
-      const targetStateName = transitionData.target || editingTransition.target;
-      
-      let targetFile = null;
-      if (discoveryResult?.files?.implications) {
-        const targetImp = discoveryResult.files.implications.find(imp => {
-          const impStateName = imp.metadata?.xstateConfig?.id || 
-            imp.metadata?.className?.replace(/Implications$/, '')
-              .replace(/([A-Z])/g, '_$1')
-              .toLowerCase()
-              .replace(/^_/, '');
-          return impStateName === targetStateName;
-        });
-        if (targetImp) {
-          targetFile = projectPath + '/' + targetImp.path;
-        }
-      }
-      
-      console.log('🎯 Target file for setup update:', targetFile);
-      
-      const response = await fetch('http://localhost:3000/api/implications/update-transition', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceFile: state.files.implication,
-          targetFile: targetFile,
-          oldEvent: editingTransition.event,
-          newEvent: transitionData.event,
-          newTarget: transitionData.target || editingTransition.target,
-          platform: transitionData.platform,
-          actionDetails: transitionData.actionDetails,
-          requires: transitionData.requires,
-          conditions: transitionData.conditions
-        })
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to update transition');
-      }
-
-      console.log('✅ Transition updated in file');
-
-      setEditedState(prev => ({
-        ...prev,
-        transitions: prev.transitions.map((t, i) => 
-          i === editingTransitionIndex 
-            ? {
-                event: transitionData.event,
-                target: transitionData.target || editingTransition.target,
-                platform: transitionData.platform,
-                actionDetails: transitionData.actionDetails,
-                requires: transitionData.requires,
-                conditions: transitionData.conditions
-              }
-            : t
-        )
-      }));
-      
-      setHasChanges(true);
-
-      if (window.refreshDiscovery) {
-        console.log('🔄 Refreshing discovery...');
-        await window.refreshDiscovery();
-      }
-
-      alert('✅ Transition updated successfully!');
+  } else {
+  // Check if this is an incoming transition edit
+  const isIncoming = editingTransition._isIncoming;
+  const sourceFile = isIncoming 
+    ? editingTransition._sourceFile 
+    : state.files.implication;
+  
+  const targetStateName = transitionData.target || editingTransition.target;
+  let targetFile = null;
+  
+  if (discoveryResult?.files?.implications) {
+    const targetImp = discoveryResult.files.implications.find(imp => {
+      const impStateName = imp.metadata?.xstateConfig?.id || 
+        imp.metadata?.className?.replace(/Implications$/, '')
+          .replace(/([A-Z])/g, '_$1')
+          .toLowerCase()
+          .replace(/^_/, '');
+      return impStateName === targetStateName;
+    });
+    if (targetImp) {
+      targetFile = projectPath + '/' + targetImp.path;
     }
+  }
+  
+  console.log('🎯 Source file:', sourceFile);
+  console.log('🎯 Target file:', targetFile);
+  console.log('🎯 Is incoming:', isIncoming);
+  
+  const response = await fetch('http://localhost:3000/api/implications/update-transition', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sourceFile: sourceFile,
+      targetFile: targetFile,
+      oldEvent: editingTransition.event,
+      newEvent: transitionData.event,
+      newTarget: transitionData.target || editingTransition.target,
+      platform: transitionData.platform,
+      actionDetails: transitionData.actionDetails,
+      requires: transitionData.requires,
+      conditions: transitionData.conditions
+    })
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to update transition');
+  }
+
+  console.log('✅ Transition updated in file');
+
+  if (!isIncoming) {
+    setEditedState(prev => ({
+      ...prev,
+      transitions: prev.transitions.map((t, i) => 
+        i === editingTransitionIndex 
+          ? {
+              event: transitionData.event,
+              target: transitionData.target || editingTransition.target,
+              platform: transitionData.platform,
+              actionDetails: transitionData.actionDetails,
+              requires: transitionData.requires,
+              conditions: transitionData.conditions
+            }
+          : t
+      )
+    }));
+  }
+  
+  setHasChanges(true);
+
+  if (window.refreshDiscovery) {
+    await window.refreshDiscovery();
+  }
+
+  alert('✅ Transition updated successfully!');
+}
 
     setShowTransitionModal(false);
 
@@ -1286,6 +1372,35 @@ if (entityChanges) {
     collapsed={stateNotes.length === 0}
   />
 </div>
+
+
+{/* TRANSITIONS PANEL */}
+<TransitionsPanel
+  currentState={currentState}
+  incomingTransitions={incomingTransitions}
+  outgoingTransitions={currentState.transitions || []}
+  allStates={allStatesMap}
+  projectPath={projectPath}
+  discoveryResult={discoveryResult}
+  theme={theme}
+  isEditMode={isEditMode}
+  onEditTransition={(transition, direction, sourceFile, index) => {
+    if (direction === 'incoming') {
+      handleEditIncomingTransition(transition, sourceFile);
+    } else {
+      handleEditTransition(transition, index);
+    }
+  }}
+  onDeleteTransition={(transition, direction, sourceFile, index) => {
+    if (direction === 'incoming') {
+      handleDeleteIncomingTransition(transition, sourceFile);
+    } else {
+      handleRemoveTransition(index);
+    }
+  }}
+  onAddTransition={handleAddTransition}
+/>
+
             
             {/* CONTEXT FIELDS */}
             {(contextData || loadingContext) && (
@@ -1652,86 +1767,6 @@ if (entityChanges) {
 />
             </div>
 
-            {/* TRANSITIONS */}
-            {currentState.transitions && currentState.transitions.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 
-                    className="text-2xl font-bold"
-                    style={{ color: theme.colors.accents.green }}
-                  >
-                    🔄 Transitions ({currentState.transitions.length})
-                  </h2>
-                  
-                  {isEditMode && (
-                    <button
-                      onClick={handleAddTransition}
-                      className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
-                      style={{
-                        background: theme.colors.accents.green,
-                        color: 'white'
-                      }}
-                    >
-                      ➕ Add Transition
-                    </button>
-                  )}
-                </div>
-                
-                <div className="space-y-2">
-                  {currentState.transitions.map((transition, idx) => (
-                    <div 
-                      key={idx}
-                      className="p-3 rounded flex items-center justify-between group"
-                      style={{ 
-                        background: `${theme.colors.background.tertiary}80`,
-                        border: `1px solid ${theme.colors.border}`
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span 
-                          className="px-2 py-1 rounded text-xs font-mono"
-                          style={{ 
-                            background: theme.colors.accents.blue,
-                            color: 'white'
-                          }}
-                        >
-                          {transition.event}
-                        </span>
-                        <span style={{ color: theme.colors.text.secondary }}>→</span>
-                        <span style={{ color: theme.colors.text.primary }}>
-                          {transition.target}
-                        </span>
-                      </div>
-                      
-                      {isEditMode && (
-                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                          <button
-                            onClick={() => handleEditTransition(transition, idx)}
-                            className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
-                            style={{
-                              background: theme.colors.accents.blue,
-                              color: 'white'
-                            }}
-                          >
-                            ✏️ Edit
-                          </button>
-                          <button
-                            onClick={() => handleRemoveTransition(idx)}
-                            className="px-2 py-1 rounded text-xs font-semibold transition hover:brightness-110"
-                            style={{
-                              background: theme.colors.accents.red,
-                              color: 'white'
-                            }}
-                          >
-                            🗑️ Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 {/* TEST LOCKS */}
 <div>
   <h2 
