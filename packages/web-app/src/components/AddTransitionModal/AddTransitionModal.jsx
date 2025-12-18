@@ -14,6 +14,8 @@ import useProjectConfig from '../../hooks/useProjectConfig';
 import DataFlowSummary from './DataFlowSummary';
 import usePOMData from '../../hooks/usePOMData';
 import { usePathAvailableData } from '../../hooks/usePathAvailableData';
+import NotesSection from '../Notes/NotesSection';
+import { useNotes } from '../../hooks/useNotes';
 import {
   DndContext,
   closestCenter,
@@ -31,6 +33,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
 
 
 const API_URL = "http://localhost:3000";
@@ -269,6 +272,36 @@ const [formData, setFormData] = useState({
   isObserver: false,  // ← ADD THIS
 });
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
+
+// Notes hook
+const { 
+  getTransitionNotes, 
+  categories: noteCategories, 
+  refresh: refreshNotes 
+} = useNotes(projectPath);
+
+// Build transition key for notes
+const transitionKey = useMemo(() => {
+  const source = sourceState?.id || sourceState?.meta?.status || 'unknown';
+  const target = mode === 'edit' 
+    ? (initialData?.target || targetState?.id || 'unknown')
+    : (targetState?.id || targetState?.meta?.status || 'unknown');
+  const event = formData.event || 'NEW_EVENT';
+  return `${source}:${event}:${target}`;
+}, [sourceState, targetState, initialData, mode, formData.event]);
+
+// Get notes for this transition
+const transitionNotes = useMemo(() => {
+  // Only fetch if we have a real event (not editing a new transition)
+  if (mode === 'edit' && initialData?.event) {
+    const source = sourceState?.id || sourceState?.meta?.status;
+    const target = initialData?.target;
+    const key = `${source}:${initialData.event}:${target}`;
+    return getTransitionNotes(key);
+  }
+  return [];
+}, [mode, initialData, sourceState, getTransitionNotes]);
+
 
 const [testDataSchema, setTestDataSchema] = useState([]);
 
@@ -1652,6 +1685,23 @@ const handleSubmit = async (e) => {
               </div>
             </div>
           )}
+
+{/* NOTES SECTION - Only show in edit mode with existing transition */}
+{mode === 'edit' && initialData?.event && (
+  <div className="mt-4">
+    <NotesSection
+      notes={transitionNotes}
+      categories={noteCategories}
+      targetType="transition"
+      targetKey={`${sourceState?.id || sourceState?.meta?.status}:${initialData.event}:${initialData.target}`}
+      projectPath={projectPath}
+      onNotesChange={refreshNotes}
+      theme={defaultTheme}
+      collapsed={transitionNotes.length === 0}
+    />
+  </div>
+)}
+
           {/* Data Flow Summary */}
 <DataFlowSummary
   formData={formData}

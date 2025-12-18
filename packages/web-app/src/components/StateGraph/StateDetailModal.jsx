@@ -20,6 +20,8 @@ import CompositionViewerWithEdit from '../CompositionViewer/CompositionViewerWit
 import AddTransitionModal from '../AddTransitionModal/AddTransitionModal';
 import TestLockPanel from './TestLockPanel';
 import PathDataFlowPanel from './PathDataFlowPanel';
+import NotesSection from '../Notes/NotesSection';
+import { useNotes } from '../../hooks/useNotes';
 
 
 function transformPlatformsData(platforms) {
@@ -102,6 +104,13 @@ const [entityChanges, setEntityChanges] = useState(false);
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
   // Add new state near the top with other useState calls
 const [storedVariables, setStoredVariables] = useState([]);
+
+// Notes hook
+const { 
+  getStateNotes, 
+  categories: noteCategories, 
+  refresh: refreshNotes 
+} = useNotes(projectPath);
 
  // ✅ PHASE 3.6: Build allStates map with FULL xstateConfig (including actionDetails)
   const allStatesMap = useMemo(() => {
@@ -223,6 +232,12 @@ const existingEntities = useMemo(() => {
   
   return Array.from(entities).sort();
 }, [discoveryResult]);
+
+// Get notes for current state
+const stateNotes = useMemo(() => {
+  const stateName = state?.meta?.status || state?.name;
+  return stateName ? getStateNotes(stateName) : [];
+}, [state?.meta?.status, state?.name, getStateNotes]);
 
 // Add useEffect to fetch config (after other useEffects, around line 180)
 useEffect(() => {
@@ -1257,6 +1272,20 @@ if (entityChanges) {
                 onAnalysisComplete={handleAnalysisComplete}
               />
             </div>
+
+            {/* NOTES SECTION */}
+<div className="mb-6">
+  <NotesSection
+    notes={stateNotes}
+    categories={noteCategories}
+    targetType="state"
+    targetKey={state?.meta?.status || state?.name || state?.id}
+    projectPath={projectPath}
+    onNotesChange={refreshNotes}
+    theme={theme}
+    collapsed={stateNotes.length === 0}
+  />
+</div>
             
             {/* CONTEXT FIELDS */}
             {(contextData || loadingContext) && (

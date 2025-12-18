@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import { defaultTheme, getPlatformStyle } from '../../config/visualizerTheme';
+import { useNotes } from '../../hooks/useNotes';
 
 // ============================================
 // UTILITY FUNCTIONS
@@ -237,6 +238,12 @@ export default function StateGraph({
   const cyRef = useRef(null);
   const tagGroupsRef = useRef({});
   const debounceRef = useRef(null);
+
+  // Notes for graph indicators
+// Notes for graph indicators
+const { 
+  summary: notesSummary,
+} = useNotes(projectPath);
   
   // Debounced function to update group boxes after drag
   const updateGroupBoxesDebounced = useCallback(() => {
@@ -257,12 +264,40 @@ export default function StateGraph({
     // ========================================
     // BUILD ELEMENTS (NO compound nodes!)
     // ========================================
-    let elements = {
-      nodes: graphData.nodes.map(n => ({
-        ...n,
-        data: { ...n.data, parent: undefined } // Remove any parent relationships
-      })),
-      edges: [...graphData.edges]
+  let elements = {
+      nodes: graphData.nodes.map(n => {
+        const stateName = n.data.status || n.data.id;
+        const stateNotes = notesSummary?.states?.[stateName];
+        const noteCount = stateNotes?.total || 0;
+        const hasActive = (stateNotes?.byStatus?.draft || 0) + 
+                          (stateNotes?.byStatus?.['in-progress'] || 0) > 0;
+        
+        return {
+          ...n,
+          data: { 
+            ...n.data, 
+            parent: undefined,
+            noteCount: noteCount,
+            hasActiveNotes: hasActive
+          }
+        };
+      }),
+      edges: graphData.edges.map(e => {
+        const transitionKey = `${e.data.source}:${e.data.label}:${e.data.target}`;
+        const transitionNotes = notesSummary?.transitions?.[transitionKey];
+        const noteCount = transitionNotes?.total || 0;
+        const hasActive = (transitionNotes?.byStatus?.draft || 0) +
+                          (transitionNotes?.byStatus?.['in-progress'] || 0) > 0;
+        
+        return {
+          ...e,
+          data: {
+            ...e.data,
+            noteCount: noteCount,
+            hasActiveNotes: hasActive
+          }
+        };
+      })
     };
 
 // ========================================
@@ -333,16 +368,23 @@ if (Object.keys(tagGroups).length > 0) {
       elements: [...elements.nodes, ...elements.edges],
       
       style: [
-       // ============================================
-// STATE NODES
-// ============================================
+ // STATE NODES - around line 250
 {
   selector: 'node[type="state"]',
   style: {
     'background-color': (ele) => ele.data('color') || getNodeColorFallback(ele),
-    'label': 'data(label)',
+    'label': (ele) => {
+      const label = ele.data('label');
+      const noteCount = ele.data('noteCount');
+      if (noteCount > 0) {
+        const hasActive = ele.data('hasActiveNotes');
+        return `${label}\n${hasActive ? '📝' : '📌'} ${noteCount}`;
+      }
+      return label;
+    },
     'text-valign': 'center',
     'text-halign': 'center',
+    'text-wrap': 'wrap',
     'color': '#ffffff',
     'font-size': '14px',
     'font-weight': 'bold',
@@ -446,6 +488,36 @@ if (Object.keys(tagGroups).length > 0) {
             'font-size': '12px',
           }
         },
+
+        // Nodes with notes - add badge indicator
+{
+  // selector: 'node[noteCount > 0]',
+  style: {
+    'background-image': (ele) => {
+      const count = ele.data('noteCount');
+      const hasActive = ele.data('hasActiveNotes');
+      const badgeColor = hasActive ? '#f59e0b' : '#6b7280';
+      
+      // Create SVG badge
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" fill="${badgeColor}"/>
+          <text x="12" y="16" text-anchor="middle" fill="white" font-size="12" font-weight="bold">${count}</text>
+        </svg>
+      `;
+      return 'data:image/svg+xml;base64,' + btoa(svg);
+    },
+    'background-image-opacity': 1,
+    'background-clip': 'none',
+    'background-fit': 'none',
+    'background-width': '24px',
+    'background-height': '24px',
+    'background-position-x': '100%',
+    'background-position-y': '0%',
+    'background-offset-x': '-8px',
+    'background-offset-y': '8px',
+  }
+},
         
         // Group box - filled
         {
@@ -478,18 +550,25 @@ if (Object.keys(tagGroups).length > 0) {
             'control-point-step-size': 60,
             'line-style': 'solid',
             'z-index': 5,
-       'label': (ele) => {
+    'label': (ele) => {
   const event = ele.data('label');
   const platforms = ele.data('platforms');
   const requiresLabel = ele.data('requiresLabel');
   const conditionsLabel = ele.data('conditionsLabel');
   const needsRegeneration = ele.data('needsRegeneration');
+  const noteCount = ele.data('noteCount');
   
   let label = event;
   
   // Add warning icon if needs regeneration
   if (needsRegeneration) {
     label = '⚠️ ' + label;
+  }
+  
+  // Add note indicator
+  if (noteCount > 0) {
+    const hasActive = ele.data('hasActiveNotes');
+    label = (hasActive ? '📝' : '📌') + ' ' + label;
   }
   
   if (platforms && platforms.length > 0) {
@@ -722,7 +801,7 @@ cy.on('mouseout', 'node', () => {
         cyRef.current.destroy();
       }
     };
-  }, [graphData, onNodeClick, onEdgeClick, editMode, theme, showScreenGroups, screenGroups, transitionMode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced]);
+  }, [graphData, onNodeClick, onEdgeClick, editMode, theme, showScreenGroups, screenGroups, transitionMode, tagConfig, activeFilters, projectPath, updateGroupBoxesDebounced, notesSummary]);
   
   // ========================================
   // UPDATE SELECTED NODE STYLING
