@@ -5119,6 +5119,17 @@ function findOrCreateOnProperty(configValue) {
  * @param {object} requires - Conditions from transition (optional)
  * @returns {boolean} Whether the file was modified
  */
+// In implications.js - Replace the addSetupEntryToAST function entirely
+
+/**
+ * Add a setup entry to the target implication's meta.setup array
+ * Called when a transition is added TO this state
+ * 
+ * ✅ FIXED: 
+ * 1. Unique by (previousStatus + requires) combination, not just previousStatus
+ * 2. Never overwrites existing entries - only adds new ones
+ * 3. Uses correct event name in testFile path
+ */
 function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires, mode) {
   let targetUpdated = false;
   
@@ -5151,31 +5162,69 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           metaProperty.value.properties.push(setupProperty);
         }
         
-        // Check if setup entry for this source already exists
-        const existingEntry = setupProperty.value.elements.find(el => {
+        // ════════════════════════════════════════════════════════════════
+        // ✅ CRITICAL FIX: Check for duplicate by (previousStatus + requires + event)
+        // Multiple transitions can come from same source with different requires!
+        // ════════════════════════════════════════════════════════════════
+        const existingEntryIndex = setupProperty.value.elements.findIndex(el => {
           if (el.type !== 'ObjectExpression') return false;
+          
+          // Check previousStatus
           const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
-          return prevStatusProp?.value?.value === sourceStateName;
+          if (prevStatusProp?.value?.value !== sourceStateName) return false;
+          
+          // Check requires - must match exactly
+          const requiresProp = el.properties.find(p => p.key?.name === 'requires');
+          const existingRequires = requiresProp ? extractValueFromAST(requiresProp.value) : null;
+          const newRequires = (requires && Object.keys(requires).length > 0) ? requires : null;
+          
+          // Both null = match, both objects = compare JSON
+          if (existingRequires === null && newRequires === null) return true;
+          if (existingRequires === null || newRequires === null) return false;
+          
+          return JSON.stringify(existingRequires) === JSON.stringify(newRequires);
         });
         
-        if (existingEntry) {
-          console.log(`ℹ️  Setup entry from '${sourceStateName}' already exists`);
-          return;
+        if (existingEntryIndex !== -1) {
+          console.log(`ℹ️  Setup entry from '${sourceStateName}' with requires=${JSON.stringify(requires || {})} already exists`);
+          console.log(`   (This is expected - setup entry was already created)`);
+          return; // Don't modify existing!
         }
         
-        // Build the new setup entry
+        // ════════════════════════════════════════════════════════════════
+        // Build the new setup entry with CORRECT naming
+        // ════════════════════════════════════════════════════════════════
         const toPascalCase = (str) => str
           .split('_')
           .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
           .join('');
         
+        const toCamelCase = (str) => {
+          const pascal = toPascalCase(str);
+          return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+        };
+        
         const targetPascal = toPascalCase(targetStateName);
         const sourcePascal = toPascalCase(sourceStateName);
         const platformCapitalized = platform.charAt(0).toUpperCase() + platform.slice(1);
-        const eventClean = event;
         
-        const testFileName = `${targetPascal}Via${sourcePascal}-${eventClean}-${platformCapitalized}-UNIT.spec.js`;
-        const actionName = `${targetStateName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${sourcePascal}`;
+        // ✅ Test file uses EVENT name: LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js
+        const testFileName = `${targetPascal}Via${sourcePascal}-${event}-${platformCapitalized}-UNIT.spec.js`;
+        
+        // ✅ Action name is camelCase: landingPageViaCookies
+        const actionName = `${toCamelCase(targetStateName)}Via${sourcePascal}`;
+        
+        console.log(`📝 Creating NEW setup entry:`);
+        console.log(`   testFile: tests/implications/bookings/status/${testFileName}`);
+        console.log(`   actionName: ${actionName}`);
+        console.log(`   previousStatus: ${sourceStateName}`);
+        console.log(`   platform: ${platform}`);
+        if (requires && Object.keys(requires).length > 0) {
+          console.log(`   requires:`, JSON.stringify(requires));
+        }
+        if (mode) {
+          console.log(`   mode: ${mode}`);
+        }
         
         // Build setup entry properties
         const setupEntryProps = [
@@ -5197,17 +5246,6 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           )
         ];
         
-        // ✅ NEW: Add mode if provided (for observer transitions)
-        if (mode) {
-          console.log(`✅ Adding mode "${mode}" to setup entry`);
-          setupEntryProps.push(
-            t.objectProperty(
-              t.identifier('mode'),
-              t.stringLiteral(mode)
-            )
-          );
-        }
-        
         // Add requires if provided
         if (requires && Object.keys(requires).length > 0) {
           const requiresProps = Object.entries(requires).map(([key, value]) => {
@@ -5219,7 +5257,7 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
             } else {
               valueNode = t.stringLiteral(String(value));
             }
-            return t.objectProperty(t.stringLiteral(key), valueNode);
+            return t.objectProperty(t.identifier(key), valueNode);
           });
           
           setupEntryProps.push(
@@ -5230,12 +5268,22 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           );
         }
         
+        // Add mode if provided (for observer transitions)
+        if (mode) {
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            )
+          );
+        }
+        
         // Add the new setup entry
         setupProperty.value.elements.push(
           t.objectExpression(setupEntryProps)
         );
         
-        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform}${mode ? ', mode: ' + mode : ''})`);
+        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} via ${event}`);
         targetUpdated = true;
       }
     }
@@ -6813,6 +6861,538 @@ router.post('/delete-transition', async (req, res) => {
     });
   }
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// SETUP ENTRY MANAGEMENT ENDPOINTS
+// Add these to implications.js after the existing endpoints
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/implications/setup-entries
+ * 
+ * Get all setup entries from an implication file
+ * 
+ * Query:
+ * - filePath: Path to implication file
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   setup: [
+ *     { testFile, actionName, platform, previousStatus, requires? }
+ *   ]
+ * }
+ */
+router.get('/setup-entries', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`📋 Getting setup entries from: ${path.basename(filePath)}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let setupEntries = [];
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          setupEntries = setupProp.value.elements
+            .filter(el => el.type === 'ObjectExpression')
+            .map((el, index) => {
+              const entry = { _index: index };
+              
+              el.properties.forEach(prop => {
+                const key = prop.key?.name;
+                if (!key) return;
+                
+                if (key === 'requires' && prop.value?.type === 'ObjectExpression') {
+                  entry.requires = {};
+                  prop.value.properties.forEach(reqProp => {
+                    const reqKey = reqProp.key?.name || reqProp.key?.value;
+                    entry.requires[reqKey] = extractValueFromAST(reqProp.value);
+                  });
+                } else {
+                  entry[key] = extractValueFromAST(prop.value);
+                }
+              });
+              
+              return entry;
+            });
+        }
+      }
+    });
+    
+    console.log(`✅ Found ${setupEntries.length} setup entries`);
+    
+    res.json({
+      success: true,
+      setup: setupEntries
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting setup entries:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/update-setup-entry
+ * 
+ * Update a specific setup entry by index or by matching previousStatus+requires
+ * 
+ * Body:
+ * {
+ *   filePath: string,
+ *   // Either provide index:
+ *   index: number,
+ *   // Or provide match criteria:
+ *   match: { previousStatus: string, requires?: object },
+ *   // New values to set:
+ *   updates: {
+ *     testFile?: string,
+ *     actionName?: string,
+ *     platform?: string,
+ *     previousStatus?: string,
+ *     requires?: object,
+ *     mode?: string
+ *   }
+ * }
+ */
+router.post('/update-setup-entry', async (req, res) => {
+  try {
+    const { filePath, index, match, updates } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (index === undefined && !match) {
+      return res.status(400).json({ error: 'Either index or match criteria is required' });
+    }
+    
+    if (!updates || Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'updates object is required' });
+    }
+    
+    console.log(`✏️ Updating setup entry in: ${path.basename(filePath)}`);
+    console.log(`   Match:`, match || `index ${index}`);
+    console.log(`   Updates:`, updates);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let updated = false;
+    let matchedEntry = null;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          // Find the entry to update
+          let entryIndex = -1;
+          
+          if (index !== undefined) {
+            entryIndex = index;
+          } else if (match) {
+            entryIndex = setupProp.value.elements.findIndex(el => {
+              if (el.type !== 'ObjectExpression') return false;
+              
+              // Check previousStatus
+              const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+              if (prevProp?.value?.value !== match.previousStatus) return false;
+              
+              // Check requires if specified
+              if (match.requires) {
+                const reqProp = el.properties.find(p => p.key?.name === 'requires');
+                const existingReq = reqProp ? extractValueFromAST(reqProp.value) : null;
+                
+                if (!existingReq) return false;
+                if (JSON.stringify(existingReq) !== JSON.stringify(match.requires)) return false;
+              }
+              
+              return true;
+            });
+          }
+          
+          if (entryIndex === -1 || !setupProp.value.elements[entryIndex]) {
+            console.log(`❌ No matching setup entry found`);
+            return;
+          }
+          
+          const entry = setupProp.value.elements[entryIndex];
+          
+          // Apply updates
+          Object.entries(updates).forEach(([key, value]) => {
+            // Find existing property
+            const existingPropIndex = entry.properties.findIndex(p => p.key?.name === key);
+            
+            let valueNode;
+            if (key === 'requires' && typeof value === 'object') {
+              // Build requires object
+              const reqProps = Object.entries(value).map(([k, v]) => {
+                let vNode;
+                if (typeof v === 'boolean') vNode = t.booleanLiteral(v);
+                else if (typeof v === 'number') vNode = t.numericLiteral(v);
+                else vNode = t.stringLiteral(String(v));
+                return t.objectProperty(t.identifier(k), vNode);
+              });
+              valueNode = t.objectExpression(reqProps);
+            } else if (typeof value === 'boolean') {
+              valueNode = t.booleanLiteral(value);
+            } else if (typeof value === 'number') {
+              valueNode = t.numericLiteral(value);
+            } else if (value === null) {
+              // Remove property if null
+              if (existingPropIndex !== -1) {
+                entry.properties.splice(existingPropIndex, 1);
+              }
+              return;
+            } else {
+              valueNode = t.stringLiteral(String(value));
+            }
+            
+            if (existingPropIndex !== -1) {
+              entry.properties[existingPropIndex].value = valueNode;
+            } else {
+              entry.properties.push(t.objectProperty(t.identifier(key), valueNode));
+            }
+          });
+          
+          updated = true;
+          matchedEntry = entryIndex;
+          console.log(`✅ Updated setup entry at index ${entryIndex}`);
+        }
+      }
+    });
+    
+    if (!updated) {
+      return res.status(404).json({ error: 'Setup entry not found' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    // Backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Setup entry updated successfully');
+    
+    res.json({
+      success: true,
+      updatedIndex: matchedEntry,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/delete-setup-entry
+ * 
+ * Delete a setup entry by index or match criteria
+ */
+router.post('/delete-setup-entry', async (req, res) => {
+  try {
+    const { filePath, index, match } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (index === undefined && !match) {
+      return res.status(400).json({ error: 'Either index or match criteria is required' });
+    }
+    
+    console.log(`🗑️ Deleting setup entry from: ${path.basename(filePath)}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let deleted = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          let entryIndex = -1;
+          
+          if (index !== undefined) {
+            entryIndex = index;
+          } else if (match) {
+            entryIndex = setupProp.value.elements.findIndex(el => {
+              if (el.type !== 'ObjectExpression') return false;
+              
+              const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+              if (prevProp?.value?.value !== match.previousStatus) return false;
+              
+              if (match.requires) {
+                const reqProp = el.properties.find(p => p.key?.name === 'requires');
+                const existingReq = reqProp ? extractValueFromAST(reqProp.value) : null;
+                if (JSON.stringify(existingReq) !== JSON.stringify(match.requires)) return false;
+              }
+              
+              return true;
+            });
+          }
+          
+          if (entryIndex !== -1 && setupProp.value.elements[entryIndex]) {
+            setupProp.value.elements.splice(entryIndex, 1);
+            deleted = true;
+            console.log(`✅ Deleted setup entry at index ${entryIndex}`);
+          }
+        }
+      }
+    });
+    
+    if (!deleted) {
+      return res.status(404).json({ error: 'Setup entry not found' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    res.json({
+      success: true,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/add-setup-entry
+ * 
+ * Manually add a setup entry (for fixing corrupted data or special cases)
+ */
+router.post('/add-setup-entry', async (req, res) => {
+  try {
+    const { filePath, entry } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (!entry || !entry.testFile || !entry.actionName || !entry.previousStatus) {
+      return res.status(400).json({ 
+        error: 'entry must include testFile, actionName, and previousStatus' 
+      });
+    }
+    
+    console.log(`➕ Adding setup entry to: ${path.basename(filePath)}`);
+    console.log(`   Entry:`, entry);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let added = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          // Find or create meta
+          let metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp) {
+            metaProp = t.objectProperty(t.identifier('meta'), t.objectExpression([]));
+            configValue.properties.unshift(metaProp);
+          }
+          
+          // Find or create setup array
+          let setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp) {
+            setupProp = t.objectProperty(t.identifier('setup'), t.arrayExpression([]));
+            metaProp.value.properties.push(setupProp);
+          }
+          
+          // Build entry properties
+          const entryProps = [
+            t.objectProperty(t.identifier('testFile'), t.stringLiteral(entry.testFile)),
+            t.objectProperty(t.identifier('actionName'), t.stringLiteral(entry.actionName)),
+            t.objectProperty(t.identifier('platform'), t.stringLiteral(entry.platform || 'web')),
+            t.objectProperty(t.identifier('previousStatus'), t.stringLiteral(entry.previousStatus))
+          ];
+          
+          if (entry.requires && Object.keys(entry.requires).length > 0) {
+            const reqProps = Object.entries(entry.requires).map(([k, v]) => {
+              let vNode;
+              if (typeof v === 'boolean') vNode = t.booleanLiteral(v);
+              else if (typeof v === 'number') vNode = t.numericLiteral(v);
+              else vNode = t.stringLiteral(String(v));
+              return t.objectProperty(t.identifier(k), vNode);
+            });
+            entryProps.push(t.objectProperty(t.identifier('requires'), t.objectExpression(reqProps)));
+          }
+          
+          if (entry.mode) {
+            entryProps.push(t.objectProperty(t.identifier('mode'), t.stringLiteral(entry.mode)));
+          }
+          
+          setupProp.value.elements.push(t.objectExpression(entryProps));
+          added = true;
+          console.log(`✅ Added setup entry`);
+        }
+      }
+    });
+    
+    if (!added) {
+      return res.status(400).json({ error: 'Could not find xstateConfig in file' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    res.json({
+      success: true,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// USAGE EXAMPLES:
+// ════════════════════════════════════════════════════════════════════════════
+
+/*
+// GET all setup entries:
+GET /api/implications/setup-entries?filePath=/path/to/LandingPageImplications.js
+
+// FIX a corrupted entry (by index):
+POST /api/implications/update-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "index": 0,
+  "updates": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies"
+  }
+}
+
+// FIX a corrupted entry (by matching):
+POST /api/implications/update-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "match": {
+    "previousStatus": "cookies",
+    "requires": { "acceptCookies": true }
+  },
+  "updates": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies"
+  }
+}
+
+// DELETE a setup entry:
+POST /api/implications/delete-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "match": {
+    "previousStatus": "agency_preffered"
+  }
+}
+
+// ADD a manual setup entry:
+POST /api/implications/add-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "entry": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies",
+    "platform": "web",
+    "previousStatus": "cookies",
+    "requires": { "acceptCookies": true }
+  }
+}
+*/
 
 // Register the insert-node route directly on the router
 router.post('/graph/insert-node', insertNodeHandler);

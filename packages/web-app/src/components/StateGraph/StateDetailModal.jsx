@@ -24,6 +24,15 @@ import NotesSection from '../Notes/NotesSection';
 import { useNotes } from '../../hooks/useNotes';
 import TransitionsPanel from './TransitionsPanel';
 
+import
+ 
+SetupEntriesPanel
+ 
+from
+ 
+'../SetupEntriesPanel/SetupEntriesPanel'
+;
+
 
 function transformPlatformsData(platforms) {
   if (!platforms) return { UI: {} };
@@ -105,6 +114,7 @@ const [entityChanges, setEntityChanges] = useState(false);
   const { analysis, loading: suggestionsLoading } = useSuggestions(projectPath);
   // Add new state near the top with other useState calls
 const [storedVariables, setStoredVariables] = useState([]);
+const [showSetupEntries, setShowSetupEntries] = useState(false);
 
 // Notes hook
 const { 
@@ -1401,7 +1411,42 @@ if (entityChanges) {
   onAddTransition={handleAddTransition}
 />
 
-            
+
+        {/* SETUP ENTRIES - Collapsible */}
+{currentState.files?.implication && (
+  <div>
+    <button
+      onClick={() => setShowSetupEntries(!showSetupEntries)}
+      className="flex items-center gap-2 text-2xl font-bold mb-4 hover:opacity-80"
+      style={{ color: theme.colors.accents.orange }}
+    >
+      <span>{showSetupEntries ? '▼' : '▶'}</span>
+      🔗 Setup Entries (Prerequisites)
+    </button>
+    
+    {showSetupEntries && (
+      <>
+        <p 
+          className="text-sm mb-4"
+          style={{ color: theme.colors.text.secondary }}
+        >
+          Configure how this state can be reached from other states.
+        </p>
+        
+        <SetupEntriesPanel
+          filePath={currentState.files.implication}
+          projectPath={projectPath}
+          theme={theme}
+          onRefresh={() => {
+            if (window.refreshDiscovery) {
+              window.refreshDiscovery();
+            }
+          }}
+        />
+      </>
+    )}
+  </div>
+)}
             {/* CONTEXT FIELDS */}
             {(contextData || loadingContext) && (
               <div>
