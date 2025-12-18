@@ -1281,7 +1281,7 @@ function extractBlockDataFromNode(dataNode) {
         }
       });
     }
-    // Assertions array
+    // Assertions array (for data-assertion blocks)
     else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
       data.assertions = prop.value.elements
         .filter(el => el?.type === 'ObjectExpression')
@@ -1293,6 +1293,16 @@ function extractBlockDataFromNode(dataNode) {
           });
           return assertion;
         });
+    }
+    // ✅ NEW: Assertion object (singular - for function-call blocks)
+    else if (key === 'assertion' && prop.value?.type === 'ObjectExpression') {
+      data.assertion = {};
+      prop.value.properties.forEach(assertProp => {
+        const assertKey = assertProp.key?.name;
+        if (assertKey) {
+          data.assertion[assertKey] = extractValueFromNode(assertProp.value);
+        }
+      });
     }
   });
   

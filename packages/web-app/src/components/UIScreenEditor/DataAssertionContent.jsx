@@ -20,6 +20,8 @@ const OPERATORS = [
   { value: 'isUndefined', label: '∅ is undefined', description: 'Value does not exist', unary: true },
   { value: 'isTruthy', label: '✓ is truthy', description: 'Boolean true-ish', unary: true },
   { value: 'isFalsy', label: '✗ is falsy', description: 'Boolean false-ish', unary: true },
+  { value: "toBeTrue", label: "✔ is true", description: "Boolean true", unary: true }, 
+  { value: "toBeFalse", label: "✘ is false", description: "Boolean false", unary: true },
   { value: 'lengthEquals', label: '# length equals', description: 'Array/string length' },
   { value: 'lengthGreaterThan', label: '#> length greater than', description: 'Array/string length' },
 ];
@@ -279,6 +281,10 @@ const duplicateAssertion = (index) => {
         return `expect(${leftCode}).toBeTruthy();`;
       case 'isFalsy':
         return `expect(${leftCode}).toBeFalsy();`;
+      case 'toBeTrue':
+        return `expect(${leftCode}).toBe(true);`;
+      case 'toBeFalse':
+        return `expect(${leftCode}).toBe(false);`;
       case 'lengthEquals':
         return `expect(${leftCode}.length).toBe(${rightCode});`;
       case 'lengthGreaterThan':

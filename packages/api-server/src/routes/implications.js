@@ -3204,23 +3204,80 @@ if (block.data.assertions?.length > 0) {
       }
       
       // FUNCTION-CALL block
-      if (block.type === 'function-call' && block.data) {
-        const dataProps = [];
-        if (block.data.instance) dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
-        if (block.data.method) dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
-        if (block.data.args?.length > 0) {
-          dataProps.push(t.objectProperty(t.identifier('args'),
-            t.arrayExpression(block.data.args.map(arg =>
-              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
-            ))
-          ));
-        }
-        if (block.data.await !== undefined) dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
-        if (block.data.storeAs) dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
-        
-        if (dataProps.length > 0) {
-          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
-        }
+if (block.type === 'function-call' && block.data) {
+  const dataProps = [];
+  
+  if (block.data.instance) {
+    dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
+  }
+  
+  if (block.data.method) {
+    dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
+  }
+  
+  if (block.data.args?.length > 0) {
+    dataProps.push(t.objectProperty(
+      t.identifier('args'),
+      t.arrayExpression(block.data.args.map(arg =>
+        typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+      ))
+    ));
+  }
+  
+  if (block.data.await !== undefined) {
+    dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
+  }
+  
+  if (block.data.storeAs) {
+    dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
+  }
+  
+  // ✅ NEW: Save assertion field for function-call blocks
+  if (block.data.assertion) {
+    const assertionProps = [];
+    
+    if (block.data.assertion.type) {
+      assertionProps.push(t.objectProperty(
+        t.identifier('type'), 
+        t.stringLiteral(block.data.assertion.type)
+      ));
+    }
+    
+    if (block.data.assertion.not !== undefined) {
+      assertionProps.push(t.objectProperty(
+        t.identifier('not'), 
+        t.booleanLiteral(block.data.assertion.not)
+      ));
+    }
+    
+    if (block.data.assertion.value !== undefined) {
+      const val = block.data.assertion.value;
+      let valNode;
+      
+      if (typeof val === 'boolean') {
+        valNode = t.booleanLiteral(val);
+      } else if (typeof val === 'number') {
+        valNode = t.numericLiteral(val);
+      } else if (val === null) {
+        valNode = t.nullLiteral();
+      } else {
+        valNode = t.stringLiteral(String(val));
+      }
+      
+      assertionProps.push(t.objectProperty(t.identifier('value'), valNode));
+    }
+    
+    if (assertionProps.length > 0) {
+      dataProps.push(t.objectProperty(
+        t.identifier('assertion'), 
+        t.objectExpression(assertionProps)
+      ));
+    }
+  }
+  
+  if (dataProps.length > 0) {
+    blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+  }
       }
 
       // ─────────────────────────────────────────────────────────
@@ -3392,13 +3449,17 @@ function screensHaveChanges(newScreens, originalArrayNode) {
 /**
  * Extract screen data from AST node for comparison
  */
+/**
+ * Extract screen data from AST node for comparison
+ * ✅ ENHANCED: Now properly extracts nested objects (like block.data.assertion)
+ */
 function extractScreenDataFromAst(objectNode) {
   const data = {};
   
   objectNode.properties.forEach(prop => {
     if (!t.isObjectProperty(prop) || !prop.key) return;
     
-    const key = prop.key.name;
+    const key = prop.key.name || prop.key.value;
     
     if (t.isStringLiteral(prop.value)) {
       data[key] = prop.value.value;
@@ -3406,9 +3467,12 @@ function extractScreenDataFromAst(objectNode) {
       data[key] = prop.value.value;
     } else if (t.isNumericLiteral(prop.value)) {
       data[key] = prop.value.value;
+    } else if (t.isNullLiteral(prop.value)) {
+      data[key] = null;
     } else if (t.isArrayExpression(prop.value)) {
-      // ✅ Handle blocks array specially
+      // Handle arrays
       if (key === 'blocks') {
+        // Blocks array - recursively extract each block
         data[key] = prop.value.elements.map(blockNode => {
           if (t.isObjectExpression(blockNode)) {
             return extractScreenDataFromAst(blockNode);
@@ -3416,11 +3480,17 @@ function extractScreenDataFromAst(objectNode) {
           return null;
         }).filter(Boolean);
       } else {
-        data[key] = prop.value.elements
-          .filter(e => t.isStringLiteral(e))
-          .map(e => e.value);
+        // Other arrays - could be strings or objects
+        data[key] = prop.value.elements.map(el => {
+          if (t.isStringLiteral(el)) return el.value;
+          if (t.isNumericLiteral(el)) return el.value;
+          if (t.isBooleanLiteral(el)) return el.value;
+          if (t.isObjectExpression(el)) return extractScreenDataFromAst(el);
+          return null;
+        }).filter(el => el !== null);
       }
     } else if (t.isObjectExpression(prop.value)) {
+      // ✅ FIXED: Recursively extract nested objects (like data, assertion, checks, etc.)
       data[key] = extractScreenDataFromAst(prop.value);
     }
   });

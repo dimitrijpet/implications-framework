@@ -39,7 +39,7 @@ export default function BlockRenderer({
   pomName,
   instanceName,
   projectPath,
-  platform,             // ✅ ADD THIS LINE
+  platform,
   storedVariables = [],
   testDataSchema = []
 }) {
@@ -47,8 +47,24 @@ export default function BlockRenderer({
   const colorKey = meta.color || 'blue';
   const color = theme.colors.accents[colorKey] || theme.colors.accents.blue;
 
+  // ✅ FIX: Helper to ensure deep merge of data object
+  const handleContentUpdate = (updates) => {
+    if (updates.data) {
+      // Deep merge the data object
+      onUpdate({
+        ...updates,
+        data: {
+          ...block.data,
+          ...updates.data
+        }
+      });
+    } else {
+      onUpdate(updates);
+    }
+  };
+
   // Render different content based on block type
- const renderBlockContent = () => {
+  const renderBlockContent = () => {
     switch (block.type) {
       case BLOCK_TYPES.UI_ASSERTION:
         return (
@@ -56,11 +72,11 @@ export default function BlockRenderer({
             block={block} 
             editMode={editMode} 
             theme={theme}
-            onUpdate={onUpdate}
+            onUpdate={handleContentUpdate}  // ✅ Use helper
             pomName={pomName}
             instanceName={instanceName}
             projectPath={projectPath}
-            platform={platform}        // ✅ ADD THIS LINE
+            platform={platform}
             storedVariables={storedVariables}
           />
         );
@@ -71,7 +87,7 @@ export default function BlockRenderer({
             block={block} 
             editMode={editMode} 
             theme={theme}
-            onUpdate={onUpdate}
+            onUpdate={handleContentUpdate}  // ✅ Use helper
           />
         );
       
@@ -81,20 +97,19 @@ export default function BlockRenderer({
             block={block} 
             editMode={editMode} 
             theme={theme}
-            onUpdate={onUpdate}
+            onUpdate={handleContentUpdate}  // ✅ Use helper
             pomName={pomName}
             projectPath={projectPath}
-            platform={platform}  // ✅ ADD THIS
+            platform={platform}
             storedVariables={storedVariables}
           />
         );
       
-      // ↓↓↓ ADD THIS ENTIRE CASE ↓↓↓
       case BLOCK_TYPES.DATA_ASSERTION:
         return (
           <DataAssertionContent
             block={block}
-            onChange={(updated) => onUpdate(updated)}
+            onChange={(updated) => handleContentUpdate(updated)}  // ✅ Use helper
             theme={theme}
             storedVariables={storedVariables}
             editMode={editMode}

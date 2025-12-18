@@ -14,12 +14,14 @@ const OPERATORS = [
   { value: "notExists", label: "∄ Not Exists", icon: "∄" },
   { value: "truthy", label: "✓ Truthy", icon: "✓" },
   { value: "falsy", label: "✗ Falsy", icon: "✗" },
+  { value: "toBeTrue", label: "is true", icon: "✔" }, 
+  { value: "toBeFalse", label: "is false", icon: "✘" },
   { value: "in", label: "∈ In Array", icon: "∈" },
   { value: "startsWith", label: "⊢ Starts With", icon: "⊢" },
   { value: "endsWith", label: "⊣ Ends With", icon: "⊣" },
 ];
 
-const NO_VALUE_OPERATORS = ["exists", "notExists", "truthy", "falsy"];
+const NO_VALUE_OPERATORS = ["exists", "notExists", "truthy", "falsy", "toBeTrue", "toBeFalse"];
 
 function generateCheckId() {
   return `chk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
