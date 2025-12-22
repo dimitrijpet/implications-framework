@@ -815,7 +815,7 @@ if (!shouldSkipRegistration) {
       console.log('✅ Cleanup complete');
     });
 
-      test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
+    test("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
 {{#if isVerify}}
@@ -825,21 +825,13 @@ if (!shouldSkipRegistration) {
       
       const result = await {{actionName}}(testDataPath, { page });
 {{else}}
-      const checkResult = await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+      await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         page, 
         testDataPath 
       });
       
-      // ✅ If already executed in subprocess (cross-platform completion), skip
-      if (checkResult.skipped || checkResult.executedInSubprocess) {
-        console.log('✅ Test already completed in subprocess - skipping duplicate execution');
-        testPassed = true;
-        return;
-      }
-      
       const result = await {{actionName}}(testDataPath, { page });
 {{/if}}
-
 
 {{#if useOrderedScreens}}
       // ═══════════════════════════════════════════════════════════
@@ -860,37 +852,26 @@ if (!shouldSkipRegistration) {
       // ─────────────────────────────────────────────────────────
       console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
       
-{{!-- {{#if hasNavigation}}
+{{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
       const {{navigation.instanceName}} = new {{navigation.className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
-{{/if}} --}}
+{{/if}}
       
 {{#if hasPom}}
-{{#unless skipInstantiation}}
       // Initialize screen instance
       const {{pomInstance}} = new {{pomClassName}}(page, result.data.lang || 'en', result.data.device || 'desktop');
-{{/unless}}
 {{/if}}
       
 {{#if useExpectImplication}}
       // ✅ ExpectImplication handles blocks internally
-{{#if isNestedInstance}}
-      const {{screenKey}}_instance = {{pomInstance}}.{{nestedInstance}} || {{pomInstance}};
-      await ExpectImplication.validateImplications(
-        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-        result.data,
-        {{screenKey}}_instance
-      );
-{{else}}
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,
         {{pomInstance}}
       );
-{{/if}}
 {{else if useRawValidation}}
       // 🔧 Raw validation ({{rawValidationReason}})
 {{#if hasExternalPoms}}
@@ -1017,7 +998,7 @@ if (!shouldSkipRegistration) {
       console.log('✅ Cleanup complete');
     });
     
-it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
+    it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", async () => {
       const ctx = TestContext.load({{implClassName}}, testDataPath);
       
 {{#if isVerify}}
@@ -1027,17 +1008,10 @@ it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", asy
       
       const result = await {{actionName}}(testDataPath, { driver });
 {{else}}
-      const checkResult = await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
+    await TestPlanner.checkOrThrow({{implClassName}}, ctx.data, { 
         driver,
         testDataPath 
       });
-      
-      // ✅ If already executed in subprocess (cross-platform completion), skip
-      if (checkResult.skipped || checkResult.executedInSubprocess) {
-        console.log('✅ Test already completed in subprocess - skipping duplicate execution');
-        testPassed = true;
-        return;
-      }
       
       const result = await {{actionName}}(testDataPath, { driver });
 {{/if}}
@@ -1061,37 +1035,26 @@ it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", asy
       // ─────────────────────────────────────────────────────────
       console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
       
-{{!-- {{#if hasNavigation}}
+{{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
       const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
-{{/if}} --}}
+{{/if}}
       
 {{#if hasPom}}
-{{#unless skipInstantiation}}
       // Initialize screen instance
       const {{pomInstance}} = new {{pomClassName}}(result.data.lang || 'en');
-{{/unless}}
 {{/if}}
       
 {{#if useExpectImplication}}
       // ✅ ExpectImplication handles blocks internally
-{{#if isNestedInstance}}
-      const {{screenKey}}_instance = {{pomInstance}}.{{nestedInstance}} || {{pomInstance}};
-      await ExpectImplication.validateImplications(
-        {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
-        result.data,
-        {{screenKey}}_instance
-      );
-{{else}}
       await ExpectImplication.validateImplications(
         {{../implClassName}}.mirrorsOn.UI.{{platformKey}}.{{screenKey}},
         result.data,
         {{pomInstance}}
       );
-{{/if}}
 {{else if useRawValidation}}
       // 🔧 Raw validation ({{rawValidationReason}})
 {{#if hasExternalPoms}}

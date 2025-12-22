@@ -1011,7 +1011,7 @@ function extractScreenDefinition(objectNode) {
     // ─────────────────────────────────────────────────────────
     // Simple string fields
     // ─────────────────────────────────────────────────────────
-    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance') {
+    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance' || key === 'order') {
       const value = extractValueFromNode(prop.value);
       if (value) {
         def[key] = value;
@@ -1112,6 +1112,25 @@ function extractScreenDefinition(objectNode) {
         }
       });
     }
+
+    // ─────────────────────────────────────────────────────────
+// ✅ NAVIGATION object: { pomName, instanceName, method, args }
+// ─────────────────────────────────────────────────────────
+else if (key === 'navigation' && prop.value?.type === 'ObjectExpression') {
+  console.log('      🧭 Extracting navigation...');
+  def.navigation = {};
+  prop.value.properties.forEach(navProp => {
+    const navKey = navProp.key?.name;
+    if (navKey === 'pomName' || navKey === 'instanceName' || navKey === 'method') {
+      def.navigation[navKey] = extractValueFromNode(navProp.value);
+    } else if (navKey === 'args' && navProp.value?.type === 'ArrayExpression') {
+      def.navigation.args = navProp.value.elements
+        .map(el => extractValueFromNode(el))
+        .filter(Boolean);
+    }
+  });
+  console.log('      🧭 Navigation extracted:', def.navigation);
+}
     
     // ─────────────────────────────────────────────────────────
     // ✅ BLOCKS ARRAY - The key addition!
@@ -1162,9 +1181,81 @@ function extractBlockFromNode(blockNode) {
         }
       });
     }
+    // ═══════════════════════════════════════════════════════════
+    // ✅ ADD THIS: Handle assertions at block's TOP LEVEL
+    // (for data-assertion blocks which store assertions directly)
+    // ═══════════════════════════════════════════════════════════
+    else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
+      block.assertions = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(el => {
+          const assertion = {};
+          el.properties.forEach(p => {
+            const k = p.key?.name;
+            assertion[k] = extractValueFromNode(p.value);
+          });
+          return assertion;
+        });
+    }
+    else if (key === 'conditions' && prop.value?.type === 'ObjectExpression') {
+  block.conditions = extractConditionsFromNode(prop.value);
+}
   });
   
   return block;
+}
+
+/**
+ * Extract conditions from AST node
+ */
+function extractConditionsFromNode(conditionsNode) {
+  const conditions = { mode: 'all', blocks: [] };
+  
+  conditionsNode.properties.forEach(prop => {
+    const key = prop.key?.name;
+    
+    if (key === 'mode') {
+      conditions.mode = extractValueFromNode(prop.value) || 'all';
+    }
+    else if (key === 'blocks' && prop.value?.type === 'ArrayExpression') {
+      conditions.blocks = prop.value.elements
+        .filter(el => el?.type === 'ObjectExpression')
+        .map(blockNode => {
+          const block = { type: 'condition-check', data: { checks: [] } };
+          
+          blockNode.properties.forEach(blockProp => {
+            const blockKey = blockProp.key?.name;
+            
+            if (blockKey === 'id' || blockKey === 'type' || blockKey === 'mode') {
+              block[blockKey] = extractValueFromNode(blockProp.value);
+            }
+            else if (blockKey === 'enabled') {
+              block.enabled = extractValueFromNode(blockProp.value);
+            }
+            else if (blockKey === 'data' && blockProp.value?.type === 'ObjectExpression') {
+              blockProp.value.properties.forEach(dataProp => {
+                if (dataProp.key?.name === 'checks' && dataProp.value?.type === 'ArrayExpression') {
+                  block.data.checks = dataProp.value.elements
+                    .filter(el => el?.type === 'ObjectExpression')
+                    .map(checkNode => {
+                      const check = {};
+                      checkNode.properties.forEach(checkProp => {
+                        const checkKey = checkProp.key?.name;
+                        check[checkKey] = extractValueFromNode(checkProp.value);
+                      });
+                      return check;
+                    });
+                }
+              });
+            }
+          });
+          
+          return block;
+        });
+    }
+  });
+  
+  return conditions;
 }
 
 /**
@@ -1209,7 +1300,7 @@ function extractBlockDataFromNode(dataNode) {
         }
       });
     }
-    // Assertions array
+    // Assertions array (for data-assertion blocks)
     else if (key === 'assertions' && prop.value?.type === 'ArrayExpression') {
       data.assertions = prop.value.elements
         .filter(el => el?.type === 'ObjectExpression')
@@ -1221,6 +1312,16 @@ function extractBlockDataFromNode(dataNode) {
           });
           return assertion;
         });
+    }
+    // ✅ NEW: Assertion object (singular - for function-call blocks)
+    else if (key === 'assertion' && prop.value?.type === 'ObjectExpression') {
+      data.assertion = {};
+      prop.value.properties.forEach(assertProp => {
+        const assertKey = assertProp.key?.name;
+        if (assertKey) {
+          data.assertion[assertKey] = extractValueFromNode(assertProp.value);
+        }
+      });
     }
   });
   

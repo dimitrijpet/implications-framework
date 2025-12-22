@@ -12,6 +12,10 @@ import { migrateRequiresToConditions, conditionsToRequires } from './conditionBl
 import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVariablesFromUIValidations';
 import useProjectConfig from '../../hooks/useProjectConfig';
 import DataFlowSummary from './DataFlowSummary';
+import usePOMData from '../../hooks/usePOMData';
+import { usePathAvailableData } from '../../hooks/usePathAvailableData';
+import NotesSection from '../Notes/NotesSection';
+import { useNotes } from '../../hooks/useNotes';
 import {
   DndContext,
   closestCenter,
@@ -29,6 +33,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
 
 
 const API_URL = "http://localhost:3000";
@@ -237,11 +242,21 @@ export default function AddTransitionModal({
   projectPath,
   mode = 'add',
   initialData = null,
-  // ❌ REMOVE: availablePlatforms = ["web"],
+  allTransitions = [],  // ✅ ADD
+  allStates = {},       // ✅ ADD
 }) {
   // ✅ ADD: Load platforms from config
-  const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
-  const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
+const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+
+// ✅ ADD: Path analysis for available data
+const { availableFields: pathAvailableFields, pathUsed, analysis: pathAnalysis } = usePathAvailableData(
+  sourceState?.id || sourceState?.meta?.status,
+  allTransitions,
+  allStates,
+  'initial'
+);
+
 
 const [formData, setFormData] = useState({
   event: "",
@@ -257,6 +272,36 @@ const [formData, setFormData] = useState({
   isObserver: false,  // ← ADD THIS
 });
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
+
+// Notes hook
+const { 
+  getTransitionNotes, 
+  categories: noteCategories, 
+  refresh: refreshNotes 
+} = useNotes(projectPath);
+
+// Build transition key for notes
+const transitionKey = useMemo(() => {
+  const source = sourceState?.id || sourceState?.meta?.status || 'unknown';
+  const target = mode === 'edit' 
+    ? (initialData?.target || targetState?.id || 'unknown')
+    : (targetState?.id || targetState?.meta?.status || 'unknown');
+  const event = formData.event || 'NEW_EVENT';
+  return `${source}:${event}:${target}`;
+}, [sourceState, targetState, initialData, mode, formData.event]);
+
+// Get notes for this transition
+const transitionNotes = useMemo(() => {
+  // Only fetch if we have a real event (not editing a new transition)
+  if (mode === 'edit' && initialData?.event) {
+    const source = sourceState?.id || sourceState?.meta?.status;
+    const target = initialData?.target;
+    const key = `${source}:${initialData.event}:${target}`;
+    return getTransitionNotes(key);
+  }
+  return [];
+}, [mode, initialData, sourceState, getTransitionNotes]);
+
 
 const [testDataSchema, setTestDataSchema] = useState([]);
 
@@ -354,6 +399,14 @@ const [newRequiresValueType, setNewRequiresValueType] = useState('boolean');
   const [selectedNavFile, setSelectedNavFile] = useState("");
   const [loadingNavigation, setLoadingNavigation] = useState(false);
   const [editModeInitialized, setEditModeInitialized] = useState(false)
+    // ✅ ADD: POM data for argument suggestions
+  // const { 
+  //   poms: availablePOMsFromHook,
+  //   getPOMFunctions,
+  //   getPOMLocatorsSync,
+  //   getMethodReturnKeys 
+  // } = usePOMData(projectPath);
+    const [stepMethodInfos, setStepMethodInfos] = useState({});
 
 // ✨ NEW: Compute available storeAs variables from previous steps
   const availableStoreAsVars = useMemo(() => {
@@ -395,10 +448,15 @@ const allStoredVariables = useMemo(() => {
     }
   };
   
-  // 1. Variables from current form steps (storeAs)
+  // 1. Variables from PATH (produced by earlier transitions) ✅ NEW
+  if (pathAvailableFields?.length > 0) {
+    pathAvailableFields.forEach(addVar);
+  }
+  
+  // 2. Variables from current form steps (storeAs)
   availableStoreAsVars.forEach(addVar);
   
-  // 2. Variables from source state's UI validations (storeAs)
+  // 3. Variables from source state's UI validations (storeAs)
   if (sourceState) {
     const uiVars = collectVariablesFromUIValidations(sourceState);
     uiVars.forEach(v => {
@@ -409,12 +467,14 @@ const allStoredVariables = useMemo(() => {
   }
   
   return vars;
-}, [availableStoreAsVars, sourceState]);  // ✅ Remove storedVariables from deps
+}, [pathAvailableFields, availableStoreAsVars, sourceState]);
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
     return availableStoreAsVars.filter(v => v.stepIndex < stepIndex);
   };
+
+  
 
  // ═══════════════════════════════════════════════════════════════════════════
 // EDIT MODE INITIALIZATION
@@ -972,48 +1032,102 @@ const handleAddStep = () => {
   };
 
   // Handle method selection with signature
- const handleStepMethodSelect = (stepIndex, methodSignature) => {
+// Handle method selection with signature AND parameter info
+  const handleStepMethodSelect = (stepIndex, methodSignature) => {
     const match = methodSignature.match(/^([^(]+)\(([^)]*)\)/);
 
     if (match) {
       const methodName = match[1];
       const paramsStr = match[2];
-      const params = paramsStr ? paramsStr.split(",").map((p) => p.trim()) : [];
-
-      // ✨ NEW: Find the method's return info
+      
+      // Find the step's instance to get method info
       const step = formData.steps[stepIndex];
       const matchingImport = formData.imports.find(imp => imp.varName === step.instance);
+      
+      // Get full method info from the import's functions
       const methodInfo = matchingImport?.functions?.find(f => f.name === methodName);
+      
+      // Store method info for this step
+      setStepMethodInfos(prev => ({
+        ...prev,
+        [stepIndex]: methodInfo || null
+      }));
+
+      // Initialize args based on parameters
+      const initialArgs = (methodInfo?.parameters || []).map(p => 
+        p.hasDefault ? String(p.defaultValue || '') : ''
+      );
 
       setFormData((prev) => ({
         ...prev,
-        steps: prev.steps.map((step, i) =>
+        steps: prev.steps.map((s, i) =>
           i === stepIndex
             ? {
-                ...step,
+                ...s,
                 method: methodName,
                 signature: methodSignature,
-                args: params.map((p) => {
-                  const paramName = p.split("=")[0].trim();
-                  return `ctx.data.${paramName}`;
-                }),
-                selectedMethodReturns: methodInfo?.returns || null,  // ✨ NEW
+                args: initialArgs,
               }
-            : step
+            : s
         ),
       }));
     }
   };
 
-  // Update step field
-  const handleStepChange = (index, field, value) => {
+
+    // ✅ NEW: Handle individual argument change
+  const handleStepArgChange = (stepIndex, argIndex, value) => {
     setFormData((prev) => ({
       ...prev,
-      steps: prev.steps.map((step, i) =>
-        i === index ? { ...step, [field]: value } : step
-      ),
+      steps: prev.steps.map((step, i) => {
+        if (i === stepIndex) {
+          const newArgs = [...(step.args || [])];
+          newArgs[argIndex] = value;
+          return { ...step, args: newArgs };
+        }
+        return step;
+      }),
     }));
   };
+
+  // Update step field
+ const handleStepChange = (index, field, value) => {
+  setFormData((prev) => {
+    const newSteps = prev.steps.map((step, i) =>
+      i === index ? { ...step, [field]: value } : step
+    );
+    
+    // ✅ AUTO-ADD IMPORT when selecting screen for inline action
+    if (field === 'screen' && value && ['click', 'fill', 'getText', 'waitFor'].includes(newSteps[index].type)) {
+      const alreadyImported = prev.imports.some(imp => imp.className === value);
+      
+      if (!alreadyImported) {
+        const pom = availablePOMs.find(p => p.className === value);
+        if (pom) {
+          const varName = value.charAt(0).toLowerCase() + value.slice(1);
+          const newImport = {
+            className: value,
+            varName: varName,
+            path: pom.path || pom.filePath,
+            constructor: `new ${value}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+            selectedPOM: value,
+            functions: pom.classes?.[0]?.functions || [],
+          };
+          
+          console.log(`✅ Auto-adding import for inline action: ${value}`);
+          
+          return {
+            ...prev,
+            steps: newSteps,
+            imports: [...prev.imports, newImport],
+          };
+        }
+      }
+    }
+    
+    return { ...prev, steps: newSteps };
+  });
+};
 
   // Update step args with assignment detection
   const handleStepArgsChange = (index, value) => {
@@ -1098,18 +1212,41 @@ const handleAddStep = () => {
         }
       });
 
-      formData.steps.forEach((step, index) => {
-        if (!step.description.trim()) {
-          newErrors[`step_${index}_description`] =
-            "Step description is required";
-        }
-        if (!step.instance.trim()) {
-          newErrors[`step_${index}_instance`] = "Instance name is required";
-        }
-        if (!step.method.trim()) {
-          newErrors[`step_${index}_method`] = "Method name is required";
-        }
-      });
+formData.steps.forEach((step, index) => {
+  if (!step.description?.trim()) {
+    newErrors[`step_${index}_description`] = "Step description is required";
+  }
+  
+  // Only validate instance/method for pom-method type
+  if (!step.type || step.type === 'pom-method') {
+    if (!step.instance?.trim()) {
+      newErrors[`step_${index}_instance`] = "Instance name is required";
+    }
+    if (!step.method?.trim()) {
+      newErrors[`step_${index}_method`] = "Method name is required";
+    }
+  }
+  
+  // Validate inline action types
+  if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
+    if (!step.screen?.trim()) {
+      newErrors[`step_${index}_screen`] = "Screen object is required";
+    }
+    if (!step.locator?.trim()) {
+      newErrors[`step_${index}_locator`] = "Locator is required";
+    }
+    if (step.type === 'fill' && !step.value?.trim()) {
+      newErrors[`step_${index}_value`] = "Value is required for fill";
+    }
+  }
+  
+  // Validate custom code
+  if (step.type === 'custom') {
+    if (!step.code?.trim()) {
+      newErrors[`step_${index}_code`] = "Code is required for custom step";
+    }
+  }
+});
     }
 
     setErrors(newErrors);
@@ -1131,64 +1268,185 @@ const handleAddStep = () => {
   // Handle submit
 const handleSubmit = async (e) => {
   e.preventDefault();
-
-  // ✅ ADD THIS DEBUG LOG
-  console.log('📋 Form conditions before submit:', JSON.stringify(formData.conditions, null, 2));
-
+  
   if (!validateForm()) {
+    console.log('❌ Validation failed:', errors);
     return;
   }
-
+  
   setLoading(true);
 
   try {
-const submitData = {
-  event: formData.event.trim(),
-  platform: formData.platform,
-  isObserver: formData.isObserver || undefined,
-  mode: formData.isObserver ? 'observer' : undefined,
-  requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
-  conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
-  actionDetails: formData.hasActionDetails
-    ? {
-        description: formData.description.trim(),
-        platform: formData.platform,
-        navigationMethod: formData.navigationMethod || null,
-        navigationFile: formData.navigationFile || null,
-        imports: formData.imports.map((imp) => ({
-          className: imp.className,
-          varName: imp.varName,
-          path: imp.path,
-          constructor: imp.constructor,
-        })),
-        steps: formData.steps.map((step) => ({
-          type: step.type || 'pom-method',
-          description: step.description,
-          // POM method fields
-          ...((step.type === 'pom-method' || !step.type) && {
-            instance: step.instance,
-            method: step.method,
-            args: step.args?.join(', ') || '',
-            argsArray: step.args || [],
-          }),
-          // Inline action fields
-          ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
-            screen: step.screen,
-            locator: step.locator,
-            ...(step.type === 'fill' && { value: step.value }),
-            ...(step.type === 'waitFor' && { waitState: step.waitState }),
-          }),
-          // Custom code
-          ...(step.type === 'custom' && {
-            code: step.code,
-          }),
-          // Common fields
-          storeAs: step.storeAs || undefined,
-          conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
-        })),
+    // ✅ Helper: Build imports including any screens used in inline actions
+    const buildImports = () => {
+      const imports = [...formData.imports];
+      const importedClassNames = new Set(imports.map(imp => imp.className));
+      
+      // Check if any inline action steps use a screen that's not imported
+      for (const step of formData.steps) {
+        if (['click', 'fill', 'getText', 'waitFor'].includes(step.type) && step.screen) {
+          if (!importedClassNames.has(step.screen)) {
+            const pom = availablePOMs.find(p => p.className === step.screen);
+            if (pom) {
+              const varName = step.screen.charAt(0).toLowerCase() + step.screen.slice(1);
+              imports.push({
+                className: step.screen,
+                varName: varName,
+                path: pom.path || pom.filePath,
+                constructor: `new ${step.screen}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+              });
+              importedClassNames.add(step.screen);
+              console.log(`✅ Auto-added import for ${step.screen}`);
+            }
+          }
+        }
       }
-    : null,
-};
+      
+      return imports.map(imp => ({
+        className: imp.className,
+        varName: imp.varName,
+        path: imp.path,
+        constructor: imp.constructor,
+      }));
+    };
+
+    // ✅ Helper: Transform {{varName}} to storedVars.varName or ctx.data.varName
+    const transformVariableRefs = (value, allSteps) => {
+      if (!value || typeof value !== 'string') return value;
+      
+      return value.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+        // Check if this variable was stored by a previous step
+        const sourceStep = allSteps.find(s => s.storeAs === varName);
+        
+        if (sourceStep) {
+          // If persisted, use ctx.data; otherwise use storedVars
+          if (sourceStep.persistStoreAs !== false) {
+            return `ctx.data.${varName}`;
+          } else {
+            return `storedVars.${varName}`;
+          }
+        }
+        
+        // Default: assume it's a storedVar from current test
+        return `storedVars.${varName}`;
+      });
+    };
+
+    // ✅ Helper: Build step with proper instance/method for inline actions
+    const buildStep = (step, allSteps) => {
+      const baseStep = {
+        type: step.type || 'pom-method',
+        description: step.description,
+        storeAs: step.storeAs || undefined,
+        persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,
+        conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+      };
+      
+      // POM method - transform args
+      if (step.type === 'pom-method' || !step.type) {
+        const transformedArgs = (step.args || []).map(arg => transformVariableRefs(arg, allSteps));
+        
+        return {
+          ...baseStep,
+          instance: step.instance,
+          method: step.method,
+          args: transformedArgs.join(', '),
+          argsArray: transformedArgs,
+        };
+      }
+      
+      // Custom code - transform variable refs in code
+      if (step.type === 'custom') {
+        return {
+          ...baseStep,
+          code: transformVariableRefs(step.code, allSteps),
+        };
+      }
+      
+      // INLINE ACTIONS: click, fill, getText, waitFor
+      if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
+        const screenName = step.screen || '';
+        const locatorName = step.locator || '';
+        const instanceName = screenName 
+          ? screenName.charAt(0).toLowerCase() + screenName.slice(1) 
+          : '';
+        
+        // Build locator chain with index
+        let locatorChain = locatorName;
+        if (step.elementIndex === 'first') {
+          locatorChain = `${locatorName}.first()`;
+        } else if (step.elementIndex === 'last') {
+          locatorChain = `${locatorName}.last()`;
+        } else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
+          locatorChain = `${locatorName}.nth(${step.customIndex})`;
+        } else if (step.elementIndex === 'variable' && step.indexVariable) {
+          // Transform variable reference if it uses {{}} syntax
+          const transformedIndex = transformVariableRefs(step.indexVariable, allSteps);
+          locatorChain = `${locatorName}.nth(${transformedIndex})`;
+        }
+        
+        // Build method name based on action type
+        let methodName;
+        let argsArray = [];
+        
+        switch (step.type) {
+          case 'click':
+            methodName = `${locatorChain}.click`;
+            break;
+          case 'fill':
+            methodName = `${locatorChain}.fill`;
+            argsArray = step.value ? [transformVariableRefs(step.value, allSteps)] : [];
+            break;
+          case 'getText':
+            methodName = `${locatorChain}.textContent`;
+            break;
+          case 'waitFor':
+            methodName = `${locatorChain}.waitFor`;
+            argsArray = [`{ state: '${step.waitState || 'visible'}' }`];
+            break;
+        }
+        
+        return {
+          ...baseStep,
+          instance: instanceName,
+          method: methodName,
+          args: argsArray.join(', '),
+          argsArray: argsArray,
+          // Keep original fields for UI round-trip editing
+          screen: screenName,
+          locator: locatorName,
+          elementIndex: step.elementIndex || undefined,
+          customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+          indexVariable: step.elementIndex === 'variable' 
+            ? transformVariableRefs(step.indexVariable, allSteps) 
+            : undefined,
+          ...(step.type === 'fill' && { value: transformVariableRefs(step.value, allSteps) }),
+          ...(step.type === 'waitFor' && { waitState: step.waitState }),
+        };
+      }
+      
+      return baseStep;
+    };
+
+    const submitData = {
+      event: formData.event.trim(),
+      platform: formData.platform,
+      isObserver: formData.isObserver || undefined,
+      mode: formData.isObserver ? 'observer' : undefined,
+      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
+      actionDetails: formData.hasActionDetails
+        ? {
+            description: formData.description.trim(),
+            platform: formData.platform,
+            navigationMethod: formData.navigationMethod || null,
+            navigationFile: formData.navigationFile || null,
+            imports: buildImports(),
+            steps: formData.steps.map(step => buildStep(step, formData.steps)),  // ✅ Pass allSteps
+          }
+        : null,
+    };
+
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
@@ -1427,6 +1685,23 @@ const submitData = {
               </div>
             </div>
           )}
+
+{/* NOTES SECTION - Only show in edit mode with existing transition */}
+{mode === 'edit' && initialData?.event && (
+  <div className="mt-4">
+    <NotesSection
+      notes={transitionNotes}
+      categories={noteCategories}
+      targetType="transition"
+      targetKey={`${sourceState?.id || sourceState?.meta?.status}:${initialData.event}:${initialData.target}`}
+      projectPath={projectPath}
+      onNotesChange={refreshNotes}
+      theme={defaultTheme}
+      collapsed={transitionNotes.length === 0}
+    />
+  </div>
+)}
+
           {/* Data Flow Summary */}
 <DataFlowSummary
   formData={formData}
@@ -1988,64 +2263,127 @@ const submitData = {
                   </select>
                 </div>
 
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Arguments
-                  </label>
-                  <input
-                    type="text"
-                    value={step.args?.join(", ") || ""}
-                    onChange={(e) => handleStepArgsChange(index, e.target.value)}
-                    placeholder="ctx.data.field1, ctx.data.field2"
-                    className="w-full px-3 py-1 rounded text-sm font-mono"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.tertiary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  />
-                  {getAvailableVarsForStep(index).length > 0 && (
-                    <AvailableVariablesHint 
-                      availableVars={getAvailableVarsForStep(index)}
-                      onInsert={(variable) => handleInsertVariable(index, variable)}
-                    />
-                  )}
-                </div>
+             {/* ✅ ENHANCED: Rich Arguments Section */}
+{stepMethodInfos[index]?.parameters?.length > 0 ? (
+  <div 
+    className="mb-3 p-3 rounded space-y-3"
+    style={{ 
+      background: `${defaultTheme.colors.accents.cyan}10`,
+      border: `1px solid ${defaultTheme.colors.accents.cyan}40`
+    }}
+  >
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-semibold" style={{ color: defaultTheme.colors.accents.cyan }}>
+        📝 Arguments ({stepMethodInfos[index].parameters.length})
+      </span>
+      <span className="text-xs font-mono" style={{ color: defaultTheme.colors.text.tertiary }}>
+        {step.signature}
+      </span>
+    </div>
+
+    {stepMethodInfos[index].parameters.map((param, argIdx) => (
+      <StepArgumentInput
+        key={argIdx}
+        param={param}
+        value={step.args?.[argIdx] || ''}
+        onChange={(val) => handleStepArgChange(index, argIdx, val)}
+        theme={defaultTheme}
+        storedVariables={allStoredVariables}
+        testDataSchema={testDataSchema}
+      />
+    ))}
+  </div>
+) : (
+  /* Fallback: simple text input for methods without discovered params */
+  <div className="mb-2">
+    <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+      Arguments
+    </label>
+    <input
+      type="text"
+      value={step.args?.join(", ") || ""}
+      onChange={(e) => handleStepArgsChange(index, e.target.value)}
+      placeholder="ctx.data.field1, ctx.data.field2"
+      className="w-full px-3 py-1 rounded text-sm font-mono"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    />
+    {getAvailableVarsForStep(index).length > 0 && (
+      <AvailableVariablesHint 
+        availableVars={getAvailableVarsForStep(index)}
+        onInsert={(variable) => handleInsertVariable(index, variable)}
+      />
+    )}
+  </div>
+)}
               </>
             )}
 
             {/* INLINE ACTION TYPES: click, fill, getText, waitFor */}
             {['click', 'fill', 'getText', 'waitFor'].includes(step.type) && (
               <>
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Screen Object *
-                  </label>
-                  <select
-                    value={step.screen || ""}
-                    onChange={(e) => {
-                      const selectedPOM = availablePOMs.find(p => p.className === e.target.value);
-                      handleStepChange(index, 'screen', e.target.value);
-                      handleStepChange(index, 'locator', '');
-                      // Get all getters/methods that look like locators
-                      const locators = selectedPOM?.functions?.map(f => f.name) || [];
-                      handleStepChange(index, 'availableLocators', locators);
-                    }}
-                    className="w-full px-3 py-1 rounded text-sm"
-                    style={{
-                      backgroundColor: defaultTheme.colors.background.tertiary,
-                      color: defaultTheme.colors.text.primary,
-                      border: `1px solid ${defaultTheme.colors.border}`,
-                    }}
-                  >
-                    <option value="">-- Select screen object --</option>
-                    {availablePOMs.map((pom, i) => (
-                      <option key={i} value={pom.className}>
-                        {pom.className}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+             {/* Screen Object */}
+<div className="mb-2">
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Screen Object *
+  </label>
+  <select
+    value={step.screen || ""}
+    onChange={(e) => {
+      const selectedPOMName = e.target.value;
+      handleStepChange(index, 'screen', selectedPOMName);
+      handleStepChange(index, 'locator', '');
+      
+      // ✅ FIXED: Get LOCATORS (getters), not methods
+      const selectedPOM = availablePOMs.find(p => p.className === selectedPOMName);
+      const locators = [];
+      
+      if (selectedPOM?.classes) {
+        for (const cls of selectedPOM.classes) {
+          // Get getters (these are locators like btnSubmit, inputSearch)
+          for (const getter of cls.getters || []) {
+            locators.push(getter.name);
+          }
+          // Get properties (non-instance, like this.btn defined in constructor)
+          for (const prop of cls.properties || []) {
+            if (prop.type === 'property') {
+              locators.push(prop.name);
+            }
+          }
+        }
+      }
+      
+      // Fallback: if no getters found, maybe this POM uses methods as locators
+      if (locators.length === 0 && selectedPOM?.functions) {
+        // Filter to only getter-like methods (start with get, btn, input, etc.)
+        const locatorPatterns = /^(get|btn|input|link|label|text|card|modal|popup|dropdown|select|checkbox|radio|tab|menu|nav|header|footer|sidebar|icon|img|image|container|wrapper)/i;
+        for (const fn of selectedPOM.functions) {
+          if (locatorPatterns.test(fn.name) || fn.name.startsWith('get')) {
+            locators.push(fn.name);
+          }
+        }
+      }
+      
+      handleStepChange(index, 'availableLocators', locators);
+    }}
+    className="w-full px-3 py-1 rounded text-sm"
+    style={{
+      backgroundColor: defaultTheme.colors.background.tertiary,
+      color: defaultTheme.colors.text.primary,
+      border: `1px solid ${defaultTheme.colors.border}`,
+    }}
+  >
+    <option value="">-- Select screen object --</option>
+    {availablePOMs.map((pom, i) => (
+      <option key={i} value={pom.className}>
+        {pom.className}
+      </option>
+    ))}
+  </select>
+</div>
 
                 <div className="mb-2">
                   <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
@@ -2127,25 +2465,162 @@ const submitData = {
                   </div>
                 )}
 
-                {/* Code Preview */}
-                <div 
-                  className="p-2 rounded text-xs font-mono"
-                  style={{ backgroundColor: defaultTheme.colors.background.primary }}
-                >
-                  <span style={{ color: defaultTheme.colors.accents.blue }}>await </span>
-                  <span style={{ color: defaultTheme.colors.accents.purple }}>
-                    {step.screen ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) : 'screen'}
-                  </span>
-                  <span>.</span>
-                  <span style={{ color: defaultTheme.colors.accents.green }}>{step.locator || 'locator'}</span>
-                  <span>.</span>
-                  <span style={{ color: defaultTheme.colors.accents.yellow }}>
-                    {step.type === 'click' && 'click()'}
-                    {step.type === 'fill' && `fill(${step.value || "'...'"} )`}
-                    {step.type === 'getText' && 'textContent()'}
-                    {step.type === 'waitFor' && `waitFor({ state: '${step.waitState}' })`}
-                  </span>
-                </div>
+               {/* ✅ Element Index Selector with Variable Support */}
+<div className="mb-2">
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
+  </label>
+  <div className="flex gap-2 items-center">
+    <select
+      value={step.elementIndex || ""}
+      onChange={(e) => {
+        handleStepChange(index, 'elementIndex', e.target.value);
+        // Clear when switching away from custom/variable
+        if (e.target.value !== 'custom' && e.target.value !== 'variable') {
+          handleStepChange(index, 'customIndex', undefined);
+          handleStepChange(index, 'indexVariable', undefined);
+        }
+      }}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">Single element (no index)</option>
+      <option value="first">First [0] → .first()</option>
+      <option value="last">Last → .last()</option>
+      <option value="custom">Custom index → .nth(N)</option>
+      <option value="variable">Variable → .nth(ctx.data.X)</option>
+    </select>
+    
+    {/* Custom numeric index input */}
+    {step.elementIndex === 'custom' && (
+      <input
+        type="number"
+        min="0"
+        value={step.customIndex || 0}
+        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
+        placeholder="0"
+        className="w-20 px-2 py-1 rounded text-sm font-mono"
+        style={{
+          backgroundColor: defaultTheme.colors.background.tertiary,
+          color: defaultTheme.colors.text.primary,
+          border: `1px solid ${defaultTheme.colors.border}`,
+        }}
+      />
+    )}
+    
+{/* Variable selector for dynamic index */}
+{step.elementIndex === 'variable' && (
+  <div className="flex-1 flex gap-2">
+    {/* Dropdown for quick selection */}
+    <select
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: step.indexVariable ? defaultTheme.colors.accents.yellow : defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">-- Quick select or type →</option>
+      
+      {/* Test Data Fields (ctx.data) */}
+      {testDataSchema.length > 0 && (
+        <optgroup label="📋 Test Data (ctx.data)">
+          {testDataSchema.map((field, i) => {
+            const fieldName = field.name || field;
+            return (
+              <option key={`data-${i}`} value={`ctx.data.${fieldName}`}>
+                ctx.data.{fieldName}
+              </option>
+            );
+          })}
+        </optgroup>
+      )}
+      
+      {/* Stored Variables from Previous Steps */}
+      {allStoredVariables.length > 0 && (
+        <optgroup label="💾 Stored Variables">
+          {allStoredVariables.map((v, i) => (
+            <option key={`stored-${i}`} value={`storedVars.${v.name}`}>
+              storedVars.{v.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+    
+    {/* Free text input for custom expressions */}
+    <input
+      type="text"
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      placeholder="ctx.data.cardIndex"
+      className="flex-1 px-2 py-1 rounded text-sm font-mono"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.accents.yellow,
+        border: `1px solid ${defaultTheme.colors.accents.yellow}`,
+      }}
+    />
+  </div>
+)}
+  </div>
+  
+  {step.elementIndex && (
+    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
+      💡 Use when locator returns multiple elements (e.g., list items, cards)
+    </p>
+  )}
+  
+  {/* Variable index preview */}
+  {step.elementIndex === 'variable' && step.indexVariable && (
+    <div 
+      className="text-xs mt-1 p-1.5 rounded font-mono"
+      style={{ 
+        backgroundColor: `${defaultTheme.colors.accents.yellow}15`,
+        color: defaultTheme.colors.accents.yellow 
+      }}
+    >
+      → .nth({step.indexVariable})
+    </div>
+  )}
+</div>
+
+               {/* Code Preview */}
+<div 
+  className="p-2 rounded text-xs font-mono"
+  style={{ backgroundColor: defaultTheme.colors.background.primary }}
+>
+  <span style={{ color: defaultTheme.colors.accents.blue }}>await </span>
+  <span style={{ color: defaultTheme.colors.accents.purple }}>
+    {step.screen ? step.screen.charAt(0).toLowerCase() + step.screen.slice(1) : 'screen'}
+  </span>
+  <span>.</span>
+  <span style={{ color: defaultTheme.colors.accents.green }}>{step.locator || 'locator'}</span>
+  {/* Element index */}
+  {/* Code Preview */}
+{step.elementIndex && (
+  <span style={{ color: defaultTheme.colors.accents.yellow }}>
+    {step.elementIndex === 'first' ? '.first()' : 
+     step.elementIndex === 'last' ? '.last()' : 
+     step.elementIndex === 'custom' ? `.nth(${step.customIndex || 0})` :
+     step.elementIndex === 'variable' ? `.nth(${step.indexVariable || 'ctx.data.index'})` :
+     `.nth(${step.elementIndex})`}
+  </span>
+)}
+  <span>.</span>
+  <span style={{ color: defaultTheme.colors.accents.yellow }}>
+    {step.type === 'click' && 'click()'}
+    {step.type === 'fill' && `fill(${step.value || "'...'"} )`}
+    {step.type === 'getText' && 'textContent()'}
+    {step.type === 'waitFor' && `waitFor({ state: '${step.waitState}' })`}
+  </span>
+</div>
               </>
             )}
 
@@ -2171,33 +2646,73 @@ const submitData = {
               </div>
             )}
 
-            {/* Store As */}
+            {/* Store As - Enhanced with Persistence Option */}
             {step.type !== 'custom' && (
-              <div className="mt-3">
+              <div className="mt-3 space-y-2">
                 <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
                   💾 Store Result As
                 </label>
-                <input
-                  type="text"
-                  value={step.storeAs || ''}
-                  onChange={(e) => handleStepChange(index, 'storeAs', e.target.value)}
-                  placeholder="variableName"
-                  className="w-full px-3 py-1 rounded text-sm font-mono"
-                  style={{
-                    backgroundColor: defaultTheme.colors.background.tertiary,
-                    color: defaultTheme.colors.accents.yellow,
-                    border: `1px solid ${defaultTheme.colors.border}`,
-                  }}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={step.storeAs || ''}
+                    onChange={(e) => handleStepChange(index, 'storeAs', e.target.value)}
+                    placeholder="variableName"
+                    className="flex-1 px-3 py-1 rounded text-sm font-mono"
+                    style={{
+                      backgroundColor: defaultTheme.colors.background.tertiary,
+                      color: defaultTheme.colors.accents.yellow,
+                      border: `1px solid ${defaultTheme.colors.border}`,
+                    }}
+                  />
+                  {step.storeAs && (
+                    <label 
+                      className="flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap"
+                      style={{ 
+                        backgroundColor: step.persistStoreAs !== false 
+                          ? `${defaultTheme.colors.accents.green}20` 
+                          : defaultTheme.colors.background.tertiary,
+                        border: `1px solid ${step.persistStoreAs !== false 
+                          ? defaultTheme.colors.accents.green 
+                          : defaultTheme.colors.border}`,
+                        color: step.persistStoreAs !== false 
+                          ? defaultTheme.colors.accents.green 
+                          : defaultTheme.colors.text.tertiary
+                      }}
+                      title="If enabled, value persists to ctx.data and survives across test runs"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={step.persistStoreAs !== false}
+                        onChange={(e) => handleStepChange(index, 'persistStoreAs', e.target.checked)}
+                        className="w-3 h-3"
+                      />
+                      Persist
+                    </label>
+                  )}
+                </div>
                 {step.storeAs && (
-                  <div className="text-xs mt-1 p-2 rounded"
-                    style={{ backgroundColor: `${defaultTheme.colors.accents.yellow}10`, color: defaultTheme.colors.accents.yellow }}>
-                    ✨ Use: <code>{`{{${step.storeAs}}}`}</code>
+                  <div 
+                    className="text-xs p-2 rounded space-y-1"
+                    style={{ 
+                      backgroundColor: `${defaultTheme.colors.accents.yellow}10`, 
+                      color: defaultTheme.colors.accents.yellow 
+                    }}
+                  >
+                    <div>✨ Access via: <code>{`{{${step.storeAs}}}`}</code></div>
+                    {step.persistStoreAs !== false ? (
+                      <div style={{ color: defaultTheme.colors.accents.green }}>
+                        💾 Will persist to ctx.data (available in later tests)
+                      </div>
+                    ) : (
+                      <div style={{ color: defaultTheme.colors.text.tertiary }}>
+                        ⚡ Current test only (faster, no file write)
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
-
             {/* Step Conditions */}
             <StepConditions
               conditions={step.conditions}
@@ -2286,6 +2801,198 @@ const submitData = {
    
         </form>
       </div>
+    </div>
+    
+  );
+}
+
+/**
+ * StepArgumentInput - Rich argument input for transition steps
+ */
+function StepArgumentInput({ param, value, onChange, theme, storedVariables = [], testDataSchema = [] }) {
+  const [useVariable, setUseVariable] = useState(
+    value?.startsWith('ctx.') || value?.includes('{{') || false
+  );
+
+  // Update mode when value changes externally
+  useEffect(() => {
+    if (value) {
+      setUseVariable(value.startsWith('ctx.') || value.includes('{{'));
+    }
+  }, [value]);
+
+  // Build ctx.data suggestions from testDataSchema
+  const ctxDataSuggestions = useMemo(() => {
+    if (testDataSchema && testDataSchema.length > 0) {
+      return testDataSchema.slice(0, 10).map(field => `ctx.data.${field.name || field}`);
+    }
+    return [
+      'ctx.data.lang',
+      'ctx.data.device',
+      'ctx.data.searchType',
+      'ctx.data.dateDepart',
+      'ctx.data.destination'
+    ];
+  }, [testDataSchema]);
+
+  return (
+    <div 
+      className="p-2 rounded space-y-2"
+      style={{ background: theme.colors.background.secondary }}
+    >
+      {/* Parameter name & badges */}
+      <div className="flex items-center gap-2">
+        <span 
+          className="font-mono text-sm font-bold"
+          style={{ color: theme.colors.accents.cyan }}
+        >
+          {param.name}
+        </span>
+        {param.hasDefault ? (
+          <span 
+            className="text-[10px] px-1.5 py-0.5 rounded"
+            style={{ 
+              background: `${theme.colors.accents.blue}20`,
+              color: theme.colors.accents.blue
+            }}
+          >
+            optional
+          </span>
+        ) : (
+          <span 
+            className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+            style={{ 
+              background: `${theme.colors.accents.red}20`,
+              color: theme.colors.accents.red
+            }}
+          >
+            required
+          </span>
+        )}
+      </div>
+
+      {/* Default value hint */}
+      {param.hasDefault && param.defaultValue !== undefined && (
+        <div className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+          Default: <code className="px-1 rounded" style={{ background: theme.colors.background.tertiary }}>
+            {JSON.stringify(param.defaultValue)}
+          </code>
+        </div>
+      )}
+
+      {/* Mode toggle */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => { setUseVariable(false); onChange(''); }}
+          className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+          style={{
+            background: !useVariable ? theme.colors.accents.cyan : theme.colors.background.tertiary,
+            color: !useVariable ? 'white' : theme.colors.text.tertiary
+          }}
+        >
+          ✏️ Custom Value
+        </button>
+        <button
+          type="button"
+          onClick={() => { setUseVariable(true); onChange(''); }}
+          className="flex-1 px-2 py-1 rounded text-xs font-semibold transition"
+          style={{
+            background: useVariable ? theme.colors.accents.yellow : theme.colors.background.tertiary,
+            color: useVariable ? 'black' : theme.colors.text.tertiary
+          }}
+        >
+          📦 Variable
+        </button>
+      </div>
+
+      {/* Input based on mode */}
+      {useVariable ? (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="ctx.data.field or {{variableName}}"
+            className="w-full px-2 py-1.5 rounded text-sm font-mono"
+            style={{
+              background: theme.colors.background.primary,
+              border: `1px solid ${theme.colors.accents.yellow}`,
+              color: theme.colors.accents.yellow
+            }}
+          />
+          
+          {/* Variable suggestions */}
+          <div className="space-y-1">
+            {/* Stored variables from previous steps */}
+            {storedVariables.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                  💾 Stored:
+                </span>
+                {storedVariables.slice(0, 5).map((v, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => onChange(`{{${v.path || v.name}}}`)}
+                    className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                    style={{ 
+                      background: `${theme.colors.accents.yellow}30`,
+                      color: theme.colors.accents.yellow
+                    }}
+                  >
+                    {`{{${v.path || v.name}}}`}
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            {/* Common ctx.data fields */}
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px]" style={{ color: theme.colors.text.tertiary }}>
+                📋 ctx.data:
+              </span>
+              {ctxDataSuggestions.map((field, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onChange(field)}
+                  className="px-1.5 py-0.5 rounded font-mono text-[10px] transition hover:brightness-110"
+                  style={{ 
+                    background: `${theme.colors.accents.blue}20`,
+                    color: theme.colors.accents.blue
+                  }}
+                >
+                  {field}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <input
+          type="text"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={param.hasDefault ? `Leave empty for default` : `Enter ${param.name}...`}
+          className="w-full px-2 py-1.5 rounded text-sm"
+          style={{
+            background: theme.colors.background.primary,
+            border: `1px solid ${theme.colors.border}`,
+            color: theme.colors.text.primary
+          }}
+        />
+      )}
+
+      {/* Preview */}
+      {value && (
+        <div 
+          className="text-[10px] p-1 rounded font-mono"
+          style={{ background: theme.colors.background.tertiary, color: theme.colors.accents.green }}
+        >
+          → {value.startsWith('ctx.') || value.includes('{{') ? value : `"${value}"`}
+        </div>
+      )}
     </div>
   );
 }

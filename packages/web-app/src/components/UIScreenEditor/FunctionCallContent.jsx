@@ -32,8 +32,13 @@ export default function FunctionCallContent({
   onUpdate, 
   pomName,
   projectPath,
+  platform,  // ✅ ADD THIS
   storedVariables = []
 }) {
+  console.log('🔍 FunctionCallContent loaded with block:', block);
+  console.log('🔍 block.data:', block.data);
+  console.log('🔍 block.data.assertion:', block.data?.assertion);
+
   const data = block.data || {};
   
   // Load POM data
@@ -42,7 +47,7 @@ export default function FunctionCallContent({
     loading: pomsLoading,
     getPOMFunctions,
     getMethodReturnKeys 
-  } = usePOMData(projectPath);
+  } = usePOMData(projectPath, platform);  // ✅ PASS PLATFORM
 
   // Local state for method suggestions (with full parameter info)
   const [methodSuggestions, setMethodSuggestions] = useState([]);
@@ -132,10 +137,12 @@ export default function FunctionCallContent({
 
   // Update handler
   const updateData = (key, value) => {
-    onUpdate({
-      data: { ...data, [key]: value }
-    });
-  };
+  console.log('📝 FunctionCallContent updateData:', key, value);
+  console.log('📝 Full data will be:', { ...data, [key]: value });
+  onUpdate({
+    data: { ...data, [key]: value }
+  });
+};
 
   // Handle instance selection
   const handleInstanceSelect = (option) => {
@@ -474,30 +481,39 @@ export default function FunctionCallContent({
           <span style={{ color: theme.colors.text.tertiary }}>);</span>
         </div>
 
-        {/* Line 2: Assertion (if enabled) */}
-        {data.assertion?.type && (
-          <div>
-            <span style={{ color: theme.colors.accents.blue }}>await </span>
-            <span style={{ color: theme.colors.accents.purple }}>expect</span>
-            <span style={{ color: theme.colors.text.tertiary }}>(</span>
-            <span style={{ color: theme.colors.accents.yellow }}>{data.storeAs || 'result'}</span>
-            <span style={{ color: theme.colors.text.tertiary }}>).</span>
-            <span style={{ color: theme.colors.accents.green }}>{data.assertion.type}</span>
-            <span style={{ color: theme.colors.text.tertiary }}>(</span>
-            {data.assertion.value !== undefined && data.assertion.value !== '' && (
-              <span style={{ 
-                color: String(data.assertion.value).includes('{{') 
-                  ? theme.colors.accents.yellow 
-                  : theme.colors.accents.green 
-              }}>
-                {typeof data.assertion.value === 'string' && !data.assertion.value.includes('{{')
-                  ? `"${data.assertion.value}"`
-                  : data.assertion.value}
-              </span>
-            )}
-            <span style={{ color: theme.colors.text.tertiary }}>);</span>
-          </div>
-        )}
+      {/* Line 2: Assertion (if enabled) */}
+{data.assertion?.type && (
+  <div>
+    <span style={{ color: theme.colors.accents.blue }}>await </span>
+    <span style={{ color: theme.colors.accents.purple }}>expect</span>
+    <span style={{ color: theme.colors.text.tertiary }}>(</span>
+    <span style={{ color: theme.colors.accents.yellow }}>{data.storeAs || 'result'}</span>
+    <span style={{ color: theme.colors.text.tertiary }}>)</span>
+    {/* ✅ Show .not if enabled */}
+    {data.assertion.not && (
+      <span style={{ color: theme.colors.accents.red }}>.not</span>
+    )}
+    <span style={{ color: theme.colors.text.tertiary }}>.</span>
+    <span style={{ color: theme.colors.accents.green }}>{data.assertion.type}</span>
+    <span style={{ color: theme.colors.text.tertiary }}>(</span>
+    {data.assertion.value !== undefined && data.assertion.value !== '' && (
+      <span style={{ 
+        color: String(data.assertion.value).includes('{{') 
+          ? theme.colors.accents.yellow 
+          : theme.colors.accents.green 
+      }}>
+        {typeof data.assertion.value === 'boolean' 
+          ? String(data.assertion.value)
+          : typeof data.assertion.value === 'number'
+            ? data.assertion.value
+            : typeof data.assertion.value === 'string' && !data.assertion.value.includes('{{')
+              ? `"${data.assertion.value}"`
+              : data.assertion.value}
+      </span>
+    )}
+    <span style={{ color: theme.colors.text.tertiary }}>);</span>
+  </div>
+)}
       </div>
     </div>
   );
@@ -507,28 +523,47 @@ export default function FunctionCallContent({
 // ✅ NEW: AssertionSection Component
 // ═══════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════
+// ✅ UPDATED: AssertionSection Component with NOT toggle + all operators
+// ═══════════════════════════════════════════════════════════
+
 const ASSERTION_TYPES = [
-  // Visibility
-  { value: 'toBeVisible', label: '👁 toBeVisible', category: 'visibility', needsValue: false },
-  { value: 'toBeHidden', label: '🚫 toBeHidden', category: 'visibility', needsValue: false },
-  // Text
-  { value: 'toHaveText', label: '📝 toHaveText', category: 'text', needsValue: true },
-  { value: 'toContainText', label: '📝 toContainText', category: 'text', needsValue: true },
-  // Value
-  { value: 'toBe', label: '= toBe', category: 'value', needsValue: true },
-  { value: 'toEqual', label: '≡ toEqual', category: 'value', needsValue: true },
-  { value: 'toContain', label: '⊃ toContain', category: 'value', needsValue: true },
-  { value: 'toMatch', label: '~ toMatch', category: 'value', needsValue: true },
-  // Boolean
+  // Equality
+  { value: 'toBe', label: '= toBe', category: 'equality', needsValue: true },
+  { value: 'toEqual', label: '≡ toEqual', category: 'equality', needsValue: true },
+  
+  // Boolean  
   { value: 'toBeTruthy', label: '✓ toBeTruthy', category: 'boolean', needsValue: false },
   { value: 'toBeFalsy', label: '✗ toBeFalsy', category: 'boolean', needsValue: false },
-  // State
-  { value: 'toBeDefined', label: '? toBeDefined', category: 'state', needsValue: false },
-  { value: 'toBeNull', label: '∅ toBeNull', category: 'state', needsValue: false },
+  { value: 'toBeTrue', label: '✓ toBeTrue (strict)', category: 'boolean', needsValue: false },
+  { value: 'toBeFalse', label: '✗ toBeFalse (strict)', category: 'boolean', needsValue: false },
+  
+  // Text/String
+  { value: 'toContain', label: '⊃ toContain', category: 'text', needsValue: true },
+  { value: 'toMatch', label: '~ toMatch (regex)', category: 'text', needsValue: true },
+  { value: 'toHaveText', label: '📝 toHaveText', category: 'text', needsValue: true },
+  { value: 'toContainText', label: '📝 toContainText', category: 'text', needsValue: true },
+  { value: 'toStartWith', label: '▶ toStartWith', category: 'text', needsValue: true },
+  { value: 'toEndWith', label: '◀ toEndWith', category: 'text', needsValue: true },
+  
   // Numeric
   { value: 'toBeGreaterThan', label: '> toBeGreaterThan', category: 'numeric', needsValue: true },
+  { value: 'toBeGreaterThanOrEqual', label: '>= toBeGreaterThanOrEqual', category: 'numeric', needsValue: true },
   { value: 'toBeLessThan', label: '< toBeLessThan', category: 'numeric', needsValue: true },
+  { value: 'toBeLessThanOrEqual', label: '<= toBeLessThanOrEqual', category: 'numeric', needsValue: true },
   { value: 'toHaveLength', label: '# toHaveLength', category: 'numeric', needsValue: true },
+  
+  // State
+  { value: 'toBeDefined', label: '? toBeDefined', category: 'state', needsValue: false },
+  { value: 'toBeUndefined', label: '∅ toBeUndefined', category: 'state', needsValue: false },
+  { value: 'toBeNull', label: '⊘ toBeNull', category: 'state', needsValue: false },
+  
+  // Visibility (for locators)
+  { value: 'toBeVisible', label: '👁 toBeVisible', category: 'visibility', needsValue: false },
+  { value: 'toBeHidden', label: '🚫 toBeHidden', category: 'visibility', needsValue: false },
+  { value: 'toBeEnabled', label: '✓ toBeEnabled', category: 'visibility', needsValue: false },
+  { value: 'toBeDisabled', label: '✗ toBeDisabled', category: 'visibility', needsValue: false },
+  { value: 'toBeChecked', label: '☑ toBeChecked', category: 'visibility', needsValue: false },
 ];
 
 function AssertionSection({
@@ -549,30 +584,68 @@ function AssertionSection({
     setIsEnabled(!!assertion?.type);
   }, [assertion?.type]);
 
+  // Sync useVariable with assertion value
+  useEffect(() => {
+    if (assertion?.value) {
+      setUseVariable(String(assertion.value).includes('{{'));
+    }
+  }, [assertion?.value]);
+
   const selectedType = ASSERTION_TYPES.find(t => t.value === assertion?.type);
 
   const handleToggle = (enabled) => {
-    setIsEnabled(enabled);
-    if (!enabled) {
-      onChange(null);
-    } else {
-      onChange({ type: 'toBeVisible', value: undefined });
-    }
-  };
-
-  const handleTypeChange = (type) => {
-    const typeInfo = ASSERTION_TYPES.find(t => t.value === type);
-    onChange({
-      type,
-      value: typeInfo?.needsValue ? (assertion?.value || '') : undefined
+  setIsEnabled(enabled);
+  if (!enabled) {
+    onChange(null);
+  } else {
+    // ✅ FIX: Create complete assertion object
+    onChange({ 
+      type: 'toBeTruthy', 
+      not: false,
+      value: undefined 
     });
-  };
+  }
+};
 
-  const handleValueChange = (value) => {
-    onChange({ ...assertion, value });
+ const handleTypeChange = (type) => {
+  const typeInfo = ASSERTION_TYPES.find(t => t.value === type);
+  const newAssertion = {
+    type,
+    not: assertion?.not || false,
+    value: typeInfo?.needsValue ? (assertion?.value ?? '') : undefined
   };
+  console.log('🔍 AssertionSection handleTypeChange:', newAssertion);
+  onChange(newAssertion);
+};
+
+const handleValueChange = (value) => {
+  let finalValue = value;
+  if (value === 'true') finalValue = true;
+  else if (value === 'false') finalValue = false;
+  else if (!isNaN(value) && value !== '' && !String(value).includes('{{')) {
+    finalValue = Number(value);
+  }
+  
+  // ✅ FIX: Don't spread undefined assertion
+  onChange({ 
+    type: assertion?.type || 'toBeTruthy',
+    not: assertion?.not || false,
+    value: finalValue 
+  });
+};
+
+const handleNotToggle = (not) => {
+  // ✅ FIX: Don't spread undefined assertion
+  onChange({ 
+    type: assertion?.type || 'toBeTruthy',
+    value: assertion?.value,
+    not 
+  });
+};
+
 
   const color = theme.colors.accents.purple;
+  const notColor = theme.colors.accents.red;
 
   if (!editMode && !assertion?.type) {
     return null;
@@ -583,7 +656,7 @@ function AssertionSection({
       className="p-3 rounded space-y-3"
       style={{ 
         background: isEnabled ? `${color}10` : theme.colors.background.tertiary,
-        border: `1px solid ${isEnabled ? `${color}40` : theme.colors.border}`
+        border: `1px solid ${isEnabled ? (assertion?.not ? notColor : color) + '40' : theme.colors.border}`
       }}
     >
       {/* Toggle header */}
@@ -616,39 +689,48 @@ function AssertionSection({
       {/* Assertion config (when enabled) */}
       {isEnabled && (
         <div className="space-y-3">
-          {/* Type selector */}
-          {editMode ? (
-            <div className="space-y-2">
-              <label className="text-xs" style={{ color: theme.colors.text.tertiary }}>
-                Assertion Type
-              </label>
+          {/* ✅ NOT Toggle + Type selector row */}
+          <div className="flex gap-2">
+            {/* NOT Toggle */}
+            {editMode && (
+              <button
+                onClick={() => handleNotToggle(!assertion?.not)}
+                className="px-3 py-1.5 rounded text-sm font-bold transition"
+                style={{
+                  background: assertion?.not ? notColor : theme.colors.background.secondary,
+                  color: assertion?.not ? 'white' : theme.colors.text.tertiary,
+                  border: `1px solid ${assertion?.not ? notColor : theme.colors.border}`
+                }}
+                title="Toggle NOT (negate assertion)"
+              >
+                {assertion?.not ? '🚫 NOT' : 'NOT'}
+              </button>
+            )}
+            
+            {/* Type selector */}
+            {editMode ? (
               <select
-                value={assertion?.type || 'toBeVisible'}
+                value={assertion?.type || 'toBeTruthy'}
                 onChange={(e) => handleTypeChange(e.target.value)}
-                className="w-full px-3 py-1.5 rounded text-sm"
+                className="flex-1 px-3 py-1.5 rounded text-sm"
                 style={{
                   background: theme.colors.background.primary,
                   border: `1px solid ${theme.colors.border}`,
                   color: theme.colors.text.primary
                 }}
               >
-                <optgroup label="👁 Visibility">
-                  {ASSERTION_TYPES.filter(t => t.category === 'visibility').map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="📝 Text">
-                  {ASSERTION_TYPES.filter(t => t.category === 'text').map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="= Value">
-                  {ASSERTION_TYPES.filter(t => t.category === 'value').map(t => (
+                <optgroup label="= Equality">
+                  {ASSERTION_TYPES.filter(t => t.category === 'equality').map(t => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </optgroup>
                 <optgroup label="✓ Boolean">
                   {ASSERTION_TYPES.filter(t => t.category === 'boolean').map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="📝 Text">
+                  {ASSERTION_TYPES.filter(t => t.category === 'text').map(t => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </optgroup>
@@ -662,19 +744,31 @@ function AssertionSection({
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </optgroup>
+                <optgroup label="👁 Visibility">
+                  {ASSERTION_TYPES.filter(t => t.category === 'visibility').map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </optgroup>
               </select>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>Type:</span>
-              <span 
-                className="px-2 py-1 rounded text-xs font-semibold"
-                style={{ background: `${color}30`, color }}
-              >
-                {selectedType?.label || assertion?.type}
-              </span>
-            </div>
-          )}
+            ) : (
+              <div className="flex items-center gap-2">
+                {assertion?.not && (
+                  <span 
+                    className="px-2 py-1 rounded text-xs font-bold"
+                    style={{ background: notColor, color: 'white' }}
+                  >
+                    NOT
+                  </span>
+                )}
+                <span 
+                  className="px-2 py-1 rounded text-xs font-semibold"
+                  style={{ background: `${color}30`, color }}
+                >
+                  {selectedType?.label || assertion?.type}
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Value input (if needed) */}
           {selectedType?.needsValue && (
@@ -715,7 +809,7 @@ function AssertionSection({
                       <span className="text-xs" style={{ color: theme.colors.text.tertiary }}>{'{{'}</span>
                       <input
                         type="text"
-                        value={(assertion?.value || '').replace(/^\{\{|\}\}$/g, '')}
+                        value={String(assertion?.value || '').replace(/^\{\{|\}\}$/g, '')}
                         onChange={(e) => handleValueChange(`{{${e.target.value}}}`)}
                         placeholder="variableName"
                         className="flex-1 px-2 py-1.5 rounded text-sm font-mono"
@@ -752,7 +846,7 @@ function AssertionSection({
                 ) : (
                   <input
                     type="text"
-                    value={assertion?.value || ''}
+                    value={assertion?.value ?? ''}
                     onChange={(e) => handleValueChange(e.target.value)}
                     placeholder="Expected value..."
                     className="w-full px-2 py-1.5 rounded text-sm"
@@ -774,7 +868,7 @@ function AssertionSection({
                       : theme.colors.text.primary
                   }}
                 >
-                  {assertion?.value || '—'}
+                  {assertion?.value ?? '—'}
                 </div>
               )}
             </div>
@@ -784,7 +878,6 @@ function AssertionSection({
     </div>
   );
 }
-
 // ═══════════════════════════════════════════════════════════
 // ✅ NEW: ArgumentInput Component
 // ═══════════════════════════════════════════════════════════

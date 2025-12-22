@@ -71,10 +71,11 @@ class TestContext {
   }
   
   constructor(ImplicationClass, testData, actualFilePath) {
-    this.ImplicationClass = ImplicationClass;
-    this.data = testData;
-    this.changeLog = [];
-    this.actualFilePath = actualFilePath;
+  this.ImplicationClass = ImplicationClass;
+  this.data = testData;
+  this.changeLog = [];
+  this.actualFilePath = actualFilePath;
+  this.inputPath = actualFilePath;  // ← ADD THIS LINE
     
     this.config = {
       device: testData.device || testData._config?.device || 'desktop',
@@ -130,24 +131,38 @@ static load(ImplicationClass, testDataPath) {
   const rawData = JSON.parse(fileContents);
   
   let data;
+  let originalSnapshot; // ✅ Capture the true original before any mutations
   
   if (rawData._changeLog !== undefined) {
     // Delta file format: { _original: {...}, _changeLog: [...] }
     const original = rawData._original || {};
-    data = { ...original };
+    originalSnapshot = JSON.parse(JSON.stringify(original)); // ✅ Deep clone of true original
+    data = JSON.parse(JSON.stringify(original)); // Deep clone to work with
     
     if (rawData._changeLog.length > 0) {
       for (const change of rawData._changeLog) {
-        Object.assign(data, change.delta);
+        // Apply each delta key, handling dot notation for nested fields
+        for (const [key, value] of Object.entries(change.delta)) {
+          if (key.includes('.')) {
+            // Dot notation - set nested value (e.g., "booking.status" → data.booking.status)
+            TestContext.setNestedValue(data, key, value);
+          } else {
+            data[key] = value;
+          }
+        }
       }
       console.log(`   📊 Applied ${rawData._changeLog.length} changes from history`);
-      console.log(`   🎯 Current state: ${data.status}`);
+      
+      // Log the actual entity status if applicable
+      const entityStatus = data.booking?.status || data.status;
+      console.log(`   🎯 Current state: ${entityStatus}`);
     } else {
       console.log(`   ✨ Fresh state loaded`);
     }
   } else {
-    // Original file format: flat JSON
-    data = rawData;
+    // Original file format: flat JSON - this IS the original
+    data = JSON.parse(JSON.stringify(rawData)); // Deep clone
+    originalSnapshot = JSON.parse(JSON.stringify(rawData)); // ✅ Capture original
     console.log(`   ✨ Fresh state loaded`);
   }
   
@@ -161,7 +176,7 @@ static load(ImplicationClass, testDataPath) {
     console.log(`   🔍 Entity-scoped implication: ${entity}`);
     
     const entityData = data[entity] || {};
-    const entityStatus = entityData.status || data[`${entity}.status`] || null;
+    const entityStatus = entityData.status || null;
     
     if (entityStatus) {
       console.log(`   ✅ Found entity status: ${entity}.status = ${entityStatus}`);
@@ -172,7 +187,11 @@ static load(ImplicationClass, testDataPath) {
     }
   }
   
-  return new TestContext(ImplicationClass, data, testDataPath);
+  const ctx = new TestContext(ImplicationClass, data, testDataPath);
+  ctx._originalSnapshot = originalSnapshot; // ✅ Store the true original for save()
+  ctx.actualFilePath = actualPath;
+  
+  return ctx;
 }
 
   static _transformDates(obj) {
@@ -209,71 +228,62 @@ static load(ImplicationClass, testDataPath) {
     return obj;
   }
   
-  save(testDataPath) {
-    const fs = require('fs');
-    const path = require('path');
-    
-    let savePath;
-    
-    if (testDataPath) {
-      savePath = TestContext.getDeltaPath(testDataPath);
-    } else if (this.inputPath) {
-      savePath = TestContext.getDeltaPath(this.inputPath);
-    } else {
-      savePath = this.actualFilePath;
-    }
-    
-    const originalData = { ...this.data };
-    
-    for (let i = this.changeLog.length - 1; i >= 0; i--) {
-      const change = this.changeLog[i];
-      for (const key of Object.keys(change.delta)) {
-        delete originalData[key];
-      }
-    }
-    
-    const masterPath = this.inputPath || testDataPath;
-    if (masterPath && masterPath.includes('-master.') && fs.existsSync(masterPath)) {
-      const masterData = JSON.parse(fs.readFileSync(masterPath, 'utf8'));
-      Object.assign(originalData, masterData);
-    }
-    
-    this._stripSessionFieldsFromObject(originalData);
-    
-    const sessionFields = TestContext.getSessionOnlyFields();
-    const cleanedChangeLog = this.changeLog.map(change => {
-      const cleanedDelta = { ...change.delta };
-      
-      for (const key of Object.keys(cleanedDelta)) {
-        const fieldName = key.split('.').pop();
-        if (sessionFields.includes(fieldName)) {
-          delete cleanedDelta[key];
-          console.log(`   🔒 Stripped session field from delta: ${key}`);
-        }
-      }
-      
-      return {
-        ...change,
-        delta: cleanedDelta
-      };
-    }).filter(change => Object.keys(change.delta).length > 0);
-    
-    const output = {
-      _original: originalData,
-      _changeLog: cleanedChangeLog
-    };
-    
-    fs.writeFileSync(savePath, JSON.stringify(output, null, 2));
-    
-    const fileName = path.basename(savePath);
-    const isMaster = savePath.includes('-master.');
-    
-    if (isMaster) {
-      console.log(`   ⚠️  WARNING: Saved to master file: ${fileName}`);
-    } else {
-      console.log(`   💾 Saved to delta file: ${fileName}`);
-    }
+save(testDataPath) {
+  const fs = require('fs');
+  const path = require('path');
+  
+  let savePath;
+  
+  if (testDataPath) {
+    savePath = TestContext.getDeltaPath(testDataPath);
+  } else if (this.inputPath) {
+    savePath = TestContext.getDeltaPath(this.inputPath);
+  } else {
+    savePath = this.actualFilePath;
   }
+  
+  // ✅ Use the original snapshot captured at load time (before any mutations)
+  // This preserves ALL original fields like dancer.email
+  const originalData = this._originalSnapshot 
+    ? JSON.parse(JSON.stringify(this._originalSnapshot))
+    : JSON.parse(JSON.stringify(this.data)); // Fallback if no snapshot
+  
+  this._stripSessionFieldsFromObject(originalData);
+  
+  const sessionFields = TestContext.getSessionOnlyFields();
+  const cleanedChangeLog = this.changeLog.map(change => {
+    const cleanedDelta = { ...change.delta };
+    
+    for (const key of Object.keys(cleanedDelta)) {
+      const fieldName = key.split('.').pop();
+      if (sessionFields.includes(fieldName)) {
+        delete cleanedDelta[key];
+        console.log(`   🔒 Stripped session field from delta: ${key}`);
+      }
+    }
+    
+    return {
+      ...change,
+      delta: cleanedDelta
+    };
+  }).filter(change => Object.keys(change.delta).length > 0);
+  
+  const output = {
+    _original: originalData,
+    _changeLog: cleanedChangeLog
+  };
+  
+  fs.writeFileSync(savePath, JSON.stringify(output, null, 2));
+  
+  const fileName = path.basename(savePath);
+  const isMaster = savePath.includes('-master.');
+  
+  if (isMaster) {
+    console.log(`   ⚠️  WARNING: Saved to master file: ${fileName}`);
+  } else {
+    console.log(`   💾 Saved to delta file: ${fileName}`);
+  }
+}
   
   getBooking(index) {
     if (!this.data.bookings || !this.data.bookings[index]) {
@@ -378,32 +388,35 @@ static load(ImplicationClass, testDataPath) {
     current[parts[parts.length - 1]] = value;
   }
   
-  async executeAndSave(label, testFile, deltaFn) {
-    const { delta } = await deltaFn();
-    
-    for (const [key, value] of Object.entries(delta)) {
-      if (key.includes('.')) {
-        const parts = key.split('.');
-        let obj = this.data;
-        for (let i = 0; i < parts.length - 1; i++) {
-          if (!obj[parts[i]]) obj[parts[i]] = {};
-          obj = obj[parts[i]];
-        }
-        obj[parts[parts.length - 1]] = value;
-      } else {
-        this.data[key] = value;
+async executeAndSave(label, testFile, deltaFn) {
+  const { delta } = await deltaFn();
+  
+  for (const [key, value] of Object.entries(delta)) {
+    if (key.includes('.')) {
+      const parts = key.split('.');
+      let obj = this.data;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (!obj[parts[i]]) obj[parts[i]] = {};
+        obj = obj[parts[i]];
       }
+      obj[parts[parts.length - 1]] = value;
+    } else {
+      this.data[key] = value;
     }
-    
-    this.changeLog.push({
-      label,
-      testFile,
-      delta,
-      timestamp: new Date().toISOString()
-    });
-    
-    return this;
   }
+  
+  this.changeLog.push({
+    label,
+    testFile,
+    delta,
+    timestamp: new Date().toISOString()
+  });
+  
+  // ✅ AUTO-SAVE: Write to delta file immediately
+  this.save();
+  
+  return this;
+}
 
 /**
  * Cleanup delta files after test run
@@ -413,6 +426,11 @@ static load(ImplicationClass, testDataPath) {
  * @param {boolean} options.interactive - Whether to prompt user (default: true for failures)
  */
 static async cleanup(testDataPath, options = {}) {
+  // Skip cleanup during cross-platform prerequisite execution
+  if (process.env.IS_PREREQUISITE_EXECUTION === 'true') {
+    console.log('⏭️  Skipping cleanup (prerequisite execution - preserving state for next test)');
+    return;
+  }
   const fs = require('fs');
   const path = require('path');
   
