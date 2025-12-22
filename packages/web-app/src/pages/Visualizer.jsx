@@ -13,6 +13,7 @@ import AddTransitionModal from '../components/AddTransitionModal/AddTransitionMo
 import { initializeFromDiscovery } from '../utils/requiresColors.js';
 import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
 import IntelligenceSearch from '../components/intelligence/IntelligenceSearch.jsx';
+import TicketAnalyzer from '../components/TicketAnalyzer/TicketAnalyzer';
 
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
@@ -1466,6 +1467,19 @@ onSelectResult={(result) => {
           theme={defaultTheme}
         />
       )}
+
+      <TicketAnalyzer
+  projectPath={projectPath}
+  theme={defaultTheme}
+  onNavigateToState={(status) => {
+    window.cytoscapeGraph?.navigateToNode(status);
+    setSelectedNodeId(status);
+  }}
+/>
+
+      
+
+      
 
         {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>

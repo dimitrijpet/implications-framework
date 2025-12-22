@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+dotenv.config();
 import healthRouter from './routes/health.js';
 import projectsRouter from './routes/projects.js';
 import discoveryRouter from './routes/discovery.js';
@@ -22,6 +23,7 @@ import locksRouter from './routes/locks.js';
 import notesRouter from './routes/notes.js';
 import intelligenceRoutes from './routes/intelligenceRoutes.js';
 import llmRoutes from './routes/llmRoutes.js';
+
 
 
 
