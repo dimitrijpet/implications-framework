@@ -453,21 +453,77 @@ function ResultCard({ result, onClick, theme }) {
   
   // Type-specific styling
   const typeConfig = {
-    state: { emoji: '📍', color: theme.colors.accents.blue },
-    transition: { emoji: '➡️', color: theme.colors.accents.purple },
-    validation: { emoji: '✓', color: theme.colors.accents.cyan },
-    condition: { emoji: '🔍', color: theme.colors.accents.orange },
-    setup: { emoji: '🔧', color: theme.colors.accents.yellow }
+    state: { emoji: '📍', color: theme.colors.accents.blue, label: 'State' },
+    transition: { emoji: '➡️', color: theme.colors.accents.purple, label: 'Transition' },
+    validation: { emoji: '✓', color: theme.colors.accents.cyan, label: 'Validation' },
+    condition: { emoji: '🔍', color: theme.colors.accents.orange, label: 'Condition' },
+    setup: { emoji: '🔧', color: theme.colors.accents.yellow, label: 'Setup' }
   };
   
   const config = typeConfig[type] || typeConfig.state;
   
+  // Build display title based on type
+  const getDisplayTitle = () => {
+    switch (type) {
+      case 'state':
+        return metadata?.statusLabel || metadata?.status || id;
+      case 'setup':
+        return metadata?.statusLabel || metadata?.status || id.split('.')[0];
+      case 'transition':
+        return metadata?.event || id.split('.').pop();
+      case 'validation':
+        // Show screen name, not block ID
+        return metadata?.screen || id.split('.')[2] || id;
+      case 'condition':
+        // Show the field being checked
+        return metadata?.field || id;
+      default:
+        return id;
+    }
+  };
+  
+  // Build subtitle/context based on type
+  const getSubtitle = () => {
+    switch (type) {
+      case 'state':
+        return `${metadata?.platform || ''} ${metadata?.entity ? `· ${metadata.entity}` : ''}`.trim();
+      case 'setup':
+        return `${metadata?.previousStatus || 'initial'} → ${metadata?.status} via ${metadata?.platform}`;
+      case 'transition':
+        return `${metadata?.from} → ${metadata?.to}`;
+      case 'validation':
+        // Show: State → Screen
+        return `📍 ${metadata?.state} · ${metadata?.platform}${metadata?.blockType && metadata.blockType !== 'unknown' ? ` · ${metadata.blockType}` : ''}`;
+      case 'condition':
+        // Show: State → Screen → Block label
+        return `📍 ${metadata?.state} · ${metadata?.screen}${metadata?.blockLabel ? ` · "${metadata.blockLabel.substring(0, 40)}${metadata.blockLabel.length > 40 ? '...' : ''}"` : ''}`;
+      default:
+        return '';
+    }
+  };
+  
   // Highlight ticket numbers
   const highlightTickets = (text) => {
+    if (!text) return '';
     return text.replace(
       /([A-Z]+-\d+)/g,
       `<span style="color: ${theme.colors.accents.yellow}; font-weight: bold;">$1</span>`
     );
+  };
+  
+  // Get description text
+  const getDescription = () => {
+    if (type === 'condition') {
+      return `${metadata?.field} ${metadata?.operator || '='} ${metadata?.value}`;
+    }
+    if (type === 'validation' && metadata?.label) {
+      return metadata.label;
+    }
+    if (metadata?.description) {
+      return metadata.description;
+    }
+    // Fallback to first part of text
+    return text.split('|')[0].trim();
   };
   
   return (
@@ -491,14 +547,14 @@ function ResultCard({ result, onClick, theme }) {
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
         <span style={{ fontSize: '16px' }}>{config.emoji}</span>
         <span style={{ 
           fontWeight: 'bold', 
           color: config.color,
           flex: 1
         }}>
-          {metadata?.statusLabel || metadata?.event || id.split('.').pop()}
+          {getDisplayTitle()}
         </span>
         <span style={{
           padding: '2px 8px',
@@ -508,9 +564,9 @@ function ResultCard({ result, onClick, theme }) {
           fontSize: '11px',
           textTransform: 'uppercase'
         }}>
-          {type}
+          {config.label}
         </span>
-        {metadata?.platform && (
+        {metadata?.platform && type !== 'validation' && type !== 'condition' && (
           <span style={{
             padding: '2px 8px',
             borderRadius: '12px',
@@ -533,7 +589,21 @@ function ResultCard({ result, onClick, theme }) {
         </span>
       </div>
       
-      {/* Text preview */}
+      {/* Subtitle - context info */}
+      {getSubtitle() && (
+        <div style={{
+          fontSize: '12px',
+          color: theme.colors.text.tertiary,
+          marginBottom: '4px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px'
+        }}>
+          {getSubtitle()}
+        </div>
+      )}
+      
+      {/* Description/label preview */}
       <p 
         style={{
           margin: 0,
@@ -545,7 +615,7 @@ function ResultCard({ result, onClick, theme }) {
           whiteSpace: 'nowrap'
         }}
         dangerouslySetInnerHTML={{ 
-          __html: highlightTickets(text.split('|')[0].substring(0, 120)) 
+          __html: highlightTickets(getDescription().substring(0, 120)) 
         }}
       />
       
@@ -568,7 +638,7 @@ function ResultCard({ result, onClick, theme }) {
             Chain:
           </span>
           {chain.steps.slice(0, 5).map((step, i) => (
-            <React.Fragment key={step}>
+            <React.Fragment key={`${step}-${i}`}>
               <span style={{
                 padding: '2px 6px',
                 borderRadius: '4px',
@@ -588,30 +658,6 @@ function ResultCard({ result, onClick, theme }) {
               +{chain.steps.length - 5} more
             </span>
           )}
-        </div>
-      )}
-      
-      {/* Transition details */}
-      {type === 'transition' && metadata && (
-        <div style={{
-          marginTop: '6px',
-          color: theme.colors.text.tertiary,
-          fontSize: '11px'
-        }}>
-          {metadata.from} → {metadata.to}
-          {metadata.description && ` · ${metadata.description.substring(0, 50)}`}
-        </div>
-      )}
-      
-      {/* Validation details */}
-      {type === 'validation' && metadata?.screen && (
-        <div style={{
-          marginTop: '6px',
-          color: theme.colors.text.tertiary,
-          fontSize: '11px'
-        }}>
-          Screen: {metadata.screen}
-          {metadata.blockType && metadata.blockType !== 'screen' && ` · ${metadata.blockType}`}
         </div>
       )}
     </div>

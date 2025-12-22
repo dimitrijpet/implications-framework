@@ -2,7 +2,7 @@
  * Intelligence Service - Search and Analysis for Implications Framework
  * 
  * Provides:
- * - Auto-indexing from discovery results (zero manual work)
+ * - Auto-indexing from discovery results + direct file parsing
  * - Fast text search across states, transitions, validations
  * - Ticket number lookup (SC-XXXXX, JIRA-XXX)
  * - Field/condition search (find all uses of "manageGroups")
@@ -13,6 +13,7 @@
 
 import fs from 'fs-extra';
 import path from 'path';
+import * as parser from '@babel/parser';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INDEX CACHE
@@ -91,11 +92,294 @@ export function invalidateCache() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FILE PARSING - Extract mirrorsOn and xstateConfig from source files
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Parse an implication file and extract mirrorsOn + xstateConfig
+ * Uses regex-based extraction for reliability
+ */
+function parseImplicationFile(filePath) {
+  try {
+    const code = fs.readFileSync(filePath, 'utf-8');
+    
+    let mirrorsOn = null;
+    let xstateConfig = null;
+    
+    // Extract xstateConfig using regex + balanced brace matching
+    const xstateMatch = code.match(/static\s+xstateConfig\s*=\s*\{/);
+    if (xstateMatch) {
+      const startIndex = xstateMatch.index + xstateMatch[0].length - 1;
+      const extracted = extractBalancedBraces(code, startIndex);
+      if (extracted) {
+        try {
+          // Clean up the code for eval (remove requires, functions, etc.)
+          const cleanedCode = cleanForEval(extracted);
+          xstateConfig = eval(`(${cleanedCode})`);
+        } catch (e) {
+          console.log(`⚠️ Could not eval xstateConfig in ${path.basename(filePath)}: ${e.message}`);
+          // Try simpler extraction
+          xstateConfig = extractSimpleConfig(extracted);
+        }
+      }
+    }
+    
+    // Extract mirrorsOn using regex + balanced brace matching
+    const mirrorsMatch = code.match(/static\s+mirrorsOn\s*=\s*\{/);
+    if (mirrorsMatch) {
+      const startIndex = mirrorsMatch.index + mirrorsMatch[0].length - 1;
+      const extracted = extractBalancedBraces(code, startIndex);
+      if (extracted) {
+        try {
+          const cleanedCode = cleanForEval(extracted);
+          mirrorsOn = eval(`(${cleanedCode})`);
+        } catch (e) {
+          console.log(`⚠️ Could not eval mirrorsOn in ${path.basename(filePath)}: ${e.message}`);
+          // Try simpler extraction for UI blocks
+          mirrorsOn = extractMirrorsOnSimple(extracted);
+        }
+      }
+    }
+    
+    return { mirrorsOn, xstateConfig };
+  } catch (error) {
+    console.error(`❌ Failed to parse ${path.basename(filePath)}:`, error.message);
+    return { mirrorsOn: null, xstateConfig: null };
+  }
+}
+
+/**
+ * Extract balanced braces from code starting at given index
+ */
+function extractBalancedBraces(code, startIndex) {
+  if (code[startIndex] !== '{') return null;
+  
+  let depth = 0;
+  let inString = false;
+  let stringChar = null;
+  let escaped = false;
+  
+  for (let i = startIndex; i < code.length; i++) {
+    const char = code[i];
+    
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    
+    if (inString) {
+      if (char === stringChar) {
+        inString = false;
+        stringChar = null;
+      }
+      continue;
+    }
+    
+    if (char === '"' || char === "'" || char === '`') {
+      inString = true;
+      stringChar = char;
+      continue;
+    }
+    
+    if (char === '{') depth++;
+    if (char === '}') depth--;
+    
+    if (depth === 0) {
+      return code.substring(startIndex, i + 1);
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Clean code for safe eval (remove functions, requires, etc.)
+ */
+function cleanForEval(code) {
+  return code
+    // Remove async functions
+    .replace(/async\s*\([^)]*\)\s*=>\s*\{[^}]*\}/g, 'null')
+    .replace(/async\s+function[^{]*\{[^}]*\}/g, 'null')
+    // Remove arrow functions
+    .replace(/\([^)]*\)\s*=>\s*\{[^}]*\}/g, 'null')
+    .replace(/\([^)]*\)\s*=>\s*[^,}\]]+/g, 'null')
+    // Remove require statements
+    .replace(/require\s*\([^)]+\)/g, 'null')
+    // Remove template literals that reference variables
+    .replace(/`\$\{[^}]+\}`/g, '"{{dynamic}}"')
+    // Keep simple template literals
+    .replace(/`([^`$]*)`/g, '"$1"');
+}
+
+/**
+ * Simple extraction for when eval fails - extract just the meta and on
+ */
+function extractSimpleConfig(code) {
+  const config = {};
+  
+  // Extract meta
+  const metaMatch = code.match(/meta\s*:\s*\{/);
+  if (metaMatch) {
+    const startIndex = metaMatch.index + metaMatch[0].length - 1;
+    const metaCode = extractBalancedBraces(code, startIndex);
+    if (metaCode) {
+      try {
+        config.meta = eval(`(${cleanForEval(metaCode)})`);
+      } catch (e) {
+        // Extract key fields manually
+        config.meta = extractMetaFields(metaCode);
+      }
+    }
+  }
+  
+  // Extract on (transitions)
+  const onMatch = code.match(/\bon\s*:\s*\{/);
+  if (onMatch) {
+    const startIndex = onMatch.index + onMatch[0].length - 1;
+    const onCode = extractBalancedBraces(code, startIndex);
+    if (onCode) {
+      try {
+        config.on = eval(`(${cleanForEval(onCode)})`);
+      } catch (e) {
+        // Extract transition names at least
+        config.on = extractTransitionNames(onCode);
+      }
+    }
+  }
+  
+  return config;
+}
+
+/**
+ * Extract key meta fields using regex
+ */
+function extractMetaFields(code) {
+  const meta = {};
+  
+  const statusMatch = code.match(/status\s*:\s*["']([^"']+)["']/);
+  if (statusMatch) meta.status = statusMatch[1];
+  
+  const statusLabelMatch = code.match(/statusLabel\s*:\s*["']([^"']+)["']/);
+  if (statusLabelMatch) meta.statusLabel = statusLabelMatch[1];
+  
+  const platformMatch = code.match(/platform\s*:\s*["']([^"']+)["']/);
+  if (platformMatch) meta.platform = platformMatch[1];
+  
+  const entityMatch = code.match(/entity\s*:\s*["']([^"']+)["']/);
+  if (entityMatch) meta.entity = entityMatch[1];
+  
+  return meta;
+}
+
+/**
+ * Extract transition event names
+ */
+function extractTransitionNames(code) {
+  const on = {};
+  
+  // Match EVENT_NAME: { or EVENT_NAME: "
+  const eventMatches = code.matchAll(/(\w+)\s*:\s*[{"]/g);
+  for (const match of eventMatches) {
+    const eventName = match[1];
+    if (eventName !== 'target' && eventName !== 'platforms' && eventName !== 'actionDetails') {
+      // Try to extract target
+      const targetMatch = code.match(new RegExp(`${eventName}\\s*:\\s*\\{[^}]*target\\s*:\\s*["']([^"']+)["']`));
+      const simpleTargetMatch = code.match(new RegExp(`${eventName}\\s*:\\s*["']([^"']+)["']`));
+      
+      on[eventName] = {
+        target: targetMatch?.[1] || simpleTargetMatch?.[1] || 'unknown'
+      };
+    }
+  }
+  
+  return on;
+}
+
+/**
+ * Simple mirrorsOn extraction - focus on UI blocks
+ */
+function extractMirrorsOnSimple(code) {
+  const mirrorsOn = { UI: {} };
+  
+  // Find UI section
+  const uiMatch = code.match(/UI\s*:\s*\{/);
+  if (!uiMatch) return mirrorsOn;
+  
+  const startIndex = uiMatch.index + uiMatch[0].length - 1;
+  const uiCode = extractBalancedBraces(code, startIndex);
+  if (!uiCode) return mirrorsOn;
+  
+  // Extract platform sections
+  const platforms = ['web', 'manager', 'dancer', 'clubApp'];
+  for (const platform of platforms) {
+    const platformMatch = uiCode.match(new RegExp(`${platform}\\s*:\\s*\\{`));
+    if (platformMatch) {
+      const platformStart = platformMatch.index + platformMatch[0].length - 1;
+      const platformCode = extractBalancedBraces(uiCode, platformStart);
+      if (platformCode) {
+        try {
+          mirrorsOn.UI[platform] = eval(`(${cleanForEval(platformCode)})`);
+        } catch (e) {
+          // At minimum, extract screen names and blocks
+          mirrorsOn.UI[platform] = extractScreenBlocks(platformCode);
+        }
+      }
+    }
+  }
+  
+  return mirrorsOn;
+}
+
+/**
+ * Extract screen blocks from platform code
+ */
+function extractScreenBlocks(code) {
+  const screens = {};
+  
+  // Match ScreenName: { or ScreenName: [
+  const screenMatches = code.matchAll(/(\w+Screen|\w+)\s*:\s*[\[{]/g);
+  
+  for (const match of screenMatches) {
+    const screenName = match[0].split(':')[0].trim();
+    if (screenName.length > 2) {
+      screens[screenName] = { blocks: [] };
+      
+      // Try to find blocks within this screen
+      const blockMatches = code.matchAll(/\{[^{}]*id\s*:\s*["']([^"']+)["'][^{}]*label\s*:\s*["']([^"']+)["'][^{}]*\}/g);
+      for (const blockMatch of blockMatches) {
+        screens[screenName].blocks.push({
+          id: blockMatch[1],
+          label: blockMatch[2]
+        });
+      }
+      
+      // Find conditions with field checks
+      const conditionMatches = code.matchAll(/field\s*:\s*["']([^"']+)["']/g);
+      for (const condMatch of conditionMatches) {
+        if (!screens[screenName].conditions) {
+          screens[screenName].conditions = [];
+        }
+        screens[screenName].conditions.push({
+          field: condMatch[1]
+        });
+      }
+    }
+  }
+  
+  return screens;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INDEX BUILDER
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Build searchable index from discovery result
+ * Build searchable index from discovery result + file parsing
  * 
  * @param {Object} discoveryResult - From discoverProject()
  * @param {string} projectPath - Project root path
@@ -130,18 +414,43 @@ export function buildSearchIndex(discoveryResult, projectPath) {
   };
 
   const implications = discoveryResult.files?.implications || [];
+  console.log(`📂 Processing ${implications.length} implication files...`);
+  
+  let parsedCount = 0;
+  let errorCount = 0;
   
   for (const imp of implications) {
     const meta = imp.metadata || {};
-    const xstate = meta.xstateConfig || {};
-    const xstateMeta = xstate.meta || {};
+    const filePath = path.join(projectPath, imp.path);
+    
+    // ═══════════════════════════════════════════════════════════
+    // PARSE THE ACTUAL FILE to get mirrorsOn and xstateConfig
+    // ═══════════════════════════════════════════════════════════
+    let mirrorsOn = null;
+    let xstateConfig = null;
+    
+    if (fs.existsSync(filePath)) {
+      const parsed = parseImplicationFile(filePath);
+      mirrorsOn = parsed.mirrorsOn;
+      xstateConfig = parsed.xstateConfig;
+      
+      if (mirrorsOn || xstateConfig) {
+        parsedCount++;
+      }
+    } else {
+      console.log(`⚠️ File not found: ${filePath}`);
+      errorCount++;
+      continue;
+    }
+    
+    const xstateMeta = xstateConfig?.meta || {};
+    const status = meta.status || xstateMeta.status;
+    
+    if (!status) continue;
     
     // ═══════════════════════════════════════════════════════════
     // INDEX STATES
     // ═══════════════════════════════════════════════════════════
-    
-    const status = meta.status || xstateMeta.status;
-    if (!status) continue;
     
     const stateDoc = {
       id: status,
@@ -149,15 +458,15 @@ export function buildSearchIndex(discoveryResult, projectPath) {
       text: buildStateText(meta, xstateMeta),
       metadata: {
         status: status,
-        statusLabel: meta.statusLabel || xstateMeta.statusLabel || humanize(status),
-        platform: meta.platform || xstateMeta.platform || 'unknown',
-        entity: meta.entity || null,
+        statusLabel: xstateMeta.statusLabel || meta.statusLabel || humanize(status),
+        platform: xstateMeta.platform || meta.platform || 'unknown',
+        entity: xstateMeta.entity || meta.entity || null,
         file: imp.path,
         className: imp.className || meta.className,
-        setupCount: (xstateMeta.setup || []).length,
-        transitionCount: Object.keys(xstate.on || {}).length,
-        requiredFields: xstateMeta.requiredFields || [],
-        requires: xstateMeta.requires || null
+        setupCount: (xstateMeta.setup || meta.setup || []).length,
+        transitionCount: Object.keys(xstateConfig?.on || {}).length,
+        requiredFields: xstateMeta.requiredFields || meta.requiredFields || [],
+        requires: xstateMeta.requires || meta.requires || null
       }
     };
     
@@ -166,13 +475,15 @@ export function buildSearchIndex(discoveryResult, projectPath) {
     addToInvertedIndex(index.invertedIndex, stateDoc);
 
     // ═══════════════════════════════════════════════════════════
-    // INDEX TRANSITIONS
+    // INDEX TRANSITIONS from xstateConfig.on
     // ═══════════════════════════════════════════════════════════
     
-    const transitions = xstate.on || {};
+    const transitions = xstateConfig?.on || {};
     for (const [event, transition] of Object.entries(transitions)) {
       const t = Array.isArray(transition) ? transition[0] : transition;
       if (!t) continue;
+      
+      const targetState = typeof t === 'string' ? t : (t.target || null);
       
       const transitionDoc = {
         id: `${status}.${event}`,
@@ -181,10 +492,10 @@ export function buildSearchIndex(discoveryResult, projectPath) {
         metadata: {
           event: event,
           from: status,
-          to: t.target || t,
-          platforms: extractPlatforms(t),
+          to: targetState,
+          platforms: t.platforms || (t.platform ? [t.platform] : []),
           hasActionDetails: !!(t.actionDetails),
-          description: t.actionDetails?.description || t.meta?.description || '',
+          description: t.actionDetails?.description || '',
           file: imp.path
         }
       };
@@ -201,34 +512,33 @@ export function buildSearchIndex(discoveryResult, projectPath) {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // INDEX VALIDATIONS (UI blocks)
+    // INDEX VALIDATIONS from mirrorsOn.UI
     // ═══════════════════════════════════════════════════════════
     
-    const mirrorsUI = meta.mirrorsOn?.UI || {};
+    const mirrorsUI = mirrorsOn?.UI || {};
     
     for (const [platform, screens] of Object.entries(mirrorsUI)) {
-      for (const [screenName, screenDefs] of Object.entries(screens)) {
+      if (!screens || typeof screens !== 'object') continue;
+      
+      for (const [screenName, screenDef] of Object.entries(screens)) {
         // Handle both array and object screen definitions
-        const defsArray = Array.isArray(screenDefs) ? screenDefs : [screenDefs];
+        const defsArray = Array.isArray(screenDef) ? screenDef : [screenDef];
         
-        for (const def of defsArray) {
-          if (!def) continue;
+        for (let defIndex = 0; defIndex < defsArray.length; defIndex++) {
+          const def = defsArray[defIndex];
+          if (!def || typeof def !== 'object') continue;
           
           // Index the screen itself
           const screenDoc = {
-            id: `${status}.${platform}.${screenName}`,
+            id: `${status}.${platform}.${screenName}.${defIndex}`,
             type: 'validation',
-            text: buildScreenText(def, screenName, platform),
+            text: `${screenName} ${platform} ${def.description || ''} ${def.screen || ''}`,
             metadata: {
               state: status,
               platform: platform,
               screen: screenName,
-              blockId: null,
-              blockType: 'screen',
               description: def.description || '',
-              hasConditions: !!(def.conditions?.blocks?.length),
-              visible: def.visible || [],
-              hidden: def.hidden || [],
+              hasBlocks: !!(def.blocks?.length),
               file: imp.path
             }
           };
@@ -236,20 +546,25 @@ export function buildSearchIndex(discoveryResult, projectPath) {
           index.validations.push(screenDoc);
           addToInvertedIndex(index.invertedIndex, screenDoc);
           
-          // Index individual blocks within the screen
+          // ═══════════════════════════════════════════════════════
+          // INDEX BLOCKS within the screen
+          // ═══════════════════════════════════════════════════════
           const blocks = def.blocks || [];
-          for (const block of blocks) {
-            if (!block || !block.id) continue;
+          for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+            const block = blocks[blockIndex];
+            if (!block) continue;
             
-            const validationDoc = {
-              id: `${status}.${platform}.${screenName}.${block.id}`,
+            const blockId = block.id || `block_${blockIndex}`;
+            
+            const blockDoc = {
+              id: `${status}.${platform}.${screenName}.${blockId}`,
               type: 'validation',
-              text: buildValidationText(block, screenName, def),
+              text: `${block.label || ''} ${block.type || ''} ${screenName} ${platform}`,
               metadata: {
                 state: status,
                 platform: platform,
                 screen: screenName,
-                blockId: block.id,
+                blockId: blockId,
                 blockType: block.type || 'unknown',
                 label: block.label || '',
                 hasConditions: !!(block.conditions?.blocks?.length),
@@ -257,8 +572,8 @@ export function buildSearchIndex(discoveryResult, projectPath) {
               }
             };
             
-            index.validations.push(validationDoc);
-            addToInvertedIndex(index.invertedIndex, validationDoc);
+            index.validations.push(blockDoc);
+            addToInvertedIndex(index.invertedIndex, blockDoc);
             
             // Extract ticket numbers from label
             const tickets = extractTicketNumbers(block.label);
@@ -266,23 +581,29 @@ export function buildSearchIndex(discoveryResult, projectPath) {
               if (!index.byTicket.has(ticket)) {
                 index.byTicket.set(ticket, []);
               }
-              index.byTicket.get(ticket).push(validationDoc);
+              index.byTicket.get(ticket).push(blockDoc);
             }
 
-            // Index conditions within blocks
+            // ═══════════════════════════════════════════════════════
+            // INDEX CONDITIONS within blocks
+            // ═══════════════════════════════════════════════════════
             if (block.conditions?.blocks) {
               for (const condBlock of block.conditions.blocks) {
                 const checks = condBlock.data?.checks || [];
-                for (const check of checks) {
+                for (let checkIndex = 0; checkIndex < checks.length; checkIndex++) {
+                  const check = checks[checkIndex];
                   if (!check.field) continue;
                   
+                  const checkId = check.id || `chk_${checkIndex}`;
+                  
                   const conditionDoc = {
-                    id: `${block.id}.${check.id || 'chk_' + index.conditions.length}`,
+                    id: `${status}.${blockId}.${checkId}`,
                     type: 'condition',
                     text: `${check.field} ${check.operator || 'equals'} ${check.value}`,
                     metadata: {
                       state: status,
-                      blockId: block.id,
+                      blockId: blockId,
+                      blockLabel: block.label || '',
                       screen: screenName,
                       platform: platform,
                       field: check.field,
@@ -301,6 +622,13 @@ export function buildSearchIndex(discoveryResult, projectPath) {
                   }
                   index.byField.get(fieldKey).push(conditionDoc);
                   
+                  // Also index full field path
+                  const fullFieldKey = check.field.toLowerCase();
+                  if (!index.byField.has(fullFieldKey)) {
+                    index.byField.set(fullFieldKey, []);
+                  }
+                  index.byField.get(fullFieldKey).push(conditionDoc);
+                  
                   addToInvertedIndex(index.invertedIndex, conditionDoc);
                 }
               }
@@ -311,20 +639,23 @@ export function buildSearchIndex(discoveryResult, projectPath) {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // INDEX SETUP ENTRIES (how to reach this state)
+    // INDEX SETUP ENTRIES
     // ═══════════════════════════════════════════════════════════
     
-    const setupEntries = xstateMeta.setup || [];
-    for (const setup of setupEntries) {
-      if (setup.isObserver || setup.mode === 'observer') continue;
+    const setupEntries = xstateMeta.setup || meta.setup || [];
+    const setupArray = Array.isArray(setupEntries) ? setupEntries : [setupEntries];
+    
+    for (let setupIndex = 0; setupIndex < setupArray.length; setupIndex++) {
+      const setup = setupArray[setupIndex];
+      if (!setup || setup.isObserver || setup.mode === 'observer') continue;
       
       const setupDoc = {
-        id: `${status}.setup.${setup.previousStatus || 'initial'}`,
+        id: `${status}.setup.${setup.previousStatus || 'initial'}.${setup.platform || 'unknown'}.${setupIndex}`,
         type: 'setup',
-        text: `How to reach ${meta.statusLabel || status} from ${setup.previousStatus || 'initial'} via ${setup.platform || 'unknown'}`,
+        text: `How to reach ${xstateMeta.statusLabel || humanize(status)} from ${setup.previousStatus || 'initial'} via ${setup.platform || 'unknown'}`,
         metadata: {
           status: status,
-          statusLabel: meta.statusLabel || humanize(status),
+          statusLabel: xstateMeta.statusLabel || humanize(status),
           platform: setup.platform || 'unknown',
           previousStatus: setup.previousStatus || 'initial',
           testFile: setup.testFile,
@@ -338,13 +669,13 @@ export function buildSearchIndex(discoveryResult, projectPath) {
     }
   }
 
-  // Also index transitions from the global transitions array
+  // Also index transitions from the global transitions array (from discovery)
   const globalTransitions = discoveryResult.transitions || [];
   for (const t of globalTransitions) {
     const existingId = `${t.from}.${t.event}`;
     if (!index.transitions.find(tr => tr.id === existingId)) {
       const transitionDoc = {
-        id: existingId,
+        id: `${existingId}.global`,
         type: 'transition',
         text: `${t.event} from ${t.from} to ${t.to}`.replace(/_/g, ' '),
         metadata: {
@@ -373,6 +704,7 @@ export function buildSearchIndex(discoveryResult, projectPath) {
   const elapsed = Date.now() - startTime;
   
   console.log(`📚 Built intelligence index in ${elapsed}ms:`);
+  console.log(`   Files parsed: ${parsedCount}/${implications.length}`);
   console.log(`   States: ${index.counts.states}`);
   console.log(`   Transitions: ${index.counts.transitions}`);
   console.log(`   Validations: ${index.counts.validations}`);
@@ -381,6 +713,10 @@ export function buildSearchIndex(discoveryResult, projectPath) {
   console.log(`   Fields indexed: ${index.byField.size}`);
   console.log(`   Events indexed: ${index.byEvent.size}`);
   console.log(`   Inverted index terms: ${index.invertedIndex.size}`);
+  
+  if (errorCount > 0) {
+    console.log(`   ⚠️ Errors: ${errorCount}`);
+  }
 
   return index;
 }
@@ -402,7 +738,7 @@ export function searchIndex(index, query, options = {}) {
     limit = 20,
     types = ['states', 'transitions', 'validations'],
     minScore = 3,
-    includeConditions = false
+    includeConditions = true
   } = options;
 
   if (!query || query.trim().length === 0) {
@@ -452,6 +788,14 @@ export function searchIndex(index, query, options = {}) {
     }
   }
 
+  // Also check field lookup for condition searches
+  for (const term of queryTerms) {
+    const fieldResults = index.byField.get(term);
+    if (fieldResults) {
+      fieldResults.forEach(r => candidateIds.add(r.id));
+    }
+  }
+
   // Score candidates
   const allDocs = [
     ...(searchTypes.includes('states') ? index.states : []),
@@ -461,8 +805,8 @@ export function searchIndex(index, query, options = {}) {
   ];
 
   for (const doc of allDocs) {
-    // Skip if not in candidates (for efficiency)
-    if (candidateIds.size > 0 && !candidateIds.has(doc.id)) {
+    // Skip if not in candidates (for efficiency) - unless we have few candidates
+    if (candidateIds.size > 0 && candidateIds.size < 1000 && !candidateIds.has(doc.id)) {
       continue;
     }
     
@@ -507,7 +851,7 @@ export function findByCondition(index, fieldPattern) {
     }
   }
   
-  // Also search full field paths
+  // Also search full field paths in conditions
   for (const condition of index.conditions) {
     if (!seen.has(condition.id) && 
         condition.metadata.field.toLowerCase().includes(pattern)) {
@@ -599,28 +943,6 @@ export function getStateDetails(index, status) {
 export async function enrichWithChains(results, projectPath, testDataPath) {
   const index = await getIndex(projectPath);
   
-  // Check if we can get TestPlanner
-  let TestPlanner = null;
-  try {
-    const testPlannerPath = path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js');
-    if (fs.existsSync(testPlannerPath)) {
-      // Dynamic import for CommonJS module
-      TestPlanner = require(testPlannerPath);
-    }
-  } catch (e) {
-    console.log('⚠️ TestPlanner not available for chain enrichment:', e.message);
-  }
-  
-  // Load test data for chain analysis
-  let testData = {};
-  if (testDataPath && fs.existsSync(testDataPath)) {
-    try {
-      testData = fs.readJsonSync(testDataPath);
-    } catch (e) {
-      console.log('⚠️ Could not load test data:', e.message);
-    }
-  }
-  
   const enriched = [];
   
   for (const result of results) {
@@ -641,60 +963,20 @@ export async function enrichWithChains(results, projectPath, testDataPath) {
       continue;
     }
     
-    // Try to analyze chain if TestPlanner available
-    if (TestPlanner?.analyze) {
-      try {
-        const implPath = path.join(projectPath, result.metadata.file);
-        
-        // Clear require cache to get fresh module
-        delete require.cache[require.resolve(implPath)];
-        const ImplClass = require(implPath);
-        
-        const analysis = TestPlanner.analyze(ImplClass, testData, { 
-          verbose: false,
-          skipExecution: true 
-        });
-        
-        const chainInfo = {
-          ready: analysis.ready || false,
-          steps: (analysis.chain || []).map(s => s.status || s),
-          segments: analysis.segments?.length || 0,
-          currentStatus: analysis.currentStatus
-        };
-        
-        // Cache it
-        index.chainCache.set(status, chainInfo);
-        
-        enriched.push({
-          ...result,
-          chain: chainInfo
-        });
-      } catch (e) {
-        console.log(`⚠️ Could not analyze chain for ${status}:`, e.message);
-        enriched.push({ 
-          ...result, 
-          chain: null, 
-          chainError: e.message 
-        });
-      }
-    } else {
-      // No TestPlanner - add basic chain info from transitions
-      const incomingTransitions = index.transitions.filter(
-        t => t.metadata.to === status
-      );
-      
-      const chainInfo = {
-        ready: null,
-        steps: incomingTransitions.map(t => t.metadata.from).filter(Boolean),
-        segments: null,
-        note: 'TestPlanner not available - showing direct predecessors only'
-      };
-      
-      enriched.push({
-        ...result,
-        chain: chainInfo
-      });
-    }
+    // Build simple chain from transitions
+    const chain = buildSimpleChain(index, status);
+    const chainInfo = {
+      steps: chain,
+      note: 'Built from transition graph'
+    };
+    
+    // Cache it
+    index.chainCache.set(status, chainInfo);
+    
+    enriched.push({
+      ...result,
+      chain: chainInfo
+    });
   }
   
   return enriched;
@@ -715,52 +997,24 @@ export async function getChainForState(index, status, projectPath, testData = {}
     return index.chainCache.get(status);
   }
   
-  // Try TestPlanner
   const stateDoc = index.byState.get(status);
   if (!stateDoc) {
     return { error: `State ${status} not found` };
   }
   
-  try {
-    const TestPlanner = require(path.join(projectPath, 'tests/ai-testing/utils/TestPlanner.js'));
-    const implPath = path.join(projectPath, stateDoc.metadata.file);
-    
-    delete require.cache[require.resolve(implPath)];
-    const ImplClass = require(implPath);
-    
-    const analysis = TestPlanner.analyze(ImplClass, testData, { 
-      verbose: false,
-      skipExecution: true 
-    });
-    
-    const chainInfo = {
-      status,
-      ready: analysis.ready || false,
-      steps: (analysis.chain || []).map(s => ({
-        status: s.status || s,
-        platform: s.platform
-      })),
-      segments: analysis.segments || [],
-      currentStatus: analysis.currentStatus,
-      needsExecution: !analysis.ready
-    };
-    
-    // Cache
-    index.chainCache.set(status, chainInfo);
-    
-    return chainInfo;
-  } catch (e) {
-    console.log(`⚠️ Could not get chain for ${status}:`, e.message);
-    
-    // Fallback: Build simple chain from transitions
-    const chain = buildSimpleChain(index, status);
-    return {
-      status,
-      steps: chain,
-      note: 'Built from transition graph (TestPlanner unavailable)',
-      error: e.message
-    };
-  }
+  // Build simple chain from transitions
+  const chain = buildSimpleChain(index, status);
+  
+  const chainInfo = {
+    status,
+    steps: chain,
+    note: 'Built from transition graph'
+  };
+  
+  // Cache
+  index.chainCache.set(status, chainInfo);
+  
+  return chainInfo;
 }
 
 /**
@@ -852,7 +1106,14 @@ function tokenize(text) {
 function addToInvertedIndex(invertedIndex, doc) {
   const terms = tokenize(doc.text);
   
-  for (const term of terms) {
+  // Also tokenize ID and key metadata
+  const idTerms = tokenize(doc.id);
+  const metaTerms = tokenize(doc.metadata?.label || '');
+  const fieldTerms = tokenize(doc.metadata?.field || '');
+  
+  const allTerms = [...terms, ...idTerms, ...metaTerms, ...fieldTerms];
+  
+  for (const term of allTerms) {
     if (!invertedIndex.has(term)) {
       invertedIndex.set(term, new Set());
     }
@@ -893,11 +1154,18 @@ function scoreDocument(doc, queryTerms, originalQuery) {
     if (metadata.description?.toLowerCase().includes(term)) {
       score += 6;
     }
+    if (metadata.field?.toLowerCase().includes(term)) {
+      score += 15; // High score for field matches
+    }
   }
 
   // Boost certain types based on query context
   if (doc.type === 'validation' && score > 0) {
     score *= 1.1; // Validations often have descriptive labels
+  }
+  
+  if (doc.type === 'condition' && score > 0) {
+    score *= 1.2; // Conditions are specific, boost them
   }
   
   // Boost exact phrase match
@@ -917,13 +1185,12 @@ function escapeRegex(string) {
  */
 function buildStateText(meta, xstateMeta) {
   const parts = [
-    meta.statusLabel || xstateMeta.statusLabel,
-    meta.status || xstateMeta.status,
-    (meta.status || xstateMeta.status || '').replace(/_/g, ' '),
-    meta.description,
-    xstateMeta.description,
-    meta.platform || xstateMeta.platform,
-    meta.entity
+    xstateMeta.statusLabel || meta.statusLabel,
+    xstateMeta.status || meta.status,
+    (xstateMeta.status || meta.status || '').replace(/_/g, ' '),
+    xstateMeta.description || meta.description,
+    xstateMeta.platform || meta.platform,
+    xstateMeta.entity || meta.entity
   ];
   
   // Include requires as searchable
@@ -943,17 +1210,18 @@ function buildStateText(meta, xstateMeta) {
  * Build searchable text for a transition
  */
 function buildTransitionText(event, transition, fromStatus) {
+  const t = typeof transition === 'string' ? { target: transition } : transition;
+  
   const parts = [
     event,
     event.replace(/_/g, ' '),
     `from ${fromStatus}`,
-    `to ${transition.target || transition}`,
-    transition.actionDetails?.description,
-    transition.meta?.description
+    `to ${t.target || 'unknown'}`,
+    t.actionDetails?.description
   ];
   
   // Include step descriptions
-  const steps = transition.actionDetails?.steps || [];
+  const steps = t.actionDetails?.steps || [];
   for (const step of steps) {
     if (step.description) {
       parts.push(step.description);
@@ -961,78 +1229,12 @@ function buildTransitionText(event, transition, fromStatus) {
   }
   
   // Include platforms
-  const platforms = extractPlatforms(transition);
+  const platforms = t.platforms || (t.platform ? [t.platform] : []);
   if (platforms.length) {
     parts.push(`platform: ${platforms.join(' ')}`);
   }
   
   return parts.filter(Boolean).join(' | ');
-}
-
-/**
- * Build searchable text for a screen definition
- */
-function buildScreenText(def, screenName, platform) {
-  const parts = [
-    screenName,
-    screenName.replace(/([A-Z])/g, ' $1').trim(), // camelCase to spaces
-    platform,
-    def.description
-  ];
-  
-  // Include visible/hidden elements
-  if (def.visible?.length) {
-    parts.push(`visible: ${def.visible.join(' ')}`);
-  }
-  if (def.hidden?.length) {
-    parts.push(`hidden: ${def.hidden.join(' ')}`);
-  }
-  
-  return parts.filter(Boolean).join(' | ');
-}
-
-/**
- * Build searchable text for a validation block
- */
-function buildValidationText(block, screenName, screenDef) {
-  const parts = [
-    block.label,
-    screenName,
-    screenDef.description,
-    block.type
-  ];
-  
-  // Include condition fields
-  if (block.conditions?.blocks) {
-    for (const condBlock of block.conditions.blocks) {
-      for (const check of (condBlock.data?.checks || [])) {
-        parts.push(`${check.field} ${check.operator || 'equals'} ${check.value}`);
-      }
-    }
-  }
-  
-  return parts.filter(Boolean).join(' | ');
-}
-
-/**
- * Extract platforms from a transition definition
- */
-function extractPlatforms(transition) {
-  if (!transition) return [];
-  
-  if (transition.platforms) {
-    return Array.isArray(transition.platforms) ? transition.platforms : [transition.platforms];
-  }
-  
-  if (transition.meta?.platform) {
-    return [transition.meta.platform];
-  }
-  
-  if (transition.actionDetails?.platform) {
-    return [transition.actionDetails.platform];
-  }
-  
-  return [];
 }
 
 /**
