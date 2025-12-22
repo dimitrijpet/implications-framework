@@ -1,5 +1,5 @@
 /**
- * LLM Routes - Fixed version based on v2 that was working
+ * LLM Routes - Smarter condition generation
  */
 
 import express from 'express';
@@ -25,484 +25,562 @@ function getLLMConfig() {
 
 async function callLLM(messages, options = {}) {
   const config = getLLMConfig();
-  const maxTokens = options.maxTokens || config.maxTokens;
-  const temperature = options.temperature || config.temperature;
-  
-  if (!config.apiKey) {
-    throw new Error('No API key configured. Set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env');
-  }
+  if (!config.apiKey) throw new Error('No API key configured');
 
-  const url = config.baseUrl + '/chat/completions';
-  console.log('🤖 Calling LLM:', config.model);
-
-  const response = await fetch(url, {
+  const response = await fetch(config.baseUrl + '/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + config.apiKey
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.apiKey },
     body: JSON.stringify({
       model: config.model,
-      messages: messages,
-      max_tokens: maxTokens,
-      temperature: temperature
+      messages,
+      max_tokens: options.maxTokens || config.maxTokens,
+      temperature: options.temperature || config.temperature
     })
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error('LLM API error: ' + response.status + ' - ' + error);
-  }
-
+  if (!response.ok) throw new Error('LLM API error: ' + response.status);
   const data = await response.json();
   return data.choices[0]?.message?.content || '';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STATUS
-// ═══════════════════════════════════════════════════════════════════════════
-
 router.get('/status', (req, res) => {
   const config = getLLMConfig();
-  const available = config.apiKey && config.apiKey.length > 0;
-  
-  let provider = 'unknown';
-  if (config.baseUrl.includes('deepseek')) provider = 'deepseek';
-  else if (config.baseUrl.includes('openai')) provider = 'openai';
-  else if (config.baseUrl.includes('localhost')) provider = 'ollama';
-  
-  res.json({ available, model: config.model, provider, baseUrl: config.baseUrl });
+  res.json({ available: !!config.apiKey, model: config.model, provider: config.baseUrl.includes('deepseek') ? 'deepseek' : 'unknown' });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUILD CONTEXT FROM INDEX + FILE SUMMARIES
+// POM PARSING
 // ═══════════════════════════════════════════════════════════════════════════
 
-function buildImplicationsContext(index, projectPath) {
-  if (!index) return 'No existing test data available.';
+function parsePOMFile(filePath, projectPath) {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(projectPath, filePath);
+  if (!fs.existsSync(fullPath)) return null;
   
-  const lines = [];
-  lines.push('=== EXISTING TEST COVERAGE ===\n');
+  try {
+    const content = fs.readFileSync(fullPath, 'utf-8');
+    const methods = [];
+    
+    const asyncRegex = /async\s+(\w+)\s*\(([^)]*)\)\s*\{/g;
+    let match;
+    while ((match = asyncRegex.exec(content)) !== null) {
+      if (!match[1].startsWith('_') && match[1] !== 'constructor') {
+        methods.push({ name: match[1], params: match[2].trim(), async: true });
+      }
+    }
+    
+    const getterRegex = /get\s+(\w+)\s*\(\)\s*\{/g;
+    while ((match = getterRegex.exec(content)) !== null) {
+      methods.push({ name: match[1], params: '', isGetter: true });
+    }
+    
+    const classMatch = content.match(/class\s+(\w+)/);
+    return { path: filePath, className: classMatch ? classMatch[1] : path.basename(filePath, '.js'), methods };
+  } catch (e) {
+    return null;
+  }
+}
+
+function findPOMFiles(index, projectPath) {
+  const pomPaths = new Set();
+  const poms = [];
   
-  // Group by state
+  const dirs = [
+    'tests/mobile/android/dancer/screenObjects',
+    'tests/mobile/android/manager/screenObjects',
+    'tests/web/pages',
+    'tests/web/wrappers'
+  ];
+  
+  for (const dir of dirs) {
+    const fullDir = path.join(projectPath, dir);
+    if (fs.existsSync(fullDir)) {
+      try {
+        for (const file of fs.readdirSync(fullDir)) {
+          if (file.endsWith('.screen.js') || file.endsWith('.page.js') || file.endsWith('.wrapper.js')) {
+            pomPaths.add(path.join(dir, file));
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  
+  for (const pomPath of pomPaths) {
+    const parsed = parsePOMFile(pomPath, projectPath);
+    if (parsed) poms.push(parsed);
+  }
+  
+  return poms;
+}
+
+function buildPOMContext(poms) {
+  if (!poms.length) return '';
+  const lines = ['\n=== AVAILABLE POM METHODS ==='];
+  for (const pom of poms) {
+    lines.push(`\n${pom.className} (${pom.path}):`);
+    for (const m of pom.methods.slice(0, 15)) {
+      lines.push(`  - ${m.isGetter ? 'get ' : m.async ? 'async ' : ''}${m.name}(${m.params})`);
+    }
+    if (pom.methods.length > 15) lines.push(`  ... +${pom.methods.length - 15} more`);
+  }
+  return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTEXT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildImplicationsContext(index) {
+  if (!index) return '';
+  
+  const lines = ['=== EXISTING COVERAGE ===\n'];
   const stateMap = new Map();
   
   for (const state of (index.states || [])) {
     if (state.type !== 'state') continue;
     const status = state.metadata?.status;
-    if (!status) continue;
-    
-    if (!stateMap.has(status)) {
-      stateMap.set(status, {
-        status,
-        statusLabel: state.metadata?.statusLabel || status,
-        platforms: new Set(),
-        entity: state.metadata?.entity,
-        file: state.metadata?.file,
-        transitions: [],
-        validations: [],
-        conditions: []
-      });
-    }
-    
-    if (state.metadata?.platform) {
-      stateMap.get(status).platforms.add(state.metadata.platform);
-    }
+    if (!status || stateMap.has(status)) continue;
+    stateMap.set(status, { status, file: state.metadata?.file, validations: [] });
   }
   
-  // Add transitions
-  for (const trans of (index.transitions || [])) {
-    const from = trans.metadata?.from;
-    if (from && stateMap.has(from)) {
-      stateMap.get(from).transitions.push({
-        event: trans.metadata?.event,
-        to: trans.metadata?.to,
-        platforms: trans.metadata?.platforms || []
-      });
-    }
-  }
-  
-  // Add validations with FULL details
   for (const val of (index.validations || [])) {
     const status = val.metadata?.state;
     if (status && stateMap.has(status)) {
       stateMap.get(status).validations.push({
-        screen: val.metadata?.screen,
         platform: val.metadata?.platform,
-        label: val.metadata?.label || val.text?.split('|')[0]?.trim(),
-        blockId: val.metadata?.blockId,
-        blockType: val.metadata?.blockType
+        screen: val.metadata?.screen,
+        label: val.metadata?.label,
+        method: val.metadata?.method,
+        hasConditions: val.metadata?.hasConditions
       });
     }
   }
   
-  // Add conditions
-  for (const cond of (index.conditions || [])) {
-    const status = cond.metadata?.state;
-    if (status && stateMap.has(status)) {
-      stateMap.get(status).conditions.push({
-        field: cond.metadata?.field,
-        operator: cond.metadata?.operator,
-        value: cond.metadata?.value,
-        screen: cond.metadata?.screen
-      });
-    }
-  }
-  
-  // Format each state with FULL validation details
   for (const [status, data] of stateMap) {
-    lines.push(`\n## STATE: ${data.statusLabel} (${status})`);
-    lines.push(`   File: ${data.file || 'unknown'}`);
-    lines.push(`   Entity: ${data.entity || 'unknown'}`);
-    lines.push(`   Platforms: ${[...data.platforms].join(', ') || 'none'}`);
-    
-    if (data.transitions.length > 0) {
-      lines.push(`   Transitions OUT:`);
-      for (const t of data.transitions) {
-        lines.push(`     - ${t.event} → ${t.to}`);
-      }
-    }
-    
-    if (data.validations.length > 0) {
-      lines.push(`   Validations (${data.validations.length}):`);
-      const byPlatform = {};
+    lines.push(`\n## ${status}`);
+    if (data.validations.length) {
+      const byPlat = {};
       for (const v of data.validations) {
-        const plat = v.platform || 'unknown';
-        if (!byPlatform[plat]) byPlatform[plat] = [];
-        byPlatform[plat].push(v);
+        const p = v.platform || 'unknown';
+        if (!byPlat[p]) byPlat[p] = [];
+        byPlat[p].push(v);
       }
-      for (const [plat, vals] of Object.entries(byPlatform)) {
-        lines.push(`     [${plat}]`);
-        for (const v of vals) {
-          const label = v.label?.substring(0, 80) || v.screen;
-          lines.push(`       - ${v.screen}: "${label}"`);
+      for (const [p, vs] of Object.entries(byPlat)) {
+        lines.push(`  [${p}]`);
+        for (const v of vs.slice(0, 5)) {
+          const cond = v.hasConditions ? ' [conditional]' : '';
+          lines.push(`    - ${v.screen}: ${v.label || v.method || '?'}${cond}`);
         }
       }
     }
   }
   
-  lines.push('\n=== ALL STATES ===');
-  lines.push([...stateMap.keys()].join(', '));
-  
+  lines.push('\nAll states: ' + [...stateMap.keys()].join(', '));
   return lines.join('\n');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ROBUST JSON PARSING
-// ═══════════════════════════════════════════════════════════════════════════
-
 function parseJSONSafely(text) {
-  // Try direct parse
-  try {
-    return JSON.parse(text);
-  } catch (e) {}
-  
-  // Try extracting from markdown code block
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[1]);
-    } catch (e) {}
-  }
-  
-  // Try finding JSON object
-  const braceMatch = text.match(/\{[\s\S]*\}/);
-  if (braceMatch) {
-    try {
-      return JSON.parse(braceMatch[0]);
-    } catch (e) {
-      // Try fixing common issues
-      let fixed = braceMatch[0]
-        .replace(/,\s*}/g, '}')  // trailing commas
-        .replace(/,\s*]/g, ']')  // trailing commas in arrays
-        .replace(/'/g, '"')      // single quotes
-        .replace(/[\r\n]+/g, ' '); // newlines
-      try {
-        return JSON.parse(fixed);
-      } catch (e2) {}
+  try { return JSON.parse(text); } catch (e) {}
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[1] || match[0]); } catch (e) {
+      try { return JSON.parse((match[1] || match[0]).replace(/,\s*([}\]])/g, '$1')); } catch (e2) {}
     }
   }
-  
   return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TICKET ANALYZER
+// ID GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = `You are a senior test automation engineer analyzing tickets for an implications-based testing framework.
+function generateId(prefix = 'blk') {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+}
 
-The framework has:
-- States: app states like "booking_pending", "booking_accepted", "booking_cancelled"
-- Transitions: events that move between states like "ACCEPT_BOOKING", "CANCEL_BOOKING"
-- Validations: UI checks organized by platform (web, manager, dancer) and screen
-- Conditions: conditional logic based on field values
+// ═══════════════════════════════════════════════════════════════════════════
+// BLOCK GENERATION
+// ═══════════════════════════════════════════════════════════════════════════
 
-Your job:
-1. Understand the ticket requirements
-2. Check what ALREADY EXISTS in the coverage data
-3. Identify GAPS - what's missing
-4. Give specific, actionable recommendations
+function generateConditionBlock(conditions) {
+  if (!conditions || conditions.length === 0) return null;
+  
+  const checks = conditions.map(c => ({
+    id: generateId('chk'),
+    field: c.field,
+    operator: c.operator || 'equals',
+    value: String(c.value ?? ''),
+    valueType: c.valueType || 'string'
+  }));
+  
+  return {
+    mode: 'all',
+    blocks: [{
+      id: generateId('cond_check'),
+      type: 'condition-check',
+      enabled: true,
+      mode: 'all',
+      data: { checks }
+    }]
+  };
+}
 
-IMPORTANT: Check the existing states and validations carefully before recommending new ones!`;
-
-const OUTPUT_FORMAT = `Return a JSON object with this EXACT structure (no code blocks, just pure JSON):
-{
-  "feature": "Brief description",
-  "actors": ["dancer", "manager"],
-  "preconditions": ["list of preconditions"],
-  "actions": ["what user does"],
-  "expectedResults": ["what should happen"],
-  "existingCoverage": {
-    "found": true,
-    "states": ["list of relevant existing states"],
-    "validations": ["list of relevant existing validations"],
-    "details": "Explanation of what already exists"
-  },
-  "gaps": [
-    {
-      "description": "What is missing",
-      "targetState": "which state to add to",
-      "targetPlatform": "dancer or manager or web",
-      "targetScreen": "ScreenName",
-      "severity": "HIGH or MEDIUM or LOW"
+function generateFullBlock(rec, poms) {
+  const screenName = rec.screen || rec.targetScreen || '';
+  const pom = poms.find(p => 
+    p.className.toLowerCase().includes(screenName.toLowerCase().replace('screen', '').replace('wrapper', '')) ||
+    screenName.toLowerCase().includes(p.className.toLowerCase().replace('screen', '').replace('wrapper', ''))
+  );
+  
+  let instance = screenName.charAt(0).toLowerCase() + screenName.slice(1);
+  if (!instance.endsWith('Screen') && !instance.endsWith('Wrapper')) instance += 'Screen';
+  instance = instance.replace('ScreenScreen', 'Screen').replace('WrapperWrapper', 'Wrapper');
+  
+  const methodExists = pom?.methods.some(m => m.name === rec.method);
+  
+  let assertionType = rec.assertionType || 'toBeVisible';
+  let assertionNot = rec.negate || rec.not || rec.hidden || false;
+  
+  let args = rec.args || [];
+  if (typeof args === 'string') args = [args];
+  
+  const block = {
+    id: generateId('blk_func'),
+    type: rec.blockType || 'function-call',
+    label: rec.label || rec.description || `Check ${rec.method}`,
+    order: rec.order || 0,
+    expanded: true,
+    enabled: true,
+    data: {
+      instance: instance,
+      method: rec.method,
+      args: args,
+      await: true,
+      assertion: { type: assertionType, not: assertionNot }
     }
+  };
+  
+  if (rec.conditions && rec.conditions.length > 0) {
+    block.conditions = generateConditionBlock(rec.conditions);
+  }
+  
+  if (rec.storeAs) {
+    block.data.storeAs = rec.storeAs;
+  }
+  
+  return { block, methodExists, pomPath: pom?.path, pomClass: pom?.className };
+}
+
+function formatBlockAsCode(block) {
+  let code = `{
+  id: "${block.id}",
+  type: "${block.type}",
+  label: "${block.label}",
+  order: ${block.order},
+  expanded: ${block.expanded},
+  enabled: ${block.enabled},`;
+
+  if (block.conditions) {
+    code += `
+  conditions: {
+    mode: "${block.conditions.mode}",
+    blocks: [{
+      id: "${block.conditions.blocks[0].id}",
+      type: "condition-check",
+      enabled: true,
+      mode: "${block.conditions.blocks[0].mode}",
+      data: {
+        checks: [${block.conditions.blocks[0].data.checks.map(c => `{
+          id: "${c.id}",
+          field: "${c.field}",
+          operator: "${c.operator}",
+          value: "${c.value}",
+          valueType: "${c.valueType}"
+        }`).join(', ')}]
+      }
+    }]
+  },`;
+  }
+
+  code += `
+  data: {
+    instance: "${block.data.instance}",
+    method: "${block.data.method}",
+    args: [${block.data.args.map(a => {
+      if (typeof a === 'string' && a.startsWith('ctx.')) return a;
+      return `"${a}"`;
+    }).join(', ')}],
+    await: ${block.data.await},${block.data.storeAs ? `
+    storeAs: "${block.data.storeAs}",` : ''}
+    assertion: {
+      type: "${block.data.assertion.type}",
+      not: ${block.data.assertion.not}
+    }
+  }
+}`;
+
+  return code;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TICKET ANALYZER - IMPROVED PROMPT
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SYSTEM_PROMPT = `You are a test automation engineer creating validation blocks for an implications-based testing framework.
+
+CRITICAL RULES FOR CONDITIONS:
+
+1. CONDITIONS define WHEN a block runs, not WHAT it checks.
+   - The block's method + assertion checks the UI
+   - The conditions define the data state that must be true for this check to apply
+
+2. ONE block can cover MULTIPLE scenarios using conditions:
+   
+   WRONG (multiple separate blocks):
+   - Block 1: "notification visible" (no condition)
+   - Block 2: "notification NOT visible without permission" (no condition, just negate)
+   
+   RIGHT (single block with condition):
+   - Block: "notification visible" with condition: permissions.manageGroups = truthy
+   - The test framework will skip this block when permission is falsy
+
+3. For "should NOT appear when X" scenarios:
+   - If X is a data condition (permission, status, flag): Use a CONDITION
+   - The assertion stays positive (toBeVisible, not: false)
+   - Example: "notification should not appear if no manageGroups permission"
+     → Block checks notification IS visible
+     → Condition: club.user.permissions.manageGroups = truthy
+     → Framework skips block when permission is false, so no false positive
+
+4. For genuinely negative assertions (element truly shouldn't exist):
+   - Use negate: true in assertion
+   - Example: "error message should never appear after successful save"
+     → assertion: { type: "toBeVisible", not: true }
+
+5. COMMON CONDITION PATTERNS:
+   - Permission check: { field: "club.user.permissions.manageGroups", operator: "truthy", value: "" }
+   - Status check: { field: "booking.status", operator: "equals", value: "checked_out" }
+   - Type check: { field: "booking.type", operator: "notEquals", value: "audition" }
+   - Flag check: { field: "dancer.isInGroup", operator: "falsy", value: "" }
+   - Negated: { field: "booking.isAudition", operator: "falsy", value: "" }
+
+6. DON'T create duplicate blocks for opposite conditions. ONE block with the positive condition is enough.
+   The framework handles the "skip when condition not met" logic.
+
+EXAMPLE - NOTIFICATION PERMISSION:
+
+Ticket: "Notification should only show for managers with manage_groups permission"
+
+WRONG approach (2 blocks):
+{
+  "recommendations": [
+    { "label": "Notification visible", "method": "notifGroupAdd", "negate": false },
+    { "label": "Notification NOT visible without permission", "method": "notifGroupAdd", "negate": true }
+  ]
+}
+
+RIGHT approach (1 block with condition):
+{
+  "recommendations": [
+    {
+      "label": "Add to groups notification visible",
+      "method": "notifGroupAdd",
+      "args": ["ctx.data.booking"],
+      "negate": false,
+      "conditions": [
+        { "field": "club.user.permissions.manageGroups", "operator": "truthy", "value": "" }
+      ]
+    }
+  ]
+}
+
+EXAMPLE - BOOKING TYPE:
+
+Ticket: "Notification should NOT appear for auditions, only for regular bookings"
+
+RIGHT approach:
+{
+  "recommendations": [
+    {
+      "label": "Add to groups notification after checkout",
+      "method": "notifGroupAdd",
+      "args": ["ctx.data.booking"],
+      "negate": false,
+      "conditions": [
+        { "field": "booking.type", "operator": "notEquals", "value": "audition" },
+        { "field": "booking.status", "operator": "equals", "value": "checked_out" }
+      ]
+    }
+  ]
+}
+
+EXAMPLE - MULTIPLE CONDITIONS (AND):
+
+Ticket: "Show notification only if: has permission AND booking is checked out AND entertainer not in group"
+
+{
+  "label": "Add to groups notification",
+  "method": "notifGroupAdd",
+  "conditions": [
+    { "field": "club.user.permissions.manageGroups", "operator": "truthy", "value": "" },
+    { "field": "booking.status", "operator": "equals", "value": "checked_out" },
+    { "field": "dancer.isInGroup", "operator": "falsy", "value": "" }
+  ]
+}`;
+
+const OUTPUT_FORMAT = `Return JSON:
+{
+  "understanding": "Brief summary of what needs testing",
+  "testScenarios": [
+    "List each distinct scenario that needs validation"
   ],
   "recommendations": [
     {
-      "priority": "HIGH or MEDIUM",
-      "action": "add_validation or add_transition or modify_existing",
-      "title": "Short title",
-      "description": "What to do",
-      "targetFile": "which implication file",
-      "details": "Specific implementation details"
+      "platform": "manager|dancer|web",
+      "screen": "ScreenName",
+      "method": "methodName",
+      "args": ["ctx.data.booking"],
+      "label": "Human readable description",
+      "negate": false,
+      "conditions": [
+        { "field": "data.path", "operator": "equals|notEquals|truthy|falsy|contains", "value": "value" }
+      ],
+      "newMethod": false,
+      "notes": "Optional implementation notes"
     }
   ],
-  "analysis": "Your reasoning about what exists vs what's needed"
+  "newMethods": [
+    {
+      "pomClass": "ScreenName",
+      "pomPath": "path/to/file.js",
+      "methodName": "name",
+      "methodCode": "async methodName() { ... }"
+    }
+  ],
+  "analysis": "Explanation of approach"
 }`;
 
 router.post('/analyze-ticket', async (req, res) => {
   try {
     const { ticketId, ticketText, projectPath } = req.body;
+    if (!ticketText) return res.status(400).json({ error: 'ticketText required' });
+    if (!projectPath) return res.status(400).json({ error: 'projectPath required' });
 
-    if (!ticketText) {
-      return res.status(400).json({ error: 'ticketText is required' });
-    }
-    if (!projectPath) {
-      return res.status(400).json({ error: 'projectPath is required' });
-    }
+    console.log('🎫 Analyzing:', ticketId || 'TICKET');
 
-    console.log('🎫 Analyzing ticket:', ticketId || 'TICKET');
-
-    // Get index
     let index = null;
-    let context = 'No test data available.';
+    let implContext = '';
     try {
       index = await getIndex(projectPath);
-      context = buildImplicationsContext(index, projectPath);
-      console.log('📚 Built context from', index.states?.length || 0, 'states');
-    } catch (e) {
-      console.warn('Could not load index:', e.message);
-    }
+      implContext = buildImplicationsContext(index);
+    } catch (e) {}
 
-    // Search for relevant items
-    const searchTerms = extractKeywords(ticketText);
-    const relevant = findRelevantItems(index, searchTerms);
+    const poms = findPOMFiles(index, projectPath);
+    const pomContext = buildPOMContext(poms);
 
-    // Build prompt
     const userPrompt = `TICKET: ${ticketId ? `[${ticketId}] ` : ''}${ticketText}
 
-${context}
+${implContext}
+${pomContext}
 
-=== SEARCH RESULTS FOR TICKET KEYWORDS ===
-Matching states: ${relevant.states.map(s => s.status).join(', ') || 'none'}
-Matching validations: ${relevant.validations.length} found
-${relevant.validations.slice(0, 5).map(v => `  - ${v.state}/${v.platform}/${v.screen}: ${v.label}`).join('\n')}
+${OUTPUT_FORMAT}
 
-${OUTPUT_FORMAT}`;
+REMEMBER:
+- Use CONDITIONS to define when a block applies (data state, permissions, status)
+- DON'T duplicate blocks for "with permission" vs "without permission" - use ONE block with condition
+- Conditions define WHEN, assertions define WHAT
+- Multiple conditions in one block = AND logic`;
 
-    console.log('🤖 Calling LLM...');
     const llmResponse = await callLLM([
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt }
-    ], { maxTokens: 3000 });
+    ]);
 
-    console.log('📝 Got response, parsing...');
-
-    // Parse with fallbacks
     let parsed = parseJSONSafely(llmResponse);
-    
     if (!parsed) {
-      console.warn('❌ Could not parse JSON, using fallback');
-      parsed = {
-        feature: ticketText.substring(0, 100),
-        actors: [],
-        existingCoverage: { found: false, details: 'Parse error' },
-        gaps: [],
-        recommendations: [],
-        analysis: 'Failed to parse LLM response. Raw: ' + llmResponse.substring(0, 500)
-      };
+      parsed = { understanding: ticketText.substring(0, 100), recommendations: [], analysis: 'Parse error' };
     }
 
-    // Build response
-    const response = {
-      ticketId: ticketId || 'TICKET',
-      parsed: {
-        feature: parsed.feature,
-        actors: parsed.actors || [],
-        preconditions: parsed.preconditions || [],
-        actions: parsed.actions || [],
-        expectedResults: parsed.expectedResults || [],
-        analysis: parsed.analysis
-      },
-      existingCoverage: relevant.states.map(s => ({
-        id: s.status,
-        type: 'state',
-        status: s.status,
-        description: s.statusLabel,
-        file: s.file
-      })),
-      llmExistingCoverage: parsed.existingCoverage,
-      gaps: parsed.gaps || [],
-      recommendations: (parsed.recommendations || []).map(r => ({
-        priority: r.priority || 'MEDIUM',
-        title: r.title || r.action,
-        action: r.action,
-        description: r.description,
-        targetFile: r.targetFile,
-        details: r.details,
-        // Generate code block based on recommendation
-        code: generateCodeForRecommendation(r)
-      })),
-      analysis: parsed.analysis,
-      suggestedStates: [],
-      raw: parsed
-    };
+    // Generate full blocks
+    const recommendations = (parsed.recommendations || []).map((rec, idx) => {
+      const { block, methodExists, pomPath, pomClass } = generateFullBlock(rec, poms);
+      
+      return {
+        priority: rec.priority || (idx === 0 ? 'HIGH' : 'MEDIUM'),
+        platform: rec.platform,
+        screen: rec.screen,
+        method: rec.method,
+        methodExists,
+        pomPath,
+        pomClass,
+        description: rec.label || rec.description,
+        notes: rec.notes,
+        isNewMethod: rec.newMethod || !methodExists,
+        hasConditions: !!(rec.conditions && rec.conditions.length > 0),
+        conditions: rec.conditions,
+        blockCode: formatBlockAsCode(block),
+        location: `mirrorsOn.UI.${rec.platform}.${rec.screen}.blocks[]`
+      };
+    });
 
-    console.log('✅ Done!');
-    res.json(response);
+    // New methods
+    const newMethods = (parsed.newMethods || []).map(m => ({
+      pomClass: m.pomClass,
+      pomPath: m.pomPath,
+      methodName: m.methodName,
+      code: m.methodCode
+    }));
+
+    for (const rec of recommendations) {
+      if (rec.isNewMethod && !newMethods.find(m => m.methodName === rec.method)) {
+        newMethods.push({
+          pomClass: rec.pomClass || rec.screen,
+          pomPath: rec.pomPath || `tests/mobile/android/${rec.platform}/screenObjects/${rec.screen}.screen.js`,
+          methodName: rec.method,
+          code: `// TODO: Implement ${rec.method}\nasync ${rec.method}() {\n  // Add implementation\n}`
+        });
+      }
+    }
+
+    res.json({
+      ticketId: ticketId || 'TICKET',
+      parsed: { 
+        feature: parsed.understanding, 
+        analysis: parsed.analysis,
+        testScenarios: parsed.testScenarios 
+      },
+      existingCoverage: parsed.existingCoverage,
+      gaps: parsed.testScenarios || [],
+      recommendations,
+      newMethods,
+      poms: poms.map(p => ({ className: p.className, path: p.path, methods: p.methods.map(m => m.name) })),
+      raw: parsed
+    });
 
   } catch (error) {
-    console.error('❌ Error:', error);
+    console.error('❌', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-function findRelevantItems(index, searchTerms) {
-  const result = { states: [], validations: [], transitions: [] };
-  if (!index) return result;
-  
-  const seen = new Set();
-  
-  for (const term of searchTerms) {
-    const results = searchIndex(index, term, { limit: 10, minScore: 5 });
-    for (const r of results) {
-      if (seen.has(r.id)) continue;
-      seen.add(r.id);
-      
-      if (r.type === 'state') {
-        result.states.push({
-          status: r.metadata?.status,
-          statusLabel: r.metadata?.statusLabel,
-          file: r.metadata?.file
-        });
-      } else if (r.type === 'validation') {
-        result.validations.push({
-          state: r.metadata?.state,
-          screen: r.metadata?.screen,
-          platform: r.metadata?.platform,
-          label: r.metadata?.label || r.text?.split('|')[0]
-        });
-      }
-    }
-  }
-  
-  return result;
-}
-
-function generateCodeForRecommendation(rec) {
-  if (rec.action === 'add_validation') {
-    const blockId = 'blk_func_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    return `{
-  id: "${blockId}",
-  type: "function-call",
-  label: "${rec.title || rec.description}",
-  order: 0,
-  expanded: true,
-  enabled: true,
-  data: {
-    instance: "${rec.targetScreen?.toLowerCase() || 'screen'}Screen",
-    method: "TODO_addMethodName",
-    args: ["ctx.data.booking"],
-    await: true,
-    assertion: {
-      type: "toBeVisible",
-      not: false
-    }
-  }
-}`;
-  }
-  
-  if (rec.action === 'add_transition') {
-    return `// In xstateConfig.on:
-${rec.title || 'EVENT_NAME'}: {
-  target: "${rec.targetState || 'target_state'}",
-  platforms: ["${rec.targetPlatform || 'web'}"]
-}`;
-  }
-  
-  return `// ${rec.description || rec.title}\n// TODO: Implement`;
-}
-
-const STOP_WORDS = new Set([
-  'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has',
-  'been', 'were', 'being', 'will', 'would', 'could', 'should', 'must',
-  'when', 'where', 'which', 'what', 'who', 'how', 'why', 'then', 'than',
-  'into', 'onto', 'upon', 'also', 'just', 'only', 'some', 'such', 'each',
-  'their', 'they', 'them', 'there', 'these', 'those', 'your', 'about',
-  'after', 'before', 'show', 'display', 'check', 'verify', 'ensure'
-]);
-
-function extractKeywords(text) {
-  if (!text) return [];
-  
-  const words = text
-    .toLowerCase()
-    .replace(/[^a-z0-9_\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2)
-    .filter(w => !STOP_WORDS.has(w));
-  
-  return [...new Set(words)].slice(0, 20);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// EXPLAIN
-// ═══════════════════════════════════════════════════════════════════════════
-
 router.post('/explain', async (req, res) => {
   try {
     const { query, projectPath } = req.body;
-    if (!query) return res.status(400).json({ error: 'query is required' });
+    if (!query) return res.status(400).json({ error: 'query required' });
 
     let context = '';
     if (projectPath) {
       try {
         const index = await getIndex(projectPath);
-        context = buildImplicationsContext(index, projectPath);
+        context = buildImplicationsContext(index) + buildPOMContext(findPOMFiles(index, projectPath));
       } catch (e) {}
     }
 
     const response = await callLLM([
-      { role: 'system', content: 'You are a test automation expert. Answer questions about the test suite.' },
+      { role: 'system', content: 'You are a test automation expert.' },
       { role: 'user', content: query + '\n\n' + context }
     ]);
 
-    res.json({ explanation: response, model: getLLMConfig().model });
+    res.json({ explanation: response });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
