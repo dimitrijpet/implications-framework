@@ -12,6 +12,7 @@ import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
 import { initializeFromDiscovery } from '../utils/requiresColors.js';
 import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
+import IntelligenceSearch from '../components/intelligence/IntelligenceSearch.jsx';
 
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
@@ -1039,6 +1040,9 @@ const disableTransitionMode = () => {
                 Interactive implication visualization & documentation
               </p>
             </div>
+
+               
+      
             
             {/* Action Buttons */}
             <div className="flex items-center gap-2">
@@ -1404,6 +1408,54 @@ const disableTransitionMode = () => {
           </div>
         )} */}
 
+        {/* ✅ ADD INTELLIGENCE SEARCH HERE */}
+      {discoveryResult && (
+        <IntelligenceSearch 
+          projectPath={projectPath}
+          testDataPath={selectedTestDataFile}
+          onSelectResult={(result) => {
+  // Navigate to the state in the graph
+  if (result.type === 'state' && result.metadata?.status) {
+    const nodeId = result.metadata.status;
+    setSelectedNodeId(nodeId);
+    
+    // Find and center on the node in Cytoscape
+    if (window.cytoscapeGraph) {
+      // Get the cy instance - might be stored directly or as .cy
+      const cy = window.cytoscapeGraph.cy || window.cytoscapeGraph;
+      
+      if (cy && typeof cy.getElementById === 'function') {
+        const node = cy.getElementById(nodeId);
+        if (node && node.length) {
+          cy.animate({
+            center: { eles: node },
+            zoom: 1.5
+          }, { duration: 300 });
+          node.select();
+        }
+      }
+    }
+    
+    // Open the detail modal
+    if (discoveryResult) {
+      const implication = discoveryResult.files.implications.find(
+        imp => imp.metadata.status === nodeId || 
+               imp.metadata.className === result.metadata.className
+      );
+      if (implication) {
+        handleNodeClick({ 
+          id: nodeId, 
+          metadata: implication.metadata,
+          files: { implication: `${projectPath}/${implication.path}` }
+        });
+      }
+    }
+  }
+}}
+          theme={defaultTheme}
+        />
+      )}
+
         {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>
           <button
@@ -1440,6 +1492,7 @@ const disableTransitionMode = () => {
             </button>
           )}
         </div>
+        
 
         {/* ✅ TAGS PANEL - Goes HERE, ABOVE the graph section! */}
         {graphData && Object.keys(discoveredTags).length > 0 && (
@@ -1774,6 +1827,7 @@ const disableTransitionMode = () => {
               </div>
             )}
           </div>
+          
           
           {/* StateGraph - just add the two new props */}
           {graphData ? (

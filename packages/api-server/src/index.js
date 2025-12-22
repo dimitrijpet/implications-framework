@@ -20,6 +20,8 @@ import screensRouter from './routes/screens.js';
 import navigationRoutes from './routes/navigation.js';
 import locksRouter from './routes/locks.js';
 import notesRouter from './routes/notes.js';
+import intelligenceRoutes from './routes/intelligenceRoutes.js';
+import llmRoutes from './routes/llmRoutes.js';
 
 
 
@@ -53,6 +55,9 @@ app.use('/api/navigation', navigationRoutes);
 
 app.use('/api/locks', locksRouter);
 app.use('/api/notes', notesRouter);
+
+app.use('/api/intelligence', intelligenceRoutes);
+app.use('/api/llm', llmRoutes);
 
 // Error handling
 app.use(errorHandler);
