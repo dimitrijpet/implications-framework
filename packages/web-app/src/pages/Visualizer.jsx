@@ -1468,11 +1468,11 @@ onSelectResult={(result) => {
         />
       )}
 
-      <TicketAnalyzer
+<TicketAnalyzer
   projectPath={projectPath}
   theme={defaultTheme}
-  onNavigateToState={(status) => {
-    window.cytoscapeGraph?.navigateToNode(status);
+  onSelectState={(status) => {
+    // This opens the state detail modal
     setSelectedNodeId(status);
   }}
 />

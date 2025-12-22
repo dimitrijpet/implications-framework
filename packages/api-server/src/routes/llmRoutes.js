@@ -1,19 +1,16 @@
 /**
- * LLM Routes - AI-powered analysis endpoints
- * 
- * Provides:
- * - Ticket analysis and test recommendations
- * - Natural language explanations
- * - Backend test parsing
+ * LLM Routes - Fixed version based on v2 that was working
  */
 
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import { getIndex, searchIndex } from '../services/intelligenceService.js';
 
 const router = express.Router();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM CLIENT - reads env on each request to pick up changes
+// LLM CLIENT
 // ═══════════════════════════════════════════════════════════════════════════
 
 function getLLMConfig() {
@@ -21,7 +18,7 @@ function getLLMConfig() {
     baseUrl: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
     model: process.env.LLM_MODEL || 'deepseek-chat',
     apiKey: process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || '',
-    maxTokens: 2000,
+    maxTokens: 4000,
     temperature: 0.3
   };
 }
@@ -36,8 +33,7 @@ async function callLLM(messages, options = {}) {
   }
 
   const url = config.baseUrl + '/chat/completions';
-  
-  console.log('🤖 Calling LLM:', config.model, 'at', config.baseUrl);
+  console.log('🤖 Calling LLM:', config.model);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -63,13 +59,9 @@ async function callLLM(messages, options = {}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// STATUS ENDPOINT
+// STATUS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * GET /api/llm/status
- * Check if LLM is available
- */
 router.get('/status', (req, res) => {
   const config = getLLMConfig();
   const available = config.apiKey && config.apiKey.length > 0;
@@ -79,175 +71,216 @@ router.get('/status', (req, res) => {
   else if (config.baseUrl.includes('openai')) provider = 'openai';
   else if (config.baseUrl.includes('localhost')) provider = 'ollama';
   
-  // Debug: log what we found
-  console.log('🔍 LLM Status Check:');
-  console.log('   baseUrl:', config.baseUrl);
-  console.log('   model:', config.model);
-  console.log('   apiKey present:', available);
-  console.log('   apiKey length:', config.apiKey?.length || 0);
-  
-  res.json({
-    available,
-    model: config.model,
-    provider,
-    baseUrl: config.baseUrl,
-    debug: {
-      envKeySet: !!process.env.DEEPSEEK_API_KEY,
-      keyLength: config.apiKey?.length || 0
-    }
-  });
+  res.json({ available, model: config.model, provider, baseUrl: config.baseUrl });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUILD CONTEXT FROM INDEX + FILE SUMMARIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildImplicationsContext(index, projectPath) {
+  if (!index) return 'No existing test data available.';
+  
+  const lines = [];
+  lines.push('=== EXISTING TEST COVERAGE ===\n');
+  
+  // Group by state
+  const stateMap = new Map();
+  
+  for (const state of (index.states || [])) {
+    if (state.type !== 'state') continue;
+    const status = state.metadata?.status;
+    if (!status) continue;
+    
+    if (!stateMap.has(status)) {
+      stateMap.set(status, {
+        status,
+        statusLabel: state.metadata?.statusLabel || status,
+        platforms: new Set(),
+        entity: state.metadata?.entity,
+        file: state.metadata?.file,
+        transitions: [],
+        validations: [],
+        conditions: []
+      });
+    }
+    
+    if (state.metadata?.platform) {
+      stateMap.get(status).platforms.add(state.metadata.platform);
+    }
+  }
+  
+  // Add transitions
+  for (const trans of (index.transitions || [])) {
+    const from = trans.metadata?.from;
+    if (from && stateMap.has(from)) {
+      stateMap.get(from).transitions.push({
+        event: trans.metadata?.event,
+        to: trans.metadata?.to,
+        platforms: trans.metadata?.platforms || []
+      });
+    }
+  }
+  
+  // Add validations with FULL details
+  for (const val of (index.validations || [])) {
+    const status = val.metadata?.state;
+    if (status && stateMap.has(status)) {
+      stateMap.get(status).validations.push({
+        screen: val.metadata?.screen,
+        platform: val.metadata?.platform,
+        label: val.metadata?.label || val.text?.split('|')[0]?.trim(),
+        blockId: val.metadata?.blockId,
+        blockType: val.metadata?.blockType
+      });
+    }
+  }
+  
+  // Add conditions
+  for (const cond of (index.conditions || [])) {
+    const status = cond.metadata?.state;
+    if (status && stateMap.has(status)) {
+      stateMap.get(status).conditions.push({
+        field: cond.metadata?.field,
+        operator: cond.metadata?.operator,
+        value: cond.metadata?.value,
+        screen: cond.metadata?.screen
+      });
+    }
+  }
+  
+  // Format each state with FULL validation details
+  for (const [status, data] of stateMap) {
+    lines.push(`\n## STATE: ${data.statusLabel} (${status})`);
+    lines.push(`   File: ${data.file || 'unknown'}`);
+    lines.push(`   Entity: ${data.entity || 'unknown'}`);
+    lines.push(`   Platforms: ${[...data.platforms].join(', ') || 'none'}`);
+    
+    if (data.transitions.length > 0) {
+      lines.push(`   Transitions OUT:`);
+      for (const t of data.transitions) {
+        lines.push(`     - ${t.event} → ${t.to}`);
+      }
+    }
+    
+    if (data.validations.length > 0) {
+      lines.push(`   Validations (${data.validations.length}):`);
+      const byPlatform = {};
+      for (const v of data.validations) {
+        const plat = v.platform || 'unknown';
+        if (!byPlatform[plat]) byPlatform[plat] = [];
+        byPlatform[plat].push(v);
+      }
+      for (const [plat, vals] of Object.entries(byPlatform)) {
+        lines.push(`     [${plat}]`);
+        for (const v of vals) {
+          const label = v.label?.substring(0, 80) || v.screen;
+          lines.push(`       - ${v.screen}: "${label}"`);
+        }
+      }
+    }
+  }
+  
+  lines.push('\n=== ALL STATES ===');
+  lines.push([...stateMap.keys()].join(', '));
+  
+  return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROBUST JSON PARSING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function parseJSONSafely(text) {
+  // Try direct parse
+  try {
+    return JSON.parse(text);
+  } catch (e) {}
+  
+  // Try extracting from markdown code block
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[1]);
+    } catch (e) {}
+  }
+  
+  // Try finding JSON object
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try {
+      return JSON.parse(braceMatch[0]);
+    } catch (e) {
+      // Try fixing common issues
+      let fixed = braceMatch[0]
+        .replace(/,\s*}/g, '}')  // trailing commas
+        .replace(/,\s*]/g, ']')  // trailing commas in arrays
+        .replace(/'/g, '"')      // single quotes
+        .replace(/[\r\n]+/g, ' '); // newlines
+      try {
+        return JSON.parse(fixed);
+      } catch (e2) {}
+    }
+  }
+  
+  return null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TICKET ANALYZER
 // ═══════════════════════════════════════════════════════════════════════════
 
-const TICKET_ANALYZER_SYSTEM_PROMPT = `You are a test automation analyst. Your job is to analyze tickets/requirements and identify what tests are needed.
+const SYSTEM_PROMPT = `You are a senior test automation engineer analyzing tickets for an implications-based testing framework.
 
-Given a ticket description, extract:
-1. The main feature being described
-2. Actors/platforms involved (dancer, manager, web, mobile, API)
-3. Preconditions (what state must exist before)
-4. Actions (what the user does)
-5. Expected results (what should happen)
-6. Search terms to find related existing tests
+The framework has:
+- States: app states like "booking_pending", "booking_accepted", "booking_cancelled"
+- Transitions: events that move between states like "ACCEPT_BOOKING", "CANCEL_BOOKING"
+- Validations: UI checks organized by platform (web, manager, dancer) and screen
+- Conditions: conditional logic based on field values
 
-Return your analysis as JSON:
+Your job:
+1. Understand the ticket requirements
+2. Check what ALREADY EXISTS in the coverage data
+3. Identify GAPS - what's missing
+4. Give specific, actionable recommendations
+
+IMPORTANT: Check the existing states and validations carefully before recommending new ones!`;
+
+const OUTPUT_FORMAT = `Return a JSON object with this EXACT structure (no code blocks, just pure JSON):
 {
-  "feature": "Brief description of the feature",
+  "feature": "Brief description",
   "actors": ["dancer", "manager"],
-  "preconditions": ["booking must be accepted", "user must be logged in"],
-  "actions": ["dancer cancels booking", "manager views notifications"],
-  "expectedResults": ["notification appears", "booking removed from list", "status changes to cancelled"],
-  "searchTerms": ["cancel", "booking", "notification", "accepted"],
-  "suggestsNewState": null,
-  "suggestedStates": []
-}
-
-Be thorough in extracting expected results - each testable outcome should be listed.
-Search terms should include key nouns and verbs that would appear in existing test names.`;
-
-const STOP_WORDS = new Set([
-  'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has',
-  'been', 'were', 'being', 'will', 'would', 'could', 'should', 'must',
-  'when', 'where', 'which', 'what', 'who', 'how', 'why', 'then', 'than',
-  'into', 'onto', 'upon', 'also', 'just', 'only', 'some', 'such', 'each',
-  'their', 'they', 'them', 'there', 'these', 'those', 'your', 'about'
-]);
-
-function extractKeywords(text) {
-  if (!text) return [];
-  
-  const words = text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 3)
-    .filter(w => !STOP_WORDS.has(w));
-  
-  return [...new Set(words)].slice(0, 10);
-}
-
-function buildTicketParsePrompt(ticketText, index) {
-  let prompt = 'Analyze this ticket:\n\n' + ticketText + '\n\n';
-  
-  if (index) {
-    const stateNames = index.states
-      .filter(s => s.type === 'state')
-      .map(s => s.metadata?.status)
-      .filter(Boolean)
-      .slice(0, 30);
-    
-    if (stateNames.length > 0) {
-      prompt += '\nExisting states in the test suite: ' + stateNames.join(', ') + '\n';
+  "preconditions": ["list of preconditions"],
+  "actions": ["what user does"],
+  "expectedResults": ["what should happen"],
+  "existingCoverage": {
+    "found": true,
+    "states": ["list of relevant existing states"],
+    "validations": ["list of relevant existing validations"],
+    "details": "Explanation of what already exists"
+  },
+  "gaps": [
+    {
+      "description": "What is missing",
+      "targetState": "which state to add to",
+      "targetPlatform": "dancer or manager or web",
+      "targetScreen": "ScreenName",
+      "severity": "HIGH or MEDIUM or LOW"
     }
-    
-    const transitionNames = index.transitions
-      .map(t => t.metadata?.event)
-      .filter(Boolean)
-      .slice(0, 20);
-    
-    if (transitionNames.length > 0) {
-      prompt += '\nExisting transitions: ' + [...new Set(transitionNames)].join(', ') + '\n';
+  ],
+  "recommendations": [
+    {
+      "priority": "HIGH or MEDIUM",
+      "action": "add_validation or add_transition or modify_existing",
+      "title": "Short title",
+      "description": "What to do",
+      "targetFile": "which implication file",
+      "details": "Specific implementation details"
     }
-  }
-  
-  prompt += '\nReturn your analysis as JSON only, no other text.';
-  
-  return prompt;
-}
-
-function findTargetFile(parsed, existingCoverage) {
-  const relevantCoverage = existingCoverage.find(e => e.type === 'state' || e.type === 'validation');
-  if (relevantCoverage?.id) {
-    const baseName = relevantCoverage.id.split('.')[0];
-    return 'tests/implications/.../' + baseName + 'Implications.js';
-  }
-  return 'tests/implications/[FeatureName]Implications.js';
-}
-
-function generateValidationBlockCode(description) {
-  const blockId = 'blk_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-  
-  return `{
-  id: "${blockId}",
-  type: "ui-assertion",
-  label: "${description}",
-  order: 0,
-  expanded: true,
-  enabled: true,
-  data: {
-    assertions: [
-      // TODO: Add specific assertions
-    ],
-    timeout: 30000
-  }
+  ],
+  "analysis": "Your reasoning about what exists vs what's needed"
 }`;
-}
 
-function generateStateSkeletonCode(stateName) {
-  const status = stateName.toLowerCase().replace(/\s+/g, '_');
-  const words = stateName.split(' ');
-  const className = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('') + 'Implications';
-  
-  return `class ${className} {
-  static xstateConfig = {
-    id: "${status}",
-    meta: {
-      status: "${status}",
-      statusLabel: "${stateName}",
-      platform: "web", // TODO: adjust
-      entity: "booking", // TODO: adjust
-      setup: [{
-        testFile: "tests/implications/.../TODO.spec.js",
-        actionName: "TODO",
-        previousStatus: "TODO",
-        platform: "web"
-      }]
-    },
-    on: {
-      // TODO: Add transitions
-    },
-    entry: {
-      // TODO: Add context updates
-    }
-  };
-  
-  static mirrorsOn = {
-    UI: {
-      web: {
-        // TODO: Add validations
-      }
-    }
-  };
-}`;
-}
-
-/**
- * POST /api/llm/analyze-ticket
- * 
- * Analyze a ticket and find/suggest tests
- */
 router.post('/analyze-ticket', async (req, res) => {
   try {
     const { ticketId, ticketText, projectPath } = req.body;
@@ -255,158 +288,63 @@ router.post('/analyze-ticket', async (req, res) => {
     if (!ticketText) {
       return res.status(400).json({ error: 'ticketText is required' });
     }
-
     if (!projectPath) {
       return res.status(400).json({ error: 'projectPath is required' });
     }
 
     console.log('🎫 Analyzing ticket:', ticketId || 'TICKET');
 
-    // Step 1: Get the search index
+    // Get index
     let index = null;
+    let context = 'No test data available.';
     try {
       index = await getIndex(projectPath);
+      context = buildImplicationsContext(index, projectPath);
+      console.log('📚 Built context from', index.states?.length || 0, 'states');
     } catch (e) {
       console.warn('Could not load index:', e.message);
     }
 
-    // Step 2: Use LLM to parse the ticket
-    const parsePrompt = buildTicketParsePrompt(ticketText, index);
-    
-    console.log('🤖 Calling LLM to parse ticket...');
+    // Search for relevant items
+    const searchTerms = extractKeywords(ticketText);
+    const relevant = findRelevantItems(index, searchTerms);
+
+    // Build prompt
+    const userPrompt = `TICKET: ${ticketId ? `[${ticketId}] ` : ''}${ticketText}
+
+${context}
+
+=== SEARCH RESULTS FOR TICKET KEYWORDS ===
+Matching states: ${relevant.states.map(s => s.status).join(', ') || 'none'}
+Matching validations: ${relevant.validations.length} found
+${relevant.validations.slice(0, 5).map(v => `  - ${v.state}/${v.platform}/${v.screen}: ${v.label}`).join('\n')}
+
+${OUTPUT_FORMAT}`;
+
+    console.log('🤖 Calling LLM...');
     const llmResponse = await callLLM([
-      { role: 'system', content: TICKET_ANALYZER_SYSTEM_PROMPT },
-      { role: 'user', content: parsePrompt }
-    ], { maxTokens: 2000 });
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt }
+    ], { maxTokens: 3000 });
 
-    console.log('📝 LLM response received, length:', llmResponse.length);
+    console.log('📝 Got response, parsing...');
 
-    // Step 3: Parse LLM response
-    let parsed;
-    try {
-      // Try to extract JSON from response
-      const jsonMatch = llmResponse.match(/```json\s*([\s\S]*?)\s*```/);
-      let jsonStr;
-      
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1];
-      } else {
-        // Try to find raw JSON object
-        const braceMatch = llmResponse.match(/\{[\s\S]*\}/);
-        jsonStr = braceMatch ? braceMatch[0] : llmResponse;
-      }
-      
-      parsed = JSON.parse(jsonStr);
-      console.log('✅ Parsed LLM response successfully');
-    } catch (e) {
-      console.warn('Could not parse LLM JSON response:', e.message);
-      console.log('Raw response:', llmResponse.substring(0, 500));
+    // Parse with fallbacks
+    let parsed = parseJSONSafely(llmResponse);
+    
+    if (!parsed) {
+      console.warn('❌ Could not parse JSON, using fallback');
       parsed = {
         feature: ticketText.substring(0, 100),
         actors: [],
-        preconditions: [],
-        actions: [],
-        expectedResults: [],
-        searchTerms: extractKeywords(ticketText)
+        existingCoverage: { found: false, details: 'Parse error' },
+        gaps: [],
+        recommendations: [],
+        analysis: 'Failed to parse LLM response. Raw: ' + llmResponse.substring(0, 500)
       };
     }
 
-    // Step 4: Search for existing coverage
-    const existingCoverage = [];
-    const searchedTerms = new Set();
-
-    if (index) {
-      const searchTerms = [
-        ...(parsed.searchTerms || []),
-        ...(parsed.actors || []),
-        ...extractKeywords(ticketText)
-      ];
-
-      for (const term of searchTerms) {
-        if (searchedTerms.has(term.toLowerCase())) continue;
-        searchedTerms.add(term.toLowerCase());
-
-        const results = searchIndex(index, term, { limit: 5, minScore: 10 });
-        for (const result of results) {
-          if (!existingCoverage.find(e => e.id === result.id)) {
-            existingCoverage.push({
-              id: result.id,
-              type: result.type,
-              status: result.metadata?.status,
-              description: result.text?.split('|')[0]?.trim(),
-              matchedTerm: term,
-              score: result.score
-            });
-          }
-        }
-      }
-
-      existingCoverage.sort((a, b) => b.score - a.score);
-    }
-
-    // Step 5: Identify gaps
-    const gaps = [];
-    
-    for (const expected of (parsed.expectedResults || [])) {
-      const expectedLower = expected.toLowerCase();
-      const covered = existingCoverage.some(e => {
-        const descLower = (e.description || '').toLowerCase();
-        const statusLower = (e.status || '').toLowerCase();
-        return descLower.includes(expectedLower.substring(0, 20)) ||
-               expectedLower.includes(statusLower);
-      });
-      
-      if (!covered) {
-        gaps.push({
-          description: expected,
-          type: 'missing_validation',
-          suggestion: 'Add validation for: "' + expected + '"'
-        });
-      }
-    }
-
-    for (const actor of (parsed.actors || [])) {
-      const actorLower = actor.toLowerCase();
-      const hasActorCoverage = existingCoverage.some(e => {
-        const descLower = (e.description || '').toLowerCase();
-        const idLower = (e.id || '').toLowerCase();
-        return descLower.includes(actorLower) || idLower.includes(actorLower);
-      });
-      
-      if (!hasActorCoverage && !['user', 'system', 'api'].includes(actorLower)) {
-        gaps.push({
-          description: 'No tests found for "' + actor + '" platform',
-          type: 'missing_platform',
-          suggestion: 'Ensure validations exist for ' + actor + ' platform'
-        });
-      }
-    }
-
-    // Step 6: Generate recommendations
-    const recommendations = [];
-
-    for (const gap of gaps.filter(g => g.type === 'missing_validation')) {
-      recommendations.push({
-        priority: 'HIGH',
-        title: 'Add Validation Block',
-        action: 'add_validation',
-        description: gap.suggestion,
-        targetFile: findTargetFile(parsed, existingCoverage),
-        code: generateValidationBlockCode(gap.description)
-      });
-    }
-
-    if (parsed.suggestsNewState) {
-      recommendations.push({
-        priority: 'MEDIUM',
-        title: 'Create New State',
-        action: 'create_state',
-        description: 'Consider creating a new state for: ' + parsed.suggestsNewState,
-        code: generateStateSkeletonCode(parsed.suggestsNewState)
-      });
-    }
-
-    // Step 7: Build response
+    // Build response
     const response = {
       ticketId: ticketId || 'TICKET',
       parsed: {
@@ -415,84 +353,157 @@ router.post('/analyze-ticket', async (req, res) => {
         preconditions: parsed.preconditions || [],
         actions: parsed.actions || [],
         expectedResults: parsed.expectedResults || [],
-        searchTerms: parsed.searchTerms || []
+        analysis: parsed.analysis
       },
-      existingCoverage: existingCoverage.slice(0, 10),
-      gaps,
-      recommendations,
-      suggestedStates: parsed.suggestedStates || [],
+      existingCoverage: relevant.states.map(s => ({
+        id: s.status,
+        type: 'state',
+        status: s.status,
+        description: s.statusLabel,
+        file: s.file
+      })),
+      llmExistingCoverage: parsed.existingCoverage,
+      gaps: parsed.gaps || [],
+      recommendations: (parsed.recommendations || []).map(r => ({
+        priority: r.priority || 'MEDIUM',
+        title: r.title || r.action,
+        action: r.action,
+        description: r.description,
+        targetFile: r.targetFile,
+        details: r.details,
+        // Generate code block based on recommendation
+        code: generateCodeForRecommendation(r)
+      })),
+      analysis: parsed.analysis,
+      suggestedStates: [],
       raw: parsed
     };
 
-    console.log('✅ Analysis complete:', existingCoverage.length, 'existing,', gaps.length, 'gaps,', recommendations.length, 'recommendations');
-    
+    console.log('✅ Done!');
     res.json(response);
 
   } catch (error) {
-    console.error('❌ Ticket analysis failed:', error);
-    res.status(500).json({ 
-      error: error.message,
-      hint: error.message.includes('API key') 
-        ? 'Set DEEPSEEK_API_KEY in your .env file' 
-        : undefined
-    });
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EXPLAIN ENDPOINT
+// HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/llm/explain
- * 
- * Get natural language explanation for a query
- */
+function findRelevantItems(index, searchTerms) {
+  const result = { states: [], validations: [], transitions: [] };
+  if (!index) return result;
+  
+  const seen = new Set();
+  
+  for (const term of searchTerms) {
+    const results = searchIndex(index, term, { limit: 10, minScore: 5 });
+    for (const r of results) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      
+      if (r.type === 'state') {
+        result.states.push({
+          status: r.metadata?.status,
+          statusLabel: r.metadata?.statusLabel,
+          file: r.metadata?.file
+        });
+      } else if (r.type === 'validation') {
+        result.validations.push({
+          state: r.metadata?.state,
+          screen: r.metadata?.screen,
+          platform: r.metadata?.platform,
+          label: r.metadata?.label || r.text?.split('|')[0]
+        });
+      }
+    }
+  }
+  
+  return result;
+}
+
+function generateCodeForRecommendation(rec) {
+  if (rec.action === 'add_validation') {
+    const blockId = 'blk_func_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    return `{
+  id: "${blockId}",
+  type: "function-call",
+  label: "${rec.title || rec.description}",
+  order: 0,
+  expanded: true,
+  enabled: true,
+  data: {
+    instance: "${rec.targetScreen?.toLowerCase() || 'screen'}Screen",
+    method: "TODO_addMethodName",
+    args: ["ctx.data.booking"],
+    await: true,
+    assertion: {
+      type: "toBeVisible",
+      not: false
+    }
+  }
+}`;
+  }
+  
+  if (rec.action === 'add_transition') {
+    return `// In xstateConfig.on:
+${rec.title || 'EVENT_NAME'}: {
+  target: "${rec.targetState || 'target_state'}",
+  platforms: ["${rec.targetPlatform || 'web'}"]
+}`;
+  }
+  
+  return `// ${rec.description || rec.title}\n// TODO: Implement`;
+}
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has',
+  'been', 'were', 'being', 'will', 'would', 'could', 'should', 'must',
+  'when', 'where', 'which', 'what', 'who', 'how', 'why', 'then', 'than',
+  'into', 'onto', 'upon', 'also', 'just', 'only', 'some', 'such', 'each',
+  'their', 'they', 'them', 'there', 'these', 'those', 'your', 'about',
+  'after', 'before', 'show', 'display', 'check', 'verify', 'ensure'
+]);
+
+function extractKeywords(text) {
+  if (!text) return [];
+  
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9_\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2)
+    .filter(w => !STOP_WORDS.has(w));
+  
+  return [...new Set(words)].slice(0, 20);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPLAIN
+// ═══════════════════════════════════════════════════════════════════════════
+
 router.post('/explain', async (req, res) => {
   try {
-    const { query, projectPath, context } = req.body;
+    const { query, projectPath } = req.body;
+    if (!query) return res.status(400).json({ error: 'query is required' });
 
-    if (!query) {
-      return res.status(400).json({ error: 'query is required' });
-    }
-
-    let searchResults = [];
+    let context = '';
     if (projectPath) {
       try {
         const index = await getIndex(projectPath);
-        searchResults = searchIndex(index, query, { limit: 10 });
-      } catch (e) {
-        console.warn('Could not search index:', e.message);
-      }
-    }
-
-    let contextStr = '';
-    if (searchResults.length > 0) {
-      const resultTexts = searchResults.map(r => '- ' + r.type + ': ' + r.text);
-      contextStr = '\n\nRelevant test data:\n' + resultTexts.join('\n');
-    }
-
-    let userContent = query + contextStr;
-    if (context) {
-      userContent += '\n\nAdditional context: ' + context;
+        context = buildImplicationsContext(index, projectPath);
+      } catch (e) {}
     }
 
     const response = await callLLM([
-      { 
-        role: 'system', 
-        content: 'You are a test automation expert. Explain testing concepts clearly and concisely. Reference specific states, transitions, and validations when available.' 
-      },
-      { role: 'user', content: userContent }
+      { role: 'system', content: 'You are a test automation expert. Answer questions about the test suite.' },
+      { role: 'user', content: query + '\n\n' + context }
     ]);
 
-    res.json({
-      explanation: response,
-      sources: searchResults.slice(0, 5),
-      model: getLLMConfig().model
-    });
-
+    res.json({ explanation: response, model: getLLMConfig().model });
   } catch (error) {
-    console.error('❌ Explain failed:', error);
     res.status(500).json({ error: error.message });
   }
 });
