@@ -308,12 +308,12 @@ const handleResultClick = (result) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
 {results.map((result, i) => (
   <ResultCard
-    key={`${result.type}-${result.id}-${i}-${result.score}`} 
-                  result={result}
-                  onClick={() => handleResultClick(result)}
-                  theme={theme}
-                />
-              ))}
+    key={i}
+    result={result}
+    onClick={() => handleResultClick(result)}
+    theme={theme}
+  />
+))}
             </div>
           )}
           

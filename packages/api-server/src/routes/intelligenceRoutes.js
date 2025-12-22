@@ -565,4 +565,30 @@ router.get('/impact/:status', async (req, res) => {
   }
 });
 
+router.get('/debug', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath required' });
+    }
+    
+    const index = await intelligence.getIndex(projectPath);
+    
+    res.json({
+      counts: index.counts,
+      sampleStates: index.states.slice(0, 3),
+      sampleTransitions: index.transitions.slice(0, 3),
+      sampleValidations: index.validations.slice(0, 3),
+      sampleConditions: index.conditions.slice(0, 3),
+      allFields: Array.from(index.byField.keys()),
+      allTickets: Array.from(index.byTicket.keys()),
+      allEvents: Array.from(index.byEvent.keys()),
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

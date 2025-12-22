@@ -65,6 +65,13 @@ useEffect(() => {
   }
 }, [discoveryResult]);
 
+useEffect(() => {
+  if (discoveryResult) {
+    window.__discoveryResult = discoveryResult;
+    console.log('📊 Discovery result available at window.__discoveryResult');
+  }
+}, [discoveryResult]);
+
 // âœ… Keep ref in sync with state
 useEffect(() => {
   transitionModeRef.current = transitionMode;
@@ -1413,38 +1420,42 @@ const disableTransitionMode = () => {
         <IntelligenceSearch 
           projectPath={projectPath}
           testDataPath={selectedTestDataFile}
-          onSelectResult={(result) => {
-  // Navigate to the state in the graph
-  if (result.type === 'state' && result.metadata?.status) {
-    const nodeId = result.metadata.status;
-    setSelectedNodeId(nodeId);
+onSelectResult={(result) => {
+  console.log('🔍 Selected result:', result);
+  
+  // Get the target status to navigate to
+  let targetStatus = null;
+  
+  if (result.type === 'state') {
+    targetStatus = result.metadata?.status;
+  } else if (result.type === 'setup') {
+    // Setup entries - navigate to the state they help reach
+    targetStatus = result.metadata?.status;
+  } else if (result.type === 'transition') {
+    targetStatus = result.metadata?.from;
+  } else if (result.type === 'validation') {
+    targetStatus = result.metadata?.state;
+  } else if (result.type === 'condition') {
+    targetStatus = result.metadata?.state;
+  }
+  
+  if (targetStatus) {
+    setSelectedNodeId(targetStatus);
     
-    // Find and center on the node in Cytoscape
-    if (window.cytoscapeGraph) {
-      // Get the cy instance - might be stored directly or as .cy
-      const cy = window.cytoscapeGraph.cy || window.cytoscapeGraph;
-      
-      if (cy && typeof cy.getElementById === 'function') {
-        const node = cy.getElementById(nodeId);
-        if (node && node.length) {
-          cy.animate({
-            center: { eles: node },
-            zoom: 1.5
-          }, { duration: 300 });
-          node.select();
-        }
-      }
+    // Navigate in graph
+    if (window.cytoscapeGraph?.navigateToNode) {
+      window.cytoscapeGraph.navigateToNode(targetStatus);
     }
     
-    // Open the detail modal
-    if (discoveryResult) {
+    // Open detail modal for state/setup types
+    if ((result.type === 'state' || result.type === 'setup') && discoveryResult) {
       const implication = discoveryResult.files.implications.find(
-        imp => imp.metadata.status === nodeId || 
+        imp => imp.metadata.status === targetStatus || 
                imp.metadata.className === result.metadata.className
       );
       if (implication) {
         handleNodeClick({ 
-          id: nodeId, 
+          id: targetStatus, 
           metadata: implication.metadata,
           files: { implication: `${projectPath}/${implication.path}` }
         });
