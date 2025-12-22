@@ -13,6 +13,9 @@ import { collectVariablesFromUIValidations } from '../UIScreenEditor/collectVari
 import useProjectConfig from '../../hooks/useProjectConfig';
 import DataFlowSummary from './DataFlowSummary';
 import usePOMData from '../../hooks/usePOMData';
+import { usePathAvailableData } from '../../hooks/usePathAvailableData';
+import NotesSection from '../Notes/NotesSection';
+import { useNotes } from '../../hooks/useNotes';
 import {
   DndContext,
   closestCenter,
@@ -30,6 +33,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
 
 
 const API_URL = "http://localhost:3000";
@@ -238,11 +242,21 @@ export default function AddTransitionModal({
   projectPath,
   mode = 'add',
   initialData = null,
-  // ❌ REMOVE: availablePlatforms = ["web"],
+  allTransitions = [],  // ✅ ADD
+  allStates = {},       // ✅ ADD
 }) {
   // ✅ ADD: Load platforms from config
-  const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
-  const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+const { platformNames, loading: platformsLoading } = useProjectConfig(projectPath);
+const availablePlatforms = platformNames.length > 0 ? platformNames : ['web'];
+
+// ✅ ADD: Path analysis for available data
+const { availableFields: pathAvailableFields, pathUsed, analysis: pathAnalysis } = usePathAvailableData(
+  sourceState?.id || sourceState?.meta?.status,
+  allTransitions,
+  allStates,
+  'initial'
+);
+
 
 const [formData, setFormData] = useState({
   event: "",
@@ -258,6 +272,36 @@ const [formData, setFormData] = useState({
   isObserver: false,  // ← ADD THIS
 });
 const [requiresSuggestions, setRequiresSuggestions] = useState([]);
+
+// Notes hook
+const { 
+  getTransitionNotes, 
+  categories: noteCategories, 
+  refresh: refreshNotes 
+} = useNotes(projectPath);
+
+// Build transition key for notes
+const transitionKey = useMemo(() => {
+  const source = sourceState?.id || sourceState?.meta?.status || 'unknown';
+  const target = mode === 'edit' 
+    ? (initialData?.target || targetState?.id || 'unknown')
+    : (targetState?.id || targetState?.meta?.status || 'unknown');
+  const event = formData.event || 'NEW_EVENT';
+  return `${source}:${event}:${target}`;
+}, [sourceState, targetState, initialData, mode, formData.event]);
+
+// Get notes for this transition
+const transitionNotes = useMemo(() => {
+  // Only fetch if we have a real event (not editing a new transition)
+  if (mode === 'edit' && initialData?.event) {
+    const source = sourceState?.id || sourceState?.meta?.status;
+    const target = initialData?.target;
+    const key = `${source}:${initialData.event}:${target}`;
+    return getTransitionNotes(key);
+  }
+  return [];
+}, [mode, initialData, sourceState, getTransitionNotes]);
+
 
 const [testDataSchema, setTestDataSchema] = useState([]);
 
@@ -404,10 +448,15 @@ const allStoredVariables = useMemo(() => {
     }
   };
   
-  // 1. Variables from current form steps (storeAs)
+  // 1. Variables from PATH (produced by earlier transitions) ✅ NEW
+  if (pathAvailableFields?.length > 0) {
+    pathAvailableFields.forEach(addVar);
+  }
+  
+  // 2. Variables from current form steps (storeAs)
   availableStoreAsVars.forEach(addVar);
   
-  // 2. Variables from source state's UI validations (storeAs)
+  // 3. Variables from source state's UI validations (storeAs)
   if (sourceState) {
     const uiVars = collectVariablesFromUIValidations(sourceState);
     uiVars.forEach(v => {
@@ -418,7 +467,7 @@ const allStoredVariables = useMemo(() => {
   }
   
   return vars;
-}, [availableStoreAsVars, sourceState]);  // ✅ Remove storedVariables from deps
+}, [pathAvailableFields, availableStoreAsVars, sourceState]);
 
   // ✨ NEW: Get available vars for a specific step (only from PREVIOUS steps)
   const getAvailableVarsForStep = (stepIndex) => {
@@ -1042,14 +1091,43 @@ const handleAddStep = () => {
   };
 
   // Update step field
-  const handleStepChange = (index, field, value) => {
-    setFormData((prev) => ({
-      ...prev,
-      steps: prev.steps.map((step, i) =>
-        i === index ? { ...step, [field]: value } : step
-      ),
-    }));
-  };
+ const handleStepChange = (index, field, value) => {
+  setFormData((prev) => {
+    const newSteps = prev.steps.map((step, i) =>
+      i === index ? { ...step, [field]: value } : step
+    );
+    
+    // ✅ AUTO-ADD IMPORT when selecting screen for inline action
+    if (field === 'screen' && value && ['click', 'fill', 'getText', 'waitFor'].includes(newSteps[index].type)) {
+      const alreadyImported = prev.imports.some(imp => imp.className === value);
+      
+      if (!alreadyImported) {
+        const pom = availablePOMs.find(p => p.className === value);
+        if (pom) {
+          const varName = value.charAt(0).toLowerCase() + value.slice(1);
+          const newImport = {
+            className: value,
+            varName: varName,
+            path: pom.path || pom.filePath,
+            constructor: `new ${value}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+            selectedPOM: value,
+            functions: pom.classes?.[0]?.functions || [],
+          };
+          
+          console.log(`✅ Auto-adding import for inline action: ${value}`);
+          
+          return {
+            ...prev,
+            steps: newSteps,
+            imports: [...prev.imports, newImport],
+          };
+        }
+      }
+    }
+    
+    return { ...prev, steps: newSteps };
+  });
+};
 
   // Update step args with assignment detection
   const handleStepArgsChange = (index, value) => {
@@ -1191,68 +1269,184 @@ formData.steps.forEach((step, index) => {
 const handleSubmit = async (e) => {
   e.preventDefault();
   
-  console.log('🔥 handleSubmit called!');  // ← ADD THIS
-  console.log('🔥 formData:', JSON.stringify(formData, null, 2));  // ← ADD THIS
-
   if (!validateForm()) {
-    console.log('❌ Validation failed:', errors);  // ← ADD THIS
+    console.log('❌ Validation failed:', errors);
     return;
   }
   
-  console.log('✅ Validation passed, submitting...');  // ← ADD THIS
   setLoading(true);
 
   try {
-const submitData = {
-  event: formData.event.trim(),
-  platform: formData.platform,
-  isObserver: formData.isObserver || undefined,
-  mode: formData.isObserver ? 'observer' : undefined,
-  requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
-  conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
-  actionDetails: formData.hasActionDetails
-    ? {
-        description: formData.description.trim(),
-        platform: formData.platform,
-        navigationMethod: formData.navigationMethod || null,
-        navigationFile: formData.navigationFile || null,
-        imports: formData.imports.map((imp) => ({
-          className: imp.className,
-          varName: imp.varName,
-          path: imp.path,
-          constructor: imp.constructor,
-        })),
-        steps: formData.steps.map((step) => ({
-          type: step.type || 'pom-method',
-          description: step.description,
-          // POM method fields
-          ...((step.type === 'pom-method' || !step.type) && {
-            instance: step.instance,
-            method: step.method,
-            args: step.args?.join(', ') || '',
-            argsArray: step.args || [],
-          }),
-          // Inline action fields
-            ...(['click', 'fill', 'getText', 'waitFor'].includes(step.type) && {
-            screen: step.screen,
-            locator: step.locator,
-            elementIndex: step.elementIndex || undefined,  // ✅ NEW
-            customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,  // ✅ NEW
-            ...(step.type === 'fill' && { value: step.value }),
-            ...(step.type === 'waitFor' && { waitState: step.waitState }),
-          }),
-          // Custom code
-          ...(step.type === 'custom' && {
-            code: step.code,
-          }),
-          // Common fields - ENHANCED with persistStoreAs
-          storeAs: step.storeAs || undefined,
-          persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,  // ✅ NEW
-          conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
-        })),
+    // ✅ Helper: Build imports including any screens used in inline actions
+    const buildImports = () => {
+      const imports = [...formData.imports];
+      const importedClassNames = new Set(imports.map(imp => imp.className));
+      
+      // Check if any inline action steps use a screen that's not imported
+      for (const step of formData.steps) {
+        if (['click', 'fill', 'getText', 'waitFor'].includes(step.type) && step.screen) {
+          if (!importedClassNames.has(step.screen)) {
+            const pom = availablePOMs.find(p => p.className === step.screen);
+            if (pom) {
+              const varName = step.screen.charAt(0).toLowerCase() + step.screen.slice(1);
+              imports.push({
+                className: step.screen,
+                varName: varName,
+                path: pom.path || pom.filePath,
+                constructor: `new ${step.screen}(page, ctx.data.lang || 'en', ctx.data.device || 'desktop')`,
+              });
+              importedClassNames.add(step.screen);
+              console.log(`✅ Auto-added import for ${step.screen}`);
+            }
+          }
+        }
       }
-    : null,
-};
+      
+      return imports.map(imp => ({
+        className: imp.className,
+        varName: imp.varName,
+        path: imp.path,
+        constructor: imp.constructor,
+      }));
+    };
+
+    // ✅ Helper: Transform {{varName}} to storedVars.varName or ctx.data.varName
+    const transformVariableRefs = (value, allSteps) => {
+      if (!value || typeof value !== 'string') return value;
+      
+      return value.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+        // Check if this variable was stored by a previous step
+        const sourceStep = allSteps.find(s => s.storeAs === varName);
+        
+        if (sourceStep) {
+          // If persisted, use ctx.data; otherwise use storedVars
+          if (sourceStep.persistStoreAs !== false) {
+            return `ctx.data.${varName}`;
+          } else {
+            return `storedVars.${varName}`;
+          }
+        }
+        
+        // Default: assume it's a storedVar from current test
+        return `storedVars.${varName}`;
+      });
+    };
+
+    // ✅ Helper: Build step with proper instance/method for inline actions
+    const buildStep = (step, allSteps) => {
+      const baseStep = {
+        type: step.type || 'pom-method',
+        description: step.description,
+        storeAs: step.storeAs || undefined,
+        persistStoreAs: step.storeAs ? (step.persistStoreAs !== false) : undefined,
+        conditions: (step.conditions?.blocks?.length > 0) ? step.conditions : undefined,
+      };
+      
+      // POM method - transform args
+      if (step.type === 'pom-method' || !step.type) {
+        const transformedArgs = (step.args || []).map(arg => transformVariableRefs(arg, allSteps));
+        
+        return {
+          ...baseStep,
+          instance: step.instance,
+          method: step.method,
+          args: transformedArgs.join(', '),
+          argsArray: transformedArgs,
+        };
+      }
+      
+      // Custom code - transform variable refs in code
+      if (step.type === 'custom') {
+        return {
+          ...baseStep,
+          code: transformVariableRefs(step.code, allSteps),
+        };
+      }
+      
+      // INLINE ACTIONS: click, fill, getText, waitFor
+      if (['click', 'fill', 'getText', 'waitFor'].includes(step.type)) {
+        const screenName = step.screen || '';
+        const locatorName = step.locator || '';
+        const instanceName = screenName 
+          ? screenName.charAt(0).toLowerCase() + screenName.slice(1) 
+          : '';
+        
+        // Build locator chain with index
+        let locatorChain = locatorName;
+        if (step.elementIndex === 'first') {
+          locatorChain = `${locatorName}.first()`;
+        } else if (step.elementIndex === 'last') {
+          locatorChain = `${locatorName}.last()`;
+        } else if (step.elementIndex === 'custom' && step.customIndex !== undefined) {
+          locatorChain = `${locatorName}.nth(${step.customIndex})`;
+        } else if (step.elementIndex === 'variable' && step.indexVariable) {
+          // Transform variable reference if it uses {{}} syntax
+          const transformedIndex = transformVariableRefs(step.indexVariable, allSteps);
+          locatorChain = `${locatorName}.nth(${transformedIndex})`;
+        }
+        
+        // Build method name based on action type
+        let methodName;
+        let argsArray = [];
+        
+        switch (step.type) {
+          case 'click':
+            methodName = `${locatorChain}.click`;
+            break;
+          case 'fill':
+            methodName = `${locatorChain}.fill`;
+            argsArray = step.value ? [transformVariableRefs(step.value, allSteps)] : [];
+            break;
+          case 'getText':
+            methodName = `${locatorChain}.textContent`;
+            break;
+          case 'waitFor':
+            methodName = `${locatorChain}.waitFor`;
+            argsArray = [`{ state: '${step.waitState || 'visible'}' }`];
+            break;
+        }
+        
+        return {
+          ...baseStep,
+          instance: instanceName,
+          method: methodName,
+          args: argsArray.join(', '),
+          argsArray: argsArray,
+          // Keep original fields for UI round-trip editing
+          screen: screenName,
+          locator: locatorName,
+          elementIndex: step.elementIndex || undefined,
+          customIndex: step.elementIndex === 'custom' ? (step.customIndex || 0) : undefined,
+          indexVariable: step.elementIndex === 'variable' 
+            ? transformVariableRefs(step.indexVariable, allSteps) 
+            : undefined,
+          ...(step.type === 'fill' && { value: transformVariableRefs(step.value, allSteps) }),
+          ...(step.type === 'waitFor' && { waitState: step.waitState }),
+        };
+      }
+      
+      return baseStep;
+    };
+
+    const submitData = {
+      event: formData.event.trim(),
+      platform: formData.platform,
+      isObserver: formData.isObserver || undefined,
+      mode: formData.isObserver ? 'observer' : undefined,
+      requires: Object.keys(formData.requires || {}).length > 0 ? formData.requires : undefined,
+      conditions: (formData.conditions?.blocks?.length > 0) ? formData.conditions : undefined,
+      actionDetails: formData.hasActionDetails
+        ? {
+            description: formData.description.trim(),
+            platform: formData.platform,
+            navigationMethod: formData.navigationMethod || null,
+            navigationFile: formData.navigationFile || null,
+            imports: buildImports(),
+            steps: formData.steps.map(step => buildStep(step, formData.steps)),  // ✅ Pass allSteps
+          }
+        : null,
+    };
+
     console.log("🚀 Submitting transition:", mode, submitData);
 
     await onSubmit(submitData);
@@ -1491,6 +1685,23 @@ const submitData = {
               </div>
             </div>
           )}
+
+{/* NOTES SECTION - Only show in edit mode with existing transition */}
+{mode === 'edit' && initialData?.event && (
+  <div className="mt-4">
+    <NotesSection
+      notes={transitionNotes}
+      categories={noteCategories}
+      targetType="transition"
+      targetKey={`${sourceState?.id || sourceState?.meta?.status}:${initialData.event}:${initialData.target}`}
+      projectPath={projectPath}
+      onNotesChange={refreshNotes}
+      theme={defaultTheme}
+      collapsed={transitionNotes.length === 0}
+    />
+  </div>
+)}
+
           {/* Data Flow Summary */}
 <DataFlowSummary
   formData={formData}
@@ -2254,49 +2465,131 @@ const submitData = {
                   </div>
                 )}
 
-                {/* ✅ NEW: Element Index Selector */}
-                <div className="mb-2">
-                  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
-                    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
-                  </label>
-                  <div className="flex gap-2 items-center">
-                    <select
-                      value={step.elementIndex || ""}
-                      onChange={(e) => handleStepChange(index, 'elementIndex', e.target.value)}
-                      className="flex-1 px-3 py-1 rounded text-sm"
-                      style={{
-                        backgroundColor: defaultTheme.colors.background.tertiary,
-                        color: defaultTheme.colors.text.primary,
-                        border: `1px solid ${defaultTheme.colors.border}`,
-                      }}
-                    >
-                      <option value="">Single element (no index)</option>
-                      <option value="first">First [0] → .first()</option>
-                      <option value="last">Last → .last()</option>
-                      <option value="custom">Custom index → .nth(N)</option>
-                    </select>
-                    {step.elementIndex === 'custom' && (
-                      <input
-                        type="number"
-                        min="0"
-                        value={step.customIndex || 0}
-                        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
-                        placeholder="0"
-                        className="w-20 px-2 py-1 rounded text-sm font-mono"
-                        style={{
-                          backgroundColor: defaultTheme.colors.background.tertiary,
-                          color: defaultTheme.colors.text.primary,
-                          border: `1px solid ${defaultTheme.colors.border}`,
-                        }}
-                      />
-                    )}
-                  </div>
-                  {step.elementIndex && (
-                    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
-                      💡 Use when locator returns multiple elements (e.g., list items, cards)
-                    </p>
-                  )}
-                </div>
+               {/* ✅ Element Index Selector with Variable Support */}
+<div className="mb-2">
+  <label className="text-xs" style={{ color: defaultTheme.colors.text.secondary }}>
+    Element Index <span className="text-xs" style={{ color: defaultTheme.colors.text.tertiary }}>(for multiple elements)</span>
+  </label>
+  <div className="flex gap-2 items-center">
+    <select
+      value={step.elementIndex || ""}
+      onChange={(e) => {
+        handleStepChange(index, 'elementIndex', e.target.value);
+        // Clear when switching away from custom/variable
+        if (e.target.value !== 'custom' && e.target.value !== 'variable') {
+          handleStepChange(index, 'customIndex', undefined);
+          handleStepChange(index, 'indexVariable', undefined);
+        }
+      }}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">Single element (no index)</option>
+      <option value="first">First [0] → .first()</option>
+      <option value="last">Last → .last()</option>
+      <option value="custom">Custom index → .nth(N)</option>
+      <option value="variable">Variable → .nth(ctx.data.X)</option>
+    </select>
+    
+    {/* Custom numeric index input */}
+    {step.elementIndex === 'custom' && (
+      <input
+        type="number"
+        min="0"
+        value={step.customIndex || 0}
+        onChange={(e) => handleStepChange(index, 'customIndex', parseInt(e.target.value) || 0)}
+        placeholder="0"
+        className="w-20 px-2 py-1 rounded text-sm font-mono"
+        style={{
+          backgroundColor: defaultTheme.colors.background.tertiary,
+          color: defaultTheme.colors.text.primary,
+          border: `1px solid ${defaultTheme.colors.border}`,
+        }}
+      />
+    )}
+    
+{/* Variable selector for dynamic index */}
+{step.elementIndex === 'variable' && (
+  <div className="flex-1 flex gap-2">
+    {/* Dropdown for quick selection */}
+    <select
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      className="flex-1 px-3 py-1 rounded text-sm"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: step.indexVariable ? defaultTheme.colors.accents.yellow : defaultTheme.colors.text.primary,
+        border: `1px solid ${defaultTheme.colors.border}`,
+      }}
+    >
+      <option value="">-- Quick select or type →</option>
+      
+      {/* Test Data Fields (ctx.data) */}
+      {testDataSchema.length > 0 && (
+        <optgroup label="📋 Test Data (ctx.data)">
+          {testDataSchema.map((field, i) => {
+            const fieldName = field.name || field;
+            return (
+              <option key={`data-${i}`} value={`ctx.data.${fieldName}`}>
+                ctx.data.{fieldName}
+              </option>
+            );
+          })}
+        </optgroup>
+      )}
+      
+      {/* Stored Variables from Previous Steps */}
+      {allStoredVariables.length > 0 && (
+        <optgroup label="💾 Stored Variables">
+          {allStoredVariables.map((v, i) => (
+            <option key={`stored-${i}`} value={`storedVars.${v.name}`}>
+              storedVars.{v.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+    
+    {/* Free text input for custom expressions */}
+    <input
+      type="text"
+      value={step.indexVariable || ""}
+      onChange={(e) => handleStepChange(index, 'indexVariable', e.target.value)}
+      placeholder="ctx.data.cardIndex"
+      className="flex-1 px-2 py-1 rounded text-sm font-mono"
+      style={{
+        backgroundColor: defaultTheme.colors.background.tertiary,
+        color: defaultTheme.colors.accents.yellow,
+        border: `1px solid ${defaultTheme.colors.accents.yellow}`,
+      }}
+    />
+  </div>
+)}
+  </div>
+  
+  {step.elementIndex && (
+    <p className="text-xs mt-1" style={{ color: defaultTheme.colors.accents.cyan }}>
+      💡 Use when locator returns multiple elements (e.g., list items, cards)
+    </p>
+  )}
+  
+  {/* Variable index preview */}
+  {step.elementIndex === 'variable' && step.indexVariable && (
+    <div 
+      className="text-xs mt-1 p-1.5 rounded font-mono"
+      style={{ 
+        backgroundColor: `${defaultTheme.colors.accents.yellow}15`,
+        color: defaultTheme.colors.accents.yellow 
+      }}
+    >
+      → .nth({step.indexVariable})
+    </div>
+  )}
+</div>
 
                {/* Code Preview */}
 <div 
@@ -2316,6 +2609,7 @@ const submitData = {
     {step.elementIndex === 'first' ? '.first()' : 
      step.elementIndex === 'last' ? '.last()' : 
      step.elementIndex === 'custom' ? `.nth(${step.customIndex || 0})` :
+     step.elementIndex === 'variable' ? `.nth(${step.indexVariable || 'ctx.data.index'})` :
      `.nth(${step.elementIndex})`}
   </span>
 )}

@@ -450,51 +450,62 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     let useRawValidation = forceRawValidation;
     let rawValidationReason = forceRawValidation ? "forced by user" : null;
 
-    // Only do auto-detection if NOT forced
-    if (!forceRawValidation && hasBlocks) {
-      const screenPomName = (screen.screen || screenKey)
-        .toLowerCase()
-        .replace(/\.(wrapper|screen|page)$/i, "")
-        .replace(/\//g, "");
+    // // Only do auto-detection if NOT forced
+    // if (!forceRawValidation && hasBlocks) {
+    //   const screenPomName = (screen.screen || screenKey)
+    //     .toLowerCase()
+    //     .replace(/\.(wrapper|screen|page)$/i, "")
+    //     .replace(/\//g, "");
 
-      for (const block of screen.blocks) {
-        if (block.enabled === false) continue;
+    //   for (const block of screen.blocks) {
+    //     if (block.enabled === false) continue;
 
-        // Check 1: Custom code blocks always need raw
-        if (block.type === "custom-code" && block.code?.trim()) {
-          useRawValidation = true;
-          rawValidationReason = "custom-code block";
-          break;
-        }
+    //     // Check 1: Custom code blocks always need raw
+    //     if (block.type === "custom-code" && block.code?.trim()) {
+    //       useRawValidation = true;
+    //       rawValidationReason = "custom-code block";
+    //       break;
+    //     }
 
-        // ✅ NEW Check 2: ui-assertion with assertions array needs raw
-        if (
-          block.type === "ui-assertion" &&
-          block.data?.assertions?.length > 0
-        ) {
-          useRawValidation = true;
-          rawValidationReason = "function-based assertions";
-          break;
-        }
+    //     // ✅ NEW Check 2: ui-assertion with assertions array needs raw
+    //     if (
+    //       block.type === "ui-assertion" &&
+    //       block.data?.assertions?.length > 0
+    //     ) {
+    //       useRawValidation = true;
+    //       rawValidationReason = "function-based assertions";
+    //       break;
+    //     }
 
-        // Check 3: Function calls to DIFFERENT POMs need raw
-        if (block.type === "function-call") {
-          const blockInstance = (block.data?.instance || "")
-            .toLowerCase()
-            .replace(/\.(wrapper|screen|page)$/i, "")
-            .replace(/\//g, "");
+    //     // Check 3: Function calls to DIFFERENT POMs need raw
+    //     if (block.type === "function-call") {
+    //       const blockInstance = (block.data?.instance || "")
+    //         .toLowerCase()
+    //         .replace(/\.(wrapper|screen|page)$/i, "")
+    //         .replace(/\//g, "");
 
-          if (
-            blockInstance &&
-            !screenPomName.includes(blockInstance) &&
-            !blockInstance.includes(screenPomName)
-          ) {
-            useRawValidation = true;
-            rawValidationReason = `external function call to ${block.data?.instance}`;
-            break;
-          }
-        }
-      }
+    //       if (
+    //         blockInstance &&
+    //         !screenPomName.includes(blockInstance) &&
+    //         !blockInstance.includes(screenPomName)
+    //       ) {
+    //         useRawValidation = true;
+    //         rawValidationReason = `external function call to ${block.data?.instance}`;
+    //         break;
+    //       }
+    //     }
+    //   }
+    // }
+
+    // ═══════════════════════════════════════════════════════════
+    // ✅ FIX: Force ExpectImplication for WebdriverIO/Appium
+    // Raw validation code uses Playwright-only APIs (.count(), .nth(), .first(), .last())
+    // ExpectImplication is now cross-platform safe!
+    // ═══════════════════════════════════════════════════════════
+    if (!isPlaywright && useRawValidation) {
+      console.log(`      ⚠️ WebdriverIO detected - switching to ExpectImplication (raw validation uses Playwright-only APIs)`);
+      useRawValidation = false;
+      rawValidationReason = null;
     }
 
     console.log(
@@ -504,6 +515,7 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     // ───────────────────────────────────────────────────────
     // Process blocks (for raw mode) OR legacy assertions
     // ───────────────────────────────────────────────────────
+
     let processedBlocks = [];
     let externalPoms = [];
     let legacyAssertions = null;
@@ -584,6 +596,34 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       );
     }
 
+    
+
+   // ───────────────────────────────────────────────────────
+    // Detect if instance is a nested instance
+    // ───────────────────────────────────────────────────────
+    const mainClassName = screen._pomSource?.className || pomClassName;
+    const defaultInstanceName = mainClassName 
+      ? mainClassName.charAt(0).toLowerCase() + mainClassName.slice(1)
+      : this._toCamelCase(screenKey);
+    
+    const configuredInstance = screen.instance || defaultInstanceName;
+    
+    // Is this a nested instance? (different from default)
+    const isNestedInstance = configuredInstance !== defaultInstanceName;
+    const nestedInstanceName = isNestedInstance ? configuredInstance : null;
+    
+    // The main POM instance name (always use default for instantiation)
+    const mainPomInstance = defaultInstanceName;
+
+    console.log(`      📦 Instance detection:`);
+    console.log(`         className: ${mainClassName}`);
+    console.log(`         defaultInstance: ${defaultInstanceName}`);
+    console.log(`         configuredInstance: ${configuredInstance}`);
+    console.log(`         isNested: ${isNestedInstance}`);
+    if (isNestedInstance) {
+      console.log(`         nestedInstance: ${nestedInstanceName}`);
+    }
+
     // ───────────────────────────────────────────────────────
     // Build screen object
     // ───────────────────────────────────────────────────────
@@ -594,7 +634,9 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       // POM info
       pomClassName: pomClassName,
       pomPath: pomPathValue,
-      pomInstance: screen.instance || this._toCamelCase(screenKey),
+      pomInstance: mainPomInstance,  // ✅ CHANGED: Always main instance for new()
+      nestedInstance: nestedInstanceName,  // ✅ NEW: Nested instance if different
+      isNestedInstance: isNestedInstance,  // ✅ NEW: Flag for template
       hasPom: !!pomPathValue,
 
       // Navigation
@@ -631,18 +673,29 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
     });
   }
 
-  // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
   // PASS 2: Sort by order and add position info
   // ═══════════════════════════════════════════════════════════
   screens.sort((a, b) => a.order - b.order);
+
+  // ✅ Track which POM instances have already been created
+  const createdInstances = new Set();
 
   screens.forEach((screen, index) => {
     screen.position = index + 1;
     screen.totalScreens = screens.length;
     screen.isFirst = index === 0;
     screen.isLast = index === screens.length - 1;
-  });
 
+    // ✅ Check if this POM instance was already created by a previous screen
+    if (screen.pomInstance && createdInstances.has(screen.pomInstance)) {
+      screen.skipInstantiation = true;
+      console.log(`      ♻️  Reusing existing instance: ${screen.pomInstance}`);
+    } else if (screen.pomInstance) {
+      screen.skipInstantiation = false;
+      createdInstances.add(screen.pomInstance);
+    }
+  });
   // ═══════════════════════════════════════════════════════════
   // PASS 3: Collect unique POM requires (DEDUPLICATION FIX)
   // ═══════════════════════════════════════════════════════════
@@ -1412,6 +1465,29 @@ if (storeAs && expectCode) {
         break;
       }
 
+        // ═══════════════════════════════════════════════════════════
+      // DATA-ASSERTION BLOCK
+      // ═══════════════════════════════════════════════════════════
+      case "data-assertion": {
+        const assertions = (block.assertions || []).map(assertion => {
+          return {
+            expectCode: this._generateDataAssertionCode(assertion)
+          };
+        });
+        
+        processed.push({
+          blockType: "data-assertion",
+          position: index + 1,
+          description: block.label || block.description || "Data assertions",
+          assertions,
+          enabled: true,
+        });
+        console.log(`   ✅ Added data-assertion block with ${assertions.length} assertions`);
+        break;
+      }
+
+
+      
       // ═══════════════════════════════════════════════════════════
       // CUSTOM-CODE BLOCK
       // ═══════════════════════════════════════════════════════════
@@ -1511,6 +1587,95 @@ if (storeAs && expectCode) {
       normalizedInstance.includes(normalizedScreen) ||
       normalizedScreen.includes(normalizedInstance)
     );
+  }
+
+  /**
+   * Generate assertion code for data-assertion blocks
+   */
+  _generateDataAssertionCode(assertion) {
+    const { left, operator, right, message } = assertion;
+    
+    const leftCode = this._resolveDataAssertionOperand(left);
+    const rightCode = right ? this._resolveDataAssertionOperand(right) : null;
+    
+    switch (operator) {
+      case 'equals':
+        return `expect(${leftCode}).toBe(${rightCode});`;
+      case 'notEquals':
+        return `expect(${leftCode}).not.toBe(${rightCode});`;
+      case 'contains':
+        return `expect(${leftCode}).toContain(${rightCode});`;
+      case 'notContains':
+        return `expect(${leftCode}).not.toContain(${rightCode});`;
+      case 'greaterThan':
+        return `expect(Number(${leftCode})).toBeGreaterThan(Number(${rightCode}));`;
+      case 'lessThan':
+        return `expect(Number(${leftCode})).toBeLessThan(Number(${rightCode}));`;
+      case 'greaterOrEqual':
+        return `expect(Number(${leftCode})).toBeGreaterThanOrEqual(Number(${rightCode}));`;
+      case 'lessOrEqual':
+        return `expect(Number(${leftCode})).toBeLessThanOrEqual(Number(${rightCode}));`;
+      case 'matches':
+        return `expect(${leftCode}).toMatch(${rightCode});`;
+      case 'startsWith':
+        return `expect(String(${leftCode}).startsWith(${rightCode})).toBe(true);`;
+      case 'endsWith':
+        return `expect(String(${leftCode}).endsWith(${rightCode})).toBe(true);`;
+      case 'isDefined':
+        return `expect(${leftCode}).toBeDefined();`;
+      case 'isUndefined':
+        return `expect(${leftCode}).toBeUndefined();`;
+      case 'isTruthy':
+        return `expect(${leftCode}).toBeTruthy();`;
+      case 'isFalsy':
+        return `expect(${leftCode}).toBeFalsy();`;
+      case 'lengthEquals':
+        return `expect(${leftCode}.length).toBe(${rightCode});`;
+      case 'lengthGreaterThan':
+        return `expect(${leftCode}.length).toBeGreaterThan(${rightCode});`;
+      default:
+        return `// Unknown operator: ${operator}`;
+    }
+  }
+
+  /**
+   * Resolve a data assertion operand to code
+   */
+  _resolveDataAssertionOperand(operand) {
+    if (!operand) return 'undefined';
+    
+    // Handle stored variables: {{varName}}
+    if (operand.startsWith('{{') && operand.endsWith('}}')) {
+      const varPath = operand.slice(2, -2);
+      return `storedVars.${varPath}`;
+    }
+    
+    // Handle ctx.data.field syntax
+    if (operand.startsWith('ctx.data.')) {
+      return operand;
+    }
+    
+    // Handle regex patterns
+    if (operand.startsWith('/') && operand.lastIndexOf('/') > 0) {
+      return operand;
+    }
+    
+    // Handle numeric literals
+    if (!isNaN(operand) && operand.trim() !== '') {
+      return operand;
+    }
+    
+    // Handle boolean literals
+    if (operand === 'true' || operand === 'false') {
+      return operand;
+    }
+    
+    // Default: treat as string literal
+    if (!operand.startsWith("'") && !operand.startsWith('"')) {
+      return `'${operand.replace(/'/g, "\\'")}'`;
+    }
+    
+    return operand;
   }
 
  /**
@@ -4169,22 +4334,62 @@ _extractDeltaFields(entryAssign, targetStatus) {
     // (Don't call _extractMetadata again - that causes recursion!)
     const entity = this.currentMetadata?.meta?.entity || null;
 
-    // Process steps with storeAs parsing, args format, AND entity
-    if (processed.steps) {
-      const storeAsFields = []; // Collect for delta generation
+   // Process steps with storeAs parsing, args format, AND entity
+if (processed.steps) {
+  const storeAsFields = []; // Collect for delta generation
 
-      processed.steps = processed.steps.map((step, index) => {
-        const argsArray = Array.isArray(step.args)
-          ? step.args
-          : (step.args || "")
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
+  processed.steps = processed.steps.map((step, index) => {
+    // ✅ Helper: Convert {{ctx.data.x}} to ctx.data.x (valid JS)
+    const resolveArg = (arg) => {
+      if (typeof arg !== 'string') return String(arg);
+      const trimmed = arg.trim();
+      
+      // Template variable: {{something}} → something
+      const templateMatch = trimmed.match(/^\{\{(.+?)\}\}$/);
+      if (templateMatch) {
+        return templateMatch[1].trim();
+      }
+      
+      // Number - use as-is
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        return trimmed;
+      }
+      
+      // Boolean - use as-is
+      if (trimmed === 'true' || trimmed === 'false') {
+        return trimmed;
+      }
+      
+      // null/undefined - use as-is
+      if (trimmed === 'null' || trimmed === 'undefined') {
+        return trimmed;
+      }
+      
+      // Object literal (starts with { but not {{)
+      if (trimmed.startsWith('{') && !trimmed.startsWith('{{')) {
+        return trimmed;
+      }
+      
+      // Already a JS expression (has dots, starts with ctx., etc.)
+      if (trimmed.startsWith('ctx.') || trimmed.startsWith('result.') || trimmed.startsWith('storedVars.')) {
+        return trimmed;
+      }
+      
+      // Literal string - wrap in quotes
+      const escaped = trimmed.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `'${escaped}'`;
+    };
 
-        const argsString = Array.isArray(step.args)
-          ? step.args.join(", ")
-          : step.args || "";
+    const rawArgsArray = Array.isArray(step.args)
+      ? step.args
+      : (step.args || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
 
+    // ✅ Resolve each arg to valid JS
+    const argsArray = rawArgsArray.map(resolveArg);
+    const argsString = argsArray.join(", ");
         // ✅ Parse storeAs config
         const storeAsConfig = this._parseStoreAsConfig(step.storeAs);
 

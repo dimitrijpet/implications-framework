@@ -158,6 +158,7 @@ export class LockService {
   }
   
   // Get lock status for tests belonging to a specific state
+  // ✅ FIXED: Only returns tests that actually exist on disk
   async getLocksForState(stateName, setupEntries = []) {
     const data = await this.loadLocks();
     const results = [];
@@ -166,19 +167,53 @@ export class LockService {
       if (!entry.testFile) continue;
       
       const normalizedPath = this._normalizePath(entry.testFile);
-      const lockInfo = data.locks[normalizedPath];
+      const fullPath = path.join(this.projectPath, normalizedPath);
       
-      results.push({
-        testFile: entry.testFile,
-        actionName: entry.actionName,
-        platform: entry.platform,
-        locked: lockInfo?.locked === true,
-        lockedAt: lockInfo?.lockedAt || null,
-        reason: lockInfo?.reason || null
-      });
+      // ✅ Check if test file actually exists
+      let exists = false;
+      try {
+        await fs.access(fullPath);
+        exists = true;
+      } catch {
+        exists = false;
+      }
+      
+      // Only include tests that exist on disk
+      if (exists) {
+        const lockInfo = data.locks[normalizedPath];
+        
+        results.push({
+          testFile: entry.testFile,
+          actionName: entry.actionName,
+          platform: entry.platform,
+          source: entry.source,
+          fromState: entry.fromState,
+          event: entry.event,
+          locked: lockInfo?.locked === true,
+          lockedAt: lockInfo?.lockedAt || null,
+          reason: lockInfo?.reason || null,
+          exists: true
+        });
+      }
+      // Skip files that don't exist
     }
     
+    console.log(`🔒 Found ${results.length} existing tests for state "${stateName}" (checked ${setupEntries.length} entries)`);
+    
     return results;
+  }
+  
+  // ✅ NEW: Check if a test file exists on disk
+  async testExists(testPath) {
+    const normalizedPath = this._normalizePath(testPath);
+    const fullPath = path.join(this.projectPath, normalizedPath);
+    
+    try {
+      await fs.access(fullPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
   
   _normalizePath(testPath) {

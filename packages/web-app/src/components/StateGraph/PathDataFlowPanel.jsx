@@ -11,13 +11,44 @@ export default function PathDataFlowPanel({
   currentState,
   allTransitions,
   allStates,
-  startState = 'initial',
+  startState: providedStartState = 'initial',
   theme,
   loadedTestData
 }) {
   const [expanded, setExpanded] = useState(false);
   const [selectedPathIndex, setSelectedPathIndex] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
+
+  // Auto-detect start state if provided one doesn't exist
+  const startState = useMemo(() => {
+    if (!allTransitions?.length) return providedStartState;
+    
+    const fromStates = new Set(allTransitions.map(t => t.from.toLowerCase()));
+    const toStates = new Set(allTransitions.map(t => t.to.toLowerCase()));
+    
+    // Check if provided start state exists
+    if (fromStates.has(providedStartState.toLowerCase())) {
+      return providedStartState;
+    }
+    
+    // Try common alternatives
+    const alternatives = ['init', 'initial', 'start', 'home', 'landing_page', 'landing'];
+    for (const alt of alternatives) {
+      if (fromStates.has(alt.toLowerCase())) {
+        console.log(`🔄 Auto-detected start state: "${alt}" (instead of "${providedStartState}")`);
+        return alt;
+      }
+    }
+    
+    // Find states with no incoming transitions (root states)
+    const rootStates = [...fromStates].filter(s => !toStates.has(s));
+    if (rootStates.length > 0) {
+      console.log(`🔄 Auto-detected root state: "${rootStates[0]}"`);
+      return rootStates[0];
+    }
+    
+    return providedStartState;
+  }, [allTransitions, providedStartState]);
 
   // Build testData keys set for validation
   const testDataKeys = useMemo(() => {
@@ -50,21 +81,27 @@ export default function PathDataFlowPanel({
 
   // Find all paths from start to current state
   const pathAnalysis = useMemo(() => {
+    console.log('🔍 PathDataFlowPanel DEBUG:');
+    console.log('   currentState?.meta?.status:', currentState?.meta?.status);
+    console.log('   allTransitions?.length:', allTransitions?.length);
+    console.log('   startState:', startState);
+    
     if (!currentState?.meta?.status || !allTransitions?.length) {
+      console.log('   ❌ EARLY RETURN: missing status or transitions');
       return null;
     }
 
     const targetState = currentState.meta.status;
     
-    // Don't analyze if we're at the start state
     if (targetState.toLowerCase() === startState.toLowerCase()) {
+      console.log('   ❌ EARLY RETURN: target is start state');
       return null;
     }
 
     console.log(`🛤️ Finding paths from "${startState}" to "${targetState}"...`);
     
     const paths = findAllPaths(startState, targetState, allTransitions, 8);
-    
+      
     console.log(`   Found ${paths.length} paths`);
 
     if (paths.length === 0) {

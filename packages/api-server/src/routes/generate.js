@@ -10,82 +10,133 @@ import { LockService } from '../services/lockService.js';
 const router = express.Router();
 
 /**
- * Update Implication file's setup.testFile and triggeredBy to point to generated test
+ * Update Implication file's setup entry for the specific transition
  * 
- * This ensures TestPlanner can find the correct test file when resolving prerequisites.
- * 
- * @param {string} implFilePath - Path to the Implication file
- * @param {string} testFileName - Generated test filename (e.g., AgencySelectedViaLanding-SELECTAGENCY-Web-UNIT.spec.js)
- * @param {object} transition - Transition object with event, platform, etc.
- * @param {string} implDir - Directory containing the implication files
+ * FIXED: Now matches by previousStatus + requires instead of blindly replacing first entry
  */
 async function updateImplicationSetup(implFilePath, testFileName, transition, implDir) {
   try {
     const absolutePath = path.resolve(implFilePath);
     let content = await fs.readFile(absolutePath, 'utf-8');
     
-    // Build the full test file path (relative from project root)
     const testFileRelative = `${implDir}/${testFileName}`.replace(/^\//, '');
     
     // Parse filename to get actionName
-    // AgencySelectedViaLanding-SELECTAGENCY-Web-UNIT.spec.js → agencySelectedViaLanding
     const baseFileName = testFileName
-      .replace(/-UNIT\.spec\.js$/, '')  // Remove suffix
-      .split('-')[0];  // Get first part (before event name)
-    
+      .replace(/-UNIT\.spec\.js$/, '')
+      .split('-')[0];
     const actionName = baseFileName.charAt(0).toLowerCase() + baseFileName.slice(1);
     
     console.log(`\n   📝 Updating ${path.basename(implFilePath)}:`);
     console.log(`      testFile: ${testFileRelative}`);
     console.log(`      actionName: ${actionName}`);
+    console.log(`      fromState: ${transition.fromState}`);
+    console.log(`      requires: ${JSON.stringify(transition.conditions?.requires || {})}`);
     
-    let updated = false;
+    // ═══════════════════════════════════════════════════════════
+    // ✅ FIX: Find the SPECIFIC setup entry to update
+    // Match by previousStatus AND requires
+    // ═══════════════════════════════════════════════════════════
     
-    // Strategy 1: Replace existing setup block using regex
-    // Match: setup: [{ testFile: '...', actionName: '...', platform: '...' }]
-    const setupBlockRegex = /(setup:\s*\[\s*\{[^}]*testFile:\s*['"])[^'"]+(['"][^}]*actionName:\s*['"])[^'"]+(['"])/;
+    const previousStatus = transition.fromState;
+    const requires = transition.conditions?.requires || {};
     
-    if (setupBlockRegex.test(content)) {
-      content = content.replace(setupBlockRegex, `$1${testFileRelative}$2${actionName}$3`);
-      updated = true;
-    } else {
-      // Strategy 2: Replace testFile and actionName separately
-      const testFileRegex = /(setup:\s*\[\s*\{[\s\S]*?testFile:\s*['"])[^'"]+(['"])/;
-      if (testFileRegex.test(content)) {
-        content = content.replace(testFileRegex, `$1${testFileRelative}$2`);
-        updated = true;
+    if (!previousStatus) {
+      console.log(`      ⚠️ No fromState in transition, skipping update`);
+      return;
+    }
+    
+    // Parse the setup array to find the right entry
+    const setupMatch = content.match(/setup:\s*\[([\s\S]*?)\]/);
+    
+    if (!setupMatch) {
+      console.log(`      ⚠️ No setup block found`);
+      return;
+    }
+    
+    const setupContent = setupMatch[1];
+    
+    // Find all setup entries
+    const entryRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+    const entries = setupContent.match(entryRegex) || [];
+    
+    let targetEntryIndex = -1;
+    let targetEntry = null;
+    
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      
+      // Check if this entry matches our previousStatus
+      const prevStatusMatch = entry.match(/previousStatus:\s*['"]([^'"]+)['"]/);
+      if (!prevStatusMatch || prevStatusMatch[1] !== previousStatus) {
+        continue;
       }
       
-      const actionNameRegex = /(setup:\s*\[\s*\{[\s\S]*?actionName:\s*['"])[^'"]+(['"])/;
-      if (actionNameRegex.test(content)) {
-        content = content.replace(actionNameRegex, `$1${actionName}$2`);
-        updated = true;
+      // Check requires match
+      const requiresMatch = entry.match(/requires:\s*\{([^}]*)\}/);
+      const entryRequires = {};
+      
+      if (requiresMatch) {
+        // Parse requires object
+        const reqContent = requiresMatch[1];
+        const reqPairs = reqContent.match(/(\w+):\s*(true|false|'[^']*'|"[^"]*"|\d+)/g) || [];
+        
+        for (const pair of reqPairs) {
+          const [key, value] = pair.split(':').map(s => s.trim());
+          if (value === 'true') entryRequires[key] = true;
+          else if (value === 'false') entryRequires[key] = false;
+          else if (value.startsWith("'") || value.startsWith('"')) {
+            entryRequires[key] = value.slice(1, -1);
+          } else {
+            entryRequires[key] = Number(value);
+          }
+        }
+      }
+      
+      // Compare requires
+      const requiresKeys = Object.keys(requires);
+      const entryRequiresKeys = Object.keys(entryRequires);
+      
+      // If both have no requires, or if requires match
+      const bothEmpty = requiresKeys.length === 0 && entryRequiresKeys.length === 0;
+      const requiresMatch2 = JSON.stringify(requires) === JSON.stringify(entryRequires);
+      
+      if (bothEmpty || requiresMatch2) {
+        targetEntryIndex = i;
+        targetEntry = entry;
+        console.log(`      ✅ Found matching entry at index ${i}`);
+        break;
       }
     }
     
-    // Update triggeredBy require path and function name
-    // Match: require('./SomeFile.spec.js') and the destructured function name
-    const triggeredByRequireRegex = /(require\(\s*['"]\.\/)[^'"]+Implications-[^'"]+\.spec\.js(['"])/g;
-    if (triggeredByRequireRegex.test(content)) {
-      content = content.replace(triggeredByRequireRegex, `$1${testFileName}$2`);
-      updated = true;
+    if (targetEntryIndex === -1 || !targetEntry) {
+      console.log(`      ⚠️ No matching setup entry found for previousStatus="${previousStatus}" with requires=${JSON.stringify(requires)}`);
+      return;
     }
     
-    // Also update the destructured function name in triggeredBy
-    // Match: const { old_action_name } = require(...)
-    const triggeredByFunctionRegex = /(const\s*\{\s*)[a-zA-Z_]+(\s*\}\s*=\s*require\(['"]\.\/[^'"]*['"])/g;
-    content = content.replace(triggeredByFunctionRegex, `$1${actionName}$2`);
+    // ═══════════════════════════════════════════════════════════
+    // Update ONLY the matched entry
+    // ═══════════════════════════════════════════════════════════
     
-    // Update the return call: return old_action_name(testDataPath, options)
-    const returnCallRegex = /(return\s+)[a-zA-Z_]+(\(testDataPath,\s*options\))/g;
-    content = content.replace(returnCallRegex, `$1${actionName}$2`);
+    let updatedEntry = targetEntry;
     
-    if (updated) {
-      await fs.writeFile(absolutePath, content, 'utf-8');
-      console.log(`      ✅ Updated successfully`);
-    } else {
-      console.log(`      ⚠️ No setup block found to update`);
-    }
+    // Replace testFile
+    updatedEntry = updatedEntry.replace(
+      /(testFile:\s*['"])[^'"]+(['"])/,
+      `$1${testFileRelative}$2`
+    );
+    
+    // Replace actionName
+    updatedEntry = updatedEntry.replace(
+      /(actionName:\s*['"])[^'"]+(['"])/,
+      `$1${actionName}$2`
+    );
+    
+    // Replace in content
+    content = content.replace(targetEntry, updatedEntry);
+    
+    await fs.writeFile(absolutePath, content, 'utf-8');
+    console.log(`      ✅ Updated entry ${targetEntryIndex} successfully`);
     
   } catch (error) {
     console.warn(`      ⚠️ Could not update implication: ${error.message}`);

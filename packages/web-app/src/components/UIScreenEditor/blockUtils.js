@@ -7,7 +7,8 @@
 export const BLOCK_TYPES = {
   UI_ASSERTION: 'ui-assertion',
   CUSTOM_CODE: 'custom-code',
-  FUNCTION_CALL: 'function-call'
+  FUNCTION_CALL: 'function-call',
+  DATA_ASSERTION: 'data-assertion'  // ← ADD THIS LINE
 };
 
 /**
@@ -31,6 +32,13 @@ export const BLOCK_TYPE_META = {
     label: 'Function Call',
     color: 'purple',
     description: 'Call a POM method'
+  },
+  // ↓↓↓ ADD THIS ENTIRE BLOCK ↓↓↓
+  [BLOCK_TYPES.DATA_ASSERTION]: {
+    icon: '🔍',
+    label: 'Data Assertion',
+    color: 'yellow',
+    description: 'Compare stored variables and values'
   }
 };
 
@@ -104,6 +112,19 @@ export const createFunctionCallBlock = (data = {}) => ({
     await: data.await ?? true,
     storeAs: data.storeAs || ''
   }
+});
+
+/**
+ * Create a new Data Assertion block
+ */
+export const createDataAssertionBlock = (data = {}) => ({
+  id: generateBlockId(BLOCK_TYPES.DATA_ASSERTION),
+  type: BLOCK_TYPES.DATA_ASSERTION,
+  label: data.label || 'Data Assertion',
+  order: data.order ?? 0,
+  expanded: true,
+  enabled: true,
+  assertions: data.assertions || []
 });
 
 /**
@@ -284,11 +305,26 @@ export const findBlockById = (blocks, id) => {
 
 /**
  * Update a block in the array
+ * ✅ FIXED: Deep merge the data object to preserve nested properties like assertion
  */
 export const updateBlock = (blocks, id, updates) => {
-  return blocks.map(block => 
-    block.id === id ? { ...block, ...updates } : block
-  );
+  return blocks.map(block => {
+    if (block.id !== id) return block;
+    
+    // ✅ Deep merge data object if present
+    if (updates.data && block.data) {
+      return {
+        ...block,
+        ...updates,
+        data: {
+          ...block.data,
+          ...updates.data
+        }
+      };
+    }
+    
+    return { ...block, ...updates };
+  });
 };
 
 /**
