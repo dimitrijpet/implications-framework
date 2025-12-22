@@ -135,8 +135,10 @@ export default function PlatformSectionWithOrdering({
       screenId, 
       pomName, 
       instanceName,
-      projectPath,
-      hasProjectPath: !!projectPath 
+      navigation: screen.navigation,
+      hasNavigation: !!screen.navigation,
+      screenKeys: Object.keys(screen),  // ✅ This will show ALL keys on screen object
+      fullScreen: screen
     });
 
     return (
@@ -167,30 +169,46 @@ export default function PlatformSectionWithOrdering({
           />
         )}
         
-        {/* Show navigation in read mode */}
-        {!editMode && screen.navigation && screen.navigation.method && (
-          <div 
-            className="p-2 rounded text-xs font-mono"
-            style={{ 
-              background: `${theme.colors.accents.cyan || theme.colors.accents.blue}10`,
-              border: `1px solid ${theme.colors.accents.cyan || theme.colors.accents.blue}40`
-            }}
-          >
-            <span style={{ color: theme.colors.text.tertiary }}>🧭 Navigation:</span>{' '}
-            <span style={{ color: theme.colors.accents.green }}>
-              {screen.navigation.instanceName || screen.navigation.pomName}
-            </span>
-            <span style={{ color: theme.colors.text.primary }}>.</span>
-            <span style={{ color: theme.colors.accents.yellow }}>
-              {screen.navigation.method}
-            </span>
-            <span style={{ color: theme.colors.text.primary }}>(</span>
-            <span style={{ color: theme.colors.accents.purple }}>
-              {(screen.navigation.args || []).filter(a => a).join(', ')}
-            </span>
-            <span style={{ color: theme.colors.text.primary }}>)</span>
-          </div>
-        )}
+{/* Show navigation in read mode */}
+{!editMode && screen.navigation && screen.navigation.method && (
+  <div 
+    className="p-2 rounded text-xs font-mono"
+    style={{ 
+      background: `${theme.colors.accents.cyan || theme.colors.accents.blue}10`,
+      border: `1px solid ${theme.colors.accents.cyan || theme.colors.accents.blue}40`
+    }}
+  >
+    <span style={{ color: theme.colors.text.tertiary }}>🧭 Navigation:</span>{' '}
+    <span style={{ color: theme.colors.accents.green }}>
+      {screen.navigation.instanceName || screen.navigation.pomName}
+    </span>
+    <span style={{ color: theme.colors.text.primary }}>.</span>
+    <span style={{ color: theme.colors.accents.yellow }}>
+      {screen.navigation.method}
+    </span>
+    <span style={{ color: theme.colors.text.primary }}>(</span>
+    <span style={{ color: theme.colors.accents.purple }}>
+      {(screen.navigation.args || []).filter(a => a).join(', ')}
+    </span>
+    <span style={{ color: theme.colors.text.primary }}>)</span>
+  </div>
+)}
+
+{/* Warning for missing navigation (skip first screen - order 0) */}
+{!editMode && (!screen.navigation || !screen.navigation.method) && (screen.order > 0) && (
+  <div 
+    className="p-2 rounded text-xs flex items-center gap-2"
+    style={{ 
+      background: `${theme.colors.accents.orange}15`,
+      border: `1px dashed ${theme.colors.accents.orange}50`,
+      color: theme.colors.accents.orange
+    }}
+  >
+    <span>⚠️</span>
+    <span>No navigation configured - test may fail if screen isn't already visible</span>
+  </div>
+)}
+
 
         {/* Block List */}
         <BlockList
@@ -201,6 +219,7 @@ export default function PlatformSectionWithOrdering({
           pomName={pomName}
           instanceName={instanceName}
           projectPath={projectPath}
+          platform={platformName}
           storedVariables={storedVariables}
         />
 

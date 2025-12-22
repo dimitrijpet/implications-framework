@@ -57,43 +57,42 @@ export default function FieldAutocomplete({
     
     fetchPOMDetails();
   }, [projectPath, pomName]);
+// ✨ ENHANCED: Merge POM fields + function names
+const functionNamesKey = JSON.stringify(Object.keys(functions || {}).sort());
 
-  // ✨ ENHANCED: Merge POM fields + function names
- const functionNamesKey = JSON.stringify(Object.keys(functions || {}).sort());
+useEffect(() => {
+  if (!pomDetails) {
+    setAvailableFields([]);
+    return;
+  }
   
-  useEffect(() => {
-    if (!pomDetails) {
-      setAvailableFields([]);
-      return;
-    }
-    
-    // Get POM fields
-    let pomFields = [];
-    if (instanceName && pomDetails.instancePaths[instanceName]) {
-      pomFields = pomDetails.instancePaths[instanceName];
-    } else {
-      const allFields = new Set();
-      Object.values(pomDetails.instancePaths || {}).forEach(paths => {
-        paths.forEach(path => allFields.add(path));
-      });
-      pomFields = Array.from(allFields).sort();
-    }
-    
-    // ✨ Add function names
-    const functionNames = Object.keys(functions || {});
-    
-    console.log('🔍 FieldAutocomplete merging:', {
-      pomFields: pomFields.length,
-      functionNames: functionNames.length,
-      functions: functionNames,
-      instanceName
+  let pomFields = [];
+  
+  // ✅ FIX: Check if instanceName is in instancePaths
+  // If not, it's probably the main class - use 'default'
+  const instanceKey = pomDetails.instancePaths?.[instanceName] 
+    ? instanceName 
+    : 'default';
+  
+  if (pomDetails.instancePaths?.[instanceKey]) {
+    pomFields = pomDetails.instancePaths[instanceKey];
+    console.log(`📍 Using locators from "${instanceKey}":`, pomFields.length);
+  } else {
+    // Fallback: merge all
+    const allFields = new Set();
+    Object.values(pomDetails.instancePaths || {}).forEach(paths => {
+      paths.forEach(path => allFields.add(path));
     });
-    
-    const allFields = [...functionNames, ...pomFields];
-    setAvailableFields(allFields);
-    
-    console.log('📋 Available fields:', allFields.length);
-  }, [pomDetails, instanceName, functionNamesKey]);
+    pomFields = Array.from(allFields).sort();
+    console.log(`📍 Fallback - using all locators:`, pomFields.length);
+  }
+  
+  const functionNames = Object.keys(functions || {});
+  const allFields = [...functionNames, ...pomFields];
+  setAvailableFields(allFields);
+  
+  console.log('📋 Total available fields:', allFields.length);
+}, [pomDetails, instanceName, functionNamesKey]);
 
   // Validate field when it changes
   useEffect(() => {

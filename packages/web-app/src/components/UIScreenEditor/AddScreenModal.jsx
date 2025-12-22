@@ -1,6 +1,7 @@
 /**
  * AddScreenModal - Enhanced Version
  * ✅ Platform selection
+ * ✅ Instance selection (nested instance support)
  * ✅ Working field autocomplete
  * ✅ Uses existing POM API
  */
@@ -17,11 +18,11 @@ export default function AddScreenModal({
   onClose, 
   onAdd,
   projectPath,
-  // ❌ REMOVE: availablePlatforms,  - We'll load from config
   existingScreens = {}
 }) {
   const [selectedPlatform, setSelectedPlatform] = useState('');
   const [selectedPOM, setSelectedPOM] = useState('');
+  const [selectedInstance, setSelectedInstance] = useState('');  // ✅ NEW
   const [description, setDescription] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('simple');
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,20 +31,32 @@ export default function AddScreenModal({
   // POM fetching
   const [availablePOMs, setAvailablePOMs] = useState([]);
   const [loadingPOMs, setLoadingPOMs] = useState(false);
+  
+  // ✅ NEW: Instance fetching
+  const [availableInstances, setAvailableInstances] = useState([]);
+  const [loadingInstances, setLoadingInstances] = useState(false);
 
-  // ✅ ADD: Load platforms from config
   const { platforms: availablePlatforms, loading: platformsLoading } = useProjectConfig(projectPath);
 
   const templates = getAllTemplates();
 
-  // ✅ UPDATED: Fetch POMs when modal opens OR when platform changes
+  // Fetch POMs when modal opens OR when platform changes
   useEffect(() => {
     if (isOpen && projectPath) {
       fetchAvailablePOMs(selectedPlatform);
     }
   }, [isOpen, projectPath, selectedPlatform]);
 
-  // ✅ UPDATED: Accept platform parameter
+  // ✅ NEW: Fetch instances when POM is selected
+  useEffect(() => {
+    if (selectedPOM && projectPath) {
+      fetchAvailableInstances();
+    } else {
+      setAvailableInstances([]);
+      setSelectedInstance('');
+    }
+  }, [selectedPOM, selectedPlatform, projectPath]);
+
   const fetchAvailablePOMs = async (platform) => {
     setLoadingPOMs(true);
     try {
@@ -84,6 +97,73 @@ export default function AddScreenModal({
     }
   };
 
+  // ✅ NEW: Fetch available instances for selected POM
+  const fetchAvailableInstances = async () => {
+    setLoadingInstances(true);
+    try {
+      const selected = availablePOMs.find(p => p.name === selectedPOM);
+      if (!selected) {
+        setAvailableInstances([]);
+        return;
+      }
+
+      let url = `${API_URL}/api/poms/${encodeURIComponent(selectedPOM)}?projectPath=${encodeURIComponent(projectPath)}`;
+      if (selectedPlatform) {
+        url += `&platform=${encodeURIComponent(selectedPlatform)}`;
+      }
+      if (selected.path) {
+        url += `&pomPath=${encodeURIComponent(selected.path)}`;
+      }
+
+      const response = await fetch(url);
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Build instance list: default (main class) + nested instances
+        const instances = [];
+        
+        // Add default (main class getters)
+        const defaultName = selected.className 
+          ? selected.className.charAt(0).toLowerCase() + selected.className.slice(1)
+          : 'default';
+        
+        instances.push({
+          name: defaultName,
+          displayName: `${selected.className || selected.name} (main)`,
+          isDefault: true,
+          locatorCount: data.instancePaths?.default?.length || 0
+        });
+        
+        // Add nested instances
+        if (data.instances && Array.isArray(data.instances)) {
+          for (const inst of data.instances) {
+            instances.push({
+              name: inst.name,
+              displayName: `${inst.name} (${inst.className})`,
+              className: inst.className,
+              isDefault: false,
+              locatorCount: data.instancePaths?.[inst.name]?.length || 0
+            });
+          }
+        }
+        
+        console.log(`✅ Loaded ${instances.length} instance(s) for ${selectedPOM}`);
+        setAvailableInstances(instances);
+        
+        // Auto-select default instance
+        setSelectedInstance(defaultName);
+      } else {
+        setAvailableInstances([]);
+      }
+    } catch (error) {
+      console.error('Error fetching instances:', error);
+      setAvailableInstances([]);
+    } finally {
+      setLoadingInstances(false);
+    }
+  };
+
   // Filter POMs by search
   const filteredPOMs = React.useMemo(() => {
     if (!searchQuery) return availablePOMs;
@@ -100,39 +180,68 @@ export default function AddScreenModal({
   }, [availablePOMs, searchQuery]);
 
   // Reset form when modal opens
-useEffect(() => {
-  if (isOpen) {
-    // ✅ Auto-select first platform if only one
-    if (availablePlatforms && availablePlatforms.length === 1) {
-      setSelectedPlatform(availablePlatforms[0].name);
-    } else {
-      setSelectedPlatform('');
+  useEffect(() => {
+    if (isOpen) {
+      if (availablePlatforms && availablePlatforms.length === 1) {
+        setSelectedPlatform(availablePlatforms[0].name);
+      } else {
+        setSelectedPlatform('');
+      }
+      setSelectedPOM('');
+      setSelectedInstance('');  // ✅ Reset instance
+      setDescription('');
+      setSelectedTemplate('simple');
+      setSearchQuery('');
+      setValidation({ valid: false, errors: [] });
     }
-    setSelectedPOM('');
-    setDescription('');
-    setSelectedTemplate('simple');
-    setSearchQuery('');
-    setValidation({ valid: false, errors: [] });
-  }
-}, [isOpen, availablePlatforms]);
+  }, [isOpen, availablePlatforms]);
 
-  // Validate selected POM
+  // ✅ UPDATED: Validate selected POM + Instance combo
   useEffect(() => {
     if (selectedPOM && selectedPlatform) {
       const selected = availablePOMs.find(p => p.name === selectedPOM);
       if (selected) {
         const screenName = selected.className || selected.name.replace(/\.(screen|modal|wrapper)$/i, '');
+        const defaultInstanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);
         
-        // ✅ Check against screens in selected platform only
+        // Determine if this is a nested instance
+        const isNestedInstance = selectedInstance && selectedInstance !== defaultInstanceName;
+        
+        // ✅ Build unique key: ClassName or ClassName_instanceName for nested
+        const uniqueKey = isNestedInstance 
+          ? `${screenName}_${selectedInstance}`
+          : screenName;
+        
         const platformScreens = existingScreens[selectedPlatform] || {};
-        const result = validateScreenName(screenName, selectedPlatform, platformScreens);
-        setValidation(result);
+        
+        // Check if this exact combo already exists
+        const isDuplicate = Object.keys(platformScreens).some(key => {
+          // Exact key match
+          if (key === uniqueKey) return true;
+          
+          // Also check if same class + same instance
+          const existing = platformScreens[key];
+          if (existing._pomSource?.className === selected.className) {
+            return existing.instance === selectedInstance;
+          }
+          return false;
+        });
+        
+        if (isDuplicate) {
+          setValidation({ 
+            valid: false, 
+            errors: [`${screenName} with instance "${selectedInstance}" already exists in ${selectedPlatform}`] 
+          });
+        } else {
+          setValidation({ valid: true, errors: [] });
+        }
       }
     } else {
       setValidation({ valid: false, errors: [] });
     }
-  }, [selectedPOM, selectedPlatform, existingScreens, availablePOMs]);
+  }, [selectedPOM, selectedPlatform, selectedInstance, existingScreens, availablePOMs]);
 
+  // ✅ UPDATED: handleSubmit with instance support
   const handleSubmit = (e) => {
     e.preventDefault();
     
@@ -143,35 +252,42 @@ useEffect(() => {
     const selected = availablePOMs.find(p => p.name === selectedPOM);
     if (!selected) return;
 
-    const screenName = selected.className || selected.name.replace(/\.(screen|modal|wrapper)$/i, '');
+    const screenClassName = selected.className || selected.name.replace(/\.(screen|modal|wrapper)$/i, '');
+    const defaultInstanceName = screenClassName.charAt(0).toLowerCase() + screenClassName.slice(1);
+    
+    // Determine if nested instance
+    const isNestedInstance = selectedInstance && selectedInstance !== defaultInstanceName;
+    
+    // ✅ Build unique screen key
+    const screenKey = isNestedInstance 
+      ? `${screenClassName}_${selectedInstance}`
+      : screenClassName;
 
     // Create screen from template
     const newScreen = createScreenFromTemplate(
-  selectedTemplate,
-  screenName,
-  description.trim() || `${selected.className || screenName} from ${selected.path}`
-);
+      selectedTemplate,
+      screenKey,
+      description.trim() || `${screenClassName} ${isNestedInstance ? `(${selectedInstance})` : ''} from ${selected.path}`
+    );
 
-// ✅ FIX: Remove .js extension and set instance name
-const screenFile = selected.name.replace(/\.js$/, '');  // "searchBar.wrapper"
-const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);  // "roundTrip"
+    const screenFile = selected.name.replace(/\.js$/, '');
+    
+    newScreen.screen = screenFile;
+    newScreen.instance = selectedInstance || defaultInstanceName;  // ✅ Use selected instance
+    newScreen._pomSource = {
+      path: selected.path,
+      name: selected.name,
+      className: selected.className,
+      methods: selected.methods || [],
+      fields: selected.fields || []
+    };
 
-newScreen.screen = screenFile;      // ✅ Without .js
-newScreen.instance = instanceName;  // ✅ Add instance
-newScreen._pomSource = {
-  path: selected.path,
-  name: selected.name,
-  className: selected.className,
-  methods: selected.methods || [],
-  fields: selected.fields || []
-};
-
-console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
-console.log('📦 newScreen data:', JSON.stringify(newScreen, null, 2));  // ✅ ADD THIS
-onAdd(selectedPlatform, screenName, newScreen);
-
-    console.log('✅ Adding screen:', screenName, 'to platform:', selectedPlatform);
-    onAdd(selectedPlatform, screenName, newScreen);
+    console.log('✅ Adding screen:', screenKey, 'to platform:', selectedPlatform);
+    console.log('   Instance:', newScreen.instance);
+    console.log('   Is nested:', isNestedInstance);
+    console.log('📦 newScreen data:', JSON.stringify(newScreen, null, 2));
+    
+    onAdd(selectedPlatform, screenKey, newScreen);
     onClose();
   };
 
@@ -192,7 +308,7 @@ onAdd(selectedPlatform, screenName, newScreen);
 
   if (!isOpen) return null;
 
-  const canSubmit = validation.valid && selectedPOM && selectedPlatform;
+  const canSubmit = validation.valid && selectedPOM && selectedPlatform && selectedInstance;
 
   return (
     <div 
@@ -209,21 +325,21 @@ onAdd(selectedPlatform, screenName, newScreen);
           <h2 className="text-xl font-semibold text-white">
             Add UI Screen
           </h2>
-        {loadingPOMs || platformsLoading ? (
-  <p className="text-sm text-gray-400 mt-1">
-    ⏳ Loading...
-  </p>
-) : (
-  <p className="text-sm text-gray-400 mt-1">
-    Select platform and screen object ({availablePOMs.length} POMs available)
-  </p>
-)}
+          {loadingPOMs || platformsLoading ? (
+            <p className="text-sm text-gray-400 mt-1">
+              ⏳ Loading...
+            </p>
+          ) : (
+            <p className="text-sm text-gray-400 mt-1">
+              Select platform, screen object, and instance ({availablePOMs.length} POMs available)
+            </p>
+          )}
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           
-          {/* ✅ PLATFORM SELECTION */}
+          {/* PLATFORM SELECTION */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
               Target Platform <span className="text-red-400">*</span>
@@ -277,7 +393,7 @@ onAdd(selectedPlatform, screenName, newScreen);
                 />
 
                 {/* POM List */}
-                <div className="max-h-96 overflow-y-auto border border-gray-600 rounded-md bg-gray-900">
+                <div className="max-h-64 overflow-y-auto border border-gray-600 rounded-md bg-gray-900">
                   {filteredPOMs.length === 0 ? (
                     <div className="p-4 text-center text-gray-400">
                       No POMs match "{searchQuery}"
@@ -286,17 +402,14 @@ onAdd(selectedPlatform, screenName, newScreen);
                     <div className="divide-y divide-gray-700">
                       {filteredPOMs.map(pom => {
                         const isSelected = selectedPOM === pom.name;
-                        const isDuplicate = validation.errors.some(e => e.includes('already exists'));
                         const uniqueKey = `${pom.path}-${pom.name}`;
                         
                         return (
                           <label
                             key={uniqueKey}
                             className={`
-                              flex items-start p-4 cursor-pointer transition-colors
-                              ${isSelected && isDuplicate
-                                ? 'bg-red-900 bg-opacity-20 border-l-4 border-red-500'
-                                : isSelected
+                              flex items-start p-3 cursor-pointer transition-colors
+                              ${isSelected
                                 ? 'bg-blue-500 bg-opacity-20 border-l-4 border-blue-500'
                                 : 'hover:bg-gray-800'
                               }
@@ -311,44 +424,12 @@ onAdd(selectedPlatform, screenName, newScreen);
                               className="mt-1 mr-3"
                             />
                             <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <div className="text-white font-medium">
-                                  {pom.className || pom.name.replace(/\.(screen|modal|wrapper)$/i, '')}
-                                </div>
-                                {isSelected && isDuplicate && (
-                                  <span className="text-xs bg-red-900 text-red-200 px-2 py-0.5 rounded">
-                                    Already exists
-                                  </span>
-                                )}
+                              <div className="text-white font-medium">
+                                {pom.className || pom.name.replace(/\.(screen|modal|wrapper)$/i, '')}
                               </div>
-                              
-                              {pom.className && (
-                                <div className="text-xs text-blue-400 mt-1">
-                                  Class: {pom.className}
-                                </div>
-                              )}
-                              
                               <div className="text-xs text-gray-400 mt-1 font-mono">
                                 {pom.path}
                               </div>
-                              
-                              {pom.methods && pom.methods.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                  {pom.methods.slice(0, 5).map((method, idx) => (
-                                    <span 
-                                      key={idx}
-                                      className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded"
-                                    >
-                                      {method.name}()
-                                    </span>
-                                  ))}
-                                  {pom.methods.length > 5 && (
-                                    <span className="text-xs text-gray-500">
-                                      +{pom.methods.length - 5} more
-                                    </span>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           </label>
                         );
@@ -360,8 +441,71 @@ onAdd(selectedPlatform, screenName, newScreen);
             )}
           </div>
 
+     {/* Instance Selection - MORE PROMINENT */}
+{selectedPOM && availableInstances.length > 0 && (
+  <div className="bg-indigo-900 bg-opacity-30 border-2 border-indigo-500 rounded-lg p-4">
+    <label className="block text-sm font-medium text-indigo-300 mb-3">
+      🎯 Select Instance <span className="text-red-400">*</span>
+    </label>
+    
+    {loadingInstances ? (
+      <div className="p-4 bg-gray-900 border border-gray-600 rounded-md">
+        <p className="text-gray-400">⏳ Loading instances...</p>
+      </div>
+    ) : (
+      <>
+        <div className="space-y-2 max-h-64 overflow-y-auto border border-indigo-600 rounded-md bg-gray-900 p-3">
+          {availableInstances.map(inst => (
+            <label
+              key={inst.name}
+              className={`
+                flex items-center p-4 cursor-pointer rounded-lg transition-colors
+                ${selectedInstance === inst.name
+                  ? 'bg-indigo-600 bg-opacity-40 border-2 border-indigo-400'
+                  : 'hover:bg-gray-800 border-2 border-transparent'
+                }
+              `}
+            >
+              <input
+                type="radio"
+                name="instance"
+                value={inst.name}
+                checked={selectedInstance === inst.name}
+                onChange={(e) => setSelectedInstance(e.target.value)}
+                className="mr-4 w-5 h-5"
+              />
+              <div className="flex-1">
+                <div className="text-white font-semibold text-base flex items-center gap-2">
+                  {inst.displayName}
+                  {inst.isDefault && (
+                    <span className="text-xs bg-green-700 text-green-100 px-2 py-1 rounded-full">
+                      ⭐ default
+                    </span>
+                  )}
+                  {!inst.isDefault && (
+                    <span className="text-xs bg-purple-700 text-purple-100 px-2 py-1 rounded-full">
+                      📦 nested
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm text-indigo-300 mt-1">
+                  {inst.locatorCount} locators available
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+        
+        <p className="text-xs text-indigo-400 mt-3">
+          💡 <strong>Default:</strong> Uses main class locators. <strong>Nested:</strong> Uses locators from a sub-instance (e.g., slideshowSection).
+        </p>
+      </>
+    )}
+  </div>
+)}
+
           {/* Validation Message */}
-          {selectedPOM && selectedPlatform && !validation.valid && (
+          {selectedPOM && selectedPlatform && selectedInstance && !validation.valid && (
             <div className="p-3 bg-red-900 bg-opacity-20 border border-red-700 rounded-md">
               <p className="text-sm text-red-400">
                 ❌ {validation.errors[0]}
@@ -369,10 +513,11 @@ onAdd(selectedPlatform, screenName, newScreen);
             </div>
           )}
 
-          {selectedPOM && selectedPlatform && validation.valid && (
+          {selectedPOM && selectedPlatform && selectedInstance && validation.valid && (
             <div className="p-3 bg-green-900 bg-opacity-20 border border-green-700 rounded-md">
               <p className="text-sm text-green-400">
-                ✓ Ready to add "{selectedPOM.replace(/\.(screen|modal|wrapper)$/i, '')}" to {selectedPlatform}
+                ✓ Ready to add "{selectedPOM.replace(/\.(screen|modal|wrapper)$/i, '')}" 
+                {selectedInstance && ` (instance: ${selectedInstance})`} to {selectedPlatform}
               </p>
             </div>
           )}

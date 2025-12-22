@@ -19,6 +19,7 @@ import TestDataRouter from './routes/testData.js';  // ✅ Add this
 import screensRouter from './routes/screens.js';
 import navigationRoutes from './routes/navigation.js';
 import locksRouter from './routes/locks.js';
+import notesRouter from './routes/notes.js';
 
 
 
@@ -51,6 +52,7 @@ app.use('/api/screens', screensRouter);
 app.use('/api/navigation', navigationRoutes);
 
 app.use('/api/locks', locksRouter);
+app.use('/api/notes', notesRouter);
 
 // Error handling
 app.use(errorHandler);

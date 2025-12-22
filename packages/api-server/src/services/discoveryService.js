@@ -115,6 +115,26 @@ if (result.files.implications.length > 0) {
   );
 }
 
+// ✨ NEW: Build and write state registry
+if (result.files.implications.length > 0) {
+  result.stateRegistry = buildAndWriteStateRegistry(
+    result.files.implications,
+    projectPath
+  );
+}
+
+// ✨ NEW: Check which transitions need test regeneration
+if (result.transitions && result.transitions.length > 0) {
+  console.log('\n🔍 Checking transitions for missing test files...');
+  result.transitions = checkTransitionsForRegeneration(
+    result.transitions,
+    result.files.implications,
+    projectPath
+  );
+}
+
+// ✅ ADD THIS: Save discovery result to cache
+
 // ✅ ADD THIS: Save discovery result to cache
 console.log('\n💾 Saving discovery cache...');
 const cacheDir = path.join(projectPath, '.implications-framework', 'cache');
@@ -345,4 +365,97 @@ fs.ensureDirSync(registryDir);
 fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2));
 console.log(`   💾 Wrote registry: ${registryPath}`);
   return registry;
+}
+
+/**
+ * ✨ Check which transitions need test file regeneration
+ * 
+ * A transition needs regeneration if:
+ * 1. The target state has no setup entry for this path
+ * 2. The setup entry exists but test file is missing
+ */
+function checkTransitionsForRegeneration(transitions, implications, projectPath) {
+  let needsRegenCount = 0;
+  
+  // Build a map of status -> implication for quick lookup
+  const implicationMap = new Map();
+  implications.forEach(imp => {
+    const status = imp.metadata?.status;
+    if (status) {
+      implicationMap.set(status, imp);
+      implicationMap.set(status.toLowerCase(), imp);
+    }
+  });
+  
+  // Check each transition
+  const enrichedTransitions = transitions.map(transition => {
+    const { from, to, event } = transition;
+    
+    // Find the target implication
+    const targetImp = implicationMap.get(to) || implicationMap.get(to.toLowerCase());
+    
+    if (!targetImp) {
+      needsRegenCount++;
+      return {
+        ...transition,
+        needsRegeneration: true,
+        regenerationReason: 'Target state not found'
+      };
+    }
+    
+    // Get setup entries from target
+    const setup = targetImp.metadata?.setup || targetImp.metadata?.xstateConfig?.meta?.setup;
+    const setupArray = Array.isArray(setup) ? setup : (setup ? [setup] : []);
+    
+    // Find matching setup entry for this transition
+    const matchingSetup = setupArray.find(s => {
+      const prevStatusMatch = s.previousStatus === from || 
+                              s.previousStatus?.toLowerCase() === from?.toLowerCase();
+      return prevStatusMatch;
+    });
+    
+    if (!matchingSetup) {
+      needsRegenCount++;
+      return {
+        ...transition,
+        needsRegeneration: true,
+        regenerationReason: 'No setup entry for this path'
+      };
+    }
+    
+    // Check if test file exists
+    if (matchingSetup.testFile) {
+      const testFilePath = path.join(projectPath, matchingSetup.testFile);
+      const testFileExists = fs.existsSync(testFilePath);
+      
+      if (!testFileExists) {
+        needsRegenCount++;
+        return {
+          ...transition,
+          needsRegeneration: true,
+          regenerationReason: 'Test file missing',
+          expectedTestFile: matchingSetup.testFile
+        };
+      }
+      
+      // Test file exists
+      return {
+        ...transition,
+        needsRegeneration: false,
+        hasTestFile: true,
+        testFile: matchingSetup.testFile
+      };
+    } else {
+      needsRegenCount++;
+      return {
+        ...transition,
+        needsRegeneration: true,
+        regenerationReason: 'No test file specified in setup'
+      };
+    }
+  });
+  
+  console.log(`   ⚠️  ${needsRegenCount} transitions need test regeneration`);
+  
+  return enrichedTransitions;
 }
