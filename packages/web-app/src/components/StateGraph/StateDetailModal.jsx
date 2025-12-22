@@ -1792,7 +1792,13 @@ if (entityChanges) {
               </h2>
 
                {/* DEBUG - remove after */}
-{console.log('🔍 FULL currentState:', JSON.stringify(currentState, null, 2))}    
+{console.log('🔍 FULL currentState:', JSON.stringify(currentState, null, 2))}   
+{console.log('🔍 DEBUG meta.uiCoverage:', {
+  platforms: currentState.meta?.uiCoverage?.platforms,
+  managerScreens: currentState.meta?.uiCoverage?.platforms?.manager?.screens,
+  notificationScreen: currentState.meta?.uiCoverage?.platforms?.manager?.screens?.NotificationScreen,
+  notificationNavigation: currentState.meta?.uiCoverage?.platforms?.manager?.screens?.NotificationScreen?.navigation
+})}
 <UIScreenEditor
   state={{
     ...currentState,

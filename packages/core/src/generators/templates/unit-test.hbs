@@ -860,13 +860,13 @@ if (!shouldSkipRegistration) {
       // ─────────────────────────────────────────────────────────
       console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
       
-{{#if hasNavigation}}
+{{!-- {{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
       const {{navigation.instanceName}} = new {{navigation.className}}(page, result.data.lang || 'en', result.data.device || 'desktop');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
-{{/if}}
+{{/if}} --}}
       
 {{#if hasPom}}
 {{#unless skipInstantiation}}
@@ -1061,13 +1061,13 @@ it("{{#if isVerify}}Verify{{else}}Execute{{/if}} {{transitionDescription}}", asy
       // ─────────────────────────────────────────────────────────
       console.log('\n   📺 Screen {{position}}/{{totalScreens}}: {{screenKey}}');
       
-{{#if hasNavigation}}
+{{!-- {{#if hasNavigation}}
       // 🧭 Navigate to screen
       console.log('   🧭 Navigating: {{navigation.instanceName}}.{{navigation.method}}()');
       const {{navigation.instanceName}} = new {{navigation.className}}(result.data.lang || 'en');
       await {{navigation.instanceName}}.{{navigation.method}}({{{navigation.resolvedArgsString}}});
       console.log('   ✅ Navigation complete');
-{{/if}}
+{{/if}} --}}
       
 {{#if hasPom}}
 {{#unless skipInstantiation}}

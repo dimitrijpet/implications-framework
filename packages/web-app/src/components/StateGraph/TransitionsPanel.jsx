@@ -275,7 +275,7 @@ export default function TransitionsPanel({
                     color: colors.yellow,
                   }}
                 >
-                  {s.storeAs}
+                  {typeof s.storeAs === 'object' ? s.storeAs.key : s.storeAs}
                 </code>
               ))}
           </div>
@@ -389,7 +389,7 @@ export default function TransitionsPanel({
                     color: colors.yellow,
                   }}
                 >
-                  {s.storeAs}
+                  {typeof s.storeAs === 'object' ? s.storeAs.key : s.storeAs}
                 </code>
               ))}
           </div>

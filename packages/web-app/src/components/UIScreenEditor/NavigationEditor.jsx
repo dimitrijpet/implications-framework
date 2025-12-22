@@ -25,6 +25,14 @@ export default function NavigationEditor({
     args: []
   });
 
+ useEffect(() => {
+  console.log('🧭 NavigationEditor received navigation prop:', navigation);
+  if (navigation && Object.keys(navigation).length > 0) {
+    console.log('🧭 Setting navConfig to:', navigation);
+    setNavConfig(navigation);
+    setIsExpanded(true);
+  }
+}, [navigation]);
   // Fetch available POMs
   useEffect(() => {
     if (projectPath) {
@@ -53,32 +61,29 @@ export default function NavigationEditor({
     }
   };
 
-  const fetchMethods = async (pomName) => {
-    setIsLoadingMethods(true);
-    try {
-      const response = await fetch(
-        `/api/poms/functions?projectPath=${encodeURIComponent(projectPath)}&pomName=${encodeURIComponent(pomName)}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        // Filter to show only navigation-like methods
-        const allMethods = data.functions || [];
-        const navMethods = allMethods.filter(m => 
-          m.toLowerCase().includes('navigate') ||
-          m.toLowerCase().includes('goto') ||
-          m.toLowerCase().includes('open') ||
-          m.toLowerCase().includes('load') ||
-          m.toLowerCase().startsWith('go')
-        );
-        // If no nav methods found, show all
-        setAvailableMethods(navMethods.length > 0 ? navMethods : allMethods);
-      }
-    } catch (error) {
-      console.error('Failed to fetch methods:', error);
-    } finally {
-      setIsLoadingMethods(false);
+const fetchMethods = async (pomName) => {
+  setIsLoadingMethods(true);
+  try {
+    // Extract just the filename if it's a full path
+    const cleanPomName = pomName.includes('/') 
+      ? pomName.split('/').pop().replace('.js', '')
+      : pomName;
+    
+    const response = await fetch(
+      `/api/poms/functions?projectPath=${encodeURIComponent(projectPath)}&pomName=${encodeURIComponent(cleanPomName)}`
+    );
+    if (response.ok) {
+      const data = await response.json();
+      // Show ALL methods, not just navigation-filtered ones
+      const allMethods = data.functions || [];
+      setAvailableMethods(allMethods);
     }
-  };
+  } catch (error) {
+    console.error('Failed to fetch methods:', error);
+  } finally {
+    setIsLoadingMethods(false);
+  }
+};
 
   const handlePOMChange = (pomName) => {
     const updated = { ...navConfig, pomName, method: '', args: [] };

@@ -1011,7 +1011,7 @@ function extractScreenDefinition(objectNode) {
     // ─────────────────────────────────────────────────────────
     // Simple string fields
     // ─────────────────────────────────────────────────────────
-    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance') {
+    if (key === 'name' || key === 'description' || key === 'screen' || key === 'instance' || key === 'order') {
       const value = extractValueFromNode(prop.value);
       if (value) {
         def[key] = value;
@@ -1112,6 +1112,25 @@ function extractScreenDefinition(objectNode) {
         }
       });
     }
+
+    // ─────────────────────────────────────────────────────────
+// ✅ NAVIGATION object: { pomName, instanceName, method, args }
+// ─────────────────────────────────────────────────────────
+else if (key === 'navigation' && prop.value?.type === 'ObjectExpression') {
+  console.log('      🧭 Extracting navigation...');
+  def.navigation = {};
+  prop.value.properties.forEach(navProp => {
+    const navKey = navProp.key?.name;
+    if (navKey === 'pomName' || navKey === 'instanceName' || navKey === 'method') {
+      def.navigation[navKey] = extractValueFromNode(navProp.value);
+    } else if (navKey === 'args' && navProp.value?.type === 'ArrayExpression') {
+      def.navigation.args = navProp.value.elements
+        .map(el => extractValueFromNode(el))
+        .filter(Boolean);
+    }
+  });
+  console.log('      🧭 Navigation extracted:', def.navigation);
+}
     
     // ─────────────────────────────────────────────────────────
     // ✅ BLOCKS ARRAY - The key addition!
