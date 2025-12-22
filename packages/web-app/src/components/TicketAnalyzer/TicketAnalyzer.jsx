@@ -1,5 +1,5 @@
 /**
- * TicketAnalyzer - With test scenarios
+ * TicketAnalyzer - With implication file generation
  */
 
 import React, { useState, useEffect } from 'react';
@@ -73,7 +73,7 @@ export default function TicketAnalyzer({ projectPath, theme, onSelectState }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '2vh', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
       onClick={e => e.target === e.currentTarget && setIsOpen(false)}>
-      <div style={{ width: '95%', maxWidth: '1100px', maxHeight: '96vh', overflow: 'auto', background: theme.colors.background.primary, borderRadius: '16px', border: `2px solid ${theme.colors.accents.purple}`, boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+      <div style={{ width: '95%', maxWidth: '1200px', maxHeight: '96vh', overflow: 'auto', background: theme.colors.background.primary, borderRadius: '16px', border: `2px solid ${theme.colors.accents.purple}`, boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
         {/* Header */}
         <div style={{ padding: '14px 24px', borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: theme.colors.background.secondary, position: 'sticky', top: 0, zIndex: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -93,7 +93,7 @@ export default function TicketAnalyzer({ projectPath, theme, onSelectState }) {
           <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
             <input placeholder="ID" value={ticketId} onChange={e => setTicketId(e.target.value)}
               style={{ width: '80px', padding: '8px 12px', background: theme.colors.background.secondary, border: `1px solid ${theme.colors.border}`, borderRadius: '6px', color: theme.colors.text.primary, fontSize: '13px' }} />
-            <textarea placeholder="Paste ticket description here..."
+            <textarea placeholder="Describe what you need... (new states, validations, or paste a ticket)"
               value={ticketText} onChange={e => setTicketText(e.target.value)}
               style={{ flex: 1, padding: '8px 12px', background: theme.colors.background.secondary, border: `1px solid ${theme.colors.border}`, borderRadius: '6px', color: theme.colors.text.primary, fontSize: '13px', resize: 'vertical', minHeight: '60px', fontFamily: 'inherit' }} />
             <button onClick={analyzeTicket} disabled={isAnalyzing || !llmStatus.available}
@@ -112,7 +112,7 @@ export default function TicketAnalyzer({ projectPath, theme, onSelectState }) {
 }
 
 function Results({ analysis, theme, onCopy, copiedIndex }) {
-  const { parsed, gaps, recommendations, newMethods } = analysis;
+  const { parsed, needsNewStates, newStateFiles, recommendations, newMethods } = analysis;
 
   // Group recommendations by platform/screen
   const grouped = {};
@@ -123,7 +123,7 @@ function Results({ analysis, theme, onCopy, copiedIndex }) {
   }
 
   return (
-    <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
       {/* Understanding */}
       {parsed?.feature && (
@@ -132,25 +132,32 @@ function Results({ analysis, theme, onCopy, copiedIndex }) {
         </Section>
       )}
 
-      {/* Test Scenarios */}
-      {parsed?.testScenarios?.length > 0 && (
-        <Section title="🧪 Test Scenarios" theme={theme}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {parsed.testScenarios.map((scenario, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px 12px', background: theme.colors.background.secondary, borderRadius: '6px' }}>
-                <span style={{ color: theme.colors.accents.purple, fontWeight: '600' }}>{i + 1}.</span>
-                <span style={{ color: theme.colors.text.secondary, fontSize: '13px' }}>{scenario}</span>
-              </div>
-            ))}
+      {/* New State Files - THE BIG FEATURE */}
+      {needsNewStates && newStateFiles?.length > 0 && (
+        <Section title="🆕 New Implication Files" theme={theme}>
+          <div style={{ padding: '10px 14px', background: `${theme.colors.accents.green}10`, borderRadius: '8px', marginBottom: '16px', border: `1px solid ${theme.colors.accents.green}30` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <span style={{ fontSize: '16px' }}>✨</span>
+              <span style={{ color: theme.colors.accents.green, fontWeight: '600', fontSize: '13px' }}>
+                Generated {newStateFiles.length} new implication file{newStateFiles.length > 1 ? 's' : ''}
+              </span>
+            </div>
+            <p style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '12px' }}>
+              Copy these files to your implications folder. The flow will be: {newStateFiles.map(f => f.status).join(' → ')}
+            </p>
           </div>
+
+          {newStateFiles.map((file, i) => (
+            <StateFileCard key={i} file={file} theme={theme} onCopy={onCopy} copiedIndex={copiedIndex} index={`state-${i}`} />
+          ))}
         </Section>
       )}
 
-      {/* New Methods */}
+      {/* New POM Methods */}
       {newMethods?.length > 0 && (
         <Section title="🔧 New POM Methods" theme={theme}>
           <div style={{ padding: '8px 12px', background: `${theme.colors.accents.orange}10`, borderRadius: '6px', marginBottom: '12px', fontSize: '12px', color: theme.colors.accents.orange }}>
-            ⚠️ Add these methods to your POM files first
+            ⚠️ Add these methods to your POM files
           </div>
           {newMethods.map((m, i) => (
             <div key={i} style={{ marginBottom: '12px', background: theme.colors.background.secondary, borderRadius: '8px', overflow: 'hidden', border: `1px solid ${theme.colors.accents.orange}40` }}>
@@ -173,11 +180,11 @@ function Results({ analysis, theme, onCopy, copiedIndex }) {
         </Section>
       )}
 
-      {/* Blocks by Screen */}
+      {/* Validation Blocks */}
       {Object.keys(grouped).length > 0 && (
         <Section title="📝 Validation Blocks" theme={theme}>
           <div style={{ padding: '8px 12px', background: `${theme.colors.accents.blue}10`, borderRadius: '6px', marginBottom: '12px', fontSize: '12px', color: theme.colors.accents.blue }}>
-            💡 Each block runs only when its conditions are met. The framework handles the logic.
+            💡 Add these blocks to existing or new implication files
           </div>
           {Object.entries(grouped).map(([key, group]) => (
             <ScreenGroup key={key} group={group} theme={theme} onCopy={onCopy} copiedIndex={copiedIndex} />
@@ -195,13 +202,73 @@ function Results({ analysis, theme, onCopy, copiedIndex }) {
   );
 }
 
+function StateFileCard({ file, theme, onCopy, copiedIndex, index }) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  
+  return (
+    <div style={{ marginBottom: '16px', background: theme.colors.background.secondary, borderRadius: '12px', overflow: 'hidden', border: `2px solid ${theme.colors.accents.green}40` }}>
+      {/* Header */}
+      <div style={{ padding: '14px 18px', background: `${theme.colors.accents.green}10`, borderBottom: `1px solid ${theme.colors.border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <Tag color={theme.colors.accents.green}>NEW STATE</Tag>
+              <span style={{ color: theme.colors.text.primary, fontWeight: '600', fontSize: '15px' }}>{file.statusLabel}</span>
+            </div>
+            <code style={{ color: theme.colors.accents.cyan, fontSize: '12px' }}>{file.status}</code>
+          </div>
+          <button onClick={() => onCopy(file.content, index)}
+            style={{ padding: '6px 14px', background: copiedIndex === index ? theme.colors.accents.green : theme.colors.accents.purple, border: 'none', borderRadius: '6px', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}>
+            {copiedIndex === index ? '✓ Copied!' : '📋 Copy File'}
+          </button>
+        </div>
+        
+        {/* Metadata */}
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
+          <div>
+            <span style={{ color: theme.colors.text.tertiary }}>From: </span>
+            <code style={{ color: theme.colors.accents.yellow }}>{file.previousState}</code>
+          </div>
+          <div>
+            <span style={{ color: theme.colors.text.tertiary }}>Via: </span>
+            <code style={{ color: theme.colors.accents.orange }}>{file.transitionEvent}</code>
+          </div>
+          <div>
+            <span style={{ color: theme.colors.text.tertiary }}>Platforms: </span>
+            {file.platforms?.map((p, i) => (
+              <Tag key={i} color={theme.colors.accents.blue} style={{ marginLeft: i > 0 ? '4px' : 0 }}>{p}</Tag>
+            ))}
+          </div>
+        </div>
+      </div>
+      
+      {/* File path */}
+      <div style={{ padding: '8px 18px', background: theme.colors.background.tertiary, borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <code style={{ fontSize: '11px', color: theme.colors.text.tertiary }}>
+          📁 {file.filePath}
+        </code>
+        <button onClick={() => setIsExpanded(!isExpanded)}
+          style={{ background: 'none', border: 'none', color: theme.colors.text.tertiary, cursor: 'pointer', fontSize: '11px' }}>
+          {isExpanded ? '▼ Collapse' : '▶ Expand'}
+        </button>
+      </div>
+      
+      {/* Code */}
+      {isExpanded && (
+        <pre style={{ margin: 0, padding: '16px 18px', fontSize: '11px', color: '#a0aec0', background: '#0d1117', overflow: 'auto', maxHeight: '400px', lineHeight: '1.4' }}>
+          <code>{file.content}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function ScreenGroup({ group, theme, onCopy, copiedIndex }) {
   const { platform, screen, blocks } = group;
   const allBlocksCode = blocks.map(b => b.blockCode).join(',\n\n');
   
   return (
     <div style={{ marginBottom: '16px', background: theme.colors.background.secondary, borderRadius: '8px', overflow: 'hidden', border: `1px solid ${theme.colors.border}` }}>
-      {/* Header */}
       <div style={{ padding: '12px 16px', background: theme.colors.background.tertiary, borderBottom: `1px solid ${theme.colors.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Tag color={theme.colors.accents.blue}>{platform}</Tag>
@@ -213,12 +280,10 @@ function ScreenGroup({ group, theme, onCopy, copiedIndex }) {
         </button>
       </div>
       
-      {/* Location */}
       <div style={{ padding: '8px 16px', fontSize: '11px', color: theme.colors.text.tertiary, background: theme.colors.background.primary, borderBottom: `1px solid ${theme.colors.border}` }}>
         📍 <code style={{ color: theme.colors.accents.cyan }}>mirrorsOn.UI.{platform}.{screen}.blocks[]</code>
       </div>
       
-      {/* Blocks */}
       {blocks.map((rec, i) => (
         <BlockCard key={i} rec={rec} theme={theme} onCopy={onCopy} copiedIndex={copiedIndex} index={`block-${platform}-${screen}-${i}`} isLast={i === blocks.length - 1} />
       ))}
@@ -229,14 +294,13 @@ function ScreenGroup({ group, theme, onCopy, copiedIndex }) {
 function BlockCard({ rec, theme, onCopy, copiedIndex, index, isLast }) {
   return (
     <div style={{ borderBottom: isLast ? 'none' : `1px solid ${theme.colors.border}` }}>
-      {/* Block header */}
       <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
             {rec.methodExists ? (
               <Tag color={theme.colors.accents.green}>✓ exists</Tag>
             ) : (
-              <Tag color={theme.colors.accents.orange}>⚠️ new method</Tag>
+              <Tag color={theme.colors.accents.orange}>⚠️ new</Tag>
             )}
             {rec.hasConditions && (
               <Tag color={theme.colors.accents.cyan}>conditional</Tag>
@@ -244,35 +308,18 @@ function BlockCard({ rec, theme, onCopy, copiedIndex, index, isLast }) {
           </div>
           <p style={{ margin: 0, color: theme.colors.text.primary, fontSize: '13px', fontWeight: '500' }}>{rec.description}</p>
           
-          {/* Method info */}
           <div style={{ marginTop: '4px', fontSize: '11px', color: theme.colors.text.tertiary }}>
             <code style={{ color: theme.colors.accents.green }}>{rec.method}()</code>
-            {rec.pomPath && <span> • {rec.pomPath}</span>}
           </div>
           
-          {/* Notes */}
-          {rec.notes && (
-            <div style={{ marginTop: '6px', padding: '6px 10px', background: `${theme.colors.accents.yellow}10`, borderRadius: '4px', fontSize: '11px', color: theme.colors.accents.yellow }}>
-              💡 {rec.notes}
-            </div>
-          )}
-          
-          {/* Conditions */}
           {rec.conditions && rec.conditions.length > 0 && (
             <div style={{ marginTop: '8px', padding: '8px 12px', background: `${theme.colors.accents.cyan}08`, borderRadius: '6px', border: `1px solid ${theme.colors.accents.cyan}20` }}>
               <div style={{ fontSize: '11px', color: theme.colors.accents.cyan, fontWeight: '600', marginBottom: '4px' }}>
-                📋 Runs when ALL conditions are true:
+                📋 Runs when:
               </div>
               {rec.conditions.map((c, ci) => (
-                <div key={ci} style={{ fontSize: '12px', color: theme.colors.text.secondary, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ color: theme.colors.text.tertiary }}>•</span>
-                  <code style={{ color: theme.colors.accents.yellow, background: `${theme.colors.accents.yellow}10`, padding: '1px 4px', borderRadius: '3px' }}>{c.field}</code>
-                  <span style={{ color: theme.colors.text.tertiary }}>{c.operator}</span>
-                  {c.value ? (
-                    <code style={{ color: theme.colors.accents.green, background: `${theme.colors.accents.green}10`, padding: '1px 4px', borderRadius: '3px' }}>"{c.value}"</code>
-                  ) : (
-                    <span style={{ color: theme.colors.text.tertiary, fontStyle: 'italic' }}>(any truthy)</span>
-                  )}
+                <div key={ci} style={{ fontSize: '12px', color: theme.colors.text.secondary, marginTop: '2px' }}>
+                  • <code style={{ color: theme.colors.accents.yellow }}>{c.field}</code> {c.operator} {c.value ? `"${c.value}"` : '(truthy)'}
                 </div>
               ))}
             </div>
@@ -284,8 +331,7 @@ function BlockCard({ rec, theme, onCopy, copiedIndex, index, isLast }) {
         </button>
       </div>
       
-      {/* Code */}
-      <pre style={{ margin: 0, padding: '12px 16px', fontSize: '11px', color: '#a0aec0', background: '#0d1117', overflow: 'auto', maxHeight: '300px' }}>
+      <pre style={{ margin: 0, padding: '12px 16px', fontSize: '11px', color: '#a0aec0', background: '#0d1117', overflow: 'auto', maxHeight: '200px' }}>
         <code>{rec.blockCode}</code>
       </pre>
     </div>
@@ -297,7 +343,7 @@ function Section({ title, theme, children, collapsed }) {
   return (
     <div>
       <h3 onClick={() => collapsed && setIsCollapsed(!isCollapsed)}
-        style={{ margin: '0 0 10px', color: theme.colors.text.primary, fontSize: '14px', fontWeight: '600', cursor: collapsed ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        style={{ margin: '0 0 12px', color: theme.colors.text.primary, fontSize: '15px', fontWeight: '600', cursor: collapsed ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: '6px' }}>
         {title}
         {collapsed && <span style={{ fontSize: '10px', color: theme.colors.text.tertiary }}>{isCollapsed ? '▶' : '▼'}</span>}
       </h3>
@@ -306,6 +352,6 @@ function Section({ title, theme, children, collapsed }) {
   );
 }
 
-function Tag({ color, children }) {
-  return <span style={{ padding: '2px 6px', background: `${color}20`, color, borderRadius: '4px', fontSize: '10px', fontWeight: '600', textTransform: 'uppercase' }}>{children}</span>;
+function Tag({ color, children, style = {} }) {
+  return <span style={{ padding: '2px 6px', background: `${color}20`, color, borderRadius: '4px', fontSize: '10px', fontWeight: '600', textTransform: 'uppercase', ...style }}>{children}</span>;
 }

@@ -1,5 +1,5 @@
 /**
- * LLM Routes - Smarter condition generation
+ * LLM Routes - With implication file generation
  */
 
 import express from 'express';
@@ -18,7 +18,7 @@ function getLLMConfig() {
     baseUrl: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
     model: process.env.LLM_MODEL || 'deepseek-chat',
     apiKey: process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || '',
-    maxTokens: 4000,
+    maxTokens: 6000,
     temperature: 0.3
   };
 }
@@ -47,6 +47,46 @@ router.get('/status', (req, res) => {
   const config = getLLMConfig();
   res.json({ available: !!config.apiKey, model: config.model, provider: config.baseUrl.includes('deepseek') ? 'deepseek' : 'unknown' });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE READING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function readImplicationFile(filePath, projectPath) {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(projectPath, filePath);
+  if (!fs.existsSync(fullPath)) return null;
+  try {
+    return fs.readFileSync(fullPath, 'utf-8');
+  } catch (e) {
+    return null;
+  }
+}
+
+function findImplicationFiles(projectPath) {
+  const files = [];
+  const searchDirs = [
+    'tests/implications/bookings/status',
+    'tests/implications/bookings',
+    'tests/implications'
+  ];
+  
+  for (const dir of searchDirs) {
+    const fullDir = path.join(projectPath, dir);
+    if (fs.existsSync(fullDir)) {
+      try {
+        for (const file of fs.readdirSync(fullDir)) {
+          if (file.endsWith('Implications.js') || file.includes('Implication')) {
+            files.push({
+              path: path.join(dir, file),
+              name: file.replace('.js', '')
+            });
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  return files;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // POM PARSING
@@ -126,13 +166,13 @@ function buildPOMContext(poms) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONTEXT
+// CONTEXT BUILDING
 // ═══════════════════════════════════════════════════════════════════════════
 
 function buildImplicationsContext(index) {
   if (!index) return '';
   
-  const lines = ['=== EXISTING COVERAGE ===\n'];
+  const lines = ['=== EXISTING STATES ===\n'];
   const stateMap = new Map();
   
   for (const state of (index.states || [])) {
@@ -142,39 +182,20 @@ function buildImplicationsContext(index) {
     stateMap.set(status, { status, file: state.metadata?.file, validations: [] });
   }
   
-  for (const val of (index.validations || [])) {
-    const status = val.metadata?.state;
-    if (status && stateMap.has(status)) {
-      stateMap.get(status).validations.push({
-        platform: val.metadata?.platform,
-        screen: val.metadata?.screen,
-        label: val.metadata?.label,
-        method: val.metadata?.method,
-        hasConditions: val.metadata?.hasConditions
-      });
-    }
-  }
-  
   for (const [status, data] of stateMap) {
-    lines.push(`\n## ${status}`);
-    if (data.validations.length) {
-      const byPlat = {};
-      for (const v of data.validations) {
-        const p = v.platform || 'unknown';
-        if (!byPlat[p]) byPlat[p] = [];
-        byPlat[p].push(v);
-      }
-      for (const [p, vs] of Object.entries(byPlat)) {
-        lines.push(`  [${p}]`);
-        for (const v of vs.slice(0, 5)) {
-          const cond = v.hasConditions ? ' [conditional]' : '';
-          lines.push(`    - ${v.screen}: ${v.label || v.method || '?'}${cond}`);
-        }
-      }
+    lines.push(`- ${status} (${data.file || 'unknown'})`);
+  }
+  
+  lines.push('\n=== EXISTING TRANSITIONS ===');
+  for (const trans of (index.transitions || [])) {
+    const from = trans.metadata?.from;
+    const to = trans.metadata?.to;
+    const event = trans.metadata?.event;
+    if (from && to && event) {
+      lines.push(`- ${from} --[${event}]--> ${to}`);
     }
   }
   
-  lines.push('\nAll states: ' + [...stateMap.keys()].join(', '));
   return lines.join('\n');
 }
 
@@ -322,141 +343,217 @@ function formatBlockAsCode(block) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TICKET ANALYZER - IMPROVED PROMPT
+// IMPLICATION FILE GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT = `You are a test automation engineer creating validation blocks for an implications-based testing framework.
+function generateImplicationFile(state, poms) {
+  const { status, statusLabel, entity, platforms, previousState, transitionEvent, validations } = state;
+  
+  const className = status.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') + 'Implications';
+  const timestamp = new Date().toISOString();
+  
+  // Build UI sections
+  const uiSections = {};
+  
+  for (const val of (validations || [])) {
+    const platform = val.platform || 'manager';
+    const screen = val.screen || 'DefaultScreen';
+    
+    if (!uiSections[platform]) uiSections[platform] = {};
+    if (!uiSections[platform][screen]) {
+      let instance = screen.charAt(0).toLowerCase() + screen.slice(1);
+      uiSections[platform][screen] = {
+        description: `${screen} validations for ${statusLabel}`,
+        screen: screen.replace('Screen', '.screen'),
+        instance: instance,
+        order: Object.keys(uiSections[platform]).length,
+        blocks: []
+      };
+    }
+    
+    const { block } = generateFullBlock(val, poms);
+    block.order = uiSections[platform][screen].blocks.length;
+    uiSections[platform][screen].blocks.push(block);
+  }
+  
+  // Format UI sections as code
+  let uiCode = '';
+  for (const [platform, screens] of Object.entries(uiSections)) {
+    uiCode += `      ${platform}: {\n`;
+    for (const [screenName, screenData] of Object.entries(screens)) {
+      uiCode += `        ${screenName}: {\n`;
+      uiCode += `          description: "${screenData.description}",\n`;
+      uiCode += `          screen: "${screenData.screen}",\n`;
+      uiCode += `          instance: "${screenData.instance}",\n`;
+      uiCode += `          order: ${screenData.order},\n`;
+      uiCode += `          blocks: [\n`;
+      for (const block of screenData.blocks) {
+        uiCode += formatBlockAsCode(block).split('\n').map(l => '            ' + l).join('\n');
+        uiCode += ',\n';
+      }
+      uiCode += `          ]\n`;
+      uiCode += `        },\n`;
+    }
+    uiCode += `      },\n`;
+  }
+  
+  const file = `// Auto-generated by Implications Framework
+// Created: ${timestamp}
 
-CRITICAL RULES FOR CONDITIONS:
-
-1. CONDITIONS define WHEN a block runs, not WHAT it checks.
-   - The block's method + assertion checks the UI
-   - The conditions define the data state that must be true for this check to apply
-
-2. ONE block can cover MULTIPLE scenarios using conditions:
-   
-   WRONG (multiple separate blocks):
-   - Block 1: "notification visible" (no condition)
-   - Block 2: "notification NOT visible without permission" (no condition, just negate)
-   
-   RIGHT (single block with condition):
-   - Block: "notification visible" with condition: permissions.manageGroups = truthy
-   - The test framework will skip this block when permission is falsy
-
-3. For "should NOT appear when X" scenarios:
-   - If X is a data condition (permission, status, flag): Use a CONDITION
-   - The assertion stays positive (toBeVisible, not: false)
-   - Example: "notification should not appear if no manageGroups permission"
-     → Block checks notification IS visible
-     → Condition: club.user.permissions.manageGroups = truthy
-     → Framework skips block when permission is false, so no false positive
-
-4. For genuinely negative assertions (element truly shouldn't exist):
-   - Use negate: true in assertion
-   - Example: "error message should never appear after successful save"
-     → assertion: { type: "toBeVisible", not: true }
-
-5. COMMON CONDITION PATTERNS:
-   - Permission check: { field: "club.user.permissions.manageGroups", operator: "truthy", value: "" }
-   - Status check: { field: "booking.status", operator: "equals", value: "checked_out" }
-   - Type check: { field: "booking.type", operator: "notEquals", value: "audition" }
-   - Flag check: { field: "dancer.isInGroup", operator: "falsy", value: "" }
-   - Negated: { field: "booking.isAudition", operator: "falsy", value: "" }
-
-6. DON'T create duplicate blocks for opposite conditions. ONE block with the positive condition is enough.
-   The framework handles the "skip when condition not met" logic.
-
-EXAMPLE - NOTIFICATION PERMISSION:
-
-Ticket: "Notification should only show for managers with manage_groups permission"
-
-WRONG approach (2 blocks):
-{
-  "recommendations": [
-    { "label": "Notification visible", "method": "notifGroupAdd", "negate": false },
-    { "label": "Notification NOT visible without permission", "method": "notifGroupAdd", "negate": true }
-  ]
+/**
+ * ${className}
+ *
+ * Status: ${status}
+ * Platforms: ${platforms.join(', ')}
+ */
+class ${className} {
+  static xstateConfig = {
+    id: "${status}",
+    meta: {
+      status: "${status}",
+      entity: "${entity}",
+      statusLabel: "${statusLabel}",
+      setup: [{
+        testFile: "tests/implications/${entity}s/status/${className.replace('Implications', '')}Via${previousState ? previousState.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') : 'Previous'}-${transitionEvent || 'TRANSITION'}-UNIT.spec.js",
+        actionName: "${status.replace(/_/g, '')}Via${previousState ? previousState.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') : 'Previous'}",
+        platform: "${platforms[0] || 'manager'}",
+        previousStatus: "${previousState || 'previous_state'}"
+      }]
+    },
+    on: {
+      // Add transitions to next states here
+      // NEXT_EVENT: { target: "next_state", platforms: ["manager", "dancer"] }
+    },
+    entry: {
+      status: "${status}",
+      statusLabel: "${statusLabel}"
+    }
+  };
+  
+  static mirrorsOn = {
+    description: "${statusLabel} state validations",
+    triggeredBy: [{
+      description: "Trigger ${status} state",
+      platform: "${platforms[0] || 'manager'}",
+      action: async (testDataPath, options = {}) => {
+        // TODO: Implement trigger action
+        throw new Error("Not implemented yet");
+      }
+    }],
+    UI: {
+${uiCode}    }
+  };
+  
+  static meta = {
+    status: "${status}",
+    entity: "${entity}",
+    statusLabel: "${statusLabel}"
+  };
 }
 
-RIGHT approach (1 block with condition):
+module.exports = ${className};
+`;
+
+  return { className, fileName: `${className}.js`, content: file };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROMPTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SYSTEM_PROMPT = `You are a test automation engineer for an implications-based testing framework.
+
+You can do TWO things:
+1. Generate VALIDATION BLOCKS for existing states
+2. Generate NEW STATE IMPLICATIONS (complete implication files)
+
+Detect what the user needs:
+- If they mention "create state", "new state", "need state for", "implication for" → Generate new implications
+- If they mention "validate", "check", "test that", "when X happens" → Generate validation blocks
+- If they ask for a flow like "A → B → C" → Generate the missing state implications
+
+FOR NEW STATE IMPLICATIONS:
+When user asks for new states, analyze:
+1. The flow (what comes before, what comes after)
+2. What entity it belongs to (booking, dancer, club, etc.)
+3. What platforms need coverage (manager, dancer, web)
+4. What validations should exist for this state
+
+Return newStates array with:
+- status: snake_case state name
+- statusLabel: Human readable name
+- entity: booking, dancer, club, etc.
+- platforms: ["manager", "dancer", "web"]
+- previousState: state that leads to this one
+- transitionEvent: TRANSITION_NAME that gets here
+- validations: array of validation blocks for this state
+
+FOR VALIDATION BLOCKS:
+Use conditions to define WHEN blocks run.
+- conditions: [{field, operator, value}]
+- Operators: equals, notEquals, truthy, falsy, contains
+
+Example newStates response:
 {
-  "recommendations": [
+  "needsNewStates": true,
+  "newStates": [
     {
-      "label": "Add to groups notification visible",
-      "method": "notifGroupAdd",
-      "args": ["ctx.data.booking"],
-      "negate": false,
-      "conditions": [
-        { "field": "club.user.permissions.manageGroups", "operator": "truthy", "value": "" }
+      "status": "booking_checked_in",
+      "statusLabel": "Booking Checked In",
+      "entity": "booking",
+      "platforms": ["manager", "dancer"],
+      "previousState": "booking_accepted",
+      "transitionEvent": "CHECK_IN",
+      "validations": [
+        { "platform": "manager", "screen": "ManageBookingsScreen", "method": "fieldBookingStatus", "args": ["ctx.data.booking", "checked_in"], "label": "Booking shows checked-in status" },
+        { "platform": "dancer", "screen": "BookingDetailsScreen", "method": "statusText", "args": ["CHECKED IN"], "label": "Dancer sees checked-in status" }
       ]
     }
-  ]
-}
-
-EXAMPLE - BOOKING TYPE:
-
-Ticket: "Notification should NOT appear for auditions, only for regular bookings"
-
-RIGHT approach:
-{
-  "recommendations": [
-    {
-      "label": "Add to groups notification after checkout",
-      "method": "notifGroupAdd",
-      "args": ["ctx.data.booking"],
-      "negate": false,
-      "conditions": [
-        { "field": "booking.type", "operator": "notEquals", "value": "audition" },
-        { "field": "booking.status", "operator": "equals", "value": "checked_out" }
-      ]
-    }
-  ]
-}
-
-EXAMPLE - MULTIPLE CONDITIONS (AND):
-
-Ticket: "Show notification only if: has permission AND booking is checked out AND entertainer not in group"
-
-{
-  "label": "Add to groups notification",
-  "method": "notifGroupAdd",
-  "conditions": [
-    { "field": "club.user.permissions.manageGroups", "operator": "truthy", "value": "" },
-    { "field": "booking.status", "operator": "equals", "value": "checked_out" },
-    { "field": "dancer.isInGroup", "operator": "falsy", "value": "" }
   ]
 }`;
 
-const OUTPUT_FORMAT = `Return JSON:
-{
-  "understanding": "Brief summary of what needs testing",
-  "testScenarios": [
-    "List each distinct scenario that needs validation"
+const OUTPUT_FORMAT = `{
+  "understanding": "What the user is asking for",
+  
+  "needsNewStates": true/false,
+  
+  "newStates": [
+    {
+      "status": "snake_case_status",
+      "statusLabel": "Human Readable Label",
+      "entity": "booking",
+      "platforms": ["manager", "dancer"],
+      "previousState": "previous_state",
+      "transitionEvent": "TRANSITION_EVENT",
+      "validations": [
+        {
+          "platform": "manager|dancer|web",
+          "screen": "ScreenName",
+          "method": "methodName",
+          "args": ["arg1"],
+          "label": "Description",
+          "conditions": [{ "field": "path", "operator": "op", "value": "val" }]
+        }
+      ]
+    }
   ],
+  
   "recommendations": [
     {
-      "platform": "manager|dancer|web",
+      "platform": "manager",
       "screen": "ScreenName",
       "method": "methodName",
       "args": ["ctx.data.booking"],
-      "label": "Human readable description",
-      "negate": false,
-      "conditions": [
-        { "field": "data.path", "operator": "equals|notEquals|truthy|falsy|contains", "value": "value" }
-      ],
-      "newMethod": false,
-      "notes": "Optional implementation notes"
+      "label": "Description",
+      "conditions": [{ "field": "path", "operator": "op", "value": "val" }]
     }
   ],
+  
   "newMethods": [
-    {
-      "pomClass": "ScreenName",
-      "pomPath": "path/to/file.js",
-      "methodName": "name",
-      "methodCode": "async methodName() { ... }"
-    }
+    { "pomClass": "ScreenName", "pomPath": "path", "methodName": "name", "methodCode": "code" }
   ],
-  "analysis": "Explanation of approach"
+  
+  "analysis": "Explanation"
 }`;
 
 router.post('/analyze-ticket', async (req, res) => {
@@ -476,31 +573,61 @@ router.post('/analyze-ticket', async (req, res) => {
 
     const poms = findPOMFiles(index, projectPath);
     const pomContext = buildPOMContext(poms);
+    
+    // Find and include a sample implication file for reference
+    const implFiles = findImplicationFiles(projectPath);
+    let sampleImplication = '';
+    if (implFiles.length > 0) {
+      const sample = readImplicationFile(implFiles[0].path, projectPath);
+      if (sample) {
+        sampleImplication = `\n=== SAMPLE IMPLICATION FILE (${implFiles[0].name}) ===\n${sample.substring(0, 3000)}${sample.length > 3000 ? '\n... (truncated)' : ''}`;
+      }
+    }
 
     const userPrompt = `TICKET: ${ticketId ? `[${ticketId}] ` : ''}${ticketText}
 
 ${implContext}
 ${pomContext}
+${sampleImplication}
 
 ${OUTPUT_FORMAT}
 
-REMEMBER:
-- Use CONDITIONS to define when a block applies (data state, permissions, status)
-- DON'T duplicate blocks for "with permission" vs "without permission" - use ONE block with condition
-- Conditions define WHEN, assertions define WHAT
-- Multiple conditions in one block = AND logic`;
+IMPORTANT:
+- If user asks for new states, set needsNewStates: true and populate newStates
+- Include validations for each new state based on existing POM methods
+- For booking states, typical platforms are manager and dancer
+- Look at the sample implication file to understand the structure`;
 
     const llmResponse = await callLLM([
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt }
-    ]);
+    ], { maxTokens: 6000 });
 
     let parsed = parseJSONSafely(llmResponse);
     if (!parsed) {
-      parsed = { understanding: ticketText.substring(0, 100), recommendations: [], analysis: 'Parse error' };
+      parsed = { understanding: ticketText.substring(0, 100), recommendations: [], newStates: [], analysis: 'Parse error' };
     }
 
-    // Generate full blocks
+    // Generate implication files for new states
+    const newStateFiles = [];
+    if (parsed.needsNewStates && parsed.newStates?.length > 0) {
+      for (const state of parsed.newStates) {
+        const file = generateImplicationFile(state, poms);
+        newStateFiles.push({
+          status: state.status,
+          statusLabel: state.statusLabel,
+          className: file.className,
+          fileName: file.fileName,
+          filePath: `tests/implications/${state.entity}s/status/${file.fileName}`,
+          previousState: state.previousState,
+          transitionEvent: state.transitionEvent,
+          platforms: state.platforms,
+          content: file.content
+        });
+      }
+    }
+
+    // Generate validation blocks
     const recommendations = (parsed.recommendations || []).map((rec, idx) => {
       const { block, methodExists, pomPath, pomClass } = generateFullBlock(rec, poms);
       
@@ -530,17 +657,6 @@ REMEMBER:
       code: m.methodCode
     }));
 
-    for (const rec of recommendations) {
-      if (rec.isNewMethod && !newMethods.find(m => m.methodName === rec.method)) {
-        newMethods.push({
-          pomClass: rec.pomClass || rec.screen,
-          pomPath: rec.pomPath || `tests/mobile/android/${rec.platform}/screenObjects/${rec.screen}.screen.js`,
-          methodName: rec.method,
-          code: `// TODO: Implement ${rec.method}\nasync ${rec.method}() {\n  // Add implementation\n}`
-        });
-      }
-    }
-
     res.json({
       ticketId: ticketId || 'TICKET',
       parsed: { 
@@ -548,8 +664,8 @@ REMEMBER:
         analysis: parsed.analysis,
         testScenarios: parsed.testScenarios 
       },
-      existingCoverage: parsed.existingCoverage,
-      gaps: parsed.testScenarios || [],
+      needsNewStates: parsed.needsNewStates || false,
+      newStateFiles,
       recommendations,
       newMethods,
       poms: poms.map(p => ({ className: p.className, path: p.path, methods: p.methods.map(m => m.name) })),
