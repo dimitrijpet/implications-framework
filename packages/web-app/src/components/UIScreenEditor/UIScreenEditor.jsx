@@ -927,6 +927,7 @@ function PlatformSection({
   screenIndex={idx}
   editMode={editMode}
   projectPath={projectPath}
+  platform={platformName}
   theme={theme}
   storedVariables={storedVariables}  // ✅ ADD THIS
   onUpdate={(updates) => {
@@ -962,7 +963,7 @@ function PlatformSection({
 // ScreenCard Component (UNCHANGED - keeping your version)
 // ============================================
 
-function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete, theme, storedVariables = [] }) {
+function ScreenCard({ screen, editMode, projectPath, platform, onUpdate, onCopy, onDelete, theme, storedVariables = [] }) {
   console.log('🔍 ScreenCard received:', screen.screenName || screen.name, {
     hasBlocks: !!screen.blocks,
     blocksCount: screen.blocks?.length || 0,
@@ -1106,16 +1107,18 @@ function ScreenCard({ screen, editMode, projectPath, onUpdate, onCopy, onDelete,
 
           {/* Block-based View (new) */}
           {(viewMode === 'blocks' || !hasLegacyData) && (
-            <BlockList
-              screen={screen}
-              editMode={editMode}
-              theme={theme}
-              onBlocksChange={handleBlocksChange}
-              pomName={pomName}
-              instanceName={instanceName}
-              projectPath={projectPath}
-              storedVariables={storedVariables}
-            />
+<BlockList
+  screen={screen}
+  editMode={editMode}
+  theme={theme}
+  onBlocksChange={handleBlocksChange}
+  pomName={pomName}
+  pomPath={screen._pomSource?.path}  // ✅ ADD THIS
+  instanceName={instanceName}
+  projectPath={projectPath}
+  platform={platform}
+  storedVariables={storedVariables}
+/>
           )}
 
           {/* Legacy View (existing sections) */}
@@ -1395,6 +1398,7 @@ function ElementSection({ title, elements, color, editMode, pomName, instanceNam
   const handleRemoveElement = (element) => {
     onChange(elements.filter(el => el !== element));
   };
+  
 
   return (
     <div className="p-3 rounded" style={{ background: `${color}10`, border: `1px solid ${color}40` }}>

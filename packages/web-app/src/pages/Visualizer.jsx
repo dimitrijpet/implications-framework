@@ -11,6 +11,8 @@ import StateRegistryPanel from '../components/StateRegistry/StateRegistryPanel';
 import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
 import { initializeFromDiscovery } from '../utils/requiresColors.js';
+import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
+
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
 const API_URL = 'http://localhost:3000';
@@ -52,6 +54,9 @@ const [testDataFiles, setTestDataFiles] = useState([]);
 const [loadedTestData, setLoadedTestData] = useState(null);
 const [selectedTestDataFile, setSelectedTestDataFile] = useState(null);
 const [loadingTestData, setLoadingTestData] = useState(false);
+const [editMode, setEditMode] = useState(false);
+const [showInsertNodeModal, setShowInsertNodeModal] = useState(false);
+const [selectedEdge, setSelectedEdge] = useState(null);
 
 useEffect(() => {
   if (discoveryResult) {
@@ -115,6 +120,19 @@ const existingTags = useMemo(() => {
     group: Array.from(groupTags).sort()
   };
 }, [discoveryResult, discoveredTags]);
+
+const existingEntities = useMemo(() => {
+  const entities = new Set();
+  
+  discoveryResult?.files?.implications?.forEach(imp => {
+    const entity = imp.metadata?.xstateConfig?.meta?.entity || imp.metadata?.entity;
+    if (entity) {
+      entities.add(entity);
+    }
+  });
+  
+  return Array.from(entities).sort();
+}, [discoveryResult]);
 
 
 
@@ -279,6 +297,63 @@ const handleReInitialize = async () => {
   } finally {
     setInitLoading(false);
   }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// EDIT MODE - INSERT NODE BETWEEN EDGES
+// ═══════════════════════════════════════════════════════════════
+
+const handleEdgeClick = (edgeData) => {
+  console.log('🔗 Edge clicked for insertion:', edgeData);
+  setSelectedEdge(edgeData);
+  setShowInsertNodeModal(true);
+};
+
+const handleInsertNodeSuccess = async (result) => {
+  console.log('✅ Node inserted:', result);
+  
+  // Show success notification
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #10b981;
+    color: white;
+    padding: 16px 24px;
+    border-radius: 8px;
+    font-weight: bold;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+  notification.innerHTML = `
+    <div>✅ Node Inserted!</div>
+    <div style="font-size: 12px; margin-top: 4px;">
+      ${result.result.firstSegment.from} → ${result.result.firstSegment.to} → ${result.result.secondSegment.to}
+    </div>
+  `;
+  document.body.appendChild(notification);
+  setTimeout(() => notification.remove(), 4000);
+  
+  // Close modal and reset edit mode
+  setShowInsertNodeModal(false);
+  setSelectedEdge(null);
+  setEditMode(false);
+  
+  // Refresh graph
+  await handleScan();
+};
+
+// Get orphan nodes (states not connected to main flow)
+const getAvailableNodesForInsertion = () => {
+  if (!graphData?.nodes) return [];
+  
+  return graphData.nodes
+    .filter(n => n.data.type === 'state')
+    .map(n => ({
+      id: n.data.id,
+      label: n.data.label || n.data.id
+    }));
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -1319,7 +1394,7 @@ const disableTransitionMode = () => {
         )}
 
         {/* State Registry Panel */}
-        {stateRegistry && (
+        {/* {stateRegistry && (
           <div className="mb-6">
             <StateRegistryPanel 
               stateRegistry={stateRegistry}
@@ -1327,7 +1402,7 @@ const disableTransitionMode = () => {
               onRefresh={handleScan}
             />
           </div>
-        )}
+        )} */}
 
         {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>
@@ -1620,6 +1695,19 @@ const disableTransitionMode = () => {
     )}
   </div>
 )}
+
+{/* Edit Mode Toggle */}
+<button
+  onClick={() => setEditMode(!editMode)}
+  className="px-4 py-2 rounded-lg font-semibold transition hover:brightness-110"
+  style={{
+    background: editMode ? defaultTheme.colors.accents.orange : defaultTheme.colors.background.tertiary,
+    color: editMode ? 'white' : defaultTheme.colors.text.primary,
+    border: `2px solid ${editMode ? defaultTheme.colors.accents.orange : defaultTheme.colors.border}`
+  }}
+>
+  {editMode ? '✏️ Edit Mode ON' : '✏️ Edit Mode'}
+</button>
         
         {/* Graph - NO changes needed inside here! */}
         <div 
@@ -1631,17 +1719,23 @@ const disableTransitionMode = () => {
               <h2 className="text-2xl font-bold mb-1" style={{ color: defaultTheme.colors.accents.blue }}>
                 📊 Interactive State Graph
               </h2>
-              <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
-                💡 {mode === 'add-transition' ? 'Click source state, then target state' : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
-                {Object.keys(activeFilters).length > 0 && (
-                  <span style={{ color: defaultTheme.colors.accents.blue, marginLeft: '8px' }}>
-                    | 🔍 Filtered: {Object.keys(activeFilters).length} tags
-                  </span>
-                )}
-              </p>
             </div>
             
             {/* Graph Controls - keep as-is */}
+            <p className="text-sm" style={{ color: defaultTheme.colors.text.tertiary }}>
+  💡 {editMode 
+    ? '✏️ Edit Mode: Click an edge to insert a node between states' 
+    : mode === 'add-transition' 
+      ? 'Click source state, then target state' 
+      : 'Click nodes to view details | Scroll to zoom | Drag to pan'}
+  {Object.keys(activeFilters).length > 0 && (
+    <span style={{ color: defaultTheme.colors.accents.blue, marginLeft: '8px' }}>
+      | 🔍 Filtered: {Object.keys(activeFilters).length} tags
+    </span>
+  )}
+</p>
+
+
             {graphData && (
               <div className="flex gap-2">
                 <button onClick={() => window.cytoscapeGraph?.fit()}>
@@ -1694,6 +1788,8 @@ const disableTransitionMode = () => {
       handleNodeClick(nodeData);
     }
   }}
+  onEdgeClick={handleEdgeClick}      // ← ADD THIS
+  editMode={editMode}                 // ← ADD THIS
   selectedNodeId={selectedNodeId}
   theme={defaultTheme}
   showScreenGroups={showScreenGroups}
@@ -1704,8 +1800,9 @@ const disableTransitionMode = () => {
   activeFilters={activeFilters}
   projectPath={projectPath}
   loadedTestData={loadedTestData}
-  transitionMode={transitionMode}  // ← ADD THIS
+  transitionMode={transitionMode}
 />
+
           ) : (
             <div 
               className="flex items-center justify-center"
@@ -1732,6 +1829,25 @@ const disableTransitionMode = () => {
           </div>
         )}
       </main>
+
+      {/* Insert Node Modal */}
+{showInsertNodeModal && selectedEdge && (
+  <InsertNodeModal
+    isOpen={showInsertNodeModal}
+    onClose={() => {
+      setShowInsertNodeModal(false);
+      setSelectedEdge(null);
+    }}
+    onSuccess={handleInsertNodeSuccess}
+    projectPath={projectPath}
+    sourceState={selectedEdge.source}
+    targetState={selectedEdge.target}
+    originalEvent={selectedEdge.event}
+    originalPlatforms={selectedEdge.platforms}
+    availableNodes={getAvailableNodesForInsertion()}
+    theme={defaultTheme}
+  />
+)}
       
  {/* Detail Modal */}
 {selectedState && (
@@ -1775,6 +1891,7 @@ const disableTransitionMode = () => {
       })
     || []}
     existingTags={existingTags}  // ✅ ADD THIS
+    existingEntities={existingEntities}
     projectPath={projectPath}
     theme={defaultTheme}
   />
@@ -1790,6 +1907,8 @@ const disableTransitionMode = () => {
   targetState={transitionModalData.target}
   projectPath={projectPath}
   availablePlatforms={projectConfig?.platforms || ["web"]}
+  allTransitions={discoveryResult?.transitions || []}
+  allStates={graphData?.statesMap || {}}
 />
     
     </div>

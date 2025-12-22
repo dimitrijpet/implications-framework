@@ -21,6 +21,7 @@ const __dirname = dirname(__filename);
 
 // ← ADD THIS
 const traverse = babelTraverse.default || babelTraverse;
+const generate = babelGenerate.default || babelGenerate;
 
 const router = express.Router();
 
@@ -240,6 +241,682 @@ async function extractUIFromSource(sourceFilePath) {
     console.error('Failed to extract UI from source:', error);
     return { uiStructure: null, needsImplicationHelper: false };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function insertNodeHandler(req, res) {
+  try {
+    const {
+      projectPath,
+      sourceState,
+      targetState,
+      insertState,
+      originalEvent,
+      keepEventOn,
+      newEventName,
+      platforms,
+      copyActionDetails = true
+    } = req.body;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDATION
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    if (!projectPath || !sourceState || !targetState || !insertState || !originalEvent || !newEventName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: projectPath, sourceState, targetState, insertState, originalEvent, newEventName'
+      });
+    }
+
+    if (!['first', 'second'].includes(keepEventOn)) {
+      return res.status(400).json({
+        success: false,
+        error: 'keepEventOn must be "first" or "second"'
+      });
+    }
+
+    // Validate event name format
+    if (!/^[A-Z][A-Z0-9_]*$/.test(newEventName)) {
+      return res.status(400).json({
+        success: false,
+        error: 'newEventName must be UPPER_SNAKE_CASE (e.g., APPROVE_BOOKING)'
+      });
+    }
+
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('🔗 INSERT NODE BETWEEN EDGES');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   Source:  ${sourceState}`);
+    console.log(`   Insert:  ${insertState}`);
+    console.log(`   Target:  ${targetState}`);
+    console.log(`   Original Event: ${originalEvent}`);
+    console.log(`   Keep Event On: ${keepEventOn}`);
+    console.log(`   New Event: ${newEventName}`);
+    console.log(`   Platforms: ${platforms?.join(', ') || 'inherit'}`);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIND FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const sourceFile = await findImplicationFile(projectPath, sourceState);
+    const insertFile = await findImplicationFile(projectPath, insertState);
+    const targetFile = await findImplicationFile(projectPath, targetState);
+
+    if (!sourceFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Source state file not found: ${sourceState}`
+      });
+    }
+
+    if (!insertFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Insert state file not found: ${insertState}`
+      });
+    }
+
+    if (!targetFile) {
+      return res.status(404).json({
+        success: false,
+        error: `Target state file not found: ${targetState}`
+      });
+    }
+
+    console.log('📁 Files found:');
+    console.log(`   Source: ${path.basename(sourceFile)}`);
+    console.log(`   Insert: ${path.basename(insertFile)}`);
+    console.log(`   Target: ${path.basename(targetFile)}`);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // READ AND PARSE FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const sourceContent = await fs.readFile(sourceFile, 'utf-8');
+    const insertContent = await fs.readFile(insertFile, 'utf-8');
+    const targetContent = await fs.readFile(targetFile, 'utf-8');
+
+    const sourceAst = parser.parse(sourceContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    const insertAst = parser.parse(insertContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    const targetAst = parser.parse(targetContent, {
+      sourceType: 'module',
+      plugins: ['classProperties', 'objectRestSpread']
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EXTRACT ORIGINAL TRANSITION DATA
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const originalTransition = extractTransitionData(sourceAst, originalEvent);
+    
+    if (!originalTransition) {
+      return res.status(404).json({
+        success: false,
+        error: `Transition "${originalEvent}" not found in ${sourceState}`
+      });
+    }
+
+    console.log('📋 Original transition data:', {
+      event: originalEvent,
+      target: originalTransition.target,
+      platforms: originalTransition.platforms,
+      hasActionDetails: !!originalTransition.actionDetails
+    });
+
+    // Determine platforms for new transition
+    const effectivePlatforms = platforms || originalTransition.platforms || ['web'];
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 1: UPDATE SOURCE FILE
+    // Change original transition target from targetState → insertState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n1️⃣ Updating source file...');
+    
+    const firstEvent = keepEventOn === 'first' ? originalEvent : newEventName;
+    const secondEvent = keepEventOn === 'first' ? newEventName : originalEvent;
+
+    // Modify source: Change target of original transition
+    const sourceModified = modifyTransitionTarget(
+      sourceAst, 
+      originalEvent, 
+      insertState,
+      keepEventOn === 'second' ? newEventName : null  // Rename if moving event to second segment
+    );
+
+    if (!sourceModified) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to modify source file transition'
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 2: UPDATE INSERT FILE
+    // Add new transition from insertState → targetState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n2️⃣ Updating insert file...');
+
+    // Build actionDetails for the new transition
+    const newActionDetails = copyActionDetails && keepEventOn === 'second' 
+      ? originalTransition.actionDetails 
+      : null;
+
+    // Add transition to insert file
+    const insertTransitionAdded = addTransitionToFile(
+      insertAst,
+      secondEvent,
+      targetState,
+      effectivePlatforms,
+      newActionDetails
+    );
+
+    if (!insertTransitionAdded) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to add transition to insert file'
+      });
+    }
+
+    // Add setup entry to insert file (pointing back to source)
+    const insertSetupAdded = addSetupEntry(
+      insertAst,
+      sourceState,
+      insertState,
+      firstEvent,
+      effectivePlatforms[0] || 'web'
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: UPDATE TARGET FILE
+    // Change setup entry's previousStatus from sourceState → insertState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n3️⃣ Updating target file...');
+
+    const targetSetupUpdated = updateSetupPreviousStatus(
+      targetAst,
+      sourceState,    // Old previousStatus
+      insertState,    // New previousStatus
+      secondEvent     // Update event name in testFile path if needed
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CREATE BACKUPS AND WRITE FILES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n4️⃣ Creating backups and writing files...');
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const changes = {};
+
+    // Source file
+    const sourceBackup = `${sourceFile}.backup-${timestamp}`;
+    await fs.copy(sourceFile, sourceBackup);
+    const sourceCode = generate(sourceAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(sourceFile, sourceCode, 'utf-8');
+    changes.sourceFile = {
+      path: sourceFile,
+      backup: sourceBackup,
+      modification: `Changed ${originalEvent} target: ${targetState} → ${insertState}`
+    };
+    console.log(`   ✅ Source: ${path.basename(sourceFile)}`);
+
+    // Insert file
+    const insertBackup = `${insertFile}.backup-${timestamp}`;
+    await fs.copy(insertFile, insertBackup);
+    const insertCode = generate(insertAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(insertFile, insertCode, 'utf-8');
+    changes.insertFile = {
+      path: insertFile,
+      backup: insertBackup,
+      modification: `Added transition ${secondEvent} → ${targetState}, setup from ${sourceState}`
+    };
+    console.log(`   ✅ Insert: ${path.basename(insertFile)}`);
+
+    // Target file
+    const targetBackup = `${targetFile}.backup-${timestamp}`;
+    await fs.copy(targetFile, targetBackup);
+    const targetCode = generate(targetAst, { retainLines: true, comments: true }).code;
+    await fs.writeFile(targetFile, targetCode, 'utf-8');
+    changes.targetFile = {
+      path: targetFile,
+      backup: targetBackup,
+      modification: `Updated setup previousStatus: ${sourceState} → ${insertState}`
+    };
+    console.log(`   ✅ Target: ${path.basename(targetFile)}`);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUCCESS RESPONSE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    console.log('\n═══════════════════════════════════════════════════════════');
+    console.log('✅ NODE INSERTED SUCCESSFULLY');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   Before: ${sourceState} ──${originalEvent}──▶ ${targetState}`);
+    console.log(`   After:  ${sourceState} ──${firstEvent}──▶ ${insertState} ──${secondEvent}──▶ ${targetState}`);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    res.json({
+      success: true,
+      changes,
+      result: {
+        firstSegment: {
+          from: sourceState,
+          event: firstEvent,
+          to: insertState
+        },
+        secondSegment: {
+          from: insertState,
+          event: secondEvent,
+          to: targetState
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Insert node failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+}
+
+/**
+ * Find implication file for a given state name
+ */
+async function findImplicationFile(projectPath, stateName) {
+  // Convert state_name to PascalCase for class name
+  const pascalCase = stateName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+
+  // Try various patterns
+  const patterns = [
+    `**/implications/**/${pascalCase}*Implications.js`,
+    `**/implications/**/*${pascalCase}Implications.js`,
+    `**/${pascalCase}Implications.js`,
+    `**/${pascalCase}BookingImplications.js`
+  ];
+
+  for (const pattern of patterns) {
+    const files = await glob(pattern, {
+      cwd: projectPath,
+      absolute: true,
+      ignore: ['**/node_modules/**', '**/.backup*']
+    });
+
+    if (files.length > 0) {
+      return files[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract transition data from AST
+ */
+function extractTransitionData(ast, eventName) {
+  let transitionData = null;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find 'on' property
+        const onProp = findProperty(configValue, 'on');
+        if (!onProp?.value?.properties) return;
+
+        // Find the specific transition
+        const transitionProp = onProp.value.properties.find(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (!transitionProp) return;
+
+        // Extract data
+        transitionData = extractTransitionValue(transitionProp.value);
+      }
+    }
+  });
+
+  return transitionData;
+}
+
+/**
+ * Find property in ObjectExpression
+ */
+function findProperty(objExpr, name) {
+  return objExpr.properties.find(
+    p => t.isObjectProperty(p) && (p.key.name === name || p.key.value === name)
+  );
+}
+
+/**
+ * Modify transition target in AST
+ */
+function modifyTransitionTarget(ast, eventName, newTarget, newEventName = null) {
+  let modified = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        const onProp = findProperty(configValue, 'on');
+        if (!onProp?.value?.properties) return;
+
+        // Find the transition
+        const transitionIndex = onProp.value.properties.findIndex(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (transitionIndex === -1) return;
+
+        const transitionProp = onProp.value.properties[transitionIndex];
+
+        // Update target
+        if (t.isStringLiteral(transitionProp.value)) {
+          // Simple string target
+          transitionProp.value = t.stringLiteral(newTarget);
+          modified = true;
+        } else if (t.isObjectExpression(transitionProp.value)) {
+          // Object with target property
+          const targetProp = transitionProp.value.properties.find(
+            p => p.key?.name === 'target'
+          );
+          if (targetProp) {
+            targetProp.value = t.stringLiteral(newTarget);
+            modified = true;
+          }
+        } else if (t.isArrayExpression(transitionProp.value)) {
+          // Array of transitions - update all
+          transitionProp.value.elements.forEach(el => {
+            if (t.isObjectExpression(el)) {
+              const targetProp = el.properties.find(p => p.key?.name === 'target');
+              if (targetProp) {
+                targetProp.value = t.stringLiteral(newTarget);
+                modified = true;
+              }
+            }
+          });
+        }
+
+        // Rename event if needed
+        if (newEventName && modified) {
+          transitionProp.key = t.identifier(newEventName);
+          console.log(`   📝 Renamed event: ${eventName} → ${newEventName}`);
+        }
+      }
+    }
+  });
+
+  if (modified) {
+    console.log(`   ✅ Updated transition target: ${eventName} → ${newTarget}`);
+  }
+
+  return modified;
+}
+
+/**
+ * Add transition to file
+ */
+function addTransitionToFile(ast, eventName, target, platforms, actionDetails) {
+  let added = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find or create 'on' property
+        let onProp = findProperty(configValue, 'on');
+        
+        if (!onProp) {
+          onProp = t.objectProperty(
+            t.identifier('on'),
+            t.objectExpression([])
+          );
+          configValue.properties.push(onProp);
+        }
+
+        // Check if transition already exists
+        const existing = onProp.value.properties.find(
+          p => p.key?.name === eventName || p.key?.value === eventName
+        );
+
+        if (existing) {
+          console.log(`   ⚠️ Transition ${eventName} already exists, skipping`);
+          return;
+        }
+
+        // Build transition object
+        const transitionProps = [
+          t.objectProperty(t.identifier('target'), t.stringLiteral(target))
+        ];
+
+        if (platforms && platforms.length > 0) {
+          transitionProps.push(
+            t.objectProperty(
+              t.identifier('platforms'),
+              t.arrayExpression(platforms.map(p => t.stringLiteral(p)))
+            )
+          );
+        }
+
+        if (actionDetails) {
+          transitionProps.push(
+            t.objectProperty(
+              t.identifier('actionDetails'),
+              createValueNode(actionDetails)
+            )
+          );
+        }
+
+        // Add transition
+        onProp.value.properties.push(
+          t.objectProperty(
+            t.identifier(eventName),
+            t.objectExpression(transitionProps)
+          )
+        );
+
+        added = true;
+        console.log(`   ✅ Added transition: ${eventName} → ${target}`);
+      }
+    }
+  });
+
+  return added;
+}
+
+/**
+ * Add setup entry to file
+ */
+function addSetupEntry(ast, previousStatus, currentStatus, event, platform) {
+  let added = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        // Find or create meta
+        let metaProp = findProperty(configValue, 'meta');
+        
+        if (!metaProp) {
+          metaProp = t.objectProperty(
+            t.identifier('meta'),
+            t.objectExpression([])
+          );
+          configValue.properties.unshift(metaProp);
+        }
+
+        // Find or create setup array
+        let setupProp = findProperty(metaProp.value, 'setup');
+        
+        if (!setupProp) {
+          setupProp = t.objectProperty(
+            t.identifier('setup'),
+            t.arrayExpression([])
+          );
+          metaProp.value.properties.push(setupProp);
+        }
+
+        // Check if entry already exists
+        const existing = setupProp.value.elements.find(el => {
+          if (!t.isObjectExpression(el)) return false;
+          const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          return prevProp?.value?.value === previousStatus;
+        });
+
+        if (existing) {
+          console.log(`   ⚠️ Setup entry for ${previousStatus} already exists, skipping`);
+          return;
+        }
+
+        // Build test file path
+        const toPascal = (str) => str
+          .split('_')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join('');
+        
+        const currentPascal = toPascal(currentStatus);
+        const prevPascal = toPascal(previousStatus);
+        const platformCap = platform.charAt(0).toUpperCase() + platform.slice(1);
+        
+        const testFile = `tests/implications/bookings/status/${currentPascal}Via${prevPascal}-${event}-${platformCap}-UNIT.spec.js`;
+        const actionName = `${currentStatus.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${prevPascal}`;
+
+        // Create setup entry
+        const setupEntry = t.objectExpression([
+          t.objectProperty(t.identifier('testFile'), t.stringLiteral(testFile)),
+          t.objectProperty(t.identifier('actionName'), t.stringLiteral(actionName)),
+          t.objectProperty(t.identifier('platform'), t.stringLiteral(platform)),
+          t.objectProperty(t.identifier('previousStatus'), t.stringLiteral(previousStatus))
+        ]);
+
+        setupProp.value.elements.push(setupEntry);
+        added = true;
+        console.log(`   ✅ Added setup entry: previousStatus=${previousStatus}`);
+      }
+    }
+  });
+
+  return added;
+}
+
+/**
+ * Update setup entry's previousStatus
+ */
+function updateSetupPreviousStatus(ast, oldPreviousStatus, newPreviousStatus, newEvent) {
+  let updated = false;
+
+  traverse(ast, {
+    ClassProperty(path) {
+      if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+        const configValue = path.node.value;
+        
+        if (configValue?.type !== 'ObjectExpression') return;
+
+        const metaProp = findProperty(configValue, 'meta');
+        if (!metaProp?.value?.properties) return;
+
+        const setupProp = findProperty(metaProp.value, 'setup');
+        if (!setupProp?.value?.elements) return;
+
+        // Find entry with old previousStatus
+        setupProp.value.elements.forEach(el => {
+          if (!t.isObjectExpression(el)) return;
+
+          const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+          if (prevProp?.value?.value !== oldPreviousStatus) return;
+
+          // Update previousStatus
+          prevProp.value = t.stringLiteral(newPreviousStatus);
+          
+          // Update testFile path if needed
+          const testFileProp = el.properties.find(p => p.key?.name === 'testFile');
+          if (testFileProp?.value?.value) {
+            // Replace old status with new in path
+            const oldPath = testFileProp.value.value;
+            const toPascal = (str) => str
+              .split('_')
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join('');
+            
+            const oldPascal = toPascal(oldPreviousStatus);
+            const newPascal = toPascal(newPreviousStatus);
+            
+            let newPath = oldPath.replace(`Via${oldPascal}`, `Via${newPascal}`);
+            
+            // Also update event name in path if provided
+            if (newEvent && oldPath.includes('-')) {
+              const parts = newPath.split('-');
+              if (parts.length >= 2) {
+                // Find the event part (usually second segment)
+                const eventIndex = parts.findIndex(p => p === p.toUpperCase() && !p.includes('.'));
+                if (eventIndex > 0) {
+                  parts[eventIndex] = newEvent;
+                  newPath = parts.join('-');
+                }
+              }
+            }
+            
+            testFileProp.value = t.stringLiteral(newPath);
+          }
+
+          // Update actionName
+          const actionProp = el.properties.find(p => p.key?.name === 'actionName');
+          if (actionProp?.value?.value) {
+            const toPascal = (str) => str
+              .split('_')
+              .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join('');
+            
+            const oldPascal = toPascal(oldPreviousStatus);
+            const newPascal = toPascal(newPreviousStatus);
+            
+            actionProp.value = t.stringLiteral(
+              actionProp.value.value.replace(`Via${oldPascal}`, `Via${newPascal}`)
+            );
+          }
+
+          updated = true;
+          console.log(`   ✅ Updated setup entry: previousStatus ${oldPreviousStatus} → ${newPreviousStatus}`);
+        });
+      }
+    }
+  });
+
+  return updated;
 }
 
 /**
@@ -601,35 +1278,72 @@ router.get('/get-transition', async (req, res) => {
   }
 });
 
+/**
+ * Extract value from transition AST node
+ */
 function extractTransitionValue(node) {
   if (t.isStringLiteral(node)) {
-    // Simple: EVENT: "target"
     return { target: node.value };
   }
-  
+
   if (t.isObjectExpression(node)) {
-    // Complex: EVENT: { target: "...", platforms: [...], actionDetails: {...} }
     const result = {};
     
     node.properties.forEach(prop => {
-      if (t.isObjectProperty(prop)) {
-        const key = prop.key.name || prop.key.value;
-        result[key] = extractValueFromNode(prop.value);
+      if (!t.isObjectProperty(prop)) return;
+      
+      const key = prop.key.name || prop.key.value;
+      
+      if (key === 'target' && t.isStringLiteral(prop.value)) {
+        result.target = prop.value.value;
+      } else if (key === 'platforms' && t.isArrayExpression(prop.value)) {
+        result.platforms = prop.value.elements
+          .filter(el => t.isStringLiteral(el))
+          .map(el => el.value);
+      } else if (key === 'actionDetails') {
+        result.actionDetails = extractObjectFromAST(prop.value);
+      } else if (key === 'requires') {
+        result.requires = extractObjectFromAST(prop.value);
       }
     });
     
     return result;
   }
-  
-  if (t.isArrayExpression(node)) {
-    // Array of transitions: EVENT: [{...}, {...}]
-    // Return first one for now (or could return all)
-    if (node.elements.length > 0) {
-      return extractTransitionValue(node.elements[0]);
-    }
-    return null;
+
+  // Handle array (multiple platform variants)
+  if (t.isArrayExpression(node) && node.elements.length > 0) {
+    return extractTransitionValue(node.elements[0]);
   }
-  
+
+  return null;
+}
+
+/**
+ * Extract JavaScript object from AST node
+ */
+function extractObjectFromAST(node) {
+  if (!node) return null;
+
+  if (t.isStringLiteral(node)) return node.value;
+  if (t.isNumericLiteral(node)) return node.value;
+  if (t.isBooleanLiteral(node)) return node.value;
+  if (t.isNullLiteral(node)) return null;
+
+  if (t.isArrayExpression(node)) {
+    return node.elements.map(el => extractObjectFromAST(el));
+  }
+
+  if (t.isObjectExpression(node)) {
+    const obj = {};
+    node.properties.forEach(prop => {
+      if (t.isObjectProperty(prop)) {
+        const key = prop.key.name || prop.key.value;
+        obj[key] = extractObjectFromAST(prop.value);
+      }
+    });
+    return obj;
+  }
+
   return null;
 }
 
@@ -1063,6 +1777,104 @@ router.post('/update-metadata', async (req, res) => {
       error: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
+  }
+});
+
+router.post('/update-entity', async (req, res) => {
+  try {
+    const { filePath, entity } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`🎯 Updating entity in: ${path.basename(filePath)}`);
+    console.log(`   New entity: ${entity || '(empty)'}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let modified = false;
+    
+    traverse(ast, {
+      ClassProperty(classPath) {
+        if (classPath.node.key?.name === 'xstateConfig' && classPath.node.static) {
+          const configObj = classPath.node.value;
+          
+          if (configObj?.type === 'ObjectExpression') {
+            // Find meta property
+            const metaProp = configObj.properties.find(p => p.key?.name === 'meta');
+            
+            if (metaProp && metaProp.value?.type === 'ObjectExpression') {
+              // Find or create entity property
+              const entityProp = metaProp.value.properties.find(p => p.key?.name === 'entity');
+              
+              if (entity) {
+                // Set or update entity
+                if (entityProp) {
+                  entityProp.value = t.stringLiteral(entity);
+                } else {
+                  // Add entity property after status/platform if they exist
+                  const insertIndex = metaProp.value.properties.findIndex(
+                    p => p.key?.name === 'statusLabel' || p.key?.name === 'platform'
+                  );
+                  
+                  const newProp = t.objectProperty(
+                    t.identifier('entity'),
+                    t.stringLiteral(entity)
+                  );
+                  
+                  if (insertIndex >= 0) {
+                    metaProp.value.properties.splice(insertIndex + 1, 0, newProp);
+                  } else {
+                    metaProp.value.properties.push(newProp);
+                  }
+                }
+              } else {
+                // Remove entity if empty
+                if (entityProp) {
+                  const idx = metaProp.value.properties.indexOf(entityProp);
+                  if (idx >= 0) {
+                    metaProp.value.properties.splice(idx, 1);
+                  }
+                }
+              }
+              
+              modified = true;
+            }
+          }
+        }
+      }
+    });
+    
+    if (!modified) {
+      return res.status(400).json({ error: 'Could not find xstateConfig.meta in file' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    // Backup
+    const backupPath = `${filePath}.backup.${Date.now()}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Entity updated successfully');
+    
+    res.json({ success: true, entity });
+    
+  } catch (error) {
+    console.error('❌ Entity update failed:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1657,6 +2469,73 @@ const newUINode = buildSmartUIAst(uiData, originalUINode, originalContent, class
   }
 });
 
+/**
+ * Build conditions AST node from conditions data
+ * @param {Object} conditions - { mode: 'all'|'any', blocks: [...] }
+ * @returns {t.ObjectExpression|null}
+ */
+function buildConditionsAST(conditions) {
+  if (!conditions?.blocks?.length) return null;
+  
+  const conditionProps = [];
+  
+  // mode: 'all' or 'any'
+  conditionProps.push(
+    t.objectProperty(t.identifier('mode'), t.stringLiteral(conditions.mode || 'all'))
+  );
+  
+  // blocks array
+  const blockElements = conditions.blocks.map(block => {
+    const blockProps = [];
+    
+    if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+    if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+    if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+    if (block.mode) blockProps.push(t.objectProperty(t.identifier('mode'), t.stringLiteral(block.mode)));
+    
+    // data.checks array
+    if (block.data?.checks?.length > 0) {
+      const checkElements = block.data.checks.map(check => {
+        const checkProps = [];
+        
+        if (check.id) checkProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(check.id)));
+        if (check.field) checkProps.push(t.objectProperty(t.identifier('field'), t.stringLiteral(check.field)));
+        if (check.operator) checkProps.push(t.objectProperty(t.identifier('operator'), t.stringLiteral(check.operator)));
+        
+        // value - handle different types
+        if (check.value !== undefined && check.value !== null) {
+          const valueNode = typeof check.value === 'number' ? t.numericLiteral(check.value)
+                         : typeof check.value === 'boolean' ? t.booleanLiteral(check.value)
+                         : Array.isArray(check.value) ? t.arrayExpression(check.value.map(v => t.stringLiteral(String(v))))
+                         : t.stringLiteral(String(check.value));
+          checkProps.push(t.objectProperty(t.identifier('value'), valueNode));
+        }
+        
+        if (check.valueType) checkProps.push(t.objectProperty(t.identifier('valueType'), t.stringLiteral(check.valueType)));
+        
+        return t.objectExpression(checkProps);
+      });
+      
+      blockProps.push(
+        t.objectProperty(
+          t.identifier('data'),
+          t.objectExpression([
+            t.objectProperty(t.identifier('checks'), t.arrayExpression(checkElements))
+          ])
+        )
+      );
+    }
+    
+    return t.objectExpression(blockProps);
+  });
+  
+  conditionProps.push(
+    t.objectProperty(t.identifier('blocks'), t.arrayExpression(blockElements))
+  );
+  
+  return t.objectExpression(conditionProps);
+}
+
 
 
 /**
@@ -2217,18 +3096,26 @@ if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
     console.log(`    🧱 Including ${screen.blocks.length} blocks`);
     
     const blockElements = screen.blocks.map(block => {
-      const blockProps = [];
-      
-      // Basic block properties
-      if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
-      if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
-      if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
-      if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
-      if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
-      if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
-      
-      // UI-ASSERTION block data
-      if (block.type === 'ui-assertion' && block.data) {
+  const blockProps = [];
+  
+  // Basic block properties
+  if (block.id) blockProps.push(t.objectProperty(t.identifier('id'), t.stringLiteral(block.id)));
+  if (block.type) blockProps.push(t.objectProperty(t.identifier('type'), t.stringLiteral(block.type)));
+  if (block.label) blockProps.push(t.objectProperty(t.identifier('label'), t.stringLiteral(block.label)));
+  if (block.order !== undefined) blockProps.push(t.objectProperty(t.identifier('order'), t.numericLiteral(block.order)));
+  if (block.expanded !== undefined) blockProps.push(t.objectProperty(t.identifier('expanded'), t.booleanLiteral(block.expanded)));
+  if (block.enabled !== undefined) blockProps.push(t.objectProperty(t.identifier('enabled'), t.booleanLiteral(block.enabled)));
+  
+  // ✅ NEW: Block conditions
+  if (block.conditions?.blocks?.length > 0) {
+    const conditionsNode = buildConditionsAST(block.conditions);
+    if (conditionsNode) {
+      blockProps.push(t.objectProperty(t.identifier('conditions'), conditionsNode));
+    }
+  }
+  
+  // UI-ASSERTION block data
+  if (block.type === 'ui-assertion' && block.data) {
         const dataProps = [];
         
         if (block.data.visible?.length > 0) {
@@ -2247,23 +3134,30 @@ if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
         // checks
         if (block.data.checks) {
           const checksProps = [];
-       if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
-  const textProps = Object.entries(block.data.checks.text).map(([k, v]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? t.identifier(k) : t.stringLiteral(k),
-      t.stringLiteral(String(v))
-    )
-  );
-            checksProps.push(t.objectProperty(t.identifier('text'), t.objectExpression(textProps)));
+           if (block.data.checks.text && Object.keys(block.data.checks.text).length > 0) {
+            const textProps = Object.entries(block.data.checks.text).map(([key, value]) =>
+              t.objectProperty(
+                /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+                t.stringLiteral(String(value))
+              )
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('text'),
+              t.objectExpression(textProps)
+            ));
           }
-if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
-  const containsProps = Object.entries(block.data.checks.contains).map(([k, v]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? t.identifier(k) : t.stringLiteral(k),
-      t.stringLiteral(String(v))
-    )
-  );
-            checksProps.push(t.objectProperty(t.identifier('contains'), t.objectExpression(containsProps)));
+          
+          if (block.data.checks.contains && Object.keys(block.data.checks.contains).length > 0) {
+            const containsProps = Object.entries(block.data.checks.contains).map(([key, value]) =>
+              t.objectProperty(
+                /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+                t.stringLiteral(String(value))
+              )
+            );
+            checksProps.push(t.objectProperty(
+              t.identifier('contains'),
+              t.objectExpression(containsProps)
+            ));
           }
           if (checksProps.length > 0) {
             dataProps.push(t.objectProperty(t.identifier('checks'), t.objectExpression(checksProps)));
@@ -2310,23 +3204,80 @@ if (block.data.assertions?.length > 0) {
       }
       
       // FUNCTION-CALL block
-      if (block.type === 'function-call' && block.data) {
-        const dataProps = [];
-        if (block.data.instance) dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
-        if (block.data.method) dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
-        if (block.data.args?.length > 0) {
-          dataProps.push(t.objectProperty(t.identifier('args'),
-            t.arrayExpression(block.data.args.map(arg =>
-              typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
-            ))
-          ));
-        }
-        if (block.data.await !== undefined) dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
-        if (block.data.storeAs) dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
-        
-        if (dataProps.length > 0) {
-          blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
-        }
+if (block.type === 'function-call' && block.data) {
+  const dataProps = [];
+  
+  if (block.data.instance) {
+    dataProps.push(t.objectProperty(t.identifier('instance'), t.stringLiteral(block.data.instance)));
+  }
+  
+  if (block.data.method) {
+    dataProps.push(t.objectProperty(t.identifier('method'), t.stringLiteral(block.data.method)));
+  }
+  
+  if (block.data.args?.length > 0) {
+    dataProps.push(t.objectProperty(
+      t.identifier('args'),
+      t.arrayExpression(block.data.args.map(arg =>
+        typeof arg === 'number' ? t.numericLiteral(arg) : t.stringLiteral(String(arg))
+      ))
+    ));
+  }
+  
+  if (block.data.await !== undefined) {
+    dataProps.push(t.objectProperty(t.identifier('await'), t.booleanLiteral(block.data.await)));
+  }
+  
+  if (block.data.storeAs) {
+    dataProps.push(t.objectProperty(t.identifier('storeAs'), t.stringLiteral(block.data.storeAs)));
+  }
+  
+  // ✅ NEW: Save assertion field for function-call blocks
+  if (block.data.assertion) {
+    const assertionProps = [];
+    
+    if (block.data.assertion.type) {
+      assertionProps.push(t.objectProperty(
+        t.identifier('type'), 
+        t.stringLiteral(block.data.assertion.type)
+      ));
+    }
+    
+    if (block.data.assertion.not !== undefined) {
+      assertionProps.push(t.objectProperty(
+        t.identifier('not'), 
+        t.booleanLiteral(block.data.assertion.not)
+      ));
+    }
+    
+    if (block.data.assertion.value !== undefined) {
+      const val = block.data.assertion.value;
+      let valNode;
+      
+      if (typeof val === 'boolean') {
+        valNode = t.booleanLiteral(val);
+      } else if (typeof val === 'number') {
+        valNode = t.numericLiteral(val);
+      } else if (val === null) {
+        valNode = t.nullLiteral();
+      } else {
+        valNode = t.stringLiteral(String(val));
+      }
+      
+      assertionProps.push(t.objectProperty(t.identifier('value'), valNode));
+    }
+    
+    if (assertionProps.length > 0) {
+      dataProps.push(t.objectProperty(
+        t.identifier('assertion'), 
+        t.objectExpression(assertionProps)
+      ));
+    }
+  }
+  
+  if (dataProps.length > 0) {
+    blockProps.push(t.objectProperty(t.identifier('data'), t.objectExpression(dataProps)));
+  }
       }
 
       // ─────────────────────────────────────────────────────────
@@ -2498,13 +3449,17 @@ function screensHaveChanges(newScreens, originalArrayNode) {
 /**
  * Extract screen data from AST node for comparison
  */
+/**
+ * Extract screen data from AST node for comparison
+ * ✅ ENHANCED: Now properly extracts nested objects (like block.data.assertion)
+ */
 function extractScreenDataFromAst(objectNode) {
   const data = {};
   
   objectNode.properties.forEach(prop => {
     if (!t.isObjectProperty(prop) || !prop.key) return;
     
-    const key = prop.key.name;
+    const key = prop.key.name || prop.key.value;
     
     if (t.isStringLiteral(prop.value)) {
       data[key] = prop.value.value;
@@ -2512,9 +3467,12 @@ function extractScreenDataFromAst(objectNode) {
       data[key] = prop.value.value;
     } else if (t.isNumericLiteral(prop.value)) {
       data[key] = prop.value.value;
+    } else if (t.isNullLiteral(prop.value)) {
+      data[key] = null;
     } else if (t.isArrayExpression(prop.value)) {
-      // ✅ Handle blocks array specially
+      // Handle arrays
       if (key === 'blocks') {
+        // Blocks array - recursively extract each block
         data[key] = prop.value.elements.map(blockNode => {
           if (t.isObjectExpression(blockNode)) {
             return extractScreenDataFromAst(blockNode);
@@ -2522,11 +3480,17 @@ function extractScreenDataFromAst(objectNode) {
           return null;
         }).filter(Boolean);
       } else {
-        data[key] = prop.value.elements
-          .filter(e => t.isStringLiteral(e))
-          .map(e => e.value);
+        // Other arrays - could be strings or objects
+        data[key] = prop.value.elements.map(el => {
+          if (t.isStringLiteral(el)) return el.value;
+          if (t.isNumericLiteral(el)) return el.value;
+          if (t.isBooleanLiteral(el)) return el.value;
+          if (t.isObjectExpression(el)) return extractScreenDataFromAst(el);
+          return null;
+        }).filter(el => el !== null);
       }
     } else if (t.isObjectExpression(prop.value)) {
+      // ✅ FIXED: Recursively extract nested objects (like data, assertion, checks, etc.)
       data[key] = extractScreenDataFromAst(prop.value);
     }
   });
@@ -2754,21 +3718,20 @@ function buildScreenObjectAst(screen) {
     }
     
    // checks.text
-  if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
-  const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+   if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(value)
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
       ));
     }
     
-    // ✅ ADD THIS: checks.contains
-     if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
       const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
         t.objectProperty(
           /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
@@ -3061,26 +4024,26 @@ function buildScreenAst(screen, screenName, platformName, className) {
       ));
     }
     
-    if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
-  const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+  if (screen.checks.text && Object.keys(screen.checks.text).length > 0) {
+      const textProps = Object.entries(screen.checks.text).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(String(value))
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('text'),
         t.objectExpression(textProps)
       ));
     }
     
-   if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
-  const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
-    t.objectProperty(
-      /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
-      t.stringLiteral(value)
-    )
-  );
+    if (screen.checks.contains && Object.keys(screen.checks.contains).length > 0) {
+      const containsProps = Object.entries(screen.checks.contains).map(([key, value]) =>
+        t.objectProperty(
+          /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? t.identifier(key) : t.stringLiteral(key),
+          t.stringLiteral(String(value))
+        )
+      );
       checkProps.push(t.objectProperty(
         t.identifier('contains'),
         t.objectExpression(containsProps)
@@ -3796,7 +4759,7 @@ function addTransitionToAST(ast, event, targetStateName, platforms, actionDetail
       } else {
         valueNode = t.stringLiteral(String(value));
       }
-      return t.objectProperty(t.identifier(key), valueNode);
+      return t.objectProperty(t.stringLiteral(key), valueNode);
     });
     
     transitionObj.properties.push(
@@ -4156,6 +5119,17 @@ function findOrCreateOnProperty(configValue) {
  * @param {object} requires - Conditions from transition (optional)
  * @returns {boolean} Whether the file was modified
  */
+// In implications.js - Replace the addSetupEntryToAST function entirely
+
+/**
+ * Add a setup entry to the target implication's meta.setup array
+ * Called when a transition is added TO this state
+ * 
+ * ✅ FIXED: 
+ * 1. Unique by (previousStatus + requires) combination, not just previousStatus
+ * 2. Never overwrites existing entries - only adds new ones
+ * 3. Uses correct event name in testFile path
+ */
 function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platform, requires, mode) {
   let targetUpdated = false;
   
@@ -4188,31 +5162,69 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           metaProperty.value.properties.push(setupProperty);
         }
         
-        // Check if setup entry for this source already exists
-        const existingEntry = setupProperty.value.elements.find(el => {
+        // ════════════════════════════════════════════════════════════════
+        // ✅ CRITICAL FIX: Check for duplicate by (previousStatus + requires + event)
+        // Multiple transitions can come from same source with different requires!
+        // ════════════════════════════════════════════════════════════════
+        const existingEntryIndex = setupProperty.value.elements.findIndex(el => {
           if (el.type !== 'ObjectExpression') return false;
+          
+          // Check previousStatus
           const prevStatusProp = el.properties.find(p => p.key?.name === 'previousStatus');
-          return prevStatusProp?.value?.value === sourceStateName;
+          if (prevStatusProp?.value?.value !== sourceStateName) return false;
+          
+          // Check requires - must match exactly
+          const requiresProp = el.properties.find(p => p.key?.name === 'requires');
+          const existingRequires = requiresProp ? extractValueFromAST(requiresProp.value) : null;
+          const newRequires = (requires && Object.keys(requires).length > 0) ? requires : null;
+          
+          // Both null = match, both objects = compare JSON
+          if (existingRequires === null && newRequires === null) return true;
+          if (existingRequires === null || newRequires === null) return false;
+          
+          return JSON.stringify(existingRequires) === JSON.stringify(newRequires);
         });
         
-        if (existingEntry) {
-          console.log(`ℹ️  Setup entry from '${sourceStateName}' already exists`);
-          return;
+        if (existingEntryIndex !== -1) {
+          console.log(`ℹ️  Setup entry from '${sourceStateName}' with requires=${JSON.stringify(requires || {})} already exists`);
+          console.log(`   (This is expected - setup entry was already created)`);
+          return; // Don't modify existing!
         }
         
-        // Build the new setup entry
+        // ════════════════════════════════════════════════════════════════
+        // Build the new setup entry with CORRECT naming
+        // ════════════════════════════════════════════════════════════════
         const toPascalCase = (str) => str
           .split('_')
           .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
           .join('');
         
+        const toCamelCase = (str) => {
+          const pascal = toPascalCase(str);
+          return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+        };
+        
         const targetPascal = toPascalCase(targetStateName);
         const sourcePascal = toPascalCase(sourceStateName);
         const platformCapitalized = platform.charAt(0).toUpperCase() + platform.slice(1);
-        const eventClean = event;
         
-        const testFileName = `${targetPascal}Via${sourcePascal}-${eventClean}-${platformCapitalized}-UNIT.spec.js`;
-        const actionName = `${targetStateName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}Via${sourcePascal}`;
+        // ✅ Test file uses EVENT name: LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js
+        const testFileName = `${targetPascal}Via${sourcePascal}-${event}-${platformCapitalized}-UNIT.spec.js`;
+        
+        // ✅ Action name is camelCase: landingPageViaCookies
+        const actionName = `${toCamelCase(targetStateName)}Via${sourcePascal}`;
+        
+        console.log(`📝 Creating NEW setup entry:`);
+        console.log(`   testFile: tests/implications/bookings/status/${testFileName}`);
+        console.log(`   actionName: ${actionName}`);
+        console.log(`   previousStatus: ${sourceStateName}`);
+        console.log(`   platform: ${platform}`);
+        if (requires && Object.keys(requires).length > 0) {
+          console.log(`   requires:`, JSON.stringify(requires));
+        }
+        if (mode) {
+          console.log(`   mode: ${mode}`);
+        }
         
         // Build setup entry properties
         const setupEntryProps = [
@@ -4233,17 +5245,6 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
             t.stringLiteral(sourceStateName)
           )
         ];
-        
-        // ✅ NEW: Add mode if provided (for observer transitions)
-        if (mode) {
-          console.log(`✅ Adding mode "${mode}" to setup entry`);
-          setupEntryProps.push(
-            t.objectProperty(
-              t.identifier('mode'),
-              t.stringLiteral(mode)
-            )
-          );
-        }
         
         // Add requires if provided
         if (requires && Object.keys(requires).length > 0) {
@@ -4267,12 +5268,22 @@ function addSetupEntryToAST(ast, sourceStateName, targetStateName, event, platfo
           );
         }
         
+        // Add mode if provided (for observer transitions)
+        if (mode) {
+          setupEntryProps.push(
+            t.objectProperty(
+              t.identifier('mode'),
+              t.stringLiteral(mode)
+            )
+          );
+        }
+        
         // Add the new setup entry
         setupProperty.value.elements.push(
           t.objectExpression(setupEntryProps)
         );
         
-        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} (${platform}${mode ? ', mode: ' + mode : ''})`);
+        console.log(`✅ Added setup entry: ${sourceStateName} → ${targetStateName} via ${event}`);
         targetUpdated = true;
       }
     }
@@ -4969,43 +5980,24 @@ function detectFieldType(value) {
  * Create a Babel AST node from a JavaScript value
  */
 function createValueNode(value) {
-  if (value === null) {
-    return t.nullLiteral();
-  }
-  
-  if (value === undefined) {
-    return t.identifier('undefined');
-  }
-  
-  if (typeof value === 'boolean') {
-    return t.booleanLiteral(value);
-  }
-  
-  if (typeof value === 'number') {
-    return t.numericLiteral(value);
-  }
-  
-  if (typeof value === 'string') {
-    return t.stringLiteral(value);
-  }
+  if (value === null) return t.nullLiteral();
+  if (value === undefined) return t.identifier('undefined');
+  if (typeof value === 'boolean') return t.booleanLiteral(value);
+  if (typeof value === 'number') return t.numericLiteral(value);
+  if (typeof value === 'string') return t.stringLiteral(value);
   
   if (Array.isArray(value)) {
-    return t.arrayExpression(
-      value.map(item => createValueNode(item))
-    );
+    return t.arrayExpression(value.map(v => createValueNode(v)));
   }
   
   if (typeof value === 'object') {
-    const properties = Object.entries(value).map(([key, val]) =>
-      t.objectProperty(
-        t.identifier(key),
-        createValueNode(val)
+    return t.objectExpression(
+      Object.entries(value).map(([k, v]) =>
+        t.objectProperty(t.identifier(k), createValueNode(v))
       )
     );
-    return t.objectExpression(properties);
   }
   
-  // Fallback
   return t.stringLiteral(String(value));
 }
 
@@ -5092,7 +6084,7 @@ function updateSetupEntryRequiresInAST(ast, sourceStateName, requires, mode) {
               } else {
                 valueNode = t.stringLiteral(String(value));
               }
-              return t.objectProperty(t.identifier(key), valueNode);
+              return t.objectProperty(t.stringLiteral(key), valueNode);
             });
             
             const requiresNode = t.objectProperty(
@@ -5490,7 +6482,7 @@ console.log('🔒 Conditions received:', JSON.stringify(conditions, null, 2));
                 } else {
                   valueNode = t.stringLiteral(String(value));
                 }
-                return t.objectProperty(t.identifier(key), valueNode);
+                return t.objectProperty(t.stringLiteral(key), valueNode);
               });
               
               transitionProperties.push(
@@ -5861,7 +6853,7 @@ router.post('/delete-transition', async (req, res) => {
       backup: backupPath
     });
     
-  } catch (error) {
+ } catch (error) {
     console.error('❌ Delete transition failed:', error);
     res.status(500).json({ 
       error: error.message,
@@ -5870,5 +6862,540 @@ router.post('/delete-transition', async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// SETUP ENTRY MANAGEMENT ENDPOINTS
+// Add these to implications.js after the existing endpoints
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/implications/setup-entries
+ * 
+ * Get all setup entries from an implication file
+ * 
+ * Query:
+ * - filePath: Path to implication file
+ * 
+ * Response:
+ * {
+ *   success: true,
+ *   setup: [
+ *     { testFile, actionName, platform, previousStatus, requires? }
+ *   ]
+ * }
+ */
+router.get('/setup-entries', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    console.log(`📋 Getting setup entries from: ${path.basename(filePath)}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let setupEntries = [];
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          setupEntries = setupProp.value.elements
+            .filter(el => el.type === 'ObjectExpression')
+            .map((el, index) => {
+              const entry = { _index: index };
+              
+              el.properties.forEach(prop => {
+                const key = prop.key?.name;
+                if (!key) return;
+                
+                if (key === 'requires' && prop.value?.type === 'ObjectExpression') {
+                  entry.requires = {};
+                  prop.value.properties.forEach(reqProp => {
+                    const reqKey = reqProp.key?.name || reqProp.key?.value;
+                    entry.requires[reqKey] = extractValueFromAST(reqProp.value);
+                  });
+                } else {
+                  entry[key] = extractValueFromAST(prop.value);
+                }
+              });
+              
+              return entry;
+            });
+        }
+      }
+    });
+    
+    console.log(`✅ Found ${setupEntries.length} setup entries`);
+    
+    res.json({
+      success: true,
+      setup: setupEntries
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting setup entries:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/update-setup-entry
+ * 
+ * Update a specific setup entry by index or by matching previousStatus+requires
+ * 
+ * Body:
+ * {
+ *   filePath: string,
+ *   // Either provide index:
+ *   index: number,
+ *   // Or provide match criteria:
+ *   match: { previousStatus: string, requires?: object },
+ *   // New values to set:
+ *   updates: {
+ *     testFile?: string,
+ *     actionName?: string,
+ *     platform?: string,
+ *     previousStatus?: string,
+ *     requires?: object,
+ *     mode?: string
+ *   }
+ * }
+ */
+router.post('/update-setup-entry', async (req, res) => {
+  try {
+    const { filePath, index, match, updates } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (index === undefined && !match) {
+      return res.status(400).json({ error: 'Either index or match criteria is required' });
+    }
+    
+    if (!updates || Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'updates object is required' });
+    }
+    
+    console.log(`✏️ Updating setup entry in: ${path.basename(filePath)}`);
+    console.log(`   Match:`, match || `index ${index}`);
+    console.log(`   Updates:`, updates);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let updated = false;
+    let matchedEntry = null;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          // Find the entry to update
+          let entryIndex = -1;
+          
+          if (index !== undefined) {
+            entryIndex = index;
+          } else if (match) {
+            entryIndex = setupProp.value.elements.findIndex(el => {
+              if (el.type !== 'ObjectExpression') return false;
+              
+              // Check previousStatus
+              const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+              if (prevProp?.value?.value !== match.previousStatus) return false;
+              
+              // Check requires if specified
+              if (match.requires) {
+                const reqProp = el.properties.find(p => p.key?.name === 'requires');
+                const existingReq = reqProp ? extractValueFromAST(reqProp.value) : null;
+                
+                if (!existingReq) return false;
+                if (JSON.stringify(existingReq) !== JSON.stringify(match.requires)) return false;
+              }
+              
+              return true;
+            });
+          }
+          
+          if (entryIndex === -1 || !setupProp.value.elements[entryIndex]) {
+            console.log(`❌ No matching setup entry found`);
+            return;
+          }
+          
+          const entry = setupProp.value.elements[entryIndex];
+          
+          // Apply updates
+          Object.entries(updates).forEach(([key, value]) => {
+            // Find existing property
+            const existingPropIndex = entry.properties.findIndex(p => p.key?.name === key);
+            
+            let valueNode;
+            if (key === 'requires' && typeof value === 'object') {
+              // Build requires object
+              const reqProps = Object.entries(value).map(([k, v]) => {
+                let vNode;
+                if (typeof v === 'boolean') vNode = t.booleanLiteral(v);
+                else if (typeof v === 'number') vNode = t.numericLiteral(v);
+                else vNode = t.stringLiteral(String(v));
+                return t.objectProperty(t.identifier(k), vNode);
+              });
+              valueNode = t.objectExpression(reqProps);
+            } else if (typeof value === 'boolean') {
+              valueNode = t.booleanLiteral(value);
+            } else if (typeof value === 'number') {
+              valueNode = t.numericLiteral(value);
+            } else if (value === null) {
+              // Remove property if null
+              if (existingPropIndex !== -1) {
+                entry.properties.splice(existingPropIndex, 1);
+              }
+              return;
+            } else {
+              valueNode = t.stringLiteral(String(value));
+            }
+            
+            if (existingPropIndex !== -1) {
+              entry.properties[existingPropIndex].value = valueNode;
+            } else {
+              entry.properties.push(t.objectProperty(t.identifier(key), valueNode));
+            }
+          });
+          
+          updated = true;
+          matchedEntry = entryIndex;
+          console.log(`✅ Updated setup entry at index ${entryIndex}`);
+        }
+      }
+    });
+    
+    if (!updated) {
+      return res.status(404).json({ error: 'Setup entry not found' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    // Backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    console.log('✅ Setup entry updated successfully');
+    
+    res.json({
+      success: true,
+      updatedIndex: matchedEntry,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/delete-setup-entry
+ * 
+ * Delete a setup entry by index or match criteria
+ */
+router.post('/delete-setup-entry', async (req, res) => {
+  try {
+    const { filePath, index, match } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (index === undefined && !match) {
+      return res.status(400).json({ error: 'Either index or match criteria is required' });
+    }
+    
+    console.log(`🗑️ Deleting setup entry from: ${path.basename(filePath)}`);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let deleted = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          const metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp?.value?.properties) return;
+          
+          const setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp?.value?.elements) return;
+          
+          let entryIndex = -1;
+          
+          if (index !== undefined) {
+            entryIndex = index;
+          } else if (match) {
+            entryIndex = setupProp.value.elements.findIndex(el => {
+              if (el.type !== 'ObjectExpression') return false;
+              
+              const prevProp = el.properties.find(p => p.key?.name === 'previousStatus');
+              if (prevProp?.value?.value !== match.previousStatus) return false;
+              
+              if (match.requires) {
+                const reqProp = el.properties.find(p => p.key?.name === 'requires');
+                const existingReq = reqProp ? extractValueFromAST(reqProp.value) : null;
+                if (JSON.stringify(existingReq) !== JSON.stringify(match.requires)) return false;
+              }
+              
+              return true;
+            });
+          }
+          
+          if (entryIndex !== -1 && setupProp.value.elements[entryIndex]) {
+            setupProp.value.elements.splice(entryIndex, 1);
+            deleted = true;
+            console.log(`✅ Deleted setup entry at index ${entryIndex}`);
+          }
+        }
+      }
+    });
+    
+    if (!deleted) {
+      return res.status(404).json({ error: 'Setup entry not found' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    res.json({
+      success: true,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/implications/add-setup-entry
+ * 
+ * Manually add a setup entry (for fixing corrupted data or special cases)
+ */
+router.post('/add-setup-entry', async (req, res) => {
+  try {
+    const { filePath, entry } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+    
+    if (!entry || !entry.testFile || !entry.actionName || !entry.previousStatus) {
+      return res.status(400).json({ 
+        error: 'entry must include testFile, actionName, and previousStatus' 
+      });
+    }
+    
+    console.log(`➕ Adding setup entry to: ${path.basename(filePath)}`);
+    console.log(`   Entry:`, entry);
+    
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    const ast = parser.parse(content, {
+      sourceType: 'module',
+      plugins: ['jsx', 'classProperties']
+    });
+    
+    let added = false;
+    
+    traverse(ast, {
+      ClassProperty(path) {
+        if (path.node.key?.name === 'xstateConfig' && path.node.static) {
+          const configValue = path.node.value;
+          
+          if (configValue?.type !== 'ObjectExpression') return;
+          
+          // Find or create meta
+          let metaProp = configValue.properties.find(p => p.key?.name === 'meta');
+          if (!metaProp) {
+            metaProp = t.objectProperty(t.identifier('meta'), t.objectExpression([]));
+            configValue.properties.unshift(metaProp);
+          }
+          
+          // Find or create setup array
+          let setupProp = metaProp.value.properties.find(p => p.key?.name === 'setup');
+          if (!setupProp) {
+            setupProp = t.objectProperty(t.identifier('setup'), t.arrayExpression([]));
+            metaProp.value.properties.push(setupProp);
+          }
+          
+          // Build entry properties
+          const entryProps = [
+            t.objectProperty(t.identifier('testFile'), t.stringLiteral(entry.testFile)),
+            t.objectProperty(t.identifier('actionName'), t.stringLiteral(entry.actionName)),
+            t.objectProperty(t.identifier('platform'), t.stringLiteral(entry.platform || 'web')),
+            t.objectProperty(t.identifier('previousStatus'), t.stringLiteral(entry.previousStatus))
+          ];
+          
+          if (entry.requires && Object.keys(entry.requires).length > 0) {
+            const reqProps = Object.entries(entry.requires).map(([k, v]) => {
+              let vNode;
+              if (typeof v === 'boolean') vNode = t.booleanLiteral(v);
+              else if (typeof v === 'number') vNode = t.numericLiteral(v);
+              else vNode = t.stringLiteral(String(v));
+              return t.objectProperty(t.identifier(k), vNode);
+            });
+            entryProps.push(t.objectProperty(t.identifier('requires'), t.objectExpression(reqProps)));
+          }
+          
+          if (entry.mode) {
+            entryProps.push(t.objectProperty(t.identifier('mode'), t.stringLiteral(entry.mode)));
+          }
+          
+          setupProp.value.elements.push(t.objectExpression(entryProps));
+          added = true;
+          console.log(`✅ Added setup entry`);
+        }
+      }
+    });
+    
+    if (!added) {
+      return res.status(400).json({ error: 'Could not find xstateConfig in file' });
+    }
+    
+    // Generate and write
+    const output = babelGenerate.default(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    }, content);
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${filePath}.backup-${timestamp}`;
+    await fs.copy(filePath, backupPath);
+    
+    await fs.writeFile(filePath, output.code, 'utf-8');
+    
+    res.json({
+      success: true,
+      backup: backupPath
+    });
+    
+  } catch (error) {
+    console.error('❌ Error adding setup entry:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// USAGE EXAMPLES:
+// ════════════════════════════════════════════════════════════════════════════
+
+/*
+// GET all setup entries:
+GET /api/implications/setup-entries?filePath=/path/to/LandingPageImplications.js
+
+// FIX a corrupted entry (by index):
+POST /api/implications/update-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "index": 0,
+  "updates": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies"
+  }
+}
+
+// FIX a corrupted entry (by matching):
+POST /api/implications/update-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "match": {
+    "previousStatus": "cookies",
+    "requires": { "acceptCookies": true }
+  },
+  "updates": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies"
+  }
+}
+
+// DELETE a setup entry:
+POST /api/implications/delete-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "match": {
+    "previousStatus": "agency_preffered"
+  }
+}
+
+// ADD a manual setup entry:
+POST /api/implications/add-setup-entry
+{
+  "filePath": "/path/to/LandingPageImplications.js",
+  "entry": {
+    "testFile": "tests/implications/bookings/status/LandingPageViaCookies-ACCEPT-Web-UNIT.spec.js",
+    "actionName": "landingPageViaCookies",
+    "platform": "web",
+    "previousStatus": "cookies",
+    "requires": { "acceptCookies": true }
+  }
+}
+*/
+
+// Register the insert-node route directly on the router
+router.post('/graph/insert-node', insertNodeHandler);
+console.log('✅ Registered: POST /api/implications/graph/insert-node');
 
 export default router;

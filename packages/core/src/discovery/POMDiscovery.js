@@ -226,14 +226,11 @@ _detectPlatform(filePath) {
     return [];
   }
 
-/**
- * ✅ GENERIC: Find all POM files using config patterns OR defaults
- */
 async _findPOMFiles() {
-  // Try to load config from project
   const patterns = await this._loadPOMPatterns();
   
   console.log(`   🔍 Using ${patterns.length} pattern(s) for POM discovery`);
+  console.log(`   🚫 Ignore patterns: ${this._ignorePatterns?.length || 0}`);
 
   const pomFiles = [];
 
@@ -244,7 +241,7 @@ async _findPOMFiles() {
       const files = await glob(pattern, {
         cwd: this.projectPath,
         absolute: true,
-        ignore: [
+        ignore: this._ignorePatterns || [  // ✅ USE LOADED PATTERNS
           '**/node_modules/**',
           '**/dist/**',
           '**/build/**',
@@ -261,7 +258,6 @@ async _findPOMFiles() {
     }
   }
 
-  // Deduplicate
   const uniqueFiles = [...new Set(pomFiles)];
   console.log(`   📦 Total unique POM files: ${uniqueFiles.length}`);
   
@@ -283,38 +279,65 @@ _looksLikeLocatorMethod(name) {
 }
 
 /**
- * ✅ NEW: Load POM patterns from ai-testing.config.js or use defaults
+ * ✅ FIXED: Load POM patterns AND ignore patterns from ai-testing.config.js
  */
 async _loadPOMPatterns() {
   const configPath = path.join(this.projectPath, 'ai-testing.config.js');
   
+  let patterns = [];
+  let ignorePatterns = [
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.next/**',
+  ];
+  
   try {
-    // Check if config exists
     await fs.access(configPath);
     
     // Dynamic import for ESM compatibility
     const configModule = await import(`file://${configPath}`);
     const config = configModule.default || configModule;
     
+    // Load patterns
     if (config.discovery?.poms && config.discovery.poms.length > 0) {
-      console.log(`   ✅ Loaded ${config.discovery.poms.length} POM pattern(s) from ai-testing.config.js`);
-      return config.discovery.poms;
+      patterns = config.discovery.poms;
+      console.log(`   ✅ Loaded ${patterns.length} POM pattern(s) from config.discovery.poms`);
+    } else if (config.screenObjectsPaths && config.screenObjectsPaths.length > 0) {
+      patterns = config.screenObjectsPaths;
+      console.log(`   ✅ Loaded ${patterns.length} POM pattern(s) from config.screenObjectsPaths`);
     }
+    
+    // ✅ NEW: Load ignore patterns
+    if (config.screenPaths?.ignore && config.screenPaths.ignore.length > 0) {
+      ignorePatterns = [...ignorePatterns, ...config.screenPaths.ignore];
+      console.log(`   ✅ Loaded ${config.screenPaths.ignore.length} ignore pattern(s) from config.screenPaths.ignore`);
+    } else if (config.discovery?.ignore && config.discovery.ignore.length > 0) {
+      ignorePatterns = [...ignorePatterns, ...config.discovery.ignore];
+      console.log(`   ✅ Loaded ${config.discovery.ignore.length} ignore pattern(s) from config.discovery.ignore`);
+    }
+    
   } catch (error) {
-    // Config doesn't exist or can't be loaded
     console.log(`   ℹ️  No ai-testing.config.js found, using default patterns`);
   }
   
-  // Default patterns (generic, should work for most projects)
-  return [
-    '**/screenObjects/**/*.js',
-    '**/pages/**/*.js',
-    '**/screens/**/*.js',
-    '**/pom/**/*.js',
-    '**/pageObjects/**/*.js',
-    '**/*.page.js',
-    '**/*.screen.js',
-  ];
+  // Use defaults if no patterns found
+  if (patterns.length === 0) {
+    patterns = [
+      '**/screenObjects/**/*.js',
+      '**/pages/**/*.js',
+      '**/screens/**/*.js',
+      '**/pom/**/*.js',
+      '**/pageObjects/**/*.js',
+      '**/*.page.js',
+      '**/*.screen.js',
+    ];
+  }
+  
+  // ✅ Store ignore patterns for use in _findPOMFiles
+  this._ignorePatterns = ignorePatterns;
+  
+  return patterns;
 }
 
   /**
@@ -628,48 +651,61 @@ else if (member.kind === 'method' && member.key.name !== 'constructor') {
     return `${name}(${paramStrings.join(', ')})`;
   }
 
-  /**
-   * Get available paths for a POM
-   */
-  getAvailablePaths(pomName, instanceName = null) {
-    const pom = this.pomCache.get(pomName);
-    if (!pom) return [];
+/**
+ * Get available paths for a POM
+ * ✅ FIXED: Always include direct getters, even if POM has instances
+ */
+getAvailablePaths(pomName, instanceName = null) {
+  const pom = this.pomCache.get(pomName);
+  if (!pom) return [];
 
-    const paths = [];
-    
-    for (const cls of pom.classes) {
-      if (instanceName) {
-        const instanceProp = cls.properties.find(
-          p => p.name === instanceName && p.type === 'instance'
-        );
+  const paths = [];
+  
+  for (const cls of pom.classes) {
+    if (instanceName) {
+      // Looking for a specific instance's paths
+      const instanceProp = cls.properties.find(
+        p => p.name === instanceName && p.type === 'instance'
+      );
+      
+      if (instanceProp) {
+        // Try to find the instance's class in our cache
+        const instancePom = this.pomCache.get(instanceProp.className);
         
-        if (instanceProp) {
-          const instanceClass = pom.classes.find(c => c.name === instanceProp.className);
-          if (instanceClass) {
-            for (const getter of instanceClass.getters) {
+        if (instancePom) {
+          // Get getters from the instance's class
+          for (const instanceCls of instancePom.classes) {
+            for (const getter of instanceCls.getters || []) {
               paths.push(`${instanceName}.${getter.name}`);
             }
-          }
-        }
-      } else {
-        const hasInstances = cls.properties.some(p => p.type === 'instance');
-        
-        if (!hasInstances) {
-          for (const getter of cls.getters) {
-            paths.push(getter.name);
-          }
-          
-          for (const prop of cls.properties) {
-            if (prop.type === 'property') {
-              paths.push(prop.name);
+            for (const prop of instanceCls.properties || []) {
+              if (prop.type === 'property') {
+                paths.push(`${instanceName}.${prop.name}`);
+              }
             }
           }
         }
       }
+    } else {
+      // ✅ FIXED: Always include direct getters from main class
+      // (regardless of whether it has instance properties)
+      for (const getter of cls.getters || []) {
+        if (!paths.includes(getter.name)) {
+          paths.push(getter.name);
+        }
+      }
+      
+      // Include direct properties (not instances)
+      for (const prop of cls.properties || []) {
+        if (prop.type === 'property' && !paths.includes(prop.name)) {
+          paths.push(prop.name);
+        }
+      }
     }
-
-    return paths;
   }
+
+  return paths;
+}
 
   /**
    * ✅ FIXED: Get ALL functions for a POM (including ones without params)

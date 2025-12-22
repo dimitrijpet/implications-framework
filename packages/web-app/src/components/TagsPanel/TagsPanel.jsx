@@ -4,6 +4,21 @@
 
 import { useState, useEffect } from 'react';
 
+const CATEGORY_ICONS = {
+  screen: '🖥️',
+  group: '📁',
+  entity: '🎯',
+  platform: '🌐',
+  flow: '🔄',
+  pattern: '📐',
+  status: '📊',
+  _default: '🏷️'
+};
+
+const getCategoryIcon = (category) => {
+  return CATEGORY_ICONS[category.toLowerCase()] || CATEGORY_ICONS._default;
+};
+
 const DEFAULT_COLORS = [
   '#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', 
   '#ec4899', '#06b6d4', '#ef4444', '#84cc16',
@@ -144,25 +159,25 @@ export default function TagsPanel({
           <div className="flex flex-wrap gap-6">
             {Object.entries(discoveredTags).map(([category, values]) => (
               <div key={category} className="min-w-[200px]">
-                {/* Category header */}
-                <div 
-                  className="flex items-center gap-2 mb-2 cursor-pointer"
-                  onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}
-                >
-                  <span style={{ color: theme.colors.text.tertiary, fontSize: '10px' }}>
-                    {expandedCategories[category] ? '▼' : '▶'}
-                  </span>
-                  <span className="font-semibold text-sm capitalize" style={{ color: theme.colors.text.primary }}>
-                    {category}
-                  </span>
-                  <span 
-                    className="text-xs px-1.5 rounded"
-                    style={{ background: theme.colors.background.tertiary, color: theme.colors.text.tertiary }}
-                  >
-                    {values.length}
-                  </span>
-                </div>
-
+            {/* Category header */}
+<div 
+  className="flex items-center gap-2 mb-2 cursor-pointer"
+  onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}
+>
+  <span style={{ color: theme.colors.text.tertiary, fontSize: '10px' }}>
+    {expandedCategories[category] ? '▼' : '▶'}
+  </span>
+  <span className="text-base">{getCategoryIcon(category)}</span>
+  <span className="font-semibold text-sm capitalize" style={{ color: theme.colors.text.primary }}>
+    {category}
+  </span>
+  <span 
+    className="text-xs px-1.5 rounded"
+    style={{ background: theme.colors.background.tertiary, color: theme.colors.text.tertiary }}
+  >
+    {values.length}
+  </span>
+</div>
                 {/* Tag values */}
                 {expandedCategories[category] && (
                   <div className="space-y-1 ml-4">
@@ -236,13 +251,14 @@ export default function TagsPanel({
           </div>
 
           {/* Help */}
-          <details className="mt-4 pt-3 border-t text-xs" style={{ borderColor: theme.colors.border, color: theme.colors.text.tertiary }}>
-            <summary className="cursor-pointer">💡 How to add tags to your implications</summary>
-            <pre className="mt-2 p-3 rounded overflow-x-auto" style={{ background: theme.colors.background.tertiary }}>
+        <details className="mt-4 pt-3 border-t text-xs" style={{ borderColor: theme.colors.border, color: theme.colors.text.tertiary }}>
+  <summary className="cursor-pointer">💡 How to add tags to your implications</summary>
+  <pre className="mt-2 p-3 rounded overflow-x-auto" style={{ background: theme.colors.background.tertiary }}>
 {`// In your implication's xstateConfig.meta:
 static xstateConfig = {
   meta: {
     status: "pending",
+    entity: "booking",  // 🎯 Primary data entity
     tags: {
       screen: "BookingScreen",
       flow: "booking-review",
@@ -250,8 +266,8 @@ static xstateConfig = {
     }
   }
 };`}
-            </pre>
-          </details>
+  </pre>
+</details>
         </div>
       )}
     </div>

@@ -305,11 +305,26 @@ export const findBlockById = (blocks, id) => {
 
 /**
  * Update a block in the array
+ * ✅ FIXED: Deep merge the data object to preserve nested properties like assertion
  */
 export const updateBlock = (blocks, id, updates) => {
-  return blocks.map(block => 
-    block.id === id ? { ...block, ...updates } : block
-  );
+  return blocks.map(block => {
+    if (block.id !== id) return block;
+    
+    // ✅ Deep merge data object if present
+    if (updates.data && block.data) {
+      return {
+        ...block,
+        ...updates,
+        data: {
+          ...block.data,
+          ...updates.data
+        }
+      };
+    }
+    
+    return { ...block, ...updates };
+  });
 };
 
 /**
