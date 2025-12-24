@@ -12,6 +12,8 @@ import AddStateModal from '../components/AddStateModal/AddStateModal';
 import AddTransitionModal from '../components/AddTransitionModal/AddTransitionModal';
 import { initializeFromDiscovery } from '../utils/requiresColors.js';
 import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
+import IntelligenceSearch from '../components/intelligence/IntelligenceSearch.jsx';
+import TicketAnalyzer from '../components/TicketAnalyzer/TicketAnalyzer';
 
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
@@ -61,6 +63,13 @@ const [selectedEdge, setSelectedEdge] = useState(null);
 useEffect(() => {
   if (discoveryResult) {
     initializeFromDiscovery(discoveryResult);
+  }
+}, [discoveryResult]);
+
+useEffect(() => {
+  if (discoveryResult) {
+    window.__discoveryResult = discoveryResult;
+    console.log('📊 Discovery result available at window.__discoveryResult');
   }
 }, [discoveryResult]);
 
@@ -1039,6 +1048,9 @@ const disableTransitionMode = () => {
                 Interactive implication visualization & documentation
               </p>
             </div>
+
+               
+      
             
             {/* Action Buttons */}
             <div className="flex items-center gap-2">
@@ -1404,6 +1416,71 @@ const disableTransitionMode = () => {
           </div>
         )} */}
 
+        {/* ✅ ADD INTELLIGENCE SEARCH HERE */}
+      {discoveryResult && (
+        <IntelligenceSearch 
+          projectPath={projectPath}
+          testDataPath={selectedTestDataFile}
+onSelectResult={(result) => {
+  console.log('🔍 Selected result:', result);
+  
+  // Get the target status to navigate to
+  let targetStatus = null;
+  
+  if (result.type === 'state') {
+    targetStatus = result.metadata?.status;
+  } else if (result.type === 'setup') {
+    // Setup entries - navigate to the state they help reach
+    targetStatus = result.metadata?.status;
+  } else if (result.type === 'transition') {
+    targetStatus = result.metadata?.from;
+  } else if (result.type === 'validation') {
+    targetStatus = result.metadata?.state;
+  } else if (result.type === 'condition') {
+    targetStatus = result.metadata?.state;
+  }
+  
+  if (targetStatus) {
+    setSelectedNodeId(targetStatus);
+    
+    // Navigate in graph
+    if (window.cytoscapeGraph?.navigateToNode) {
+      window.cytoscapeGraph.navigateToNode(targetStatus);
+    }
+    
+    // Open detail modal for state/setup types
+    if ((result.type === 'state' || result.type === 'setup') && discoveryResult) {
+      const implication = discoveryResult.files.implications.find(
+        imp => imp.metadata.status === targetStatus || 
+               imp.metadata.className === result.metadata.className
+      );
+      if (implication) {
+        handleNodeClick({ 
+          id: targetStatus, 
+          metadata: implication.metadata,
+          files: { implication: `${projectPath}/${implication.path}` }
+        });
+      }
+    }
+  }
+}}
+          theme={defaultTheme}
+        />
+      )}
+
+<TicketAnalyzer
+  projectPath={projectPath}
+  theme={defaultTheme}
+  onSelectState={(status) => {
+    // This opens the state detail modal
+    setSelectedNodeId(status);
+  }}
+/>
+
+      
+
+      
+
         {/* Transition Mode Controls */}
         <div className="mode-controls" style={{ marginBottom: '16px' }}>
           <button
@@ -1440,6 +1517,7 @@ const disableTransitionMode = () => {
             </button>
           )}
         </div>
+        
 
         {/* ✅ TAGS PANEL - Goes HERE, ABOVE the graph section! */}
         {graphData && Object.keys(discoveredTags).length > 0 && (
@@ -1774,6 +1852,7 @@ const disableTransitionMode = () => {
               </div>
             )}
           </div>
+          
           
           {/* StateGraph - just add the two new props */}
           {graphData ? (

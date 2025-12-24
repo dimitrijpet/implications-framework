@@ -861,6 +861,20 @@ useEffect(() => {
       // Access to cy instance
       nodes: () => cyRef.current.nodes(),
       edges: () => cyRef.current.edges(),
+      // ✅ ADD THIS NEW METHOD
+  navigateToNode: (nodeId) => {
+    if (!cyRef.current) return false;
+    const node = cyRef.current.getElementById(nodeId);
+    if (node && node.length) {
+      cyRef.current.animate({
+        center: { eles: node },
+        zoom: 1.5
+      }, { duration: 300 });
+      node.select();
+      return true;
+    }
+    return false;
+  }
     };
   }, [projectPath, theme]);
 
