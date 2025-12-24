@@ -1,10 +1,10 @@
 // packages/api-server/src/index.js (FIX - remove duplicate listen)
 
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
-import dotenv from 'dotenv';
-dotenv.config();
+// console.log('🔑 DEEPSEEK_API_KEY loaded:', !!process.env.DEEPSEEK_API_KEY);
 import healthRouter from './routes/health.js';
 import projectsRouter from './routes/projects.js';
 import discoveryRouter from './routes/discovery.js';
@@ -23,11 +23,9 @@ import locksRouter from './routes/locks.js';
 import notesRouter from './routes/notes.js';
 import intelligenceRoutes from './routes/intelligenceRoutes.js';
 import llmRoutes from './routes/llmRoutes.js';
+import aiAssistantRoutes from './routes/aiAssistantRoutes.js';
 
 
-
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,6 +58,7 @@ app.use('/api/notes', notesRouter);
 
 app.use('/api/intelligence', intelligenceRoutes);
 app.use('/api/llm', llmRoutes);
+app.use('/api/ai-assistant', aiAssistantRoutes);
 
 // Error handling
 app.use(errorHandler);
