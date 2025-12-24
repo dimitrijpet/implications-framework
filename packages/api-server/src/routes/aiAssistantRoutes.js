@@ -247,7 +247,7 @@ router.post('/compare-screenshots', async (req, res) => {
   }
 });
 
-export default router;
+
 /**
  * POST /api/ai-assistant/save-to-project
  * Save generated code to project files
@@ -378,3 +378,208 @@ ${exports.join('\n')}
 `;
 }
 
+
+/**
+ * POST /api/ai-assistant/create-implication
+ * Create an implication file from scan results using LLM
+ */
+router.post('/create-implication', async (req, res) => {
+  const {
+  projectPath,
+  screenName,
+  status,
+  elements,
+  platform = 'web',
+  entity = '',
+  previousState = '',
+  triggerEvent = '',
+  tags = {},
+  outputPath = 'tests/implications'  // ADD THIS
+} = req.body;
+
+  if (!projectPath || !screenName || !status || !elements) {
+    return res.status(400).json({
+      success: false,
+      error: 'projectPath, screenName, status, and elements are required'
+    });
+  }
+
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const { generateImplicationFromScan, isLLMEnabled } = await import('../services/llmservice.js');
+
+  try {
+    console.log(`🔧 Creating implication: ${screenName} (${status})`);
+
+    // Try to load an example implication for context
+    let exampleImplication = '';
+    const implicationsDir = path.join(projectPath, outputPath);
+    try {
+      const files = await fs.readdir(implicationsDir);
+      const implFile = files.find(f => f.endsWith('Implications.js'));
+      if (implFile) {
+        exampleImplication = await fs.readFile(path.join(implicationsDir, implFile), 'utf-8');
+        console.log(`  📖 Using ${implFile} as reference`);
+      }
+    } catch (e) {
+      console.log('  ⚠️ No example implication found, using defaults');
+    }
+
+    let implicationCode;
+    
+    if (isLLMEnabled()) {
+      // Use LLM to generate proper implication
+      console.log('  🤖 Generating with LLM...');
+      implicationCode = await generateImplicationFromScan({
+        screenName,
+        status,
+        elements,
+        platform,
+        entity,
+        context: { previousState, triggerEvent, tags },
+        exampleImplication
+      });
+    } else {
+      // Fallback to simple template
+      console.log('  📝 Using fallback template (LLM disabled)');
+      implicationCode = generateImplicationCode({ screenName, status, elements, platform, entity, previousState, triggerEvent, tags });
+    }
+
+    // Ensure directory exists
+    await fs.mkdir(implicationsDir, { recursive: true });
+
+    const fileName = `${screenName}Implications.js`;
+    const filePath = path.join(implicationsDir, fileName);
+
+    // Backup existing file
+    let backed = false;
+    try {
+      await fs.access(filePath);
+      const backupPath = `${filePath}.backup-${Date.now()}`;
+      await fs.copyFile(filePath, backupPath);
+      backed = true;
+      console.log(`  📦 Backed up to ${backupPath}`);
+    } catch {
+      // File doesn't exist
+    }
+
+    // Write file
+    await fs.writeFile(filePath, implicationCode, 'utf-8');
+    console.log(`  ✅ Created ${filePath}`);
+
+    res.json({
+      success: true,
+      filePath,
+      fileName,
+      backed,
+      screenName,
+      status,
+      elementsCount: elements.length,
+      usedLLM: isLLMEnabled()
+    });
+
+  } catch (error) {
+    console.error('❌ Create implication failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Generate implication class code from scan results
+ */
+function generateImplicationCode({ screenName, status, elements, platform, entity, previousState, triggerEvent, tags }) {
+  const className = `${screenName}Implications`;
+  
+  // Build mirrorsOn UI checks from elements - USE DOUBLE QUOTES for selectors
+  const uiChecks = elements.map(el => {
+    const selector = el.selectors?.[0]?.value || `[data-testid="${el.name}"]`;
+    // Escape any double quotes in the selector
+    const escapedSelector = selector.replace(/"/g, '\\"');
+
+    if (el.type === 'input') {
+      return `        ${el.name}: {
+          visible: true,
+          selector: "${escapedSelector}"
+        }`;
+    } else if (el.type === 'button') {
+      return `        ${el.name}: {
+          visible: true,
+          enabled: true,
+          selector: "${escapedSelector}"
+        }`;
+    } else {
+      return `        ${el.name}: {
+          visible: true,
+          selector: "${escapedSelector}"
+        }`;
+    }
+  }).join(',\n');
+
+  // Build transitions from interactive elements
+  const transitions = elements
+    .filter(el => el.isInteractive && (el.type === 'button' || el.type === 'link'))
+    .map(el => {
+      const eventName = `CLICK_${el.name.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+      return `      ${eventName}: {
+        target: 'next_state', // TODO: Set actual target
+        actions: ['click${el.name.charAt(0).toUpperCase() + el.name.slice(1)}']
+      }`;
+    }).join(',\n');
+
+  // Generate requires array if previousState provided
+  const requiresSection = previousState 
+    ? `requires: ['${previousState}'],` 
+    : '';
+
+  // Generate tags section
+  const tagsSection = (tags.screen || tags.group) 
+    ? `tags: {
+          ${tags.screen ? `screen: '${tags.screen}',` : ''}
+          ${tags.group ? `group: '${tags.group}'` : ''}
+        },` 
+    : '';
+
+  return `// Auto-generated by AI Assistant
+// Screen: ${screenName}
+// Generated: ${new Date().toISOString()}
+
+import { BaseBookingImplications } from './BaseBookingImplications.js';
+
+export class ${className} extends BaseBookingImplications {
+  
+  static xstateConfig = {
+    meta: {
+      status: '${status}',
+      ${entity ? `entity: '${entity}',` : ''}
+      ${requiresSection}
+      ${tagsSection}
+      description: 'Auto-generated from AI scan of ${screenName}'
+    },
+    on: {
+${transitions || '      // TODO: Add transitions'}
+    }
+  };
+
+  static mirrorsOn = {
+    UI: {
+      ${platform}: {
+${uiChecks}
+      }
+    }
+  };
+
+  /**
+   * Setup function to reach this state
+   */
+  static async setup(page, testData) {
+    ${previousState ? `// Requires: ${previousState}` : '// TODO: Implement setup steps'}
+    ${triggerEvent ? `// Triggered by: ${triggerEvent}` : ''}
+  }
+}
+`;
+}
+
+export default router;

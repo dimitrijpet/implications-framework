@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 const API_URL = 'http://localhost:3000';
+import CreateStateForm from './CreateStateForm';
 
 export default function ScanResultsView({ result, onClear, theme, projectPath }) {
   const [activeCodeTab, setActiveCodeTab] = useState('locators');
@@ -295,6 +296,20 @@ export default function ScanResultsView({ result, onClear, theme, projectPath })
           )}
         </div>
       )}
+
+      {/* Create State Machine Implication */}
+{projectPath && (
+  <CreateStateForm
+    result={result}
+    projectPath={projectPath}
+    theme={theme}
+    existingStates={[]} // Could pass from parent
+    onSuccess={(data) => {
+      console.log('✅ Implication created:', data);
+      // Could trigger graph refresh
+    }}
+  />
+)}
 
       {/* Screenshot Preview */}
       {result.screenshot && (

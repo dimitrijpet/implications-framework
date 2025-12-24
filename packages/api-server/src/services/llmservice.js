@@ -470,16 +470,158 @@ Be practical. Focus on high-value gaps.`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// IMPLICATION GENERATION FROM SCANNED ELEMENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate a proper implication file from scanned UI elements
+ */
+export async function generateImplicationFromScan({
+  screenName,
+  status,
+  elements,
+  platform = 'web',
+  entity = '',
+  context = {},
+  exampleImplication = ''
+}) {
+  if (!LLM_CONFIG.enabled) {
+    throw new Error('LLM not enabled');
+  }
+
+  const elementsDescription = elements.map(el => 
+    `- ${el.name} (${el.type}): "${el.label || ''}" - ${el.purpose || 'interactive element'}
+     Selector: ${el.selectors?.[0]?.value || 'unknown'}`
+  ).join('\n');
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are an expert at generating Playwright test automation code for the Implications Framework.
+
+Generate a complete JavaScript class following this structure:
+
+class [ScreenName]Implications {
+  static xstateConfig = {
+    id: "[status]",
+    meta: {
+      status: "[status]",
+      entity: "[entity]",
+      platforms: ["[platform]"],
+      statusLabel: "[Human Readable Status]",
+      setup: [{
+        testFile: "tests/implications/[entity]/status/[ClassName]-[EVENT]-[Platform]-UNIT.spec.js",
+        actionName: "[actionName]",
+        platform: "[platform]",
+        previousStatus: "[previous_status]"
+      }]
+    },
+    on: {
+      // EVENT_NAME: { target: "next_state", platforms: ["platform"] }
+    },
+    entry: {
+      status: "[status]",
+      statusLabel: "[Human Readable Status]"
+    }
+  };
+  
+  static mirrorsOn = {
+    description: "[Description]",
+    UI: {
+      [platform]: {
+        [ScreenName]: {
+          description: "[Screen description]",
+          screen: "[screen.file.js]",
+          instance: "[instanceName]",
+          order: 0,
+          blocks: [
+            {
+              id: "blk_func_[timestamp]_[random]",
+              type: "function-call",
+              label: "[What this validates]",
+              order: 0,
+              expanded: true,
+              enabled: true,
+              data: {
+                instance: "[instanceName]",
+                method: "[methodName]",
+                args: ["{{variable}}", "expected value"],
+                await: true,
+                assertion: { type: "toBeVisible", not: false }
+              }
+            }
+          ]
+        }
+      }
+    }
+  };
+  
+  static meta = {
+    status: "[status]",
+    entity: "[entity]",
+    statusLabel: "[Human Readable Status]"
+  };
+}
+
+module.exports = [ScreenName]Implications;
+
+RULES:
+1. Generate a block for EACH interactive element
+2. Use proper assertions: toBeVisible, toBeEnabled, toHaveText
+3. For inputs: visible check
+4. For buttons: visible AND enabled
+5. Generate unique block IDs: blk_func_[timestamp]_[5chars]
+6. Order blocks logically
+
+Return ONLY valid JavaScript code.`
+    },
+    {
+      role: 'user',
+      content: `Generate implication for:
+
+Screen: ${screenName}
+Status: ${status}
+Platform: ${platform}
+Entity: ${entity || 'unknown'}
+Previous State: ${context.previousState || 'initial'}
+
+DETECTED ELEMENTS:
+${elementsDescription}
+
+${exampleImplication ? `EXAMPLE (use similar structure):\n${exampleImplication.substring(0, 1500)}` : ''}`
+    }
+  ];
+
+  try {
+    const response = await callLLM(messages, { 
+      maxTokens: 2500,
+      temperature: 0.2
+    });
+    
+    let code = response.trim();
+    if (code.startsWith('```')) {
+      code = code.replace(/^```(?:javascript|js)?\n?/, '').replace(/\n?```$/, '');
+    }
+    
+    return code;
+  } catch (error) {
+    console.error('❌ LLM implication generation error:', error.message);
+    throw error;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default {
-  callLLM,  // ADD THIS
+  callLLM,
   isLLMEnabled,
   getLLMConfig,
   explainFlow,
   parseBackendTest,
   mapBackendTestToImplications,
   analyzeTicket,
-  suggestMissingTests
+  suggestMissingTests,
+  generateImplicationFromScan  // ADD THIS
 };

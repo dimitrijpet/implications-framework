@@ -156,76 +156,55 @@ export class VisionAdapter {
    * @param {Object} options - Options passed to analyzeScreenshot
    * @returns {string} - Prompt text
    */
-  buildPrompt(options = {}) {
-    const {
-      context = '',
-      pageTitle = '',
-      pageUrl = '',
-      focusElements = [],
-      includeCoordinates = false
-    } = options;
+buildPrompt(task, context = {}) {
+  return `You are a senior QA automation engineer analyzing a web page screenshot.
+Your job is to identify ALL testable UI elements for Playwright automation.
 
-    let prompt = `Analyze this screenshot of a web page and identify all interactive UI elements.
+BE THOROUGH - A typical page has 15-40 elements. Don't skip anything!
 
-For each element, provide:
-1. A camelCase name (e.g., "submitButton", "emailInput")
-2. The element type (button, input, link, dropdown, checkbox, etc.)
-3. A human-readable label
-4. What the element does (its purpose)
-5. Suggested selectors in order of preference:
-   - data-testid if visible
-   - ARIA attributes
-   - CSS selectors
-   - Text content
-   - XPath as last resort
+MUST INCLUDE:
+✅ ALL navigation links (header, footer, sidebar menus)
+✅ ALL buttons (including icon-only buttons, submit buttons)
+✅ ALL form inputs (text, email, password, search)
+✅ ALL dropdowns and select elements
+✅ ALL checkboxes and radio buttons
+✅ ALL clickable images/icons
+✅ ALL important text headings (h1, h2) for assertions
+✅ ALL links in content areas
+✅ Logo (usually clickable, navigates to home)
+✅ User menu / profile buttons
+✅ Search bars
+✅ Notification icons
+✅ Footer links
 
-Return a JSON object with this structure:
+For EACH element provide:
 {
-  "pageDescription": "Brief description of the page",
-  "suggestedScreenNames": ["ScreenName1", "ScreenName2"],
-  "elements": [
-    {
-      "name": "camelCaseName",
-      "type": "button|input|link|dropdown|checkbox|radio|text|image|form|container",
-      "label": "Human readable label",
-      "purpose": "What this element does",
-      "isInteractive": true/false,
-      "inputType": "text|email|password|number|etc (for inputs)",
-      "selectors": [
-        { "type": "data-testid", "value": "[data-testid='example']", "confidence": 0.95 },
-        { "type": "css", "value": ".submit-btn", "confidence": 0.8 },
-        { "type": "text", "value": "Submit", "confidence": 0.7 }
-      ]${includeCoordinates ? `,
-      "bounds": { "x": 100, "y": 200, "width": 120, "height": 40 }` : ''}
-    }
+  "name": "camelCaseName",           // e.g., "signInButton", "emailInput", "platformDropdown"
+  "type": "button|input|link|text|image|checkbox|select|heading|nav|icon",
+  "label": "Visible text or aria-label",
+  "purpose": "What this element does",
+  "isInteractive": true/false,
+  "inputType": "text|email|password|search|null",  // for inputs only
+  "selectors": [
+    { "type": "role", "value": "button[name='Sign in']", "confidence": 0.9 },
+    { "type": "text", "value": "text=Sign in", "confidence": 0.85 },
+    { "type": "css", "value": ".sign-in-btn", "confidence": 0.7 }
   ]
-}`;
+}
 
-    if (pageTitle) {
-      prompt += `\n\nPage title: "${pageTitle}"`;
-    }
+Return JSON:
+{
+  "screenName": "PascalCaseScreenName",
+  "pageDescription": "One sentence description",
+  "elements": [...all elements...],
+  "suggestedScreenNames": ["Option1", "Option2"]
+}
 
-    if (pageUrl) {
-      prompt += `\nPage URL: ${pageUrl}`;
-    }
-
-    if (context) {
-      prompt += `\n\nAdditional context: ${context}`;
-    }
-
-    if (focusElements.length > 0) {
-      prompt += `\n\nFocus on these element types: ${focusElements.join(', ')}`;
-    }
-
-    prompt += `\n\nIMPORTANT:
-- Be thorough but only include visible, meaningful elements
-- Prefer data-testid selectors when visible in the DOM
-- For inputs, always include the inputType
-- Use camelCase for all element names
-- Return ONLY valid JSON, no markdown or explanation`;
-
-    return prompt;
-  }
+IMPORTANT: 
+- For GitHub.com homepage, expect 20+ elements (nav links, sign in, sign up, search, etc.)
+- Don't skip header/footer navigation
+- Every clickable thing is an element`;
+}
 
   /**
    * Parse the vision model response into structured data
