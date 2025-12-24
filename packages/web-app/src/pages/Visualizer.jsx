@@ -14,6 +14,7 @@ import { initializeFromDiscovery } from '../utils/requiresColors.js';
 import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
 import IntelligenceSearch from '../components/intelligence/IntelligenceSearch.jsx';
 import TicketAnalyzer from '../components/TicketAnalyzer/TicketAnalyzer';
+import { AIAssistantPanel } from '../components/AIAssistant';
 
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
@@ -1415,6 +1416,16 @@ const disableTransitionMode = () => {
             />
           </div>
         )} */}
+
+        {/* AI Assistant Panel */}
+<AIAssistantPanel 
+  theme={defaultTheme}
+  projectPath={projectPath}
+  onElementsGenerated={(result) => {
+    console.log('🤖 AI Assistant generated:', result);
+    // Could auto-refresh or show notification
+  }}
+/>
 
         {/* ✅ ADD INTELLIGENCE SEARCH HERE */}
       {discoveryResult && (
