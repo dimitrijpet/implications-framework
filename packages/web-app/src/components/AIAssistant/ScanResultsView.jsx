@@ -2,16 +2,65 @@
 
 import { useState } from 'react';
 
+const API_URL = 'http://localhost:3000';
+
 export default function ScanResultsView({ result, onClear, theme, projectPath }) {
   const [activeCodeTab, setActiveCodeTab] = useState('locators');
   const [copied, setCopied] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState(null);
+  const [screenNameOverride, setScreenNameOverride] = useState('');
 
   if (!result) return null;
+
+  const effectiveScreenName = screenNameOverride || result.screenName || 'UnknownScreen';
 
   const copyToClipboard = (text, type) => {
     navigator.clipboard.writeText(text);
     setCopied(type);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  const saveToProject = async (fileType = 'all') => {
+    if (!projectPath) {
+      alert('No project path set. Please scan a project first.');
+      return;
+    }
+
+    setSaving(true);
+    setSaveResult(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/ai-assistant/save-to-project`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectPath,
+          screenName: effectiveScreenName,
+          fileType,
+          code: {
+            locators: result.generated?.locators,
+            pom: result.generated?.pom,
+            transitions: result.generated?.transitions
+          },
+          overwrite: false
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Save failed');
+      }
+
+      setSaveResult(data);
+      console.log('✅ Saved to project:', data);
+
+    } catch (err) {
+      setSaveResult({ success: false, error: err.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const codeTabs = [
@@ -66,6 +115,186 @@ export default function ScanResultsView({ result, onClear, theme, projectPath })
           ✕ Clear
         </button>
       </div>
+
+      {/* Save to Project Section */}
+      {projectPath && (
+        <div style={{
+          marginBottom: '20px',
+          padding: '16px',
+          background: `${theme.colors.accents.green}10`,
+          border: `1px solid ${theme.colors.accents.green}40`,
+          borderRadius: '8px'
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '12px'
+          }}>
+            <h5 style={{
+              margin: 0,
+              fontSize: '14px',
+              fontWeight: 600,
+              color: theme.colors.accents.green
+            }}>
+              💾 Save to Project
+            </h5>
+          </div>
+
+          {/* Screen Name Override */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{
+              display: 'block',
+              marginBottom: '6px',
+              fontSize: '12px',
+              color: theme.colors.text.secondary
+            }}>
+              Screen Name
+            </label>
+            <input
+              type="text"
+              value={screenNameOverride}
+              onChange={(e) => setScreenNameOverride(e.target.value)}
+              placeholder={result.screenName || 'ScreenName'}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                background: theme.colors.background.secondary,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: '6px',
+                color: theme.colors.text.primary,
+                fontSize: '13px'
+              }}
+            />
+            <div style={{
+              marginTop: '4px',
+              fontSize: '11px',
+              color: theme.colors.text.tertiary
+            }}>
+              Files will be saved to: <code>tests/screens/{effectiveScreenName}/</code>
+            </div>
+          </div>
+
+          {/* Save Buttons */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => saveToProject('all')}
+              disabled={saving}
+              style={{
+                padding: '10px 20px',
+                background: saving ? theme.colors.background.tertiary : theme.colors.accents.green,
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: 600,
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '13px'
+              }}
+            >
+              {saving ? '⏳ Saving...' : '💾 Save All Files'}
+            </button>
+
+            <button
+              onClick={() => saveToProject('locators')}
+              disabled={saving || !result.generated?.locators}
+              style={{
+                padding: '8px 16px',
+                background: theme.colors.background.tertiary,
+                color: theme.colors.text.primary,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                opacity: !result.generated?.locators ? 0.5 : 1
+              }}
+            >
+              Save Locators
+            </button>
+
+            <button
+              onClick={() => saveToProject('pom')}
+              disabled={saving || !result.generated?.pom}
+              style={{
+                padding: '8px 16px',
+                background: theme.colors.background.tertiary,
+                color: theme.colors.text.primary,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                opacity: !result.generated?.pom ? 0.5 : 1
+              }}
+            >
+              Save POM
+            </button>
+
+            <button
+              onClick={() => saveToProject('transitions')}
+              disabled={saving || !result.generated?.transitions}
+              style={{
+                padding: '8px 16px',
+                background: theme.colors.background.tertiary,
+                color: theme.colors.text.primary,
+                border: `1px solid ${theme.colors.border}`,
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                opacity: !result.generated?.transitions ? 0.5 : 1
+              }}
+            >
+              Save Transitions
+            </button>
+          </div>
+
+          {/* Save Result */}
+          {saveResult && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: saveResult.success
+                ? `${theme.colors.accents.green}20`
+                : `${theme.colors.accents.red}20`,
+              borderRadius: '6px',
+              fontSize: '13px'
+            }}>
+              {saveResult.success ? (
+                <div>
+                  <div style={{ 
+                    fontWeight: 600, 
+                    color: theme.colors.accents.green,
+                    marginBottom: '8px'
+                  }}>
+                    ✅ Files saved successfully!
+                  </div>
+                  <div style={{ color: theme.colors.text.secondary }}>
+                    {saveResult.savedFiles?.map((file, idx) => (
+                      <div key={idx} style={{ 
+                        fontFamily: 'monospace', 
+                        fontSize: '11px',
+                        marginBottom: '2px'
+                      }}>
+                        📄 {file.path.replace(projectPath, '.')}
+                      </div>
+                    ))}
+                  </div>
+                  {saveResult.skippedFiles?.length > 0 && (
+                    <div style={{ 
+                      marginTop: '8px', 
+                      color: theme.colors.accents.yellow 
+                    }}>
+                      ⚠️ Skipped {saveResult.skippedFiles.length} existing files
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ color: theme.colors.accents.red }}>
+                  ❌ {saveResult.error}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Screenshot Preview */}
       {result.screenshot && (
