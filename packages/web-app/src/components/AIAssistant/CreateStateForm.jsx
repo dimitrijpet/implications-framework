@@ -1,6 +1,6 @@
 // packages/web-app/src/components/AIAssistant/CreateStateForm.jsx
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 const API_URL = 'http://localhost:3000';
 
@@ -9,6 +9,8 @@ export default function CreateStateForm({
   projectPath, 
   theme,
   existingStates = [],
+  existingEntities = [],
+  existingTags = { screen: [], group: [] },
   onSuccess 
 }) {
   const [formData, setFormData] = useState({
@@ -19,38 +21,90 @@ export default function CreateStateForm({
     previousState: '',
     triggerEvent: '',
     tags: { screen: '', group: '' },
-    outputPath: 'tests/implications'  // ADD THIS
+    outputPath: 'tests/implications'
   });
-
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
+  const [warnings, setWarnings] = useState([]);
+
+  // Extract status list from existing states
+  const existingStatuses = useMemo(() => {
+    return existingStates
+      .map(s => s.status || s.id)
+      .filter(Boolean)
+      .sort();
+  }, [existingStates]);
+
+  // Check for duplicate status
+  const isDuplicateStatus = useMemo(() => {
+    if (!formData.status) return false;
+    return existingStatuses.includes(formData.status);
+  }, [formData.status, existingStatuses]);
+
+  // Auto-generate status from screenName
+  const suggestedStatus = useMemo(() => {
+    if (!formData.screenName) return '';
+    return formData.screenName
+      .replace(/([A-Z])/g, '_$1')
+      .toLowerCase()
+      .replace(/^_/, '')
+      .replace(/_+/g, '_');
+  }, [formData.screenName]);
+
+  // Find states that could transition TO this new state
+  const potentialPreviousStates = useMemo(() => {
+    return existingStates
+      .filter(s => s.status !== formData.status)
+      .map(s => ({
+        status: s.status || s.id,
+        label: s.statusLabel || s.status || s.id,
+        platforms: s.platforms || [s.platform]
+      }));
+  }, [existingStates, formData.status]);
 
   const handleCreate = async () => {
+    // Validation
+    const newWarnings = [];
+    
     if (!formData.screenName || !formData.status) {
       setError('Screen name and status are required');
       return;
     }
 
+    if (isDuplicateStatus) {
+      setError(`Status "${formData.status}" already exists! Choose a different name.`);
+      return;
+    }
+
+    if (!formData.previousState) {
+      newWarnings.push('No previous state set - this will be an entry point');
+    }
+
+    if (!formData.entity) {
+      newWarnings.push('No entity specified - consider adding one for better organization');
+    }
+
+    setWarnings(newWarnings);
     setCreating(true);
     setError(null);
 
     try {
       const response = await fetch(`${API_URL}/api/ai-assistant/create-implication`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    projectPath,
-    screenName: formData.screenName,
-    status: formData.status,
-    elements: result.elements,
-    platform: formData.platform,
-    entity: formData.entity,
-    previousState: formData.previousState,
-    triggerEvent: formData.triggerEvent,
-    tags: formData.tags,
-    outputPath: formData.outputPath  // ADD THIS
-  })
-});
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectPath,
+          screenName: formData.screenName,
+          status: formData.status,
+          elements: result.elements,
+          platform: formData.platform,
+          entity: formData.entity,
+          previousState: formData.previousState,
+          triggerEvent: formData.triggerEvent,
+          tags: formData.tags,
+          outputPath: formData.outputPath
+        })
+      });
 
       const data = await response.json();
 
@@ -58,8 +112,6 @@ export default function CreateStateForm({
         throw new Error(data.error || 'Creation failed');
       }
 
-      console.log('✅ Implication created:', data);
-      
       if (onSuccess) {
         onSuccess(data);
       }
@@ -73,6 +125,21 @@ export default function CreateStateForm({
 
   const updateField = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setError(null); // Clear error on change
+  };
+
+  // Auto-suggest status when screenName changes
+  const handleScreenNameChange = (value) => {
+    updateField('screenName', value);
+    // Auto-fill status if empty
+    if (!formData.status) {
+      const suggested = value
+        .replace(/([A-Z])/g, '_$1')
+        .toLowerCase()
+        .replace(/^_/, '')
+        .replace(/_+/g, '_');
+      updateField('status', suggested);
+    }
   };
 
   return (
@@ -100,20 +167,36 @@ export default function CreateStateForm({
             <input
               type="text"
               value={formData.screenName}
-              onChange={(e) => updateField('screenName', e.target.value)}
+              onChange={(e) => handleScreenNameChange(e.target.value)}
               placeholder="LoginScreen"
               style={inputStyle(theme)}
             />
           </div>
           <div>
-            <label style={labelStyle(theme)}>Status *</label>
+            <label style={labelStyle(theme)}>
+              Status * 
+              {isDuplicateStatus && (
+                <span style={{ color: theme.colors.accents.red, marginLeft: '8px' }}>
+                  ⚠️ Already exists!
+                </span>
+              )}
+            </label>
             <input
               type="text"
               value={formData.status}
               onChange={(e) => updateField('status', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
-              placeholder="logged_in"
-              style={inputStyle(theme)}
+              placeholder={suggestedStatus || 'logged_in'}
+              style={{
+                ...inputStyle(theme),
+                borderColor: isDuplicateStatus ? theme.colors.accents.red : theme.colors.border
+              }}
+              list="existing-statuses"
             />
+            <datalist id="existing-statuses">
+              {existingStatuses.slice(0, 20).map((s, idx) => (
+                <option key={idx} value={s} />
+              ))}
+            </datalist>
           </div>
         </div>
 
@@ -126,8 +209,36 @@ export default function CreateStateForm({
               value={formData.entity}
               onChange={(e) => updateField('entity', e.target.value)}
               placeholder="user, booking, etc."
+              list="existing-entities"
               style={inputStyle(theme)}
             />
+            <datalist id="existing-entities">
+              {existingEntities.map((e, idx) => (
+                <option key={idx} value={e} />
+              ))}
+            </datalist>
+            {existingEntities.length > 0 && !formData.entity && (
+              <div style={{ marginTop: '4px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {existingEntities.slice(0, 5).map((e, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => updateField('entity', e)}
+                    style={{
+                      padding: '2px 8px',
+                      fontSize: '11px',
+                      background: `${theme.colors.accents.blue}20`,
+                      border: `1px solid ${theme.colors.accents.blue}40`,
+                      borderRadius: '4px',
+                      color: theme.colors.accents.blue,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <label style={labelStyle(theme)}>Platform</label>
@@ -144,37 +255,108 @@ export default function CreateStateForm({
           </div>
         </div>
 
-        {/* Row 3: Previous State & Trigger Event */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-          <div>
-            <label style={labelStyle(theme)}>Previous State (requires)</label>
-            <input
-              type="text"
-              list="existing-states"
-              value={formData.previousState}
-              onChange={(e) => updateField('previousState', e.target.value)}
-              placeholder="initial, pending, etc."
-              style={inputStyle(theme)}
-            />
-            <datalist id="existing-states">
-              {existingStates.map((state, idx) => (
-                <option key={idx} value={state} />
+        {/* Row 3: Previous State (with smart suggestions) */}
+        <div>
+          <label style={labelStyle(theme)}>
+            Previous State (requires)
+            <span style={{ 
+              marginLeft: '8px', 
+              fontSize: '10px', 
+              color: theme.colors.text.tertiary 
+            }}>
+              Which state transitions to this one?
+            </span>
+          </label>
+          <input
+            type="text"
+            list="previous-states"
+            value={formData.previousState}
+            onChange={(e) => updateField('previousState', e.target.value)}
+            placeholder="initial, pending, etc."
+            style={inputStyle(theme)}
+          />
+          <datalist id="previous-states">
+            <option value="initial">initial (entry point)</option>
+            {potentialPreviousStates.map((s, idx) => (
+              <option key={idx} value={s.status}>
+                {s.status} ({s.platforms?.join(', ')})
+              </option>
+            ))}
+          </datalist>
+          
+          {/* Quick-pick buttons for common previous states */}
+          {potentialPreviousStates.length > 0 && !formData.previousState && (
+            <div style={{ marginTop: '6px' }}>
+              <span style={{ fontSize: '11px', color: theme.colors.text.tertiary, marginRight: '8px' }}>
+                Quick pick:
+              </span>
+              <button
+                type="button"
+                onClick={() => updateField('previousState', 'initial')}
+                style={quickPickStyle(theme)}
+              >
+                initial
+              </button>
+              {potentialPreviousStates.slice(0, 4).map((s, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => updateField('previousState', s.status)}
+                  style={quickPickStyle(theme)}
+                >
+                  {s.status}
+                </button>
               ))}
-            </datalist>
-          </div>
-          <div>
-            <label style={labelStyle(theme)}>Trigger Event</label>
-            <input
-              type="text"
-              value={formData.triggerEvent}
-              onChange={(e) => updateField('triggerEvent', e.target.value.toUpperCase())}
-              placeholder="LOGIN, SUBMIT, etc."
-              style={inputStyle(theme)}
-            />
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* Row 4: Tags */}
+        {/* Row 4: Trigger Event */}
+        <div>
+          <label style={labelStyle(theme)}>
+            Trigger Event
+            <span style={{ 
+              marginLeft: '8px', 
+              fontSize: '10px', 
+              color: theme.colors.text.tertiary 
+            }}>
+              What action leads to this state?
+            </span>
+          </label>
+          <input
+            type="text"
+            value={formData.triggerEvent}
+            onChange={(e) => updateField('triggerEvent', e.target.value.toUpperCase().replace(/\s+/g, '_'))}
+            placeholder="LOGIN, SUBMIT_FORM, CLICK_BUTTON"
+            style={inputStyle(theme)}
+          />
+          {/* Suggest events based on detected buttons */}
+          {result.elements?.filter(e => e.type === 'button').length > 0 && !formData.triggerEvent && (
+            <div style={{ marginTop: '6px' }}>
+              <span style={{ fontSize: '11px', color: theme.colors.text.tertiary, marginRight: '8px' }}>
+                From detected buttons:
+              </span>
+              {result.elements
+                .filter(e => e.type === 'button')
+                .slice(0, 4)
+                .map((btn, idx) => {
+                  const event = `CLICK_${btn.name.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => updateField('triggerEvent', event)}
+                      style={quickPickStyle(theme)}
+                    >
+                      {event}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
+        {/* Row 5: Tags */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div>
             <label style={labelStyle(theme)}>Screen Tag</label>
@@ -182,9 +364,15 @@ export default function CreateStateForm({
               type="text"
               value={formData.tags.screen}
               onChange={(e) => updateField('tags', { ...formData.tags, screen: e.target.value })}
-              placeholder="Auth, Dashboard, etc."
+              placeholder="Auth, Dashboard"
+              list="screen-tags"
               style={inputStyle(theme)}
             />
+            <datalist id="screen-tags">
+              {existingTags.screen?.map((t, idx) => (
+                <option key={idx} value={t} />
+              ))}
+            </datalist>
           </div>
           <div>
             <label style={labelStyle(theme)}>Group Tag</label>
@@ -192,29 +380,36 @@ export default function CreateStateForm({
               type="text"
               value={formData.tags.group}
               onChange={(e) => updateField('tags', { ...formData.tags, group: e.target.value })}
-              placeholder="login-flow, booking-flow"
+              placeholder="login-flow, checkout"
+              list="group-tags"
               style={inputStyle(theme)}
             />
+            <datalist id="group-tags">
+              {existingTags.group?.map((t, idx) => (
+                <option key={idx} value={t} />
+              ))}
+            </datalist>
           </div>
         </div>
+
         {/* Output Path */}
-<div style={{ marginTop: '12px' }}>
-  <label style={labelStyle(theme)}>Output Folder</label>
-  <input
-    type="text"
-    value={formData.outputPath}
-    onChange={(e) => updateField('outputPath', e.target.value)}
-    placeholder="tests/implications"
-    style={inputStyle(theme)}
-  />
-  <div style={{ 
-    marginTop: '4px', 
-    fontSize: '11px', 
-    color: theme.colors.text.tertiary 
-  }}>
-    File will be saved to: <code>{formData.outputPath}/{formData.screenName || '[ScreenName]'}Implications.js</code>
-  </div>
-</div>
+        <div>
+          <label style={labelStyle(theme)}>Output Folder</label>
+          <input
+            type="text"
+            value={formData.outputPath}
+            onChange={(e) => updateField('outputPath', e.target.value)}
+            placeholder="tests/implications"
+            style={inputStyle(theme)}
+          />
+          <div style={{ 
+            marginTop: '4px', 
+            fontSize: '11px', 
+            color: theme.colors.text.tertiary 
+          }}>
+            📁 {formData.outputPath}/{formData.screenName || '[ScreenName]'}Implications.js
+          </div>
+        </div>
       </div>
 
       {/* Elements Preview */}
@@ -249,6 +444,22 @@ export default function CreateStateForm({
         </div>
       </div>
 
+      {/* Warnings */}
+      {warnings.length > 0 && (
+        <div style={{
+          marginTop: '12px',
+          padding: '10px',
+          background: `${theme.colors.accents.yellow}15`,
+          borderRadius: '6px',
+          fontSize: '12px',
+          color: theme.colors.accents.yellow
+        }}>
+          {warnings.map((w, idx) => (
+            <div key={idx}>⚠️ {w}</div>
+          ))}
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div style={{
@@ -266,23 +477,23 @@ export default function CreateStateForm({
       {/* Create Button */}
       <button
         onClick={handleCreate}
-        disabled={creating || !formData.screenName || !formData.status}
+        disabled={creating || !formData.screenName || !formData.status || isDuplicateStatus}
         style={{
           marginTop: '16px',
           width: '100%',
           padding: '12px',
-          background: creating || !formData.screenName || !formData.status
+          background: creating || !formData.screenName || !formData.status || isDuplicateStatus
             ? theme.colors.background.tertiary
             : theme.colors.accents.purple,
-          color: creating ? theme.colors.text.tertiary : 'white',
+          color: creating || isDuplicateStatus ? theme.colors.text.tertiary : 'white',
           border: 'none',
           borderRadius: '8px',
           fontWeight: 600,
           fontSize: '14px',
-          cursor: creating ? 'not-allowed' : 'pointer'
+          cursor: creating || isDuplicateStatus ? 'not-allowed' : 'pointer'
         }}
       >
-        {creating ? '⏳ Creating...' : '🔧 Create Implication'}
+        {creating ? '⏳ Creating...' : isDuplicateStatus ? '⚠️ Status Already Exists' : '🔧 Create Implication'}
       </button>
     </div>
   );
@@ -304,4 +515,15 @@ const inputStyle = (theme) => ({
   borderRadius: '6px',
   color: theme.colors.text.primary,
   fontSize: '13px'
+});
+
+const quickPickStyle = (theme) => ({
+  padding: '2px 8px',
+  fontSize: '10px',
+  background: `${theme.colors.accents.green}20`,
+  border: `1px solid ${theme.colors.accents.green}40`,
+  borderRadius: '4px',
+  color: theme.colors.accents.green,
+  cursor: 'pointer',
+  marginRight: '4px'
 });

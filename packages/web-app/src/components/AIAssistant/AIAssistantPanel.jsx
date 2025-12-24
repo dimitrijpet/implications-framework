@@ -5,7 +5,15 @@ import { useAIAssistant } from './hooks/useAIAssistant';
 import ScanUrlTab from './ScanUrlTab';
 import ScanResultsView from './ScanResultsView';
 
-export default function AIAssistantPanel({ theme, projectPath, onElementsGenerated }) {
+export default function AIAssistantPanel({ 
+  theme, 
+  projectPath, 
+  onElementsGenerated,
+  // ADD THESE NEW PROPS:
+  existingStates = [],
+  existingEntities = [],
+  existingTags = { screen: [], group: [] }
+}) {
   const [activeTab, setActiveTab] = useState('scan-url');
   const [collapsed, setCollapsed] = useState(false);
   
@@ -214,14 +222,17 @@ export default function AIAssistantPanel({ theme, projectPath, onElementsGenerat
         )}
 
         {/* Results */}
-        {scanResult && (
-          <ScanResultsView
-            result={scanResult}
-            onClear={clearResults}
-            theme={theme}
-            projectPath={projectPath}
-          />
-        )}
+{scanResult && (
+  <ScanResultsView
+    result={scanResult}
+    onClear={clearResults}
+    theme={theme}
+    projectPath={projectPath}
+    existingStates={existingStates}
+    existingEntities={existingEntities}
+    existingTags={existingTags}
+  />
+)}
       </div>
     </div>
   );

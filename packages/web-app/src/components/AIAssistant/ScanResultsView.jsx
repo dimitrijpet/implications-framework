@@ -5,7 +5,15 @@ import { useState } from 'react';
 const API_URL = 'http://localhost:3000';
 import CreateStateForm from './CreateStateForm';
 
-export default function ScanResultsView({ result, onClear, theme, projectPath }) {
+export default function ScanResultsView({ 
+  result, 
+  onClear, 
+  theme, 
+  projectPath,
+  existingStates = [],
+  existingEntities = [],
+  existingTags = { screen: [], group: [] }
+}) {
   const [activeCodeTab, setActiveCodeTab] = useState('locators');
   const [copied, setCopied] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -297,19 +305,21 @@ export default function ScanResultsView({ result, onClear, theme, projectPath })
         </div>
       )}
 
-      {/* Create State Machine Implication */}
+  {/* Create State Machine Implication */}
 {projectPath && (
   <CreateStateForm
     result={result}
     projectPath={projectPath}
     theme={theme}
-    existingStates={[]} // Could pass from parent
+    existingStates={existingStates}
+    existingEntities={existingEntities}
+    existingTags={existingTags}
     onSuccess={(data) => {
       console.log('✅ Implication created:', data);
-      // Could trigger graph refresh
     }}
   />
 )}
+
 
       {/* Screenshot Preview */}
       {result.screenshot && (
