@@ -64,7 +64,7 @@ export function getLLMConfig() {
  * @param {Object} options - Additional options
  * @returns {string} Assistant's response
  */
-async function callLLM(messages, options = {}) {
+export async function callLLM(messages, options = {}) {
   if (!LLM_CONFIG.enabled) {
     throw new Error('LLM is not enabled. Set DEEPSEEK_API_KEY or configure Ollama.');
   }
@@ -474,6 +474,7 @@ Be practical. Focus on high-value gaps.`
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default {
+  callLLM,  // ADD THIS
   isLLMEnabled,
   getLLMConfig,
   explainFlow,
