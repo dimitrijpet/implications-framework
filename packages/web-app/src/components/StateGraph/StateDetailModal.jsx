@@ -1781,6 +1781,33 @@ if (entityChanges) {
   theme={theme}
   loadedTestData={loadedTestData}  // ← ADD THIS
 />
+
+{/* Screenshot Preview - Collapsible */}
+{(() => {
+  // Check multiple possible paths for screenshot
+  const screenshotPath = state.meta?.screenshot 
+    || state.meta?.xstateConfig?.meta?.screenshot
+    || currentState.meta?.screenshot
+    || currentState.meta?.xstateConfig?.meta?.screenshot;
+  
+  const statusForUrl = state.meta?.status 
+    || state.meta?.xstateConfig?.meta?.status
+    || state.name;
+  
+  if (!screenshotPath) return null;
+  
+  const imageUrl = screenshotPath 
+    ? `http://localhost:3000/api/ai-assistant/screenshot?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent(screenshotPath)}`
+    : `http://localhost:3000/api/ai-assistant/screenshot?projectPath=${encodeURIComponent(projectPath)}&status=${encodeURIComponent(statusForUrl)}`;
+  
+  return (
+    <ScreenshotPreview 
+      imageUrl={imageUrl}
+      stateName={state.name}
+      theme={theme}
+    />
+  );
+})()}
             
             {/* UI SCREENS */}
             <div>
@@ -1940,6 +1967,48 @@ if (entityChanges) {
 // ========================================
 // HELPER COMPONENTS
 // ========================================
+
+function ScreenshotPreview({ imageUrl, stateName, theme }) {
+  const [collapsed, setCollapsed] = useState(true);
+  
+  return (
+    <div style={{ marginBottom: '16px' }}>
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-2 text-lg font-semibold mb-2 hover:opacity-80"
+        style={{ 
+          color: theme.colors.text.secondary,
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 0
+        }}
+      >
+        <span>{collapsed ? '▶' : '▼'}</span>
+        📸 Screen Preview
+      </button>
+      
+      {!collapsed && (
+        <img
+          src={imageUrl}
+          alt={`${stateName} screenshot`}
+          style={{
+            maxWidth: '100%',
+            maxHeight: '400px',
+            borderRadius: '8px',
+            border: `1px solid ${theme.colors.border}`,
+            cursor: 'pointer'
+          }}
+          onClick={() => window.open(imageUrl, '_blank')}
+          onError={(e) => {
+            console.log('❌ Screenshot failed to load:', imageUrl);
+            e.target.style.display = 'none';
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
 function FileCard({ label, path, theme }) {
   return (

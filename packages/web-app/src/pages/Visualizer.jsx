@@ -14,7 +14,7 @@ import { initializeFromDiscovery } from '../utils/requiresColors.js';
 import InsertNodeModal from '../components/InsertNodeModal/InsertNodeModal';
 import IntelligenceSearch from '../components/intelligence/IntelligenceSearch.jsx';
 import TicketAnalyzer from '../components/TicketAnalyzer/TicketAnalyzer';
-import { AIAssistantPanel } from '../components/AIAssistant';
+import { AIAssistantWizard } from '../components/AIAssistant';
 
 // ADD THIS LINE after the other imports:
 import TagsPanel, { useTagConfig } from '../components/TagsPanel/TagsPanel';
@@ -1417,13 +1417,22 @@ const disableTransitionMode = () => {
           </div>
         )} */}
 
-        {/* AI Assistant Panel */}
-<AIAssistantPanel 
+        {/* AI Assistant Wizard */}
+<AIAssistantWizard 
   theme={defaultTheme}
   projectPath={projectPath}
-  onElementsGenerated={(result) => {
-    console.log('🤖 AI Assistant generated:', result);
-    // Could auto-refresh or show notification
+  existingStates={discoveryResult?.files?.implications?.map(imp => ({
+    status: imp.metadata?.status,
+    className: imp.metadata?.className,
+    platform: imp.metadata?.platform
+  })) || []}
+  existingEntities={existingEntities}
+  onComplete={(result) => {
+    console.log('🤖 AI Assistant complete:', result);
+    // Refresh graph after creating implication
+    if (!result.skipped) {
+      handleScan();
+    }
   }}
 />
 

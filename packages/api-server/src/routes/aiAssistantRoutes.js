@@ -379,23 +379,21 @@ ${exports.join('\n')}
 }
 
 
-/**
- * POST /api/ai-assistant/create-implication
- * Create an implication file from scan results using LLM
- */
 router.post('/create-implication', async (req, res) => {
   const {
-  projectPath,
-  screenName,
-  status,
-  elements,
-  platform = 'web',
-  entity = '',
-  previousState = '',
-  triggerEvent = '',
-  tags = {},
-  outputPath = 'tests/implications'  // ADD THIS
-} = req.body;
+    projectPath,
+    screenName,
+    screenObjectPath,
+    elements,
+    status,
+    entity,
+    previousState,
+    triggerEvent,
+    platform,
+    screenshot,
+    outputPath,
+    tags
+  } = req.body;
 
   if (!projectPath || !screenName || !status || !elements) {
     return res.status(400).json({
@@ -411,9 +409,33 @@ router.post('/create-implication', async (req, res) => {
   try {
     console.log(`🔧 Creating implication: ${screenName} (${status})`);
 
+    // Determine output directory
+    const implicationsDir = path.join(projectPath, outputPath || 'tests/implications');
+
+    // Save screenshot if provided
+    let screenshotRelativePath = null;
+    if (screenshot) {
+      try {
+        const screenshotsDir = path.join(projectPath, 'tests/implications/.screenshots');
+        await fs.mkdir(screenshotsDir, { recursive: true });
+        
+        const screenshotFileName = `${status.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+        const screenshotFullPath = path.join(screenshotsDir, screenshotFileName);
+        
+        // Write base64 screenshot to file
+        const buffer = Buffer.from(screenshot, 'base64');
+        await fs.writeFile(screenshotFullPath, buffer);
+        
+        screenshotRelativePath = `tests/implications/.screenshots/${screenshotFileName}`;
+        console.log(`  📸 Screenshot saved: ${screenshotRelativePath}`);
+      } catch (screenshotError) {
+        console.warn(`  ⚠️ Failed to save screenshot: ${screenshotError.message}`);
+        // Don't fail the whole request for screenshot issues
+      }
+    }
+
     // Try to load an example implication for context
     let exampleImplication = '';
-    const implicationsDir = path.join(projectPath, outputPath);
     try {
       const files = await fs.readdir(implicationsDir);
       const implFile = files.find(f => f.endsWith('Implications.js'));
@@ -436,13 +458,28 @@ router.post('/create-implication', async (req, res) => {
         elements,
         platform,
         entity,
-        context: { previousState, triggerEvent, tags },
+        context: { previousState, triggerEvent, tags, screenshot: screenshotRelativePath },
         exampleImplication
       });
+      
+      // If LLM didn't include screenshot, inject it into meta
+      if (screenshotRelativePath && !implicationCode.includes('screenshot:')) {
+        implicationCode = injectScreenshotIntoMeta(implicationCode, screenshotRelativePath);
+      }
     } else {
       // Fallback to simple template
       console.log('  📝 Using fallback template (LLM disabled)');
-      implicationCode = generateImplicationCode({ screenName, status, elements, platform, entity, previousState, triggerEvent, tags });
+      implicationCode = generateImplicationCode({ 
+        screenName, 
+        status, 
+        elements, 
+        platform, 
+        entity, 
+        previousState, 
+        triggerEvent, 
+        tags,
+        screenshot: screenshotRelativePath
+      });
     }
 
     // Ensure directory exists
@@ -469,12 +506,14 @@ router.post('/create-implication', async (req, res) => {
 
     res.json({
       success: true,
-      filePath,
+      filePath: path.relative(projectPath, filePath),
+      absolutePath: filePath,
       fileName,
       backed,
       screenName,
       status,
       elementsCount: elements.length,
+      screenshotPath: screenshotRelativePath,
       usedLLM: isLLMEnabled()
     });
 
@@ -486,6 +525,28 @@ router.post('/create-implication', async (req, res) => {
     });
   }
 });
+
+/**
+ * Inject screenshot path into xstateConfig.meta if not present
+ */
+function injectScreenshotIntoMeta(code, screenshotPath) {
+  // Find the meta: { block and add screenshot after status
+  const metaRegex = /(meta:\s*\{[^}]*status:\s*['"][^'"]+['"],?)/;
+  const match = code.match(metaRegex);
+  
+  if (match) {
+    const injection = `${match[1]}\n      screenshot: '${screenshotPath}',`;
+    return code.replace(metaRegex, injection);
+  }
+  
+  // Fallback: try to find meta: { and add at the start
+  const simpleMetaRegex = /(meta:\s*\{)/;
+  if (code.match(simpleMetaRegex)) {
+    return code.replace(simpleMetaRegex, `$1\n      screenshot: '${screenshotPath}',`);
+  }
+  
+  return code;
+}
 
 /**
  * POST /api/ai-assistant/scan-from-state
@@ -822,97 +883,145 @@ router.get('/available-states', async (req, res) => {
 });
 
 /**
- * Generate implication class code from scan results
+ * GET /api/ai-assistant/screenshot
+ * Serve a screenshot image by path or status
  */
-function generateImplicationCode({ screenName, status, elements, platform, entity, previousState, triggerEvent, tags }) {
-  const className = `${screenName}Implications`;
-  
-  // Build mirrorsOn UI checks from elements - USE DOUBLE QUOTES for selectors
-  const uiChecks = elements.map(el => {
-    const selector = el.selectors?.[0]?.value || `[data-testid="${el.name}"]`;
-    // Escape any double quotes in the selector
-    const escapedSelector = selector.replace(/"/g, '\\"');
+router.get('/screenshot', async (req, res) => {
+  const { projectPath, path: relativePath, status } = req.query;
 
-    if (el.type === 'input') {
-      return `        ${el.name}: {
-          visible: true,
-          selector: "${escapedSelector}"
-        }`;
-    } else if (el.type === 'button') {
-      return `        ${el.name}: {
-          visible: true,
-          enabled: true,
-          selector: "${escapedSelector}"
-        }`;
-    } else {
-      return `        ${el.name}: {
-          visible: true,
-          selector: "${escapedSelector}"
-        }`;
+  if (!projectPath) {
+    return res.status(400).json({ success: false, error: 'projectPath required' });
+  }
+
+  const fs = await import('fs');
+  const path = await import('path');
+
+  let screenshotPath;
+
+  if (relativePath) {
+    // Use the exact path from metadata
+    screenshotPath = path.join(projectPath, relativePath);
+  } else if (status) {
+    // Fallback: try to find by status name (case-insensitive)
+    const screenshotsDir = path.join(projectPath, 'tests/implications/.screenshots');
+    
+    try {
+      const files = await fs.promises.readdir(screenshotsDir);
+      const matchingFile = files.find(f => 
+        f.toLowerCase() === `${status.toLowerCase()}.png` ||
+        f.toLowerCase() === `${status.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}.png`
+      );
+      
+      if (matchingFile) {
+        screenshotPath = path.join(screenshotsDir, matchingFile);
+      }
+    } catch (e) {
+      return res.status(404).json({ success: false, error: 'Screenshots directory not found' });
     }
-  }).join(',\n');
+  }
 
-  // Build transitions from interactive elements
-  const transitions = elements
-    .filter(el => el.isInteractive && (el.type === 'button' || el.type === 'link'))
-    .map(el => {
-      const eventName = `CLICK_${el.name.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
-      return `      ${eventName}: {
-        target: 'next_state', // TODO: Set actual target
-        actions: ['click${el.name.charAt(0).toUpperCase() + el.name.slice(1)}']
-      }`;
-    }).join(',\n');
+  if (!screenshotPath) {
+    return res.status(400).json({ success: false, error: 'path or status required' });
+  }
 
-  // Generate requires array if previousState provided
-  const requiresSection = previousState 
-    ? `requires: ['${previousState}'],` 
-    : '';
+  try {
+    await fs.promises.access(screenshotPath);
+    res.sendFile(screenshotPath);
+  } catch {
+    console.log('Screenshot not found:', screenshotPath);
+    return res.status(404).json({ success: false, error: 'Screenshot not found', tried: screenshotPath });
+  }
+});
 
-  // Generate tags section
-  const tagsSection = (tags.screen || tags.group) 
-    ? `tags: {
-          ${tags.screen ? `screen: '${tags.screen}',` : ''}
-          ${tags.group ? `group: '${tags.group}'` : ''}
-        },` 
-    : '';
-
-  return `// Auto-generated by AI Assistant
-// Screen: ${screenName}
-// Generated: ${new Date().toISOString()}
-
-import { BaseBookingImplications } from './BaseBookingImplications.js';
-
-export class ${className} extends BaseBookingImplications {
+// Keep the old route for backwards compatibility
+router.get('/screenshot/:status', async (req, res) => {
+  const { status } = req.params;
+  const { projectPath } = req.query;
   
+  // Redirect to the new endpoint
+  res.redirect(`/api/ai-assistant/screenshot?projectPath=${encodeURIComponent(projectPath)}&status=${encodeURIComponent(status)}`);
+});
+
+function generateImplicationCode({ 
+  screenName, 
+  status, 
+  elements, 
+  platform, 
+  entity, 
+  previousState, 
+  triggerEvent, 
+  tags,
+  screenshot 
+}) {
+  const className = `${screenName}Implications`;
+  const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);
+  
+  // Generate blocks from elements
+  const blocks = elements.map((el, idx) => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 7);
+    
+    return {
+      id: `blk_func_${timestamp}_${random}`,
+      type: 'function-call',
+      label: `Validate ${el.name} is visible`,
+      order: idx,
+      expanded: true,
+      enabled: true,
+      data: {
+        instance: instanceName,
+        method: `get${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`,
+        args: [],
+        await: true,
+        assertion: { type: 'toBeVisible', not: false }
+      }
+    };
+  });
+
+  const blocksJson = JSON.stringify(blocks, null, 10)
+    .replace(/"([^"]+)":/g, '$1:')  // Remove quotes from keys
+    .replace(/"/g, "'");            // Use single quotes for strings
+
+  return `// ${className}.js
+// Generated by AI Assistant
+
+class ${className} {
   static xstateConfig = {
     meta: {
       status: '${status}',
-      ${entity ? `entity: '${entity}',` : ''}
-      ${requiresSection}
-      ${tagsSection}
-      description: 'Auto-generated from AI scan of ${screenName}'
+      statusLabel: '${status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}',
+      entity: '${entity || 'unknown'}',
+      platform: '${platform || 'web'}',
+      platforms: ['${platform || 'web'}'],
+      ${screenshot ? `screenshot: '${screenshot}',` : ''}
+      ${previousState ? `requires: { previousStatus: '${previousState}' },` : ''}
+      ${triggerEvent ? `triggerEvent: '${triggerEvent}',` : ''}
+      ${tags?.screen ? `tags: { screen: '${tags.screen}'${tags.group ? `, group: '${tags.group}'` : ''} },` : ''}
+      setup: [{
+        testFile: 'tests/implications/${status}/${className}-${triggerEvent || 'TRIGGER'}-${platform || 'Web'}-UNIT.spec.js',
+        actionName: '${instanceName}Via${previousState ? previousState.replace(/_/g, '').replace(/\b\w/g, c => c.toUpperCase()) : 'Initial'}'
+      }],
+      requiredFields: []
     },
     on: {
-${transitions || '      // TODO: Add transitions'}
+      // Add transitions here
     }
   };
 
   static mirrorsOn = {
     UI: {
-      ${platform}: {
-${uiChecks}
+      ${platform || 'web'}: {
+        ${screenName}Screen: {
+          screen: '${instanceName}.screen.js',
+          instance: '${instanceName}',
+          blocks: ${blocksJson}
+        }
       }
     }
   };
-
-  /**
-   * Setup function to reach this state
-   */
-  static async setup(page, testData) {
-    ${previousState ? `// Requires: ${previousState}` : '// TODO: Implement setup steps'}
-    ${triggerEvent ? `// Triggered by: ${triggerEvent}` : ''}
-  }
 }
+
+module.exports = { ${className} };
 `;
 }
 
@@ -1396,5 +1505,189 @@ Be THOROUGH - find at least 5-10 additional elements if they exist on the page.`
     });
   }
 });
+
+/**
+ * POST /api/ai-assistant/generate-screen-object
+ * Generate screen object code from elements
+ */
+router.post('/generate-screen-object', async (req, res) => {
+  const {
+    elements,
+    screenName,
+    format = 'single',
+    platform = 'web',
+    style = {}
+  } = req.body;
+
+  if (!elements?.length || !screenName) {
+    return res.status(400).json({
+      success: false,
+      error: 'elements and screenName are required'
+    });
+  }
+
+  try {
+    const code = generateScreenObjectCode(elements, screenName, { format, platform, ...style });
+    
+    res.json({
+      success: true,
+      code
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/save-screen-object
+ * Save screen object to project
+ */
+router.post('/save-screen-object', async (req, res) => {
+  const {
+    projectPath,
+    screenName,
+    format = 'single',
+    platform = 'web',
+    outputPath,
+    code
+  } = req.body;
+
+  if (!projectPath || !screenName || !code) {
+    return res.status(400).json({
+      success: false,
+      error: 'projectPath, screenName, and code are required'
+    });
+  }
+
+  const fs = await import('fs/promises');
+  const path = await import('path');
+
+  try {
+    // Determine output directory
+    const baseDir = path.join(projectPath, outputPath || 'tests/screenObjects');
+    
+    // Ensure directory exists
+    await fs.mkdir(baseDir, { recursive: true });
+
+    // Generate filename
+    const fileName = `${screenName.charAt(0).toLowerCase() + screenName.slice(1)}.screen.js`;
+    const filePath = path.join(baseDir, fileName);
+
+    // Write file
+    const codeToWrite = typeof code === 'string' ? code : code.single || code.screen;
+    await fs.writeFile(filePath, codeToWrite, 'utf-8');
+
+    console.log(`✅ Screen object saved: ${filePath}`);
+
+    res.json({
+      success: true,
+      filePath: path.relative(projectPath, filePath),
+      absolutePath: filePath
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Generate clean screen object code
+ */
+function generateScreenObjectCode(elements, screenName, options = {}) {
+  const {
+    format = 'single',
+    platform = 'web',
+    includeAssertions = true,
+    includeCompoundActions = true
+  } = options;
+
+  const className = screenName.endsWith('Screen') ? screenName : `${screenName}Screen`;
+  const pageVar = platform === 'web' ? 'page' : 'driver';
+
+  // Generate locators
+  const locators = elements.map(el => {
+    const selector = el.selectors?.[0]?.value || `[data-testid="${el.name}"]`;
+    return `  get ${el.name}() {
+    return this.${pageVar}.locator('${selector.replace(/'/g, "\\'")}');
+  }`;
+  }).join('\n\n');
+
+  // Generate actions
+  const actions = elements
+    .filter(el => el.isInteractive !== false)
+    .map(el => {
+      const actionName = `click${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
+      
+      if (el.type === 'input') {
+        const fillName = `fill${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
+        return `  async ${fillName}(value) {
+    await this.${el.name}.fill(value);
+  }`;
+      }
+      
+      if (el.type === 'select') {
+        const selectName = `select${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
+        return `  async ${selectName}(value) {
+    await this.${el.name}.selectOption(value);
+  }`;
+      }
+      
+      if (el.type === 'button' || el.type === 'link') {
+        return `  async ${actionName}() {
+    await this.${el.name}.click();
+  }`;
+      }
+      
+      return null;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Generate assertions
+  const assertions = includeAssertions ? elements.map(el => {
+    const assertName = `is${el.name.charAt(0).toUpperCase() + el.name.slice(1)}Visible`;
+    return `  async ${assertName}() {
+    return await this.${el.name}.isVisible();
+  }`;
+  }).join('\n\n') : '';
+
+  // Build class
+  const code = `// ${className}.screen.js
+// Generated by AI Assistant
+
+class ${className} {
+  constructor(${pageVar}) {
+    this.${pageVar} = ${pageVar};
+  }
+
+  // ═══════════════════════════════════════════════════
+  // LOCATORS
+  // ═══════════════════════════════════════════════════
+
+${locators}
+
+  // ═══════════════════════════════════════════════════
+  // ACTIONS
+  // ═══════════════════════════════════════════════════
+
+${actions}
+${includeAssertions ? `
+  // ═══════════════════════════════════════════════════
+  // ASSERTIONS
+  // ═══════════════════════════════════════════════════
+
+${assertions}` : ''}
+}
+
+module.exports = { ${className} };
+`;
+
+  return code;
+}
 
 export default router;
