@@ -149,61 +149,56 @@ export class VisionAdapter {
     throw new Error('VisionAdapter.validateElement() must be implemented by subclass');
   }
 
-  /**
-   * Build the analysis prompt
-   * 
-   * @protected
-   * @param {Object} options - Options passed to analyzeScreenshot
-   * @returns {string} - Prompt text
-   */
 buildPrompt(task, context = {}) {
-  return `You are a senior QA automation engineer analyzing a web page screenshot.
-Your job is to identify ALL testable UI elements for Playwright automation.
+  return `You are a senior QA automation engineer analyzing a screenshot for Playwright test automation.
 
-BE THOROUGH - A typical page has 15-40 elements. Don't skip anything!
+YOUR TASK: Identify ALL testable UI elements on this page. Be EXTREMELY thorough.
 
-MUST INCLUDE:
-✅ ALL navigation links (header, footer, sidebar menus)
-✅ ALL buttons (including icon-only buttons, submit buttons)
-✅ ALL form inputs (text, email, password, search)
-✅ ALL dropdowns and select elements
+MUST FIND (if visible):
+✅ Logo and branding elements
+✅ ALL navigation links (header, sidebar, footer)
+✅ ALL buttons (including icon-only buttons)
+✅ ALL form inputs (text, email, password, search, etc.)
+✅ ALL dropdowns and select menus
 ✅ ALL checkboxes and radio buttons
-✅ ALL clickable images/icons
-✅ ALL important text headings (h1, h2) for assertions
-✅ ALL links in content areas
-✅ Logo (usually clickable, navigates to home)
-✅ User menu / profile buttons
-✅ Search bars
-✅ Notification icons
-✅ Footer links
+✅ ALL links (navigation, inline, footer)
+✅ Search bars and search icons
+✅ User profile/account buttons
+✅ Menu icons (hamburger, kebab, etc.)
+✅ Social media links
+✅ Important headings (h1, h2)
+✅ Images that might need verification
+✅ Tabs and tab panels
+✅ Modal triggers
+✅ Any clickable or interactive element
 
-For EACH element provide:
+For EACH element provide this JSON structure:
 {
-  "name": "camelCaseName",           // e.g., "signInButton", "emailInput", "platformDropdown"
+  "name": "camelCaseName",
   "type": "button|input|link|text|image|checkbox|select|heading|nav|icon",
   "label": "Visible text or aria-label",
   "purpose": "What this element does",
   "isInteractive": true/false,
-  "inputType": "text|email|password|search|null",  // for inputs only
   "selectors": [
-    { "type": "role", "value": "button[name='Sign in']", "confidence": 0.9 },
-    { "type": "text", "value": "text=Sign in", "confidence": 0.85 },
-    { "type": "css", "value": ".sign-in-btn", "confidence": 0.7 }
+    { "type": "text", "value": "text=Visible Text", "confidence": 0.9 },
+    { "type": "role", "value": "button[name='...']", "confidence": 0.85 },
+    { "type": "css", "value": ".class-name", "confidence": 0.7 }
   ]
 }
 
+IMPORTANT:
+- A typical webpage has 15-40+ elements
+- Don't skip header/footer navigation
+- Include even small icon buttons
+- Every clickable thing is an element
+
 Return JSON:
 {
-  "screenName": "PascalCaseScreenName",
+  "screenName": "PascalCasePageName",
   "pageDescription": "One sentence description",
   "elements": [...all elements...],
   "suggestedScreenNames": ["Option1", "Option2"]
-}
-
-IMPORTANT: 
-- For GitHub.com homepage, expect 20+ elements (nav links, sign in, sign up, search, etc.)
-- Don't skip header/footer navigation
-- Every clickable thing is an element`;
+}`;
 }
 
   /**

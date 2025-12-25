@@ -104,13 +104,14 @@ export function useAIAssistant() {
   }, []);
 
   return {
-    status,
-    scanResult,
-    loading,
-    error,
-    checkStatus,
-    scanUrl,
-    analyzeScreenshot,
-    clearResults
-  };
+  status,
+  scanResult,
+  setScanResult,  // ADD THIS
+  loading,
+  error,
+  checkStatus,
+  scanUrl,
+  analyzeScreenshot,
+  clearResults
+};
 }

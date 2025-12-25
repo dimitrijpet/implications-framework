@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useAIAssistant } from './hooks/useAIAssistant';
 import ScanUrlTab from './ScanUrlTab';
 import ScanResultsView from './ScanResultsView';
+import ScanFromStateTab from './ScanFromStateTab';
+import DebugBrowserTab from './DebugBrowserTab';
 
 export default function AIAssistantPanel({ 
   theme, 
@@ -17,16 +19,17 @@ export default function AIAssistantPanel({
   const [activeTab, setActiveTab] = useState('scan-url');
   const [collapsed, setCollapsed] = useState(false);
   
-  const {
-    status,
-    scanResult,
-    loading,
-    error,
-    checkStatus,
-    scanUrl,
-    analyzeScreenshot,
-    clearResults
-  } = useAIAssistant();
+ const {
+  status,
+  scanResult,
+  setScanResult,  // ADD THIS
+  loading,
+  error,
+  checkStatus,
+  scanUrl,
+  analyzeScreenshot,
+  clearResults
+} = useAIAssistant();
 
   // Check status on mount
   useEffect(() => {
@@ -170,10 +173,11 @@ export default function AIAssistantPanel({
         borderBottom: `1px solid ${theme.colors.border}`,
         background: theme.colors.background.tertiary
       }}>
-        {[
-          { id: 'scan-url', label: '🔗 Scan URL', icon: '🔗' },
-          { id: 'upload', label: '📤 Upload Screenshot', icon: '📤' }
-        ].map(tab => (
+{[
+  { id: 'scan-url', label: '🔗 Scan URL' },
+  { id: 'debug', label: '🔧 Debug Browser' },
+  { id: 'upload', label: '📤 Upload Screenshot' }
+].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -212,6 +216,25 @@ export default function AIAssistantPanel({
           />
         )}
 
+        {activeTab === 'scan-state' && (
+  <ScanFromStateTab
+    onScan={async (result) => {
+      if (result.success) {
+        setScanResult(result);
+        if (onElementsGenerated) {
+          onElementsGenerated(result);
+        }
+      } else {
+        // Handle error
+      }
+    }}
+    loading={loading}
+    error={error}
+    theme={theme}
+    projectPath={projectPath}
+  />
+)}
+
         {activeTab === 'upload' && (
           <UploadTab
             onUpload={handleScreenshotUpload}
@@ -220,6 +243,19 @@ export default function AIAssistantPanel({
             theme={theme}
           />
         )}
+
+        {activeTab === 'debug' && (
+  <DebugBrowserTab
+    onCapture={(result) => {
+      setScanResult(result);  // This now works!
+      if (onElementsGenerated) {
+        onElementsGenerated(result);
+      }
+    }}
+    theme={theme}
+    projectPath={projectPath}
+  />
+)}
 
         {/* Results */}
 {scanResult && (

@@ -1,6 +1,7 @@
 // packages/web-app/src/components/AIAssistant/ScanResultsView.jsx
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import ElementSelector from './ElementSelector';
 
 const API_URL = 'http://localhost:3000';
 import CreateStateForm from './CreateStateForm';
@@ -19,6 +20,19 @@ export default function ScanResultsView({
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState(null);
   const [screenNameOverride, setScreenNameOverride] = useState('');
+  const [allElements, setAllElements] = useState(result?.elements || []);
+  const [selectedElements, setSelectedElements] = useState(result?.elements || []);
+  const [rescanError, setRescanError] = useState(null);
+
+  console.log('ScanResultsView result:', result);
+
+  // Update when result changes
+  useEffect(() => {
+    if (result?.elements) {
+      setAllElements(result.elements);
+      setSelectedElements(result.elements);
+    }
+  }, [result?.elements]);
 
   if (!result) return null;
 
@@ -344,78 +358,76 @@ export default function ScanResultsView({
         </div>
       )}
 
-      {/* Elements List */}
-      <div style={{ marginBottom: '20px' }}>
-        <h5 style={{
-          margin: '0 0 12px 0',
-          fontSize: '14px',
-          color: theme.colors.text.secondary
-        }}>
-          🎯 Detected Elements ({result.elements?.length || 0})
-        </h5>
+{/* Elements Selector */}
+<div style={{ marginBottom: '20px' }}>
+  <ElementSelector
+    elements={allElements}
+    screenshot={result.screenshot}
+    theme={theme}
+    onElementsChange={(selected) => {
+      setSelectedElements(selected);
+    }}
+    onRescan={async (focusPrompt) => {
+  setRescanError(null);
+  
+  // DEBUG: Check what we have
+  console.log('🔍 Rescan debug:', {
+    hasScreenshot: !!result.screenshot,
+    screenshotLength: result.screenshot?.length,
+    allElementsCount: allElements.length,
+    focusPrompt
+  });
+  
+  if (!result.screenshot) {
+    setRescanError('No screenshot available for rescan');
+    return;
+  }
+  
+  try {
+        const response = await fetch(`${API_URL}/api/ai-assistant/rescan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            screenshot: result.screenshot,
+            existingElements: allElements,
+            focusPrompt,
+            pageTitle: result.pageTitle,
+            pageUrl: result.pageUrl
+          })
+        });
         
-        <div style={{
-          display: 'grid',
-          gap: '8px',
-          maxHeight: '200px',
-          overflowY: 'auto'
-        }}>
-          {result.elements?.map((element, idx) => (
-            <div
-              key={idx}
-              style={{
-                padding: '10px 14px',
-                background: theme.colors.background.tertiary,
-                borderRadius: '6px',
-                border: `1px solid ${theme.colors.border}`,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px'
-              }}
-            >
-              <span style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '4px',
-                background: getTypeColor(element.type, theme),
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px'
-              }}>
-                {getTypeIcon(element.type)}
-              </span>
-              
-              <div style={{ flex: 1 }}>
-                <div style={{
-                  fontWeight: 600,
-                  color: theme.colors.text.primary,
-                  fontSize: '13px'
-                }}>
-                  {element.name}
-                </div>
-                <div style={{
-                  fontSize: '11px',
-                  color: theme.colors.text.tertiary,
-                  fontFamily: 'monospace'
-                }}>
-                  {element.selectors?.[0]?.value || element.type}
-                </div>
-              </div>
-              
-              <span style={{
-                padding: '2px 8px',
-                background: `${theme.colors.accents.blue}20`,
-                borderRadius: '4px',
-                fontSize: '11px',
-                color: theme.colors.accents.blue
-              }}>
-                {element.type}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+        const data = await response.json();
+        
+        if (data.success && data.elements?.length > 0) {
+          // Merge new elements with existing
+          const merged = [...allElements, ...data.elements];
+          setAllElements(merged);
+          setSelectedElements(merged);
+          console.log(`✅ Added ${data.elements.length} new elements`);
+        } else if (data.elements?.length === 0) {
+          setRescanError('No additional elements found. Try a different focus area.');
+        } else {
+          setRescanError(data.error || 'Rescan failed');
+        }
+      } catch (err) {
+        setRescanError('Rescan failed: ' + err.message);
+      }
+    }}
+  />
+  
+  {rescanError && (
+    <div style={{
+      marginTop: '8px',
+      padding: '10px',
+      background: `${theme.colors.accents.yellow}15`,
+      borderRadius: '6px',
+      fontSize: '12px',
+      color: theme.colors.accents.yellow
+    }}>
+      ⚠️ {rescanError}
+    </div>
+  )}
+</div>
 
       {/* Generated Code Tabs */}
       {codeTabs.length > 0 && (

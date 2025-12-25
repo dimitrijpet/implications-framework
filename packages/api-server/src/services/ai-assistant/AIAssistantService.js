@@ -70,7 +70,7 @@ export class AIAssistantService {
       elements: [],
       generated: {},
       errors: [],
-      usage: { vision: 0, codegen: 0 }
+      usage: { vision: 0, codegen: 0 },
     };
 
     try {
