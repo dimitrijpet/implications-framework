@@ -50,12 +50,15 @@ export default function DebugBrowserTab({ onCapture, theme, projectPath }) {
 
       if (data.success) {
         setStatus({ running: true, ...data });
-      } else {
-        setError(data.error);
-      }
+      } else if (!data.success) {
+  const errorMsg = typeof data.error === 'string' 
+    ? data.error 
+    : data.error?.message || 'Unknown error';
+  setError(errorMsg);
+}
     } catch (err) {
-      setError('Failed to launch browser: ' + err.message);
-    } finally {
+  setError('Failed to launch browser: ' + (err?.message || String(err)));
+} finally {
       setLoading(false);
     }
   };
@@ -67,8 +70,8 @@ export default function DebugBrowserTab({ onCapture, theme, projectPath }) {
       });
       setStatus({ running: false });
     } catch (err) {
-      setError('Failed to close browser: ' + err.message);
-    }
+  setError('Failed to close browser: ' + (err?.message || String(err)));
+}
   };
 
   const capture = async () => {
@@ -91,12 +94,15 @@ export default function DebugBrowserTab({ onCapture, theme, projectPath }) {
 
       if (data.success && onCapture) {
         onCapture(data);
-      } else if (!data.success) {
-        setError(data.error);
-      }
+      } else {
+  const errorMsg = typeof data.error === 'string' 
+    ? data.error 
+    : data.error?.message || 'Launch failed';
+  setError(errorMsg);
+}
     } catch (err) {
-      setError('Capture failed: ' + err.message);
-    } finally {
+  setError('Capture failed: ' + (err?.message || String(err)));
+} finally {
       setCapturing(false);
     }
   };

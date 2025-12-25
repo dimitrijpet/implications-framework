@@ -407,11 +407,15 @@ export default function ScanResultsView({
         } else if (data.elements?.length === 0) {
           setRescanError('No additional elements found. Try a different focus area.');
         } else {
-          setRescanError(data.error || 'Rescan failed');
-        }
+  // Ensure error is always a string
+  const errorMsg = typeof data.error === 'string' 
+    ? data.error 
+    : data.error?.message || 'Rescan failed';
+  setRescanError(errorMsg);
+}
       } catch (err) {
-        setRescanError('Rescan failed: ' + err.message);
-      }
+  setRescanError('Rescan failed: ' + (err?.message || String(err)));
+}
     }}
   />
   
