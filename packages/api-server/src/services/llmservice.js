@@ -531,23 +531,21 @@ class [ScreenName]Implications {
       [platform]: {
         [ScreenName]: {
           description: "[Screen description]",
-          screen: "[screen.file.js]",
-          instance: "[instanceName]",
+          screen: "[ScreenName].screen.js",
+          instance: "[instanceName]Page",
           order: 0,
           blocks: [
             {
-              id: "blk_func_[timestamp]_[random]",
-              type: "function-call",
-              label: "[What this validates]",
+              id: "blk_ui_[timestamp]_[5chars]",
+              type: "ui-assertion",
+              label: "[Descriptive label for this group of elements]",
               order: 0,
               expanded: true,
               enabled: true,
               data: {
-                instance: "[instanceName]",
-                method: "[methodName]",
-                args: ["{{variable}}", "expected value"],
-                await: true,
-                assertion: { type: "toBeVisible", not: false }
+                visible: ["locator1", "locator2", "locator3"],
+                hidden: [],
+                timeout: 30000
               }
             }
           ]
@@ -565,15 +563,51 @@ class [ScreenName]Implications {
 
 module.exports = [ScreenName]Implications;
 
-RULES:
-1. Generate a block for EACH interactive element
-2. Use proper assertions: toBeVisible, toBeEnabled, toHaveText
-3. For inputs: visible check
-4. For buttons: visible AND enabled
-5. Generate unique block IDs: blk_func_[timestamp]_[5chars]
-6. Order blocks logically
+CRITICAL RULES:
+1. ALWAYS use "ui-assertion" blocks with data.visible arrays - this is how the UI displays them
+2. Group related elements into logical ui-assertion blocks with descriptive labels
+3. Each block should have a meaningful "label" that describes what's being validated
+4. The "visible" array inside data should contain getter names (camelCase, matching POM)
+5. Use "function-call" blocks ONLY for actions (clicks, form fills, navigation)
+6. Generate unique block IDs: blk_ui_[timestamp]_[5chars]
+7. The instance name should be camelCase + "Page" (e.g., "faqPage", "loginPage")
 
-Return ONLY valid JavaScript code.`
+EXAMPLE - Correct ui-assertion block:
+blocks: [
+  {
+    id: "blk_ui_1730419200_abc12",
+    type: "ui-assertion",
+    label: "Main navigation elements visible",
+    order: 0,
+    expanded: true,
+    enabled: true,
+    data: {
+      visible: ["searchInput", "submitButton", "headerLogo"],
+      hidden: [],
+      timeout: 30000
+    }
+  },
+  {
+    id: "blk_ui_1730419201_def34",
+    type: "ui-assertion",
+    label: "Action buttons visible and ready",
+    order: 1,
+    expanded: true,
+    enabled: true,
+    data: {
+      visible: ["entertainerResourcesButton", "tutorialsButton", "faqsButton"],
+      hidden: [],
+      timeout: 30000
+    }
+  }
+]
+
+GROUPING STRATEGY:
+- Group by purpose: "Header elements", "Navigation buttons", "Form inputs", "Action buttons"
+- Keep groups to 3-6 elements each for readability
+- Each group gets its own ui-assertion block with a descriptive label
+
+Return ONLY valid JavaScript code with module.exports at the end.`
     },
     {
       role: 'user',
@@ -585,7 +619,7 @@ Platform: ${platform}
 Entity: ${entity || 'unknown'}
 Previous State: ${context.previousState || 'initial'}
 
-DETECTED ELEMENTS:
+DETECTED ELEMENTS (use these as getter names in visible arrays):
 ${elementsDescription}
 
 ${exampleImplication ? `EXAMPLE (use similar structure):\n${exampleImplication.substring(0, 1500)}` : ''}`

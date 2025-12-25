@@ -149,11 +149,52 @@ export class VisionAdapter {
     throw new Error('VisionAdapter.validateElement() must be implemented by subclass');
   }
 
-buildPrompt(task, context = {}) {
+buildPrompt(options = {}) {
+  const { domElements = [] } = options;
+  
+  // If we have DOM info, use it for accurate selectors
+  const hasDom = Array.isArray(domElements) && domElements.length > 0;
+  
+  let domSection = '';
+  if (hasDom) {
+    console.log(`   📦 Building prompt with ${domElements.length} DOM elements`);
+    
+    // Format DOM elements for the prompt
+    const domSummary = domElements.slice(0, 50).map(el => {
+      const parts = [`<${el.tag}>`];
+      if (el.testId) parts.push(`data-testid="${el.testId}"`);
+      if (el.role) parts.push(`role="${el.role}"`);
+      if (el.ariaLabel) parts.push(`aria-label="${el.ariaLabel}"`);
+      if (el.id) parts.push(`id="${el.id}"`);
+      if (el.placeholder) parts.push(`placeholder="${el.placeholder}"`);
+      if (el.inputType) parts.push(`type="${el.inputType}"`);
+      if (el.text) parts.push(`text="${el.text.substring(0, 50)}"`);
+      if (el.href) parts.push(`href="${el.href.substring(0, 50)}"`);
+      return parts.join(' | ');
+    }).join('\n');
+    
+    domSection = `
+═══════════════════════════════════════════════════════════════
+DOM ELEMENTS (ACTUAL HTML - USE THESE FOR ACCURATE SELECTORS):
+═══════════════════════════════════════════════════════════════
+${domSummary}
+
+CRITICAL: Use the ACTUAL attributes from DOM above for selectors!
+- If data-testid exists → use getByTestId('value')
+- If type="search" → use getByRole('searchbox', { name: '...' })
+- If role exists → use getByRole('role', { name: 'aria-label or text' })
+- If placeholder exists → use getByPlaceholder('exact value')
+- If aria-label exists → use getByLabel('value')
+═══════════════════════════════════════════════════════════════
+`;
+  } else {
+    console.log(`   ⚠️ No DOM elements available - using visual-only analysis`);
+  }
+
   return `You are a senior QA automation engineer analyzing a screenshot for Playwright test automation.
 
 YOUR TASK: Identify ALL testable UI elements on this page. Be EXTREMELY thorough.
-
+${domSection}
 MUST FIND (if visible):
 ✅ Logo and branding elements
 ✅ ALL navigation links (header, sidebar, footer)
@@ -172,6 +213,24 @@ MUST FIND (if visible):
 ✅ Modal triggers
 ✅ Any clickable or interactive element
 
+${hasDom ? `
+SELECTOR PRIORITY (you have DOM data - use it!):
+1. getByTestId('data-testid-value') - if data-testid exists in DOM
+2. getByRole('searchbox', { name: '...' }) - for type="search" inputs
+3. getByRole('role', { name: 'accessible name' }) - use actual role from DOM
+4. getByPlaceholder('exact placeholder') - MUST match DOM exactly
+5. getByLabel('label text') - if aria-label exists
+6. getByText('visible text') - for links/buttons with text
+` : `
+SELECTOR RULES (no DOM available - must guess from visual):
+⚠️ You can ONLY see the screenshot - you CANNOT see HTML attributes!
+1. getByRole('button', { name: 'Visible Text' }) - for buttons
+2. getByRole('link', { name: 'Link Text' }) - for links  
+3. getByRole('textbox', { name: 'Label' }) - for inputs
+4. getByPlaceholder('Search...') - if placeholder is visible
+5. getByText('Exact Text') - for text elements
+`}
+
 For EACH element provide this JSON structure:
 {
   "name": "camelCaseName",
@@ -180,17 +239,10 @@ For EACH element provide this JSON structure:
   "purpose": "What this element does",
   "isInteractive": true/false,
   "selectors": [
-    { "type": "text", "value": "text=Visible Text", "confidence": 0.9 },
-    { "type": "role", "value": "button[name='...']", "confidence": 0.85 },
-    { "type": "css", "value": ".class-name", "confidence": 0.7 }
+    { "type": "testid", "value": "getByTestId('actual-testid')", "confidence": 0.95 },
+    { "type": "role", "value": "getByRole('button', { name: 'Submit' })", "confidence": 0.9 }
   ]
 }
-
-IMPORTANT:
-- A typical webpage has 15-40+ elements
-- Don't skip header/footer navigation
-- Include even small icon buttons
-- Every clickable thing is an element
 
 Return JSON:
 {

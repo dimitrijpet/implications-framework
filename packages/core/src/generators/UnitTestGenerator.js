@@ -571,19 +571,28 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       console.log(
         `      📁 POM from _pomSource: ${pomClassName} → ${pomPathValue}`
       );
-    } else if (screen.screen && this.implFilePath) {
+     } else if (screen.screen && this.implFilePath) {
       // Priority 2: Use screen property and calculate path
       pomPathValue = this._calculateScreenObjectPath(
         this.implFilePath,
         screen.screen,
         platform
       );
-      pomClassName = this._toPascalCase(
-        screen.screen
-          .replace(/\.screen$/i, "")
-          .replace(/\.wrapper$/i, "")
-          .replace(/\./g, "")
-          .replace(/\//g, "")
+      
+      // ✅ FIX: Properly extract class name from screen filename
+      // "FAQ.screen.js" → "FAQ" → "FAQScreen"
+      // "landing.screen.js" → "landing" → "LandingScreen"
+      const screenBaseName = screen.screen
+        .replace(/\.js$/i, "")           // Remove .js first
+        .replace(/\.screen$/i, "")       // Then remove .screen
+        .replace(/\.wrapper$/i, "")      // Or .wrapper
+        .replace(/\./g, "")              // Remove any remaining dots
+        .replace(/\//g, "");             // Remove slashes
+      
+      pomClassName = this._toPascalCase(screenBaseName) + 'Screen';
+      
+      console.log(
+        `      📁 POM from screen: ${pomClassName} → ${pomPathValue}`
       );
       console.log(
         `      📁 POM from screen: ${pomClassName} → ${pomPathValue}`
@@ -606,14 +615,16 @@ _extractOrderedScreensForValidation(metadata, platform, options = {}) {
       ? mainClassName.charAt(0).toLowerCase() + mainClassName.slice(1)
       : this._toCamelCase(screenKey);
     
+    // ✅ FIX: Use screen.instance if provided, otherwise use default
     const configuredInstance = screen.instance || defaultInstanceName;
     
-    // Is this a nested instance? (different from default)
-    const isNestedInstance = configuredInstance !== defaultInstanceName;
-    const nestedInstanceName = isNestedInstance ? configuredInstance : null;
+    // Is this a nested instance? (different from default AND not just a custom name)
+    // A nested instance is like "faqPage" when the POM is "FAQScreen" and has a sub-object
+    const isNestedInstance = screen.instance && screen.instance !== defaultInstanceName;
+    const nestedInstanceName = isNestedInstance ? screen.instance : null;
     
-    // The main POM instance name (always use default for instantiation)
-    const mainPomInstance = defaultInstanceName;
+    // ✅ FIX: Use configured instance for pomInstance (this is what gets used in template)
+    const mainPomInstance = screen.instance || defaultInstanceName;
 
     console.log(`      📦 Instance detection:`);
     console.log(`         className: ${mainClassName}`);

@@ -34,8 +34,8 @@ export class ClaudeVisionAdapter extends VisionAdapter {
    * Analyze screenshot and extract UI elements
    */
   async analyzeScreenshot(screenshotBase64, options = {}) {
-    const client = this._getClient();
-    const prompt = this.buildPrompt(options);
+  const client = this._getClient();
+  const prompt = this.buildPrompt(options)
 
     const response = await client.messages.create({
       model: this.model,

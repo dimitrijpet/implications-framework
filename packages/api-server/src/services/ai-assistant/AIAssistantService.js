@@ -89,14 +89,15 @@ export class AIAssistantService {
       result.dom = pageData.dom;
 
       // Step 2: Analyze with vision
-      console.log('🧠 Step 2/3: Analyzing screenshot with Claude Vision...');
-      const vision = this.getVisionAdapter();
-      
-      const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
-        pageTitle: pageData.title,
-        pageUrl: pageData.url,
-        includeCoordinates: false
-      });
+console.log('🧠 Step 2/3: Analyzing screenshot with Claude Vision...');
+const vision = this.getVisionAdapter();
+
+const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
+  pageTitle: pageData.title,
+  pageUrl: pageData.url,
+  domElements: pageData.dom,  // ✅ ADD THIS
+  includeCoordinates: false
+});
 
       result.elements = visionResult.elements;
       result.pageDescription = visionResult.pageDescription;

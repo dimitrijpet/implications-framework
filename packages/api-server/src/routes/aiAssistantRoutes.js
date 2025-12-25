@@ -1257,35 +1257,101 @@ router.post('/debug-browser/capture', async (req, res) => {
     const currentUrl = await debugSession.page.url();
     const pageTitle = await debugSession.page.title();
     
+    console.log(`   URL: ${currentUrl}`);
+    console.log(`   Title: ${pageTitle}`);
+
+    // ✅ EXTRACT DOM BEFORE SCREENSHOT
+    console.log('   📦 Extracting DOM elements...');
+    const domElements = await debugSession.page.evaluate(() => {
+      const elements = [];
+      const selectors = 'button, a, input, select, textarea, [role], [data-testid], img, h1, h2, h3, nav, form, [aria-label], [type="search"]';
+      
+      document.querySelectorAll(selectors).forEach(el => {
+        // Skip invisible elements (except hidden inputs)
+        if (el.offsetParent === null && el.tagName !== 'INPUT' && el.type !== 'hidden') return;
+        
+        // Skip elements inside <head>
+        if (el.closest('head')) return;
+        
+        elements.push({
+          tag: el.tagName.toLowerCase(),
+          type: el.type || null,
+          role: el.getAttribute('role'),
+          text: (el.innerText || el.textContent || '').trim().substring(0, 100),
+          placeholder: el.placeholder || null,
+          ariaLabel: el.getAttribute('aria-label'),
+          testId: el.getAttribute('data-testid'),
+          name: el.getAttribute('name'),
+          id: el.id || null,
+          classes: el.className || null,
+          href: el.tagName === 'A' ? el.getAttribute('href') : null,
+          alt: el.alt || null,
+          value: el.tagName === 'INPUT' ? el.value : null,
+          inputType: el.tagName === 'INPUT' ? el.type : null,
+          isVisible: el.offsetParent !== null || el.type === 'hidden'
+        });
+      });
+      
+      return elements;
+    });
+    console.log(`   📦 Extracted ${domElements.length} DOM elements`);
+
     // Take screenshot
     const screenshotBuffer = await debugSession.page.screenshot({
       fullPage: false
     });
     const screenshotBase64 = screenshotBuffer.toString('base64');
 
-    console.log(`   URL: ${currentUrl}`);
-    console.log(`   Title: ${pageTitle}`);
-
-    // Analyze with Vision AI
+    // Analyze with Vision AI - NOW WITH DOM!
     console.log('🧠 Analyzing with Vision AI...');
     
-    const result = await aiAssistant.analyzeScreenshot(screenshotBase64, {
-      screenName: screenName || pageTitle.replace(/[^a-zA-Z0-9]/g, ''),
+    const vision = aiAssistant.getVisionAdapter();
+    const visionResult = await vision.analyzeScreenshot(screenshotBase64, {
       pageTitle,
       pageUrl: currentUrl,
-      platform,
-      generateLocators,
-      generatePOM,
-      generateTransitions
+      domElements,  // ✅ PASS DOM TO VISION
+      includeCoordinates: false
     });
 
-    res.json({
-      ...result,
+    // Generate code
+    console.log('⚡ Generating code...');
+    
+    const finalScreenName = screenName || 
+      visionResult.suggestedScreenNames?.[0] || 
+      pageTitle.replace(/[^a-zA-Z0-9]/g, '') || 
+      'UnknownScreen';
+
+    const result = {
+      success: true,
+      elements: visionResult.elements,
+      pageDescription: visionResult.pageDescription,
+      suggestedScreenNames: visionResult.suggestedScreenNames,
+      screenName: finalScreenName,
+      generated: {},
       screenshot: screenshotBase64,
       capturedFrom: 'debug-browser',
       capturedUrl: currentUrl,
-      capturedTitle: pageTitle
-    });
+      capturedTitle: pageTitle,
+      domElementsCount: domElements.length  // ✅ Include count for debugging
+    };
+
+    // Generate code using the service's methods
+    if (generateLocators) {
+      const locatorsResult = await aiAssistant._generateLocators(visionResult.elements, finalScreenName);
+      result.generated.locators = locatorsResult.code;
+    }
+
+    if (generatePOM) {
+      const pomResult = await aiAssistant._generatePOM(visionResult.elements, finalScreenName, platform);
+      result.generated.pom = pomResult.code;
+    }
+
+    if (generateTransitions) {
+      const transitionsResult = await aiAssistant._generateTransitions(visionResult.elements, finalScreenName);
+      result.generated.transitions = transitionsResult.code;
+    }
+
+    res.json(result);
 
   } catch (error) {
     console.error('❌ Capture failed:', error);
@@ -1610,12 +1676,21 @@ function generateScreenObjectCode(elements, screenName, options = {}) {
   const pageVar = platform === 'web' ? 'page' : 'driver';
 
   // Generate locators
-  const locators = elements.map(el => {
-    const selector = el.selectors?.[0]?.value || `[data-testid="${el.name}"]`;
+const locators = elements.map(el => {
+  const selector = el.selectors?.[0]?.value || `getByText('${el.label || el.name}')`;
+  
+  // If it's a getBy* method, use it directly (not wrapped in locator)
+  if (selector.startsWith('getBy')) {
     return `  get ${el.name}() {
+    return this.${pageVar}.${selector};
+  }`;
+  }
+  
+  // Otherwise wrap in locator()
+  return `  get ${el.name}() {
     return this.${pageVar}.locator('${selector.replace(/'/g, "\\'")}');
   }`;
-  }).join('\n\n');
+}).join('\n\n');
 
   // Generate actions
   const actions = elements
@@ -1684,7 +1759,7 @@ ${includeAssertions ? `
 ${assertions}` : ''}
 }
 
-module.exports = { ${className} };
+module.exports = ${className};
 `;
 
   return code;

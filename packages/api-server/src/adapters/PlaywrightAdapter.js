@@ -35,7 +35,7 @@ export class PlaywrightAdapter extends BrowserAdapter {
     return this;
   }
 
-  /**
+/**
    * Navigate to URL and capture page data
    */
   async scanPage(url, options = {}) {
@@ -69,10 +69,43 @@ export class PlaywrightAdapter extends BrowserAdapter {
     const title = await this.page.title();
     const finalUrl = this.page.url();
 
-    // Optionally capture DOM
-    let dom = null;
+    // ✅ FIXED: Extract STRUCTURED DOM info, not raw HTML
+    let dom = [];
     if (captureDom) {
-      dom = await this.page.content();
+      dom = await this.page.evaluate(() => {
+        const elements = [];
+        const selectors = 'button, a, input, select, textarea, [role], [data-testid], img, h1, h2, h3, nav, form, [aria-label], [type="search"]';
+        
+        document.querySelectorAll(selectors).forEach(el => {
+          // Skip invisible elements (except hidden inputs)
+          if (el.offsetParent === null && el.tagName !== 'INPUT' && el.type !== 'hidden') return;
+          
+          // Skip elements inside <head>
+          if (el.closest('head')) return;
+          
+          elements.push({
+            tag: el.tagName.toLowerCase(),
+            type: el.type || null,
+            role: el.getAttribute('role'),
+            text: (el.innerText || el.textContent || '').trim().substring(0, 100),
+            placeholder: el.placeholder || null,
+            ariaLabel: el.getAttribute('aria-label'),
+            testId: el.getAttribute('data-testid'),
+            name: el.getAttribute('name'),
+            id: el.id || null,
+            classes: el.className || null,
+            href: el.tagName === 'A' ? el.getAttribute('href') : null,
+            alt: el.alt || null,
+            value: el.tagName === 'INPUT' ? el.value : null,
+            inputType: el.tagName === 'INPUT' ? el.type : null,
+            isVisible: el.offsetParent !== null || el.type === 'hidden'
+          });
+        });
+        
+        return elements;
+      });
+      
+      console.log(`   📦 Extracted ${dom.length} DOM elements`);
     }
 
     return {
@@ -115,6 +148,35 @@ export class PlaywrightAdapter extends BrowserAdapter {
   async execute(fn, ...args) {
     return this.page.evaluate(fn, ...args);
   }
+
+  async extractDOMInfo(page) {
+  return await page.evaluate(() => {
+    const elements = [];
+    const selectors = 'button, a, input, select, textarea, [role], [data-testid], img, h1, h2, h3, nav, form';
+    
+    document.querySelectorAll(selectors).forEach(el => {
+      if (el.offsetParent === null && el.tagName !== 'INPUT') return; // Skip hidden
+      
+      elements.push({
+        tag: el.tagName.toLowerCase(),
+        type: el.type || null,
+        role: el.getAttribute('role') || null,
+        text: (el.textContent || '').trim().substring(0, 100),
+        placeholder: el.placeholder || null,
+        ariaLabel: el.getAttribute('aria-label'),
+        testId: el.getAttribute('data-testid'),
+        name: el.getAttribute('name'),
+        id: el.id || null,
+        classes: el.className || null,
+        href: el.href || null,
+        alt: el.alt || null,
+        inputType: el.type || null
+      });
+    });
+    
+    return elements;
+  });
+}
 
   /**
    * Take a screenshot
