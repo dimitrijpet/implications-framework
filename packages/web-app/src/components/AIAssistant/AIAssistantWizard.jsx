@@ -57,16 +57,20 @@ export default function AIAssistantWizard({
 
   // Update screen name from scan result
   useEffect(() => {
-    if (scanResult?.screenName && !screenConfig.name) {
-      setScreenConfig(prev => ({
-        ...prev,
-        name: scanResult.screenName
-      }));
-    }
-    if (scanResult?.elements) {
-      setSelectedElements(scanResult.elements);
-    }
-  }, [scanResult]);
+  if (scanResult) {
+    setScreenConfig(prev => ({
+      ...prev,
+      name: scanResult.screenName || prev.name,
+      // Set platform from capture result (mobile captures include platform)
+      platform: scanResult.platform || scanResult.capturedFrom === 'mobile-session' 
+        ? (scanResult.platform || 'android') 
+        : prev.platform
+    }));
+  }
+  if (scanResult?.elements) {
+    setSelectedElements(scanResult.elements);
+  }
+}, [scanResult]);
 
   const loadProjectConfig = async () => {
     try {
