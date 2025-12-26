@@ -473,13 +473,12 @@ Be practical. Focus on high-value gaps.`
 // IMPLICATION GENERATION FROM SCANNED ELEMENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Generate a proper implication file from scanned UI elements
- */
 export async function generateImplicationFromScan({
   screenName,
   status,
   elements,
+  visibleElements = [],
+  hiddenElements = [],
   platform = 'web',
   entity = '',
   context = {},
@@ -489,10 +488,35 @@ export async function generateImplicationFromScan({
     throw new Error('LLM not enabled');
   }
 
-  const elementsDescription = elements.map(el => 
-    `- ${el.name} (${el.type}): "${el.label || ''}" - ${el.purpose || 'interactive element'}
-     Selector: ${el.selectors?.[0]?.value || 'unknown'}`
-  ).join('\n');
+  // Build element descriptions with visibility status
+  const elementsDescription = elements.map(el => {
+    const isVisible = el.isVisible !== false && !hiddenElements.includes(el.name);
+    const visibilityStatus = isVisible ? '✅ VISIBLE' : `❌ HIDDEN (${el.visibilityReason || 'not visible in screenshot'})`;
+    
+    return `- ${el.name} (${el.type}): "${el.label || ''}"
+     Selector: ${el.selectors?.[0]?.value || 'unknown'}
+     Status: ${visibilityStatus}`;
+  }).join('\n');
+
+  // Build visibility summary from arrays or element data
+  const visibleList = visibleElements.length > 0 
+    ? visibleElements 
+    : elements.filter(el => el.isVisible !== false).map(el => el.name);
+  
+  const hiddenList = hiddenElements.length > 0 
+    ? hiddenElements 
+    : elements.filter(el => el.isVisible === false).map(el => el.name);
+
+  const visibilitySummary = `
+═══════════════════════════════════════════════════════════════
+VISIBILITY ANALYSIS (USE THIS FOR visible/hidden ARRAYS):
+═══════════════════════════════════════════════════════════════
+✅ VISIBLE elements (put in data.visible): 
+   ${visibleList.length > 0 ? visibleList.join(', ') : 'all elements'}
+
+❌ HIDDEN elements (put in data.hidden):
+   ${hiddenList.length > 0 ? hiddenList.join(', ') : 'none detected'}
+═══════════════════════════════════════════════════════════════`;
 
   const messages = [
     {
@@ -543,8 +567,8 @@ class [ScreenName]Implications {
               expanded: true,
               enabled: true,
               data: {
-                visible: ["locator1", "locator2", "locator3"],
-                hidden: [],
+                visible: ["visibleElement1", "visibleElement2"],
+                hidden: ["hiddenElement1", "hiddenElement2"],
                 timeout: 30000
               }
             }
@@ -564,38 +588,45 @@ class [ScreenName]Implications {
 module.exports = [ScreenName]Implications;
 
 CRITICAL RULES:
-1. ALWAYS use "ui-assertion" blocks with data.visible arrays - this is how the UI displays them
+1. ALWAYS use "ui-assertion" blocks with data.visible AND data.hidden arrays
 2. Group related elements into logical ui-assertion blocks with descriptive labels
 3. Each block should have a meaningful "label" that describes what's being validated
-4. The "visible" array inside data should contain getter names (camelCase, matching POM)
-5. Use "function-call" blocks ONLY for actions (clicks, form fills, navigation)
-6. Generate unique block IDs: blk_ui_[timestamp]_[5chars]
-7. The instance name should be camelCase + "Page" (e.g., "faqPage", "loginPage")
+4. The "visible" array contains elements that ARE shown in the screenshot
+5. The "hidden" array contains elements that exist in DOM but are NOT visible (skip links, clear buttons, collapsed menus, etc.)
+6. Use "function-call" blocks ONLY for actions (clicks, form fills, navigation)
+7. Generate unique block IDs: blk_ui_[timestamp]_[5chars]
+8. The instance name should be camelCase + "Page" (e.g., "faqPage", "loginPage")
 
-EXAMPLE - Correct ui-assertion block:
+VISIBILITY HANDLING (VERY IMPORTANT):
+- Elements marked ✅ VISIBLE → put in data.visible array
+- Elements marked ❌ HIDDEN → put in data.hidden array
+- Common hidden elements: skip links, clear/reset buttons, loading spinners, collapsed dropdowns, tooltips
+- Hidden elements are important for testing - they verify elements DON'T appear when they shouldn't
+
+EXAMPLE - Correct ui-assertion block with hidden elements:
 blocks: [
   {
     id: "blk_ui_1730419200_abc12",
     type: "ui-assertion",
-    label: "Main navigation elements visible",
+    label: "Header and accessibility elements",
     order: 0,
     expanded: true,
     enabled: true,
     data: {
-      visible: ["searchInput", "submitButton", "headerLogo"],
-      hidden: [],
+      visible: ["logo", "navigationMenu", "searchInput"],
+      hidden: ["skipToMainContent", "searchClearButton"],
       timeout: 30000
     }
   },
   {
     id: "blk_ui_1730419201_def34",
     type: "ui-assertion",
-    label: "Action buttons visible and ready",
+    label: "Main navigation links",
     order: 1,
     expanded: true,
     enabled: true,
     data: {
-      visible: ["entertainerResourcesButton", "tutorialsButton", "faqsButton"],
+      visible: ["homeLink", "aboutLink", "contactLink"],
       hidden: [],
       timeout: 30000
     }
@@ -606,6 +637,7 @@ GROUPING STRATEGY:
 - Group by purpose: "Header elements", "Navigation buttons", "Form inputs", "Action buttons"
 - Keep groups to 3-6 elements each for readability
 - Each group gets its own ui-assertion block with a descriptive label
+- Hidden elements can be grouped with related visible elements or in their own block
 
 Return ONLY valid JavaScript code with module.exports at the end.`
     },
@@ -619,8 +651,10 @@ Platform: ${platform}
 Entity: ${entity || 'unknown'}
 Previous State: ${context.previousState || 'initial'}
 
-DETECTED ELEMENTS (use these as getter names in visible arrays):
+DETECTED ELEMENTS:
 ${elementsDescription}
+
+${visibilitySummary}
 
 ${exampleImplication ? `EXAMPLE (use similar structure):\n${exampleImplication.substring(0, 1500)}` : ''}`
     }

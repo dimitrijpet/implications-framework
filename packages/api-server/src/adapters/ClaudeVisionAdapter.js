@@ -67,6 +67,13 @@ export class ClaudeVisionAdapter extends VisionAdapter {
 
     // Parse the response
     const result = this.parseResponse(rawResponse);
+
+// Debug: Log visibility data
+console.log('   🔍 Vision visibility:', {
+  visibleElements: result.visibleElements?.slice(0, 5),
+  hiddenElements: result.hiddenElements,
+  sampleElement: result.elements?.[0]
+});
     
     // Add token usage
     result.tokensUsed = response.usage?.input_tokens + response.usage?.output_tokens || 0;

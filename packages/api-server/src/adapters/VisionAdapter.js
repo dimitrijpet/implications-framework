@@ -160,7 +160,7 @@ buildPrompt(options = {}) {
     console.log(`   📦 Building prompt with ${domElements.length} DOM elements`);
     
     // Format DOM elements for the prompt
-    const domSummary = domElements.slice(0, 50).map(el => {
+    const domSummary = domElements.slice(0, 60).map(el => {
       const parts = [`<${el.tag}>`];
       if (el.testId) parts.push(`data-testid="${el.testId}"`);
       if (el.role) parts.push(`role="${el.role}"`);
@@ -170,6 +170,7 @@ buildPrompt(options = {}) {
       if (el.inputType) parts.push(`type="${el.inputType}"`);
       if (el.text) parts.push(`text="${el.text.substring(0, 50)}"`);
       if (el.href) parts.push(`href="${el.href.substring(0, 50)}"`);
+      if (el.isVisible === false) parts.push(`[HIDDEN IN DOM]`);
       return parts.join(' | ');
     }).join('\n');
     
@@ -191,11 +192,31 @@ CRITICAL: Use the ACTUAL attributes from DOM above for selectors!
     console.log(`   ⚠️ No DOM elements available - using visual-only analysis`);
   }
 
-  return `You are a senior QA automation engineer analyzing a screenshot for Playwright test automation.
+  return `You are a senior QA automation engineer analyzing a FULL PAGE screenshot for Playwright test automation.
 
-YOUR TASK: Identify ALL testable UI elements on this page. Be EXTREMELY thorough.
+YOUR TASK: Identify ALL testable UI elements on this page and determine their visibility status.
 ${domSection}
-MUST FIND (if visible):
+
+═══════════════════════════════════════════════════════════════
+VISIBILITY DETECTION (CRITICAL!)
+═══════════════════════════════════════════════════════════════
+Cross-reference the screenshot with DOM data to categorize elements:
+
+VISIBLE elements (can see in screenshot):
+- Navigation links, buttons, inputs that are rendered and displayed
+- Content that appears on screen
+
+HIDDEN elements (in DOM but NOT visible in screenshot):
+- Skip links (e.g., "Skip to main content") - usually invisible until focused
+- Clear/reset buttons that only appear after user input
+- Loading spinners, error messages, success toasts (not currently shown)
+- Modal dialogs, tooltips, dropdowns (collapsed/closed state)
+- Elements with display:none, visibility:hidden, or opacity:0
+- Off-screen elements
+
+For each element, set "isVisible": true or false based on whether you can actually SEE it in the screenshot.
+
+MUST FIND (whether visible or hidden):
 ✅ Logo and branding elements
 ✅ ALL navigation links (header, sidebar, footer)
 ✅ ALL buttons (including icon-only buttons)
@@ -212,6 +233,7 @@ MUST FIND (if visible):
 ✅ Tabs and tab panels
 ✅ Modal triggers
 ✅ Any clickable or interactive element
+✅ Accessibility elements (skip links, aria landmarks)
 
 ${hasDom ? `
 SELECTOR PRIORITY (you have DOM data - use it!):
@@ -221,6 +243,12 @@ SELECTOR PRIORITY (you have DOM data - use it!):
 4. getByPlaceholder('exact placeholder') - MUST match DOM exactly
 5. getByLabel('label text') - if aria-label exists
 6. getByText('visible text') - for links/buttons with text
+
+AVOID GENERIC SELECTORS:
+❌ getByRole('img') - too generic, matches all images
+✅ getByRole('img', { name: 'Company Logo' }) - specific with alt text
+❌ getByRole('button') - too generic
+✅ getByRole('button', { name: 'Submit' }) - specific with text
 ` : `
 SELECTOR RULES (no DOM available - must guess from visual):
 ⚠️ You can ONLY see the screenshot - you CANNOT see HTML attributes!
@@ -238,6 +266,8 @@ For EACH element provide this JSON structure:
   "label": "Visible text or aria-label",
   "purpose": "What this element does",
   "isInteractive": true/false,
+  "isVisible": true/false,
+  "visibilityReason": "only if hidden - explain why (e.g., 'skip link - only visible on focus')",
   "selectors": [
     { "type": "testid", "value": "getByTestId('actual-testid')", "confidence": 0.95 },
     { "type": "role", "value": "getByRole('button', { name: 'Submit' })", "confidence": 0.9 }
@@ -249,57 +279,77 @@ Return JSON:
   "screenName": "PascalCasePageName",
   "pageDescription": "One sentence description",
   "elements": [...all elements...],
+  "visibleElements": ["names of elements visible in screenshot"],
+  "hiddenElements": ["names of elements in DOM but not visible"],
   "suggestedScreenNames": ["Option1", "Option2"]
 }`;
 }
 
-  /**
-   * Parse the vision model response into structured data
-   * 
-   * @protected
-   * @param {string} response - Raw response from vision model
-   * @returns {VisionResult} - Parsed result
-   */
   parseResponse(response) {
-    // Try to extract JSON from the response
-    let jsonStr = response;
-    
-    // Handle markdown code blocks
-    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1];
-    }
-    
-    // Try to find JSON object
-    const objectMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objectMatch) {
-      jsonStr = objectMatch[0];
-    }
-
-    try {
-      const parsed = JSON.parse(jsonStr);
-      
-      return {
-        pageDescription: parsed.pageDescription || '',
-        suggestedScreenNames: parsed.suggestedScreenNames || [],
-        elements: this.normalizeElements(parsed.elements || []),
-        rawResponse: response,
-        tokensUsed: 0 // Will be set by implementation
-      };
-    } catch (e) {
-      console.error('Failed to parse vision response:', e.message);
-      console.error('Response was:', response.substring(0, 500));
-      
-      return {
-        pageDescription: '',
-        suggestedScreenNames: [],
-        elements: [],
-        rawResponse: response,
-        tokensUsed: 0,
-        parseError: e.message
-      };
-    }
+  // Try to extract JSON from the response
+  let jsonStr = response;
+  
+  // Handle markdown code blocks
+  const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[1];
   }
+  
+  // Try to find JSON object
+  const objectMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (objectMatch) {
+    jsonStr = objectMatch[0];
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    
+    // Extract visibility arrays from response
+    const visibleElements = parsed.visibleElements || [];
+    const hiddenElements = parsed.hiddenElements || [];
+    
+    // Also check individual element isVisible flags as fallback
+    const normalizedElements = this.normalizeElements(parsed.elements || []);
+    
+    // If Claude didn't return visibility arrays, build them from element flags
+    const finalVisibleElements = visibleElements.length > 0 
+      ? visibleElements 
+      : normalizedElements.filter(el => el.isVisible !== false).map(el => el.name);
+    
+    const finalHiddenElements = hiddenElements.length > 0 
+      ? hiddenElements 
+      : normalizedElements.filter(el => el.isVisible === false).map(el => el.name);
+    
+    console.log(`   👁️ Visibility: ${finalVisibleElements.length} visible, ${finalHiddenElements.length} hidden`);
+    if (finalHiddenElements.length > 0) {
+      console.log(`   🙈 Hidden elements: ${finalHiddenElements.join(', ')}`);
+    }
+    
+    return {
+      pageDescription: parsed.pageDescription || '',
+      suggestedScreenNames: parsed.suggestedScreenNames || [],
+      elements: normalizedElements,
+      visibleElements: finalVisibleElements,
+      hiddenElements: finalHiddenElements,
+      rawResponse: response,
+      tokensUsed: 0
+    };
+  } catch (e) {
+    console.error('Failed to parse vision response:', e.message);
+    console.error('Response was:', response.substring(0, 500));
+    
+    return {
+      pageDescription: '',
+      suggestedScreenNames: [],
+      elements: [],
+      visibleElements: [],
+      hiddenElements: [],
+      rawResponse: response,
+      tokensUsed: 0,
+      parseError: e.message
+    };
+  }
+}
 
   /**
    * Normalize element data to ensure consistent structure
@@ -309,18 +359,20 @@ Return JSON:
    * @returns {UIElement[]} - Normalized elements
    */
   normalizeElements(elements) {
-    return elements.map((el, index) => ({
-      name: el.name || `element${index}`,
-      type: el.type || 'unknown',
-      label: el.label || el.name || '',
-      purpose: el.purpose || '',
-      isInteractive: el.isInteractive ?? this.isInteractiveType(el.type),
-      inputType: el.inputType || null,
-      selectors: this.normalizeSelectors(el.selectors || []),
-      bounds: el.bounds || null,
-      attributes: el.attributes || {}
-    }));
-  }
+  return elements.map((el, index) => ({
+    name: el.name || `element${index}`,
+    type: el.type || 'unknown',
+    label: el.label || el.name || '',
+    purpose: el.purpose || '',
+    isInteractive: el.isInteractive ?? this.isInteractiveType(el.type),
+    isVisible: el.isVisible !== false,  // ✅ ADD - default true if not specified
+    visibilityReason: el.visibilityReason || null,  // ✅ ADD
+    inputType: el.inputType || null,
+    selectors: this.normalizeSelectors(el.selectors || []),
+    bounds: el.bounds || null,
+    attributes: el.attributes || {}
+  }));
+}
 
   /**
    * Normalize selector suggestions

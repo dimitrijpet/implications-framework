@@ -61,7 +61,7 @@ export class PlaywrightAdapter extends BrowserAdapter {
     // Capture screenshot
     const screenshotBuffer = await this.page.screenshot({
       type: 'png',
-      fullPage: false
+      fullPage: true
     });
     const screenshot = screenshotBuffer.toString('base64');
 

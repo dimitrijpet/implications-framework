@@ -452,15 +452,17 @@ router.post('/create-implication', async (req, res) => {
     if (isLLMEnabled()) {
       // Use LLM to generate proper implication
       console.log('  🤖 Generating with LLM...');
-      implicationCode = await generateImplicationFromScan({
-        screenName,
-        status,
-        elements,
-        platform,
-        entity,
-        context: { previousState, triggerEvent, tags, screenshot: screenshotRelativePath },
-        exampleImplication
-      });
+implicationCode = await generateImplicationFromScan({
+  screenName,
+  status,
+  elements,
+  visibleElements: elements.filter(el => el.isVisible !== false).map(el => el.name),
+  hiddenElements: elements.filter(el => el.isVisible === false).map(el => el.name),
+  platform,
+  entity,
+  context: { previousState, triggerEvent, tags, screenshot: screenshotRelativePath },
+  exampleImplication
+});
       
       // If LLM didn't include screenshot, inject it into meta
       if (screenshotRelativePath && !implicationCode.includes('screenshot:')) {
@@ -789,7 +791,7 @@ test.describe('AI Assistant Scan', () => {
     console.log('📸 Taking screenshot...');
     await page.screenshot({ 
       path: '${screenshotPath}',
-      fullPage: false
+      fullPage: true
     });
     
     console.log('✅ Screenshot saved to ${screenshotPath}');
@@ -1298,7 +1300,7 @@ router.post('/debug-browser/capture', async (req, res) => {
 
     // Take screenshot
     const screenshotBuffer = await debugSession.page.screenshot({
-      fullPage: false
+      fullPage: true
     });
     const screenshotBase64 = screenshotBuffer.toString('base64');
 
