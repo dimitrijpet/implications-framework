@@ -6,9 +6,17 @@
  *   POST /api/ai-assistant/scan-url         - Scan a URL
  *   POST /api/ai-assistant/analyze-screenshot - Analyze uploaded screenshot
  */
-
+import fs from 'fs/promises';
 import express from 'express';
+import { glob } from 'glob';
 import { AIAssistantService } from '../services/ai-assistant/AIAssistantService.js';
+
+import POMComparator from '../services/ai-assistant/POMComparator.js';
+const pomComparator = new POMComparator();
+
+import ImplicationComparator from '../services/ai-assistant/ImplicationComparator.js';
+const implicationComparator = new ImplicationComparator();
+
 let mobileSession = null;
 
 const router = express.Router();
@@ -1309,24 +1317,27 @@ router.post('/debug-browser/capture', async (req, res) => {
     console.log('🧠 Analyzing with Vision AI...');
     
     const vision = aiAssistant.getVisionAdapter();
-    const visionResult = await vision.analyzeScreenshot(screenshotBase64, {
-      pageTitle,
-      pageUrl: currentUrl,
-      domElements,  // ✅ PASS DOM TO VISION
+    const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
+      pageTitle: currentScreen,
+      domElements: pageData.dom,
+      platform: mobileSession.platform,
       includeCoordinates: false
     });
 
-    // Generate code
-    console.log('⚡ Generating code...');
-    
-    const finalScreenName = screenName || 
-      visionResult.suggestedScreenNames?.[0] || 
-      pageTitle.replace(/[^a-zA-Z0-9]/g, '') || 
-      'UnknownScreen';
+
+    const mergedElements = mergeSelectorsFromDom(visionResult.elements, pageData.dom);
+
+  // Generate code using MERGED elements
+  console.log('⚡ Generating code...');
+  
+  const finalScreenName = screenName || 
+    visionResult.suggestedScreenNames?.[0] || 
+    currentScreen.replace(/[^a-zA-Z0-9]/g, '') || 
+    'MobileScreen';
 
     const result = {
       success: true,
-      elements: visionResult.elements,
+      elements: mergedElements,
       pageDescription: visionResult.pageDescription,
       suggestedScreenNames: visionResult.suggestedScreenNames,
       screenName: finalScreenName,
@@ -1340,7 +1351,11 @@ router.post('/debug-browser/capture', async (req, res) => {
 
       // Generate code using the service's methods
     if (generateLocators) {
-      const locatorsResult = await aiAssistant._generateLocators(visionResult.elements, finalScreenName, platform);
+      const locatorsResult = await aiAssistant._generateLocators(
+        mergedElements,  // ← Use merged
+        finalScreenName, 
+        mobileSession.platform
+      );
       result.generated.locators = locatorsResult.code;
     }
 
@@ -1364,6 +1379,88 @@ router.post('/debug-browser/capture', async (req, res) => {
     });
   }
 });
+
+/**
+ * Merge pre-computed selectors from DOM with vision-identified elements
+ * Vision provides: name, purpose, type identification
+ * DOM provides: accurate selectors, hierarchy, uniqueness data
+ */
+function mergeSelectorsFromDom(visionElements, domElements) {
+  // Build lookup maps from DOM
+  const domByText = new Map();
+  const domByTestId = new Map();
+  const domByLabel = new Map();
+  
+  for (const domEl of domElements) {
+    if (domEl.text) {
+      // Store by normalized text (first 30 chars, lowercased)
+      const key = domEl.text.substring(0, 30).toLowerCase().trim();
+      if (!domByText.has(key)) domByText.set(key, []);
+      domByText.get(key).push(domEl);
+    }
+    if (domEl.testId) {
+      domByTestId.set(domEl.testId.toLowerCase(), domEl);
+    }
+    if (domEl.ariaLabel) {
+      const key = domEl.ariaLabel.toLowerCase().trim();
+      if (!domByLabel.has(key)) domByLabel.set(key, []);
+      domByLabel.get(key).push(domEl);
+    }
+  }
+
+  return visionElements.map(visionEl => {
+    // Try to find matching DOM element
+    let domMatch = null;
+    
+    // Strategy 1: Match by testId in selector
+    const testIdMatch = visionEl.selectors?.[0]?.value?.match(/~([^'")\]]+)/);
+    if (testIdMatch) {
+      domMatch = domByTestId.get(testIdMatch[1].toLowerCase());
+    }
+    
+    // Strategy 2: Match by label text
+    if (!domMatch && visionEl.label) {
+      const labelKey = visionEl.label.substring(0, 30).toLowerCase().trim();
+      const candidates = domByText.get(labelKey) || domByLabel.get(labelKey) || [];
+      if (candidates.length === 1) {
+        domMatch = candidates[0];
+      } else if (candidates.length > 1) {
+        // Multiple matches - pick first with best selector
+        domMatch = candidates.find(c => c.selectorStrategy !== 'xpath-fallback') || candidates[0];
+      }
+    }
+    
+    // Strategy 3: Match by text content
+    if (!domMatch) {
+      const textFromSelector = visionEl.selectors?.[0]?.value?.match(/text\("([^"]+)"\)/)?.[1] ||
+                               visionEl.selectors?.[0]?.value?.match(/contains\(@text,\s*"([^"]+)"\)/)?.[1];
+      if (textFromSelector) {
+        const key = textFromSelector.substring(0, 30).toLowerCase().trim();
+        const candidates = domByText.get(key) || [];
+        domMatch = candidates[0];
+      }
+    }
+
+    // Merge: Keep vision's identification, use DOM's selectors
+    if (domMatch && domMatch.selectors?.length > 0) {
+      return {
+        ...visionEl,
+        selectors: domMatch.selectors,  // Use DOM's smart selectors
+        selectorStrategy: domMatch.selectorStrategy,
+        hierarchy: domMatch.hierarchy,
+        uniqueness: domMatch.uniqueness,
+        _domMatched: true
+      };
+    }
+    
+    // No match - keep vision's selectors but flag it
+    return {
+      ...visionEl,
+      _domMatched: false,
+      _warning: 'No DOM match found - selector may be unreliable'
+    };
+  });
+}
 
 /**
  * POST /api/ai-assistant/debug-browser/navigate
@@ -2034,6 +2131,15 @@ router.post('/mobile/capture', async (req, res) => {
       includeCoordinates: false
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // MERGE AppiumAdapter's smart selectors with vision results
+    // ═══════════════════════════════════════════════════════════════
+    console.log('🔀 Merging DOM selectors with vision results...');
+    const mergedElements = mergeSelectorsFromDom(visionResult.elements, pageData.dom);
+    
+    const matchedCount = mergedElements.filter(e => e._domMatched).length;
+    console.log(`   ✅ Matched ${matchedCount}/${mergedElements.length} elements with DOM`);
+
     // Generate code
     console.log('⚡ Generating code...');
     
@@ -2044,7 +2150,7 @@ router.post('/mobile/capture', async (req, res) => {
 
     const result = {
       success: true,
-      elements: visionResult.elements,
+      elements: mergedElements,  // ← Use MERGED elements
       visibleElements: visionResult.visibleElements,
       hiddenElements: visionResult.hiddenElements,
       pageDescription: visionResult.pageDescription,
@@ -2056,13 +2162,14 @@ router.post('/mobile/capture', async (req, res) => {
       platform: mobileSession.platform,
       deviceName: mobileSession.deviceName,
       currentScreen,
-      domElementsCount: pageData.dom.length
+      domElementsCount: pageData.dom.length,
+      domMatchedCount: matchedCount  // ← Add for debugging
     };
 
-    // Generate code using the service's methods
+    // Generate code using MERGED elements
     if (generateLocators) {
       const locatorsResult = await aiAssistant._generateLocators(
-        visionResult.elements, 
+        mergedElements,  // ← Use merged
         finalScreenName, 
         mobileSession.platform
       );
@@ -2071,7 +2178,7 @@ router.post('/mobile/capture', async (req, res) => {
 
     if (generatePOM) {
       const pomResult = await aiAssistant._generatePOM(
-        visionResult.elements, 
+        mergedElements,  // ← Use merged
         finalScreenName, 
         mobileSession.platform
       );
@@ -2080,7 +2187,7 @@ router.post('/mobile/capture', async (req, res) => {
 
     if (generateTransitions) {
       const transitionsResult = await aiAssistant._generateTransitions(
-        visionResult.elements, 
+        mergedElements,  // ← Use merged
         finalScreenName, 
         mobileSession.platform
       );
@@ -2577,6 +2684,238 @@ router.post('/mobile/create-implication', async (req, res) => {
 });
 
 /**
+ * GET /api/ai-assistant/list-poms
+ */
+router.get('/list-poms', async (req, res) => {
+  const { projectPath, platform, searchPath } = req.query;
+  
+  if (!projectPath) {
+    return res.status(400).json({ error: 'projectPath required' });
+  }
+
+  try {
+    // Use custom searchPath or default patterns
+    let patterns;
+    if (searchPath) {
+      // User specified a path - scan it
+      patterns = [
+        `${searchPath}/**/*.js`,
+        `${searchPath}/**/*.screen.js`
+      ];
+    } else {
+      // Default patterns
+      patterns = [
+        'tests/**/screens/**/*.js',
+        'tests/**/screenObjects/**/*.js'
+      ];
+    }
+    
+    let files = [];
+    for (const pattern of patterns) {
+      const matches = await glob(pattern, { 
+        cwd: projectPath,
+        ignore: ['**/node_modules/**', '**/*.spec.js', '**/*.test.js']
+      });
+      files.push(...matches);
+    }
+    
+    files = [...new Set(files)];
+    
+    const poms = [];
+    for (const filePath of files) {
+      try {
+        const fullPath = `${projectPath}/${filePath}`;
+        const parsed = await pomComparator.parseExistingPOM(fullPath);
+        if (parsed.className) {
+          poms.push({
+            path: filePath,
+            fullPath,
+            className: parsed.className,
+            locatorCount: parsed.locators.length,
+            actionCount: parsed.actions.length,
+            isMobile: parsed.isMobile
+          });
+        }
+      } catch (e) {
+        // Skip unparseable files
+      }
+    }
+    
+    res.json({ success: true, poms, count: poms.length });
+  } catch (error) {
+    console.error('List POMs error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/parse-pom
+ * Parse an existing POM file
+ */
+router.post('/parse-pom', async (req, res) => {
+  const { filePath } = req.body;
+  
+  if (!filePath) {
+    return res.status(400).json({ error: 'filePath required' });
+  }
+
+  try {
+    const parsed = await pomComparator.parseExistingPOM(filePath);
+    
+    res.json({
+      success: true,
+      pom: {
+        className: parsed.className,
+        locators: parsed.locators.map(l => ({
+          name: l.name,
+          selector: l.selector,
+          line: l.line
+        })),
+        actions: parsed.actions.map(a => ({
+          name: a.name,
+          params: a.params,
+          line: a.line
+        })),
+        assertions: parsed.assertions.map(a => ({
+          name: a.name,
+          line: a.line
+        })),
+        customMethods: parsed.customMethods.map(m => ({
+          name: m.name,
+          line: m.line
+        })),
+        hasConstructor: parsed.hasConstructor,
+        isMobile: parsed.isMobile
+      }
+    });
+    
+  } catch (error) {
+    console.error('Parse POM error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/compare-pom
+ * Compare existing POM with captured elements
+ */
+router.post('/compare-pom', async (req, res) => {
+  const { filePath, elements } = req.body;
+  
+  if (!filePath || !elements) {
+    return res.status(400).json({ error: 'filePath and elements required' });
+  }
+
+  try {
+    // Parse existing POM
+    const existingPOM = await pomComparator.parseExistingPOM(filePath);
+    
+    // Compare with captured elements
+    const diff = pomComparator.compare(existingPOM, elements);
+    
+    res.json({
+      success: true,
+      existingPOM: {
+        className: existingPOM.className,
+        locatorCount: existingPOM.locators.length,
+        isMobile: existingPOM.isMobile
+      },
+      diff
+    });
+    
+  } catch (error) {
+    console.error('Compare POM error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/merge-pom
+ * Merge new elements into existing POM
+ */
+router.post('/merge-pom', async (req, res) => {
+  const { 
+    filePath, 
+    diff, 
+    options = {} 
+  } = req.body;
+  
+  if (!filePath || !diff) {
+    return res.status(400).json({ error: 'filePath and diff required' });
+  }
+
+  try {
+    
+    // Parse existing POM
+    const existingPOM = await pomComparator.parseExistingPOM(filePath);
+    
+    // Create backup
+    const backupPath = filePath + '.bak';
+    await fs.copyFile(filePath, backupPath);
+    
+    // Merge
+    const newContent = await pomComparator.merge(existingPOM, diff, options);
+    
+    // Write new content
+    await fs.writeFile(filePath, newContent, 'utf-8');
+    
+    // Calculate what was added
+    const addedLocators = diff.new?.filter(n => options.addNew !== false).length || 0;
+    const updatedSelectors = diff.changed?.filter(c => options.updateChanged !== false).length || 0;
+    
+    res.json({
+      success: true,
+      filePath,
+      backupPath,
+      changes: {
+        addedLocators,
+        updatedSelectors,
+        totalLines: newContent.split('\n').length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Merge POM error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/restore-pom
+ * Restore POM from backup
+ */
+router.post('/restore-pom', async (req, res) => {
+  const { filePath } = req.body;
+  
+  if (!filePath) {
+    return res.status(400).json({ error: 'filePath required' });
+  }
+
+  try {
+    const backupPath = filePath + '.bak';
+    
+    // Check backup exists
+    try {
+      await fs.access(backupPath);
+    } catch {
+      return res.status(404).json({ error: 'No backup found' });
+    }
+    
+    // Restore
+    await fs.copyFile(backupPath, filePath);
+    
+    res.json({
+      success: true,
+      message: 'POM restored from backup'
+    });
+    
+  } catch (error) {
+    console.error('Restore POM error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * Generate mobile implication code (fallback)
  */
 function generateMobileImplicationCode({ 
@@ -2659,5 +2998,155 @@ class ${className} {
 module.exports = { ${className} };
 `;
 }
+
+/**
+ * GET /api/ai-assistant/list-implications
+ */
+router.get('/list-implications', async (req, res) => {
+  const { projectPath, searchPath } = req.query;
+  
+  if (!projectPath) {
+    return res.status(400).json({ error: 'projectPath required' });
+  }
+
+  try {
+    const patterns = searchPath
+      ? [`${searchPath}/**/*Implications.js`]
+      : ['tests/implications/**/*Implications.js', 'tests/**/*Implications.js'];
+    
+    let files = [];
+    for (const pattern of patterns) {
+      const matches = await glob(pattern, { 
+        cwd: projectPath,
+        ignore: ['**/node_modules/**']
+      });
+      files.push(...matches);
+    }
+    
+    files = [...new Set(files)];
+    
+    const implications = [];
+    for (const filePath of files) {
+      try {
+        const fullPath = `${projectPath}/${filePath}`;
+        const parsed = await implicationComparator.parseExistingImplication(fullPath);
+        if (parsed.className) {
+          implications.push({
+            path: filePath,
+            fullPath,
+            className: parsed.className,
+            status: parsed.status,
+            entity: parsed.entity,
+            platforms: parsed.platforms,
+            screenCount: parsed.screens.length
+          });
+        }
+      } catch (e) {
+        // Skip unparseable files
+      }
+    }
+    
+    res.json({ success: true, implications, count: implications.length });
+  } catch (error) {
+    console.error('List implications error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/parse-implication
+ */
+router.post('/parse-implication', async (req, res) => {
+  const { filePath } = req.body;
+  
+  if (!filePath) {
+    return res.status(400).json({ error: 'filePath required' });
+  }
+
+  try {
+    const parsed = await implicationComparator.parseExistingImplication(filePath);
+    
+    res.json({
+      success: true,
+      implication: {
+        className: parsed.className,
+        status: parsed.status,
+        entity: parsed.entity,
+        platforms: parsed.platforms,
+        screens: parsed.screens,
+        transitions: parsed.transitions
+      }
+    });
+  } catch (error) {
+    console.error('Parse implication error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/compare-implication
+ */
+router.post('/compare-implication', async (req, res) => {
+  const { filePath, elements, platform, screenName } = req.body;
+  
+  if (!filePath || !elements) {
+    return res.status(400).json({ error: 'filePath and elements required' });
+  }
+
+  try {
+    const existingImpl = await implicationComparator.parseExistingImplication(filePath);
+    const diff = implicationComparator.compare(existingImpl, elements, platform, screenName);
+    
+    res.json({
+      success: true,
+      existingImplication: {
+        className: existingImpl.className,
+        status: existingImpl.status,
+        screens: existingImpl.screens
+      },
+      diff
+    });
+  } catch (error) {
+    console.error('Compare implication error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/merge-implication
+ */
+router.post('/merge-implication', async (req, res) => {
+  const { filePath, diff, options = {} } = req.body;
+  
+  if (!filePath || !diff) {
+    return res.status(400).json({ error: 'filePath and diff required' });
+  }
+
+  try {
+    const existingImpl = await implicationComparator.parseExistingImplication(filePath);
+    
+    // Create backup
+    const backupPath = filePath + '.bak';
+    await fs.copyFile(filePath, backupPath);
+    
+    // Merge
+    const newContent = await implicationComparator.merge(existingImpl, diff, options);
+    
+    // Write
+    await fs.writeFile(filePath, newContent, 'utf-8');
+    
+    res.json({
+      success: true,
+      filePath,
+      backupPath,
+      changes: {
+        addedElements: diff.new?.length || 0
+      }
+    });
+  } catch (error) {
+    console.error('Merge implication error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;

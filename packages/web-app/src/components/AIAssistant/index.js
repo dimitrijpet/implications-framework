@@ -6,4 +6,5 @@ export { default as ScanResultsView } from './ScanResultsView';
 export { default as CreateStateForm } from './CreateStateForm';
 export { default as ElementSelector } from './ElementSelector';
 export { default as MobileSessionTab } from './MobileSessionTab';
+export { default as POMUpdatePanel } from './POMUpdatePanel';
 export { useAIAssistant } from './hooks/useAIAssistant';

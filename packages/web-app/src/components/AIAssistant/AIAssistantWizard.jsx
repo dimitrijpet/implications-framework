@@ -5,6 +5,8 @@ import DebugBrowserTab from './DebugBrowserTab';
 import ScanUrlTab from './ScanUrlTab';
 import ElementSelector from './ElementSelector';
 import MobileSessionTab from './MobileSessionTab';
+import POMUpdatePanel from './POMUpdatePanel';
+import ImplicationUpdatePanel from './ImplicationUpdatePanel';
 
 const API_URL = 'http://localhost:3000';
 
@@ -47,6 +49,8 @@ export default function AIAssistantWizard({
   const [error, setError] = useState(null);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [savedScreenObject, setSavedScreenObject] = useState(null);
+  const [mode, setMode] = useState('create'); // 'create' | 'update'
+  const [implMode, setImplMode] = useState('create'); // 'create' | 'update'
 
   // Load project config for defaults
   useEffect(() => {
@@ -270,53 +274,137 @@ export default function AIAssistantWizard({
           />
         )}
 
-       {/* Step 2: Refine Elements */}
+{/* Step 2: Refine Elements */}
 {currentStep === 2 && (
-  <StepRefineElements
-    allElements={scanResult?.elements || []}
-    selectedElements={selectedElements}
-    setSelectedElements={setSelectedElements}
-    screenshot={scanResult?.screenshot}
-    theme={theme}
-    onAddElements={(newElements) => {
-      // When rescan finds new elements, add to scanResult
-      setScanResult(prev => ({
-        ...prev,
-        elements: [...(prev?.elements || []), ...newElements]
-      }));
-      // Also select them by default
-      setSelectedElements(prev => [...prev, ...newElements]);
-    }}
-    onRescan={async (focusPrompt) => {
-              // Rescan logic
-              if (!scanResult?.screenshot) {
-                setError('No screenshot available');
-                return;
-              }
-              
-              try {
-                const response = await fetch(`${API_URL}/api/ai-assistant/rescan`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    screenshot: scanResult.screenshot,
-                    existingElements: selectedElements,
-                    focusPrompt
-                  })
-                });
-                
-                const data = await response.json();
-                if (data.success && data.elements?.length > 0) {
-                  setSelectedElements([...selectedElements, ...data.elements]);
-                } else if (data.elements?.length === 0) {
-                  setError('No additional elements found');
-                }
-              } catch (err) {
-                setError('Rescan failed: ' + (err?.message || String(err)));
-              }
-            }}
-          />
-        )}
+  <div>
+    {/* Mode Toggle */}
+    <div style={{
+      display: 'flex',
+      gap: '8px',
+      marginBottom: '20px'
+    }}>
+      <button
+        onClick={() => setMode('create')}
+        style={{
+          flex: 1,
+          padding: '12px',
+          background: mode === 'create' 
+            ? `${theme.colors.accents.green}20` 
+            : theme.colors.background.tertiary,
+          border: `2px solid ${mode === 'create' 
+            ? theme.colors.accents.green 
+            : theme.colors.border}`,
+          borderRadius: '8px',
+          cursor: 'pointer',
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
+        <div style={{ 
+          fontWeight: 600, 
+          color: theme.colors.text.primary 
+        }}>
+          Create New
+        </div>
+        <div style={{ 
+          fontSize: '11px', 
+          color: theme.colors.text.tertiary 
+        }}>
+          New screen object
+        </div>
+      </button>
+      
+      <button
+        onClick={() => setMode('update')}
+        style={{
+          flex: 1,
+          padding: '12px',
+          background: mode === 'update' 
+            ? `${theme.colors.accents.blue}20` 
+            : theme.colors.background.tertiary,
+          border: `2px solid ${mode === 'update' 
+            ? theme.colors.accents.blue 
+            : theme.colors.border}`,
+          borderRadius: '8px',
+          cursor: 'pointer',
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ fontSize: '20px', marginBottom: '4px' }}>🔄</div>
+        <div style={{ 
+          fontWeight: 600, 
+          color: theme.colors.text.primary 
+        }}>
+          Update Existing
+        </div>
+        <div style={{ 
+          fontSize: '11px', 
+          color: theme.colors.text.tertiary 
+        }}>
+          Add to existing POM
+        </div>
+      </button>
+    </div>
+
+    {/* Show appropriate panel based on mode */}
+    {mode === 'create' ? (
+      <StepRefineElements
+        allElements={scanResult?.elements || []}
+        selectedElements={selectedElements}
+        setSelectedElements={setSelectedElements}
+        screenshot={scanResult?.screenshot}
+        theme={theme}
+        onAddElements={(newElements) => {
+          setScanResult(prev => ({
+            ...prev,
+            elements: [...(prev?.elements || []), ...newElements]
+          }));
+          setSelectedElements(prev => [...prev, ...newElements]);
+        }}
+        onRescan={async (focusPrompt) => {
+          if (!scanResult?.screenshot) {
+            setError('No screenshot available');
+            return;
+          }
+          
+          try {
+            const response = await fetch(`${API_URL}/api/ai-assistant/rescan`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                screenshot: scanResult.screenshot,
+                existingElements: selectedElements,
+                focusPrompt
+              })
+            });
+            
+            const data = await response.json();
+            if (data.success && data.elements?.length > 0) {
+              setSelectedElements([...selectedElements, ...data.elements]);
+            } else if (data.elements?.length === 0) {
+              setError('No additional elements found');
+            }
+          } catch (err) {
+            setError('Rescan failed: ' + (err?.message || String(err)));
+          }
+        }}
+      />
+    ) : (
+      <POMUpdatePanel
+        projectPath={projectPath}
+        capturedElements={scanResult?.elements || []}
+        platform={screenConfig.platform}
+        theme={theme}
+        onComplete={(result) => {
+          alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedLocators} locators\nUpdated ${result.changes.updatedSelectors} selectors\n\nBackup saved to ${result.backupPath}`);
+          // Skip Step 3 (save) since we already saved, go directly to Step 4 (implication)
+          setCurrentStep(4);
+        }}
+        onCancel={() => setMode('create')}
+      />
+    )}
+  </div>
+)}
 
         {/* Step 3: Generate Screen Object */}
         {currentStep === 3 && (
@@ -331,23 +419,77 @@ export default function AIAssistantWizard({
           />
         )}
 
-        {/* Step 4: Create Implication */}
-        {currentStep === 4 && (
-          <StepImplication
-            config={implicationConfig}
-            setConfig={setImplicationConfig}
-            screenConfig={screenConfig}
-            savedScreenObject={savedScreenObject}
-            existingStates={existingStates}
-            existingEntities={existingEntities}
-            loading={loading}
-            onCreate={handleCreateImplication}
-            onSkip={() => {
-              if (onComplete) onComplete({ skipped: true });
-            }}
-            theme={theme}
-          />
-        )}
+       {/* Step 4: Create Implication */}
+{currentStep === 4 && (
+  <div>
+    {/* Mode Toggle */}
+    <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+      <button
+        onClick={() => setImplMode('create')}
+        style={{
+          flex: 1,
+          padding: '12px',
+          background: implMode === 'create' ? `${theme.colors.accents.green}20` : theme.colors.background.tertiary,
+          border: `2px solid ${implMode === 'create' ? theme.colors.accents.green : theme.colors.border}`,
+          borderRadius: '8px',
+          cursor: 'pointer',
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
+        <div style={{ fontWeight: 600, color: theme.colors.text.primary }}>Create New</div>
+        <div style={{ fontSize: '11px', color: theme.colors.text.tertiary }}>New implication</div>
+      </button>
+      
+      <button
+        onClick={() => setImplMode('update')}
+        style={{
+          flex: 1,
+          padding: '12px',
+          background: implMode === 'update' ? `${theme.colors.accents.blue}20` : theme.colors.background.tertiary,
+          border: `2px solid ${implMode === 'update' ? theme.colors.accents.blue : theme.colors.border}`,
+          borderRadius: '8px',
+          cursor: 'pointer',
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ fontSize: '20px', marginBottom: '4px' }}>🔄</div>
+        <div style={{ fontWeight: 600, color: theme.colors.text.primary }}>Update Existing</div>
+        <div style={{ fontSize: '11px', color: theme.colors.text.tertiary }}>Add to existing</div>
+      </button>
+    </div>
+
+    {implMode === 'create' ? (
+      <StepImplication
+        config={implicationConfig}
+        setConfig={setImplicationConfig}
+        screenConfig={screenConfig}
+        savedScreenObject={savedScreenObject}
+        existingStates={existingStates}
+        existingEntities={existingEntities}
+        loading={loading}
+        onCreate={handleCreateImplication}
+        onSkip={() => {
+          if (onClose) onClose();
+        }}
+        theme={theme}
+      />
+    ) : (
+      <ImplicationUpdatePanel
+        projectPath={projectPath}
+        capturedElements={selectedElements}
+        screenName={screenConfig.name}
+        platform={screenConfig.platform}
+        theme={theme}
+        onComplete={(result) => {
+          alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedElements} elements`);
+          if (onClose) onClose();
+        }}
+        onCancel={() => setImplMode('create')}
+      />
+    )}
+  </div>
+)}
 
         {/* Error Display */}
         {error && (

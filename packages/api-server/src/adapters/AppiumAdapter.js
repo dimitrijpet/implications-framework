@@ -163,10 +163,10 @@ export class AppiumAdapter {
   }
 
   /**
-   * Parse XML page source into structured DOM elements
+   * Parse XML page source into structured DOM elements with hierarchy
    * 
    * @param {string} xmlSource - Raw XML from getPageSource()
-   * @returns {Array} Normalized DOM elements
+   * @returns {Array} Normalized DOM elements with smart selectors
    */
   parsePageSource(xmlSource) {
     const parser = new XMLParser({
@@ -179,12 +179,220 @@ export class AppiumAdapter {
     
     try {
       const parsed = parser.parse(xmlSource);
-      this._extractElements(parsed, elements);
+      // Extract with hierarchy tracking
+      this._extractElementsWithHierarchy(parsed, elements, null, [], 0);
+      
+      // Post-process: check uniqueness and generate smart selectors
+      this._generateSmartSelectors(elements);
+      
     } catch (e) {
       console.error('Failed to parse XML:', e.message);
     }
 
     return elements;
+  }
+
+  /**
+   * Extract elements with full hierarchy tracking
+   * @private
+   */
+  _extractElementsWithHierarchy(node, elements, parentInfo, path, depth) {
+    if (!node || typeof node !== 'object') return;
+
+    for (const [key, value] of Object.entries(node)) {
+      if (key.startsWith('@_') || key === '#text') continue;
+
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          this._processNodeWithHierarchy(key, item, elements, parentInfo, [...path, { tag: key, index }], depth, index);
+        });
+      } else if (typeof value === 'object') {
+        this._processNodeWithHierarchy(key, value, elements, parentInfo, [...path, { tag: key, index: 0 }], depth, 0);
+      }
+    }
+  }
+
+  /**
+   * Process node with hierarchy context
+   * @private
+   */
+  _processNodeWithHierarchy(tagName, node, elements, parentInfo, path, depth, siblingIndex) {
+    if (!node || typeof node !== 'object') return;
+
+    // Extract element data
+    const element = this._extractElementData(tagName, node);
+    
+    // Build hierarchy info
+    const hierarchyInfo = {
+      depth,
+      siblingIndex,
+      path: path.map(p => p.tag).join(' > '),
+      parent: parentInfo ? {
+        testId: parentInfo.testId,
+        ariaLabel: parentInfo.ariaLabel,
+        text: parentInfo.text,
+        type: parentInfo.type
+      } : null
+    };
+
+    if (element) {
+      // Add hierarchy info
+      element.hierarchy = hierarchyInfo;
+      element.depth = depth;
+      
+      // Store raw identifiers for uniqueness check
+      element._rawIdentifiers = {
+        testId: element.testId,
+        ariaLabel: element.ariaLabel,
+        text: element.text,
+        resourceId: node['resource-id'] || node['name'] || ''
+      };
+
+      if (element.isInteractive || element.text || element.testId || element.ariaLabel) {
+        elements.push(element);
+      }
+    }
+
+    // Recurse with current element as parent
+    const newParentInfo = element || parentInfo;
+    this._extractElementsWithHierarchy(node, elements, newParentInfo, path, depth + 1);
+  }
+
+  /**
+   * Generate smart selectors based on uniqueness analysis
+   * @private
+   */
+  _generateSmartSelectors(elements) {
+    // Count occurrences of each identifier
+    const testIdCount = {};
+    const ariaLabelCount = {};
+    const textCount = {};
+
+    for (const el of elements) {
+      if (el.testId) {
+        testIdCount[el.testId] = (testIdCount[el.testId] || 0) + 1;
+      }
+      if (el.ariaLabel) {
+        ariaLabelCount[el.ariaLabel] = (ariaLabelCount[el.ariaLabel] || 0) + 1;
+      }
+      if (el.text) {
+        textCount[el.text] = (textCount[el.text] || 0) + 1;
+      }
+    }
+
+    // Generate selectors for each element
+    for (const el of elements) {
+      el.selectors = [];
+      el.selectorStrategy = null;
+
+      const testIdUnique = el.testId && testIdCount[el.testId] === 1;
+      const ariaLabelUnique = el.ariaLabel && ariaLabelCount[el.ariaLabel] === 1;
+      const textUnique = el.text && textCount[el.text] === 1;
+
+      // Strategy 1: Unique accessibility ID (best)
+      if (testIdUnique) {
+        el.selectors.push({
+          type: 'accessibility',
+          value: `~${el.testId}`,
+          confidence: 0.95,
+          unique: true
+        });
+        el.selectorStrategy = 'unique-accessibility-id';
+      }
+      // Strategy 2: Unique content-desc/aria-label
+      else if (ariaLabelUnique && el.ariaLabel !== el.testId) {
+        el.selectors.push({
+          type: 'accessibility',
+          value: `~${el.ariaLabel}`,
+          confidence: 0.90,
+          unique: true
+        });
+        el.selectorStrategy = 'unique-aria-label';
+      }
+      // Strategy 3: Chained selector (parent + child)
+      else if (el.hierarchy?.parent?.testId && el.testId) {
+        const parentId = el.hierarchy.parent.testId;
+        const parentUnique = testIdCount[parentId] === 1;
+        
+        if (parentUnique) {
+          el.selectors.push({
+            type: 'chained',
+            value: `$('~${parentId}').$('~${el.testId}')`,
+            confidence: 0.85,
+            unique: true,
+            parent: parentId,
+            child: el.testId
+          });
+          el.selectorStrategy = 'chained-parent-child';
+        }
+      }
+      // Strategy 4: Indexed selector for repeated elements
+      else if (el.testId && testIdCount[el.testId] > 1) {
+        // Find index among elements with same testId
+        const sameIdElements = elements.filter(e => e.testId === el.testId);
+        const index = sameIdElements.indexOf(el);
+        
+        el.selectors.push({
+          type: 'indexed',
+          value: `$$('~${el.testId}')[${index}]`,
+          confidence: 0.70,
+          unique: false,
+          index,
+          totalCount: testIdCount[el.testId]
+        });
+        el.selectorStrategy = 'indexed';
+      }
+      // Strategy 5: Text-based (Android UiSelector)
+      else if (textUnique && el.text && el.text.length < 50) {
+        if (this.platform === 'android') {
+          el.selectors.push({
+            type: 'text',
+            value: `android=new UiSelector().text("${el.text.replace(/"/g, '\\"')}")`,
+            confidence: 0.75,
+            unique: true
+          });
+        } else {
+          el.selectors.push({
+            type: 'predicate',
+            value: `-ios predicate string:label == "${el.text.replace(/"/g, '\\"')}"`,
+            confidence: 0.75,
+            unique: true
+          });
+        }
+        el.selectorStrategy = 'text-based';
+      }
+      // Strategy 6: Fallback - non-unique accessibility ID with warning
+      else if (el.testId) {
+        el.selectors.push({
+          type: 'accessibility',
+          value: `~${el.testId}`,
+          confidence: 0.40,
+          unique: false,
+          warning: `Shared by ${testIdCount[el.testId]} elements`
+        });
+        el.selectorStrategy = 'non-unique-warning';
+      }
+      // Strategy 7: XPath fallback (least preferred)
+      else if (el.text) {
+        el.selectors.push({
+          type: 'xpath',
+          value: `//*[contains(@text, "${el.text.substring(0, 30).replace(/"/g, '\\"')}")]`,
+          confidence: 0.30,
+          unique: false,
+          warning: 'XPath is slow and fragile'
+        });
+        el.selectorStrategy = 'xpath-fallback';
+      }
+
+      // Add uniqueness metadata
+      el.uniqueness = {
+        testIdUnique,
+        ariaLabelUnique,
+        textUnique,
+        testIdCount: el.testId ? testIdCount[el.testId] : 0,
+        ariaLabelCount: el.ariaLabel ? ariaLabelCount[el.ariaLabel] : 0
+      };
+    }
   }
 
   /**
@@ -262,10 +470,21 @@ export class AppiumAdapter {
     const enabled = node['enabled'] === 'true';
     const focusable = node['focusable'] === 'true';
     const bounds = node['bounds'] || '';
+    const index = node['index'] || '0';
+    const packageName = node['package'] || '';
 
-    // Skip if no useful identifiers
-    if (!resourceId && !contentDesc && !text && !clickable) {
+    // Skip if no useful identifiers AND not interactive
+    if (!resourceId && !contentDesc && !text && !clickable && !focusable) {
       return null;
+    }
+    
+    // Skip generic containers without identifiers
+    if (!resourceId && !contentDesc && !text) {
+      const skipClasses = ['android.view.View', 'android.view.ViewGroup', 'android.widget.FrameLayout', 
+                          'android.widget.LinearLayout', 'android.widget.RelativeLayout'];
+      if (skipClasses.includes(className)) {
+        return null;
+      }
     }
 
     // Determine element type from class name
