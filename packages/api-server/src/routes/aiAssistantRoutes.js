@@ -1327,49 +1327,75 @@ router.post('/debug-browser/capture', async (req, res) => {
 
     const mergedElements = mergeSelectorsFromDom(visionResult.elements, pageData.dom);
 
-  // Generate code using MERGED elements
-  console.log('⚡ Generating code...');
-  
-  const finalScreenName = screenName || 
-    visionResult.suggestedScreenNames?.[0] || 
-    currentScreen.replace(/[^a-zA-Z0-9]/g, '') || 
-    'MobileScreen';
+// Analyze patterns and generate compound locators
+const { CompoundLocatorGenerator } = await import('../services/ai-assistant/CompoundLocatorGenerator.js');
+const compoundGenerator = new CompoundLocatorGenerator(mobileSession.platform);
+const compoundAnalysis = compoundGenerator.analyze(mergedElements);
 
-    const result = {
-      success: true,
-      elements: mergedElements,
-      pageDescription: visionResult.pageDescription,
-      suggestedScreenNames: visionResult.suggestedScreenNames,
-      screenName: finalScreenName,
-      generated: {},
-      screenshot: screenshotBase64,
-      capturedFrom: 'debug-browser',
-      capturedUrl: currentUrl,
-      capturedTitle: pageTitle,
-      domElementsCount: domElements.length  // ✅ Include count for debugging
-    };
+console.log('🔍 Pattern analysis:');
+compoundGenerator.generatePatternSummary(compoundAnalysis.patterns).forEach(s => console.log(`   ${s}`));
+console.log(`   📦 Generated ${compoundAnalysis.methods.length} compound methods`);
 
-      // Generate code using the service's methods
-    if (generateLocators) {
-      const locatorsResult = await aiAssistant._generateLocators(
-        mergedElements,  // ← Use merged
-        finalScreenName, 
-        mobileSession.platform
-      );
-      result.generated.locators = locatorsResult.code;
-    }
+// Generate code using MERGED elements
+console.log('⚡ Generating code...');
 
-    if (generatePOM) {
-      const pomResult = await aiAssistant._generatePOM(visionResult.elements, finalScreenName, platform);
-      result.generated.pom = pomResult.code;
-    }
+const finalScreenName = screenName || 
+  visionResult.suggestedScreenNames?.[0] || 
+  currentScreen.replace(/[^a-zA-Z0-9]/g, '') || 
+  'MobileScreen';
 
-    if (generateTransitions) {
-      const transitionsResult = await aiAssistant._generateTransitions(visionResult.elements, finalScreenName, platform);
-      result.generated.transitions = transitionsResult.code;
-    }
+const result = {
+  success: true,
+  elements: mergedElements,
+  visibleElements: visionResult.visibleElements,
+  hiddenElements: visionResult.hiddenElements,
+  pageDescription: visionResult.pageDescription,
+  suggestedScreenNames: visionResult.suggestedScreenNames,
+  screenName: finalScreenName,
+  patterns: compoundAnalysis.patterns,
+  compoundMethods: compoundAnalysis.methods,
+  generated: {
+    compoundLocators: compoundAnalysis.code
+  },
+  screenshot: pageData.screenshot,
+  capturedFrom: 'mobile-session',
+  platform: mobileSession.platform,
+  deviceName: mobileSession.deviceName,
+  currentScreen,
+  domElementsCount: pageData.dom.length,
+  domMatchedCount: mergedElements.filter(e => e._domMatched).length
+};
 
-    res.json(result);
+// Generate code using the service's methods
+if (generateLocators) {
+  const locatorsResult = await aiAssistant._generateLocators(
+    mergedElements,
+    finalScreenName, 
+    mobileSession.platform
+  );
+  result.generated.locators = locatorsResult.code;
+}
+
+if (generatePOM) {
+  const pomResult = await aiAssistant._generatePOM(
+    mergedElements,
+    finalScreenName, 
+    mobileSession.platform
+  );
+  result.generated.pom = pomResult.code;
+}
+
+if (generateTransitions) {
+  const transitionsResult = await aiAssistant._generateTransitions(
+    mergedElements,
+    finalScreenName, 
+    mobileSession.platform
+  );
+  result.generated.transitions = transitionsResult.code;
+}
+
+console.log('✅ Mobile capture complete!');
+res.json(result);
 
   } catch (error) {
     console.error('❌ Capture failed:', error);
@@ -2140,6 +2166,22 @@ router.post('/mobile/capture', async (req, res) => {
     const matchedCount = mergedElements.filter(e => e._domMatched).length;
     console.log(`   ✅ Matched ${matchedCount}/${mergedElements.length} elements with DOM`);
 
+    // ═══════════════════════════════════════════════════════════════
+    // COMPOUND LOCATORS - Analyze patterns and generate smart methods
+    // ═══════════════════════════════════════════════════════════════
+    let compoundAnalysis = { patterns: {}, methods: [], code: '' };
+    try {
+      const { CompoundLocatorGenerator } = await import('../services/ai-assistant/CompoundLocatorGenerator.js');
+      const compoundGenerator = new CompoundLocatorGenerator(mobileSession.platform);
+      compoundAnalysis = compoundGenerator.analyze(mergedElements);
+      
+      console.log('🔍 Pattern analysis:');
+      compoundGenerator.generatePatternSummary(compoundAnalysis.patterns).forEach(s => console.log(`   ${s}`));
+      console.log(`   📦 Generated ${compoundAnalysis.methods.length} compound methods`);
+    } catch (err) {
+      console.error('❌ CompoundLocatorGenerator error:', err.message);
+    }
+
     // Generate code
     console.log('⚡ Generating code...');
     
@@ -2150,26 +2192,30 @@ router.post('/mobile/capture', async (req, res) => {
 
     const result = {
       success: true,
-      elements: mergedElements,  // ← Use MERGED elements
+      elements: mergedElements,
       visibleElements: visionResult.visibleElements,
       hiddenElements: visionResult.hiddenElements,
       pageDescription: visionResult.pageDescription,
       suggestedScreenNames: visionResult.suggestedScreenNames,
       screenName: finalScreenName,
-      generated: {},
+      patterns: compoundAnalysis.patterns,
+      compoundMethods: compoundAnalysis.methods,
+      generated: {
+        compoundLocators: compoundAnalysis.code
+      },
       screenshot: pageData.screenshot,
       capturedFrom: 'mobile-session',
       platform: mobileSession.platform,
       deviceName: mobileSession.deviceName,
       currentScreen,
       domElementsCount: pageData.dom.length,
-      domMatchedCount: matchedCount  // ← Add for debugging
+      domMatchedCount: matchedCount
     };
 
     // Generate code using MERGED elements
     if (generateLocators) {
       const locatorsResult = await aiAssistant._generateLocators(
-        mergedElements,  // ← Use merged
+        mergedElements,
         finalScreenName, 
         mobileSession.platform
       );
@@ -2178,7 +2224,7 @@ router.post('/mobile/capture', async (req, res) => {
 
     if (generatePOM) {
       const pomResult = await aiAssistant._generatePOM(
-        mergedElements,  // ← Use merged
+        mergedElements,
         finalScreenName, 
         mobileSession.platform
       );
@@ -2187,7 +2233,7 @@ router.post('/mobile/capture', async (req, res) => {
 
     if (generateTransitions) {
       const transitionsResult = await aiAssistant._generateTransitions(
-        mergedElements,  // ← Use merged
+        mergedElements,
         finalScreenName, 
         mobileSession.platform
       );
