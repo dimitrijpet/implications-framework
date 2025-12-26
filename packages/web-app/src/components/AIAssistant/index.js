@@ -5,4 +5,5 @@ export { default as DebugBrowserTab } from './DebugBrowserTab';
 export { default as ScanResultsView } from './ScanResultsView';
 export { default as CreateStateForm } from './CreateStateForm';
 export { default as ElementSelector } from './ElementSelector';
+export { default as MobileSessionTab } from './MobileSessionTab';
 export { useAIAssistant } from './hooks/useAIAssistant';

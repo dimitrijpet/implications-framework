@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import DebugBrowserTab from './DebugBrowserTab';
 import ScanUrlTab from './ScanUrlTab';
 import ElementSelector from './ElementSelector';
+import MobileSessionTab from './MobileSessionTab';
 
 const API_URL = 'http://localhost:3000';
 
@@ -589,10 +590,12 @@ function StepCapture({ captureMode, setCaptureMode, onCapture, theme, projectPat
       <div style={{ 
         display: 'flex', 
         gap: '8px', 
-        marginBottom: '20px' 
+        marginBottom: '20px',
+        flexWrap: 'wrap'
       }}>
         {[
-          { id: 'debug', label: '🔧 Debug Browser', desc: 'Interactive browser' },
+          { id: 'debug', label: '🌐 Web Browser', desc: 'Interactive browser' },
+          { id: 'mobile', label: '📱 Mobile App', desc: 'Android / iOS' },
           { id: 'url', label: '🔗 Scan URL', desc: 'Public pages' },
           { id: 'upload', label: '📤 Upload', desc: 'From file' }
         ].map(mode => (
@@ -652,6 +655,14 @@ function StepCapture({ captureMode, setCaptureMode, onCapture, theme, projectPat
         <UploadScreenshot
           onCapture={onCapture}
           theme={theme}
+        />
+      )}
+
+      {captureMode === 'mobile' && (
+        <MobileSessionTab
+          onCapture={onCapture}
+          theme={theme}
+          projectPath={projectPath}
         />
       )}
     </div>
