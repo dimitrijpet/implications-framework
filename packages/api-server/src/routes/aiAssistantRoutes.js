@@ -9,6 +9,7 @@
 
 import express from 'express';
 import { AIAssistantService } from '../services/ai-assistant/AIAssistantService.js';
+let mobileSession = null;
 
 const router = express.Router();
 
@@ -1337,9 +1338,9 @@ router.post('/debug-browser/capture', async (req, res) => {
       domElementsCount: domElements.length  // ✅ Include count for debugging
     };
 
-    // Generate code using the service's methods
+      // Generate code using the service's methods
     if (generateLocators) {
-      const locatorsResult = await aiAssistant._generateLocators(visionResult.elements, finalScreenName);
+      const locatorsResult = await aiAssistant._generateLocators(visionResult.elements, finalScreenName, platform);
       result.generated.locators = locatorsResult.code;
     }
 
@@ -1349,7 +1350,7 @@ router.post('/debug-browser/capture', async (req, res) => {
     }
 
     if (generateTransitions) {
-      const transitionsResult = await aiAssistant._generateTransitions(visionResult.elements, finalScreenName);
+      const transitionsResult = await aiAssistant._generateTransitions(visionResult.elements, finalScreenName, platform);
       result.generated.transitions = transitionsResult.code;
     }
 
@@ -1675,7 +1676,9 @@ function generateScreenObjectCode(elements, screenName, options = {}) {
   } = options;
 
   const className = screenName.endsWith('Screen') ? screenName : `${screenName}Screen`;
-  const pageVar = platform === 'web' ? 'page' : 'driver';
+  const isMobile = platform === 'android' || platform === 'ios';
+  const pageVar = isMobile ? 'driver' : 'page';
+  const actionVerb = isMobile ? 'tap' : 'click';
 
   // Generate locators
 const locators = elements.map(el => {
@@ -1715,7 +1718,10 @@ const locators = elements.map(el => {
       }
       
       if (el.type === 'button' || el.type === 'link') {
-        return `  async ${actionName}() {
+        const methodName = isMobile 
+          ? `tap${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`
+          : `click${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
+        return `  async ${methodName}() {
     await this.${el.name}.click();
   }`;
       }
@@ -1765,6 +1771,840 @@ module.exports = ${className};
 `;
 
   return code;
+}
+
+/**
+ * POST /api/ai-assistant/mobile/launch
+ * Launch an Appium session for mobile debugging
+ * 
+ * Body:
+ *   platform: 'android' | 'ios' (required)
+ *   deviceName: string (required) - e.g., 'Pixel 6', 'iPhone 14'
+ *   app: string (optional) - APK/IPA path or bundle ID
+ *   platformVersion: string (optional) - e.g., '13.0'
+ *   appiumUrl: string (optional) - default: 'http://localhost:4723'
+ *   noReset: boolean (optional) - default: true
+ */
+router.post('/mobile/launch', async (req, res) => {
+  const { 
+    platform = 'android',
+    deviceName,
+    app,
+    platformVersion,
+    appiumUrl = 'http://localhost:4723',
+    noReset = true,
+    ...extraCapabilities
+  } = req.body;
+
+  if (!deviceName) {
+    return res.status(400).json({
+      success: false,
+      error: 'deviceName is required'
+    });
+  }
+
+  if (!['android', 'ios'].includes(platform)) {
+    return res.status(400).json({
+      success: false,
+      error: 'platform must be "android" or "ios"'
+    });
+  }
+
+  // Close existing session if any
+  if (mobileSession) {
+    try {
+      await mobileSession.adapter.close();
+    } catch (e) {}
+    mobileSession = null;
+  }
+
+  try {
+    const { AppiumAdapter } = await import('../adapters/AppiumAdapter.js');
+    
+    console.log(`📱 Launching Appium session (${platform})...`);
+    console.log(`   Device: ${deviceName}`);
+    console.log(`   App: ${app || 'none'}`);
+    
+    const adapter = new AppiumAdapter({ 
+      platform, 
+      appiumUrl 
+    });
+
+    await adapter.launch({
+      deviceName,
+      app,
+      platformVersion,
+      noReset,
+      ...extraCapabilities
+    });
+
+    // Store session
+    mobileSession = {
+      adapter,
+      platform,
+      deviceName,
+      app,
+      launchedAt: new Date().toISOString()
+    };
+
+    console.log('✅ Mobile session launched');
+
+    res.json({
+      success: true,
+      status: 'running',
+      platform,
+      deviceName,
+      app,
+      launchedAt: mobileSession.launchedAt
+    });
+
+  } catch (error) {
+    console.error('❌ Failed to launch mobile session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      hint: 'Make sure Appium server is running (npx appium) and device/emulator is connected'
+    });
+  }
+});
+
+/**
+ * GET /api/ai-assistant/mobile/status
+ * Check mobile session status
+ */
+router.get('/mobile/status', async (req, res) => {
+  if (!mobileSession) {
+    return res.json({
+      success: true,
+      status: 'closed',
+      running: false
+    });
+  }
+
+  try {
+    const isConnected = mobileSession.adapter.isOpen();
+    
+    if (!isConnected) {
+      mobileSession = null;
+      return res.json({
+        success: true,
+        status: 'closed',
+        running: false
+      });
+    }
+
+    // Try to get current activity/screen info
+    let currentScreen = 'Unknown';
+    try {
+      if (mobileSession.platform === 'android') {
+        currentScreen = await mobileSession.adapter.driver.getCurrentActivity();
+      } else {
+        // iOS doesn't have direct equivalent
+        currentScreen = 'iOS Screen';
+      }
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      status: 'running',
+      running: true,
+      platform: mobileSession.platform,
+      deviceName: mobileSession.deviceName,
+      app: mobileSession.app,
+      currentScreen,
+      launchedAt: mobileSession.launchedAt
+    });
+
+  } catch (error) {
+    mobileSession = null;
+    res.json({
+      success: true,
+      status: 'closed',
+      running: false
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/capture
+ * Capture screenshot from mobile and analyze
+ * 
+ * Body:
+ *   screenName: string (optional) - Override screen name
+ *   generateLocators: boolean (optional, default: true)
+ *   generatePOM: boolean (optional, default: true)
+ *   generateTransitions: boolean (optional, default: true)
+ */
+router.post('/mobile/capture', async (req, res) => {
+  const { 
+    screenName,
+    generateLocators = true,
+    generatePOM = true,
+    generateTransitions = true
+  } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running. Launch one first with /mobile/launch'
+    });
+  }
+
+  try {
+    console.log(`📱 Capturing mobile screen (${mobileSession.platform})...`);
+
+    // Get current screen info
+    let currentScreen = 'Unknown';
+    try {
+      if (mobileSession.platform === 'android') {
+        currentScreen = await mobileSession.adapter.driver.getCurrentActivity();
+      }
+    } catch (e) {}
+    
+    console.log(`   Screen: ${currentScreen}`);
+
+    // Scan page (screenshot + DOM)
+    console.log('   📸 Taking screenshot...');
+    console.log('   📦 Extracting page source...');
+    const pageData = await mobileSession.adapter.scanPage();
+    
+    console.log(`   📦 Extracted ${pageData.dom.length} DOM elements`);
+
+    // Analyze with Vision AI
+    console.log('🧠 Analyzing with Vision AI...');
+    
+    const vision = aiAssistant.getVisionAdapter();
+    const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
+      pageTitle: currentScreen,
+      domElements: pageData.dom,
+      platform: mobileSession.platform,
+      includeCoordinates: false
+    });
+
+    // Generate code
+    console.log('⚡ Generating code...');
+    
+    const finalScreenName = screenName || 
+      visionResult.suggestedScreenNames?.[0] || 
+      currentScreen.replace(/[^a-zA-Z0-9]/g, '') || 
+      'MobileScreen';
+
+    const result = {
+      success: true,
+      elements: visionResult.elements,
+      visibleElements: visionResult.visibleElements,
+      hiddenElements: visionResult.hiddenElements,
+      pageDescription: visionResult.pageDescription,
+      suggestedScreenNames: visionResult.suggestedScreenNames,
+      screenName: finalScreenName,
+      generated: {},
+      screenshot: pageData.screenshot,
+      capturedFrom: 'mobile-session',
+      platform: mobileSession.platform,
+      deviceName: mobileSession.deviceName,
+      currentScreen,
+      domElementsCount: pageData.dom.length
+    };
+
+    // Generate code using the service's methods
+    if (generateLocators) {
+      const locatorsResult = await aiAssistant._generateLocators(
+        visionResult.elements, 
+        finalScreenName, 
+        mobileSession.platform
+      );
+      result.generated.locators = locatorsResult.code;
+    }
+
+    if (generatePOM) {
+      const pomResult = await aiAssistant._generatePOM(
+        visionResult.elements, 
+        finalScreenName, 
+        mobileSession.platform
+      );
+      result.generated.pom = pomResult.code;
+    }
+
+    if (generateTransitions) {
+      const transitionsResult = await aiAssistant._generateTransitions(
+        visionResult.elements, 
+        finalScreenName, 
+        mobileSession.platform
+      );
+      result.generated.transitions = transitionsResult.code;
+    }
+
+    console.log('✅ Mobile capture complete!');
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ Mobile capture failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/navigate
+ * Navigate to a specific activity (Android) or trigger deep link
+ * 
+ * Body:
+ *   activity: string (Android) - Activity name
+ *   appPackage: string (Android, optional) - Package name
+ *   deepLink: string (iOS/Android) - Deep link URL
+ */
+router.post('/mobile/navigate', async (req, res) => {
+  const { activity, appPackage, deepLink } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running'
+    });
+  }
+
+  try {
+    if (deepLink) {
+      // Use deep link (works on both platforms)
+      console.log(`📱 Opening deep link: ${deepLink}`);
+      await mobileSession.adapter.driver.execute('mobile: deepLink', {
+        url: deepLink,
+        package: appPackage
+      });
+    } else if (activity && mobileSession.platform === 'android') {
+      // Android: start activity
+      console.log(`📱 Starting activity: ${activity}`);
+      await mobileSession.adapter.driver.startActivity(
+        appPackage || mobileSession.app,
+        activity
+      );
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide either deepLink (both platforms) or activity (Android only)'
+      });
+    }
+
+    // Wait for navigation
+    await mobileSession.adapter.driver.pause(1000);
+
+    // Get new screen info
+    let currentScreen = 'Unknown';
+    try {
+      if (mobileSession.platform === 'android') {
+        currentScreen = await mobileSession.adapter.driver.getCurrentActivity();
+      }
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      currentScreen,
+      navigatedTo: deepLink || activity
+    });
+
+  } catch (error) {
+    console.error('❌ Navigation failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/tap
+ * Tap at coordinates or on element
+ * 
+ * Body:
+ *   x: number (optional) - X coordinate
+ *   y: number (optional) - Y coordinate
+ *   selector: string (optional) - Element selector (accessibility id)
+ */
+router.post('/mobile/tap', async (req, res) => {
+  const { x, y, selector } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running'
+    });
+  }
+
+  try {
+    if (selector) {
+      // Tap on element
+      console.log(`📱 Tapping element: ${selector}`);
+      const element = await mobileSession.adapter.findElement(selector);
+      await element.click();
+    } else if (x !== undefined && y !== undefined) {
+      // Tap at coordinates
+      console.log(`📱 Tapping at (${x}, ${y})`);
+      await mobileSession.adapter.tap(x, y);
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide either selector or x/y coordinates'
+      });
+    }
+
+    // Wait for tap to register
+    await mobileSession.adapter.driver.pause(500);
+
+    res.json({
+      success: true,
+      tapped: selector || `(${x}, ${y})`
+    });
+
+  } catch (error) {
+    console.error('❌ Tap failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/find
+ * Find an element and return its info
+ * 
+ * Body:
+ *   selector: string (required) - Element selector
+ */
+router.post('/mobile/find', async (req, res) => {
+  const { selector } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running'
+    });
+  }
+
+  if (!selector) {
+    return res.status(400).json({
+      success: false,
+      error: 'selector is required'
+    });
+  }
+
+  try {
+    console.log(`🔍 Finding element: ${selector}`);
+    const element = await mobileSession.adapter.findElement(selector);
+    
+    // Get element info
+    const isDisplayed = await element.isDisplayed();
+    const isEnabled = await element.isEnabled();
+    const text = await element.getText().catch(() => '');
+    const location = await element.getLocation().catch(() => null);
+    const size = await element.getSize().catch(() => null);
+
+    res.json({
+      success: true,
+      found: true,
+      selector,
+      element: {
+        isDisplayed,
+        isEnabled,
+        text,
+        location,
+        size
+      }
+    });
+
+  } catch (error) {
+    res.json({
+      success: true,
+      found: false,
+      selector,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/input
+ * Type text into an element
+ * 
+ * Body:
+ *   selector: string (required) - Element selector
+ *   text: string (required) - Text to type
+ *   clear: boolean (optional) - Clear before typing
+ */
+router.post('/mobile/input', async (req, res) => {
+  const { selector, text, clear = true } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running'
+    });
+  }
+
+  if (!selector || text === undefined) {
+    return res.status(400).json({
+      success: false,
+      error: 'selector and text are required'
+    });
+  }
+
+  try {
+    console.log(`⌨️ Typing into: ${selector}`);
+    const element = await mobileSession.adapter.findElement(selector);
+    
+    if (clear) {
+      await element.clearValue();
+    }
+    
+    await element.setValue(text);
+
+    res.json({
+      success: true,
+      selector,
+      typed: text
+    });
+
+  } catch (error) {
+    console.error('❌ Input failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/swipe
+ * Swipe gesture
+ * 
+ * Body:
+ *   direction: 'up' | 'down' | 'left' | 'right'
+ *   startX: number (optional)
+ *   startY: number (optional)
+ *   endX: number (optional)
+ *   endY: number (optional)
+ */
+router.post('/mobile/swipe', async (req, res) => {
+  const { direction, startX, startY, endX, endY } = req.body;
+
+  if (!mobileSession) {
+    return res.status(400).json({
+      success: false,
+      error: 'No mobile session running'
+    });
+  }
+
+  try {
+    const driver = mobileSession.adapter.driver;
+    const { width, height } = await driver.getWindowSize();
+
+    let coords;
+    
+    if (direction) {
+      // Calculate coords based on direction
+      const centerX = Math.floor(width / 2);
+      const centerY = Math.floor(height / 2);
+      const offsetX = Math.floor(width * 0.3);
+      const offsetY = Math.floor(height * 0.3);
+
+      switch (direction) {
+        case 'up':
+          coords = { startX: centerX, startY: centerY + offsetY, endX: centerX, endY: centerY - offsetY };
+          break;
+        case 'down':
+          coords = { startX: centerX, startY: centerY - offsetY, endX: centerX, endY: centerY + offsetY };
+          break;
+        case 'left':
+          coords = { startX: centerX + offsetX, startY: centerY, endX: centerX - offsetX, endY: centerY };
+          break;
+        case 'right':
+          coords = { startX: centerX - offsetX, startY: centerY, endX: centerX + offsetX, endY: centerY };
+          break;
+        default:
+          return res.status(400).json({ success: false, error: 'Invalid direction' });
+      }
+    } else if (startX !== undefined && startY !== undefined && endX !== undefined && endY !== undefined) {
+      coords = { startX, startY, endX, endY };
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide direction or startX/startY/endX/endY'
+      });
+    }
+
+    console.log(`👆 Swiping: (${coords.startX},${coords.startY}) → (${coords.endX},${coords.endY})`);
+
+    await driver.touchAction([
+      { action: 'press', x: coords.startX, y: coords.startY },
+      { action: 'wait', ms: 300 },
+      { action: 'moveTo', x: coords.endX, y: coords.endY },
+      { action: 'release' }
+    ]);
+
+    res.json({
+      success: true,
+      swipe: direction || 'custom',
+      coords
+    });
+
+  } catch (error) {
+    console.error('❌ Swipe failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/close
+ * Close the mobile session
+ */
+router.post('/mobile/close', async (req, res) => {
+  if (!mobileSession) {
+    return res.json({
+      success: true,
+      message: 'No mobile session was running'
+    });
+  }
+
+  try {
+    await mobileSession.adapter.close();
+    mobileSession = null;
+
+    res.json({
+      success: true,
+      message: 'Mobile session closed'
+    });
+
+  } catch (error) {
+    mobileSession = null;
+    res.json({
+      success: true,
+      message: 'Mobile session closed (with error: ' + error.message + ')'
+    });
+  }
+});
+
+/**
+ * POST /api/ai-assistant/mobile/create-implication
+ * Create implication from mobile scan (same as web but mobile-aware)
+ */
+router.post('/mobile/create-implication', async (req, res) => {
+  const {
+    projectPath,
+    screenName,
+    elements,
+    status,
+    entity,
+    previousState,
+    triggerEvent,
+    platform = 'android',
+    screenshot,
+    outputPath,
+    tags
+  } = req.body;
+
+  if (!projectPath || !screenName || !status || !elements) {
+    return res.status(400).json({
+      success: false,
+      error: 'projectPath, screenName, status, and elements are required'
+    });
+  }
+
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const { generateImplicationFromScan, isLLMEnabled } = await import('../services/llmservice.js');
+
+  try {
+    console.log(`🔧 Creating mobile implication: ${screenName} (${status}) [${platform}]`);
+
+    const implicationsDir = path.join(projectPath, outputPath || 'tests/implications');
+
+    // Save screenshot if provided
+    let screenshotRelativePath = null;
+    if (screenshot) {
+      try {
+        const screenshotsDir = path.join(projectPath, 'tests/implications/.screenshots');
+        await fs.mkdir(screenshotsDir, { recursive: true });
+        
+        const screenshotFileName = `${status.replace(/[^a-zA-Z0-9_-]/g, '_')}_${platform}.png`;
+        const screenshotFullPath = path.join(screenshotsDir, screenshotFileName);
+        
+        const buffer = Buffer.from(screenshot, 'base64');
+        await fs.writeFile(screenshotFullPath, buffer);
+        
+        screenshotRelativePath = `tests/implications/.screenshots/${screenshotFileName}`;
+        console.log(`  📸 Screenshot saved: ${screenshotRelativePath}`);
+      } catch (screenshotError) {
+        console.warn(`  ⚠️ Failed to save screenshot: ${screenshotError.message}`);
+      }
+    }
+
+    // Try to load an example implication
+    let exampleImplication = '';
+    try {
+      const files = await fs.readdir(implicationsDir);
+      const implFile = files.find(f => f.endsWith('Implications.js'));
+      if (implFile) {
+        exampleImplication = await fs.readFile(path.join(implicationsDir, implFile), 'utf-8');
+      }
+    } catch (e) {}
+
+    let implicationCode;
+    
+    if (isLLMEnabled()) {
+      console.log('  🤖 Generating with LLM...');
+      implicationCode = await generateImplicationFromScan({
+        screenName,
+        status,
+        elements,
+        visibleElements: elements.filter(el => el.isVisible !== false).map(el => el.name),
+        hiddenElements: elements.filter(el => el.isVisible === false).map(el => el.name),
+        platform,  // 'android' or 'ios'
+        entity,
+        context: { previousState, triggerEvent, tags, screenshot: screenshotRelativePath },
+        exampleImplication
+      });
+    } else {
+      console.log('  📝 Using fallback template');
+      implicationCode = generateMobileImplicationCode({ 
+        screenName, 
+        status, 
+        elements, 
+        platform, 
+        entity, 
+        previousState, 
+        triggerEvent, 
+        tags,
+        screenshot: screenshotRelativePath
+      });
+    }
+
+    await fs.mkdir(implicationsDir, { recursive: true });
+
+    const fileName = `${screenName}Implications.js`;
+    const filePath = path.join(implicationsDir, fileName);
+
+    // Backup existing
+    let backed = false;
+    try {
+      await fs.access(filePath);
+      const backupPath = `${filePath}.backup-${Date.now()}`;
+      await fs.copyFile(filePath, backupPath);
+      backed = true;
+    } catch {}
+
+    await fs.writeFile(filePath, implicationCode, 'utf-8');
+    console.log(`  ✅ Created ${filePath}`);
+
+    res.json({
+      success: true,
+      filePath: path.relative(projectPath, filePath),
+      absolutePath: filePath,
+      fileName,
+      backed,
+      screenName,
+      status,
+      platform,
+      elementsCount: elements.length,
+      screenshotPath: screenshotRelativePath,
+      usedLLM: isLLMEnabled()
+    });
+
+  } catch (error) {
+    console.error('❌ Create mobile implication failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Generate mobile implication code (fallback)
+ */
+function generateMobileImplicationCode({ 
+  screenName, 
+  status, 
+  elements, 
+  platform, 
+  entity, 
+  previousState, 
+  triggerEvent, 
+  tags,
+  screenshot 
+}) {
+  const className = `${screenName}Implications`;
+  const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);
+  
+  // Group elements into blocks
+  const visibleElements = elements.filter(el => el.isVisible !== false).map(el => `'${el.name}'`);
+  const hiddenElements = elements.filter(el => el.isVisible === false).map(el => `'${el.name}'`);
+
+  return `// ${className}.js
+// Generated by AI Assistant (Mobile - ${platform})
+
+class ${className} {
+  static xstateConfig = {
+    id: "${status}",
+    meta: {
+      status: '${status}',
+      statusLabel: '${status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}',
+      entity: '${entity || 'unknown'}',
+      platforms: ['${platform}'],
+      ${screenshot ? `screenshot: '${screenshot}',` : ''}
+      ${previousState ? `requires: { previousStatus: '${previousState}' },` : ''}
+      setup: [{
+        testFile: 'tests/implications/${status}/${className}-${platform}-UNIT.spec.js',
+        actionName: 'navigateTo${screenName}',
+        platform: '${platform}'
+      }],
+      requiredFields: []
+    },
+    on: {
+      // Add transitions here
+    }
+  };
+
+  static mirrorsOn = {
+    description: '${screenName} screen on ${platform}',
+    UI: {
+      ${platform}: {
+        ${screenName}Screen: {
+          screen: '${instanceName}.screen.js',
+          instance: '${instanceName}',
+          blocks: [
+            {
+              id: 'blk_ui_${Date.now()}_${Math.random().toString(36).substring(2, 7)}',
+              type: 'ui-assertion',
+              label: '${screenName} elements',
+              order: 0,
+              expanded: true,
+              enabled: true,
+              data: {
+                visible: [${visibleElements.join(', ')}],
+                hidden: [${hiddenElements.join(', ')}],
+                timeout: 30000
+              }
+            }
+          ]
+        }
+      }
+    }
+  };
+
+  static meta = {
+    status: '${status}',
+    entity: '${entity || 'unknown'}',
+    statusLabel: '${status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}'
+  };
+}
+
+module.exports = { ${className} };
+`;
 }
 
 export default router;

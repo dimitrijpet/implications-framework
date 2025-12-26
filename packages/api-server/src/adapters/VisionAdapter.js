@@ -149,94 +149,89 @@ export class VisionAdapter {
     throw new Error('VisionAdapter.validateElement() must be implemented by subclass');
   }
 
+/**
+ * Updated buildPrompt for VisionAdapter.js
+ * 
+ * Supports web (Playwright) and mobile (Appium) platforms
+ * with appropriate selector strategies for each.
+ */
+
 buildPrompt(options = {}) {
-  const { domElements = [] } = options;
+  const { domElements = [], platform = 'web' } = options;
   
-  // If we have DOM info, use it for accurate selectors
+  // Determine if mobile platform
+  const isMobile = platform === 'android' || platform === 'ios';
   const hasDom = Array.isArray(domElements) && domElements.length > 0;
   
   let domSection = '';
   if (hasDom) {
-    console.log(`   📦 Building prompt with ${domElements.length} DOM elements`);
+    console.log(`   📦 Building prompt with ${domElements.length} DOM elements (${platform})`);
     
     // Format DOM elements for the prompt
     const domSummary = domElements.slice(0, 60).map(el => {
       const parts = [`<${el.tag}>`];
-      if (el.testId) parts.push(`data-testid="${el.testId}"`);
+      if (el.testId) parts.push(`${isMobile ? 'accessibility-id' : 'data-testid'}="${el.testId}"`);
       if (el.role) parts.push(`role="${el.role}"`);
-      if (el.ariaLabel) parts.push(`aria-label="${el.ariaLabel}"`);
+      if (el.ariaLabel) parts.push(`${isMobile ? 'content-desc/label' : 'aria-label'}="${el.ariaLabel}"`);
       if (el.id) parts.push(`id="${el.id}"`);
       if (el.placeholder) parts.push(`placeholder="${el.placeholder}"`);
       if (el.inputType) parts.push(`type="${el.inputType}"`);
       if (el.text) parts.push(`text="${el.text.substring(0, 50)}"`);
-      if (el.href) parts.push(`href="${el.href.substring(0, 50)}"`);
+      if (!isMobile && el.href) parts.push(`href="${el.href.substring(0, 50)}"`);
       if (el.isVisible === false) parts.push(`[HIDDEN IN DOM]`);
+      if (el.bounds) parts.push(`bounds=[${el.bounds.x},${el.bounds.y}]`);
       return parts.join(' | ');
     }).join('\n');
     
     domSection = `
 ═══════════════════════════════════════════════════════════════
-DOM ELEMENTS (ACTUAL HTML - USE THESE FOR ACCURATE SELECTORS):
+${isMobile ? 'MOBILE APP' : 'DOM'} ELEMENTS (USE THESE FOR ACCURATE SELECTORS):
 ═══════════════════════════════════════════════════════════════
 ${domSummary}
 
-CRITICAL: Use the ACTUAL attributes from DOM above for selectors!
+CRITICAL: Use the ACTUAL attributes from above for selectors!
+${isMobile ? `
+- If accessibility-id/name exists → use ~accessibilityId (cross-platform best)
+- If resource-id exists (Android) → use android=resourceId("value")
+- If content-desc/label exists → use accessibility locator
+- Fallback to XPath with text content
+` : `
 - If data-testid exists → use getByTestId('value')
 - If type="search" → use getByRole('searchbox', { name: '...' })
 - If role exists → use getByRole('role', { name: 'aria-label or text' })
 - If placeholder exists → use getByPlaceholder('exact value')
 - If aria-label exists → use getByLabel('value')
+`}
 ═══════════════════════════════════════════════════════════════
 `;
   } else {
     console.log(`   ⚠️ No DOM elements available - using visual-only analysis`);
   }
 
-  return `You are a senior QA automation engineer analyzing a FULL PAGE screenshot for Playwright test automation.
+  // Platform-specific selector guidance
+  const selectorGuidance = isMobile ? `
+MOBILE SELECTOR PRIORITY (${platform}):
+${platform === 'android' ? `
+1. ~accessibilityId - content-desc attribute (best for cross-platform)
+2. android=new UiSelector().resourceId("com.app:id/button_login") - resource-id
+3. android=new UiSelector().text("Login") - by text
+4. android=new UiSelector().className("android.widget.Button") - by class
+5. XPath: //android.widget.Button[@text="Login"] - fallback
+` : `
+1. ~accessibilityId - name attribute (best for cross-platform)
+2. -ios predicate string:name == "Login" - by name
+3. -ios predicate string:label == "Login" - by label
+4. -ios class chain:**/XCUIElementTypeButton[\`label == "Login"\`]
+5. XPath: //XCUIElementTypeButton[@label="Login"] - fallback
+`}
 
-YOUR TASK: Identify ALL testable UI elements on this page and determine their visibility status.
-${domSection}
-
-═══════════════════════════════════════════════════════════════
-VISIBILITY DETECTION (CRITICAL!)
-═══════════════════════════════════════════════════════════════
-Cross-reference the screenshot with DOM data to categorize elements:
-
-VISIBLE elements (can see in screenshot):
-- Navigation links, buttons, inputs that are rendered and displayed
-- Content that appears on screen
-
-HIDDEN elements (in DOM but NOT visible in screenshot):
-- Skip links (e.g., "Skip to main content") - usually invisible until focused
-- Clear/reset buttons that only appear after user input
-- Loading spinners, error messages, success toasts (not currently shown)
-- Modal dialogs, tooltips, dropdowns (collapsed/closed state)
-- Elements with display:none, visibility:hidden, or opacity:0
-- Off-screen elements
-
-For each element, set "isVisible": true or false based on whether you can actually SEE it in the screenshot.
-
-MUST FIND (whether visible or hidden):
-✅ Logo and branding elements
-✅ ALL navigation links (header, sidebar, footer)
-✅ ALL buttons (including icon-only buttons)
-✅ ALL form inputs (text, email, password, search, etc.)
-✅ ALL dropdowns and select menus
-✅ ALL checkboxes and radio buttons
-✅ ALL links (navigation, inline, footer)
-✅ Search bars and search icons
-✅ User profile/account buttons
-✅ Menu icons (hamburger, kebab, etc.)
-✅ Social media links
-✅ Important headings (h1, h2)
-✅ Images that might need verification
-✅ Tabs and tab panels
-✅ Modal triggers
-✅ Any clickable or interactive element
-✅ Accessibility elements (skip links, aria landmarks)
-
-${hasDom ? `
-SELECTOR PRIORITY (you have DOM data - use it!):
+AVOID GENERIC SELECTORS:
+❌ XPath by index: (//Button)[3]
+❌ Class-only: android.widget.Button (matches all buttons)
+✅ Use accessibility-id when available
+✅ Combine class + text: //Button[@text="Submit"]
+` : `
+WEB SELECTOR PRIORITY (you have DOM data - use it!):
 1. getByTestId('data-testid-value') - if data-testid exists in DOM
 2. getByRole('searchbox', { name: '...' }) - for type="search" inputs
 3. getByRole('role', { name: 'accessible name' }) - use actual role from DOM
@@ -249,38 +244,75 @@ AVOID GENERIC SELECTORS:
 ✅ getByRole('img', { name: 'Company Logo' }) - specific with alt text
 ❌ getByRole('button') - too generic
 ✅ getByRole('button', { name: 'Submit' }) - specific with text
-` : `
-SELECTOR RULES (no DOM available - must guess from visual):
-⚠️ You can ONLY see the screenshot - you CANNOT see HTML attributes!
-1. getByRole('button', { name: 'Visible Text' }) - for buttons
-2. getByRole('link', { name: 'Link Text' }) - for links  
-3. getByRole('textbox', { name: 'Label' }) - for inputs
-4. getByPlaceholder('Search...') - if placeholder is visible
-5. getByText('Exact Text') - for text elements
-`}
+`;
+
+  return `You are a senior QA automation engineer analyzing a ${isMobile ? 'MOBILE APP' : 'FULL PAGE'} screenshot for ${isMobile ? 'Appium' : 'Playwright'} test automation.
+
+YOUR TASK: Identify ALL testable UI elements on this ${isMobile ? 'screen' : 'page'} and determine their visibility status.
+${domSection}
+
+═══════════════════════════════════════════════════════════════
+VISIBILITY DETECTION (CRITICAL!)
+═══════════════════════════════════════════════════════════════
+Cross-reference the screenshot with ${isMobile ? 'page source' : 'DOM'} data to categorize elements:
+
+VISIBLE elements (can see in screenshot):
+- ${isMobile ? 'Buttons, inputs, labels' : 'Navigation links, buttons, inputs'} that are rendered and displayed
+- Content that appears on screen
+
+HIDDEN elements (in ${isMobile ? 'hierarchy' : 'DOM'} but NOT visible in screenshot):
+- ${isMobile ? 'Off-screen elements, hidden views, collapsed sections' : 'Skip links, clear buttons, collapsed menus'}
+- Loading spinners, error messages (not currently shown)
+- Modal dialogs, tooltips, dropdowns (collapsed/closed state)
+- Elements with zero bounds or visibility=false
+
+For each element, set "isVisible": true or false based on whether you can actually SEE it in the screenshot.
+
+MUST FIND (whether visible or hidden):
+✅ ${isMobile ? 'App logo/branding' : 'Logo and branding elements'}
+✅ ALL ${isMobile ? 'navigation elements (tabs, hamburger menu, back button)' : 'navigation links (header, sidebar, footer)'}
+✅ ALL buttons (including icon-only buttons)
+✅ ALL ${isMobile ? 'text inputs, search fields' : 'form inputs (text, email, password, search, etc.)'}
+✅ ALL ${isMobile ? 'pickers, spinners' : 'dropdowns and select menus'}
+✅ ALL checkboxes, switches, toggles
+✅ ${isMobile ? 'List items, cards' : 'Links (navigation, inline, footer)'}
+✅ ${isMobile ? 'Tab bars, toolbars' : 'Search bars and search icons'}
+✅ ${isMobile ? 'Settings icons, profile buttons' : 'User profile/account buttons'}
+✅ Menu icons (hamburger, kebab, etc.)
+✅ ${isMobile ? 'Action buttons (FAB, submit)' : 'Important headings (h1, h2)'}
+✅ Images that might need verification
+✅ Any clickable or interactive element
+
+${selectorGuidance}
 
 For EACH element provide this JSON structure:
 {
   "name": "camelCaseName",
-  "type": "button|input|link|text|image|checkbox|select|heading|nav|icon",
-  "label": "Visible text or aria-label",
+  "type": "button|input|link|text|image|checkbox|select|switch|list|nav|icon",
+  "label": "Visible text or accessibility label",
   "purpose": "What this element does",
   "isInteractive": true/false,
   "isVisible": true/false,
-  "visibilityReason": "only if hidden - explain why (e.g., 'skip link - only visible on focus')",
+  "visibilityReason": "only if hidden - explain why",
   "selectors": [
+    ${isMobile ? `
+    { "type": "accessibilityId", "value": "~loginButton", "confidence": 0.95 },
+    { "type": "${platform === 'android' ? 'resourceId' : 'predicate'}", "value": "${platform === 'android' ? 'android=resourceId(\\"com.app:id/login\\")' : '-ios predicate string:name == \\"login\\"'}", "confidence": 0.9 }
+    ` : `
     { "type": "testid", "value": "getByTestId('actual-testid')", "confidence": 0.95 },
     { "type": "role", "value": "getByRole('button', { name: 'Submit' })", "confidence": 0.9 }
+    `}
   ]
 }
 
 Return JSON:
 {
-  "screenName": "PascalCasePageName",
+  "screenName": "PascalCaseScreenName",
   "pageDescription": "One sentence description",
+  "platform": "${platform}",
   "elements": [...all elements...],
   "visibleElements": ["names of elements visible in screenshot"],
-  "hiddenElements": ["names of elements in DOM but not visible"],
+  "hiddenElements": ["names of elements in ${isMobile ? 'hierarchy' : 'DOM'} but not visible"],
   "suggestedScreenNames": ["Option1", "Option2"]
 }`;
 }

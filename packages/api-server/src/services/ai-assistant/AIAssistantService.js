@@ -1,14 +1,15 @@
 /**
  * AIAssistantService.js
  * 
- * Orchestrates browser scanning, vision analysis, and code generation.
+ * Orchestrates browser/mobile scanning, vision analysis, and code generation.
  * 
  * Flow:
- *   URL → PlaywrightAdapter (screenshot) → ClaudeVisionAdapter (elements) → 
+ *   URL/App → PlaywrightAdapter/AppiumAdapter (screenshot) → ClaudeVisionAdapter (elements) → 
  *   llmService (code generation) → Generated POM/Locators/Transitions
  */
 
 import { PlaywrightAdapter } from '../../adapters/PlaywrightAdapter.js';
+import { AppiumAdapter } from '../../adapters/AppiumAdapter.js';
 import { ClaudeVisionAdapter } from '../../adapters/ClaudeVisionAdapter.js';
 import { callLLM, isLLMEnabled } from '../llmservice.js';
 
@@ -19,10 +20,12 @@ import { callLLM, isLLMEnabled } from '../llmservice.js';
 export class AIAssistantService {
   constructor(options = {}) {
     this.browserAdapter = options.browserAdapter || null;
+    this.mobileAdapter = options.mobileAdapter || null;
     this.visionAdapter = options.visionAdapter || null;
     
     // Default adapter classes (can be swapped)
     this.BrowserAdapterClass = options.BrowserAdapterClass || PlaywrightAdapter;
+    this.MobileAdapterClass = options.MobileAdapterClass || AppiumAdapter;
     this.VisionAdapterClass = options.VisionAdapterClass || ClaudeVisionAdapter;
   }
 
@@ -37,6 +40,17 @@ export class AIAssistantService {
   }
 
   /**
+   * Get or create mobile adapter (lazy initialization)
+   * @param {string} platform - 'android' or 'ios'
+   */
+  getMobileAdapter(platform = 'android') {
+    if (!this.mobileAdapter || this.mobileAdapter.platform !== platform) {
+      this.mobileAdapter = new this.MobileAdapterClass({ platform });
+    }
+    return this.mobileAdapter;
+  }
+
+  /**
    * Get or create vision adapter (lazy initialization)
    */
   getVisionAdapter() {
@@ -44,6 +58,13 @@ export class AIAssistantService {
       this.visionAdapter = new this.VisionAdapterClass();
     }
     return this.visionAdapter;
+  }
+
+  /**
+   * Check if platform is mobile
+   */
+  _isMobilePlatform(platform) {
+    return platform === 'android' || platform === 'ios';
   }
 
   /**
@@ -65,6 +86,7 @@ export class AIAssistantService {
     const result = {
       success: false,
       url,
+      platform,
       timestamp: new Date().toISOString(),
       screenshot: null,
       elements: [],
@@ -75,7 +97,7 @@ export class AIAssistantService {
 
     try {
       // Step 1: Capture screenshot
-      console.log('📸 Step 1/3: Capturing screenshot...');
+      console.log(`📸 Step 1/3: Capturing screenshot (${platform})...`);
       const browser = this.getBrowserAdapter();
       
       if (!browser.isOpen()) {
@@ -89,17 +111,20 @@ export class AIAssistantService {
       result.dom = pageData.dom;
 
       // Step 2: Analyze with vision
-console.log('🧠 Step 2/3: Analyzing screenshot with Claude Vision...');
-const vision = this.getVisionAdapter();
+      console.log('🧠 Step 2/3: Analyzing screenshot with Claude Vision...');
+      const vision = this.getVisionAdapter();
 
-const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
-  pageTitle: pageData.title,
-  pageUrl: pageData.url,
-  domElements: pageData.dom,  // ✅ ADD THIS
-  includeCoordinates: false
-});
+      const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
+        pageTitle: pageData.title,
+        pageUrl: pageData.url,
+        domElements: pageData.dom,
+        platform,  // Pass platform for selector strategy
+        includeCoordinates: false
+      });
 
       result.elements = visionResult.elements;
+      result.visibleElements = visionResult.visibleElements;
+      result.hiddenElements = visionResult.hiddenElements;
       result.pageDescription = visionResult.pageDescription;
       result.suggestedScreenNames = visionResult.suggestedScreenNames;
       result.usage.vision = visionResult.tokensUsed || 0;
@@ -113,7 +138,7 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
       console.log('⚡ Step 3/3: Generating code with DeepSeek...');
       
       if (generateLocators) {
-        const locatorsResult = await this._generateLocators(result.elements, finalScreenName);
+        const locatorsResult = await this._generateLocators(result.elements, finalScreenName, platform);
         result.generated.locators = locatorsResult.code;
         result.usage.codegen += locatorsResult.tokens || 0;
       }
@@ -125,7 +150,7 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
       }
 
       if (generateTransitions) {
-        const transitionsResult = await this._generateTransitions(result.elements, finalScreenName);
+        const transitionsResult = await this._generateTransitions(result.elements, finalScreenName, platform);
         result.generated.transitions = transitionsResult.code;
         result.usage.codegen += transitionsResult.tokens || 0;
       }
@@ -136,6 +161,104 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
 
     } catch (error) {
       console.error('❌ Scan error:', error.message);
+      result.errors.push(error.message);
+    }
+
+    return result;
+  }
+
+  /**
+   * Scan a mobile app screen
+   * 
+   * @param {Object} options - Scan options
+   * @returns {Promise<ScanResult>}
+   */
+  async scanMobileApp(options = {}) {
+    const {
+      platform = 'android',
+      deviceName,
+      app,
+      platformVersion,
+      generateLocators = true,
+      generatePOM = true,
+      generateTransitions = true,
+      screenName = null,
+    } = options;
+
+    const result = {
+      success: false,
+      platform,
+      timestamp: new Date().toISOString(),
+      screenshot: null,
+      elements: [],
+      generated: {},
+      errors: [],
+      usage: { vision: 0, codegen: 0 },
+    };
+
+    try {
+      // Step 1: Capture screenshot from mobile
+      console.log(`📱 Step 1/3: Capturing mobile screenshot (${platform})...`);
+      const mobile = this.getMobileAdapter(platform);
+      
+      if (!mobile.isOpen()) {
+        await mobile.launch({ deviceName, app, platformVersion });
+      }
+      
+      const pageData = await mobile.scanPage();
+      result.screenshot = pageData.screenshot;
+      result.pageTitle = pageData.title;
+      result.dom = pageData.dom;
+
+      // Step 2: Analyze with vision
+      console.log('🧠 Step 2/3: Analyzing screenshot with Claude Vision...');
+      const vision = this.getVisionAdapter();
+
+      const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
+        pageTitle: pageData.title,
+        domElements: pageData.dom,
+        platform,  // 'android' or 'ios' for mobile selectors
+        includeCoordinates: false
+      });
+
+      result.elements = visionResult.elements;
+      result.visibleElements = visionResult.visibleElements;
+      result.hiddenElements = visionResult.hiddenElements;
+      result.pageDescription = visionResult.pageDescription;
+      result.suggestedScreenNames = visionResult.suggestedScreenNames;
+      result.usage.vision = visionResult.tokensUsed || 0;
+
+      const finalScreenName = screenName || 
+        visionResult.suggestedScreenNames?.[0] || 
+        this._generateScreenName(pageData.title);
+
+      // Step 3: Generate code
+      console.log('⚡ Step 3/3: Generating code...');
+      
+      if (generateLocators) {
+        const locatorsResult = await this._generateLocators(result.elements, finalScreenName, platform);
+        result.generated.locators = locatorsResult.code;
+        result.usage.codegen += locatorsResult.tokens || 0;
+      }
+
+      if (generatePOM) {
+        const pomResult = await this._generatePOM(result.elements, finalScreenName, platform);
+        result.generated.pom = pomResult.code;
+        result.usage.codegen += pomResult.tokens || 0;
+      }
+
+      if (generateTransitions) {
+        const transitionsResult = await this._generateTransitions(result.elements, finalScreenName, platform);
+        result.generated.transitions = transitionsResult.code;
+        result.usage.codegen += transitionsResult.tokens || 0;
+      }
+
+      result.screenName = finalScreenName;
+      result.success = true;
+      console.log('✅ Mobile scan complete!');
+
+    } catch (error) {
+      console.error('❌ Mobile scan error:', error.message);
       result.errors.push(error.message);
     }
 
@@ -157,11 +280,13 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
       screenName = null,
       pageTitle = '',
       pageUrl = '',
+      domElements = [],
       platform = 'web'
     } = options;
 
     const result = {
       success: false,
+      platform,
       timestamp: new Date().toISOString(),
       elements: [],
       generated: {},
@@ -171,16 +296,20 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
 
     try {
       // Analyze with vision
-      console.log('🧠 Analyzing screenshot with Claude Vision...');
+      console.log(`🧠 Analyzing screenshot with Claude Vision (${platform})...`);
       const vision = this.getVisionAdapter();
       
       const visionResult = await vision.analyzeScreenshot(screenshotBase64, {
         pageTitle,
         pageUrl,
+        domElements,
+        platform,
         includeCoordinates: false
       });
 
       result.elements = visionResult.elements;
+      result.visibleElements = visionResult.visibleElements;
+      result.hiddenElements = visionResult.hiddenElements;
       result.pageDescription = visionResult.pageDescription;
       result.suggestedScreenNames = visionResult.suggestedScreenNames;
       result.usage.vision = visionResult.tokensUsed || 0;
@@ -190,10 +319,10 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
         'UnknownScreen';
 
       // Generate code
-      console.log('⚡ Generating code with DeepSeek...');
+      console.log('⚡ Generating code...');
       
       if (generateLocators) {
-        const locatorsResult = await this._generateLocators(result.elements, finalScreenName);
+        const locatorsResult = await this._generateLocators(result.elements, finalScreenName, platform);
         result.generated.locators = locatorsResult.code;
         result.usage.codegen += locatorsResult.tokens || 0;
       }
@@ -205,7 +334,7 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
       }
 
       if (generateTransitions) {
-        const transitionsResult = await this._generateTransitions(result.elements, finalScreenName);
+        const transitionsResult = await this._generateTransitions(result.elements, finalScreenName, platform);
         result.generated.transitions = transitionsResult.code;
         result.usage.codegen += transitionsResult.tokens || 0;
       }
@@ -225,24 +354,32 @@ const visionResult = await vision.analyzeScreenshot(pageData.screenshot, {
    * Generate locators code
    * @private
    */
-  async _generateLocators(elements, screenName) {
+  async _generateLocators(elements, screenName, platform = 'web') {
     if (!isLLMEnabled()) {
-      return { code: this._fallbackLocators(elements, screenName), tokens: 0 };
+      return { code: this._fallbackLocators(elements, screenName, platform), tokens: 0 };
     }
 
+    const isMobile = this._isMobilePlatform(platform);
     const elementsJson = JSON.stringify(elements, null, 2);
     
     const messages = [
       {
         role: 'system',
-        content: `You are an expert at writing Playwright locators for test automation.
+        content: `You are an expert at writing ${isMobile ? 'Appium' : 'Playwright'} locators for test automation.
 Generate a JavaScript locators object from the UI elements provided.
 
 Rules:
+${isMobile ? `
+- Use accessibility ID selectors when available (highest priority): ~accessibilityId
+- For Android: android=new UiSelector().resourceId("...") or .text("...")
+- For iOS: -ios predicate string:name == "..." or label == "..."
+- XPath as last resort
+` : `
 - Use data-testid selectors when available (highest priority)
 - Fall back to role-based selectors (getByRole)
 - Then text-based selectors (getByText)
 - CSS selectors as last resort
+`}
 - Use camelCase for all property names
 - Include a comment describing each locator
 
@@ -250,14 +387,14 @@ Return ONLY valid JavaScript code, no markdown, no explanation.`
       },
       {
         role: 'user',
-        content: `Generate locators for screen "${screenName}" with these elements:
+        content: `Generate locators for screen "${screenName}" (platform: ${platform}) with these elements:
 
 ${elementsJson}
 
 Format:
 export const ${screenName}Locators = {
   // Element description
-  elementName: page => page.locator('[data-testid="..."]'),
+  elementName: ${isMobile ? `'~accessibilityId'` : `page => page.locator('[data-testid="..."]')`},
 };`
       }
     ];
@@ -267,7 +404,7 @@ export const ${screenName}Locators = {
       return { code: this._cleanCodeResponse(code), tokens: 0 };
     } catch (error) {
       console.error('Locators generation error:', error.message);
-      return { code: this._fallbackLocators(elements, screenName), tokens: 0 };
+      return { code: this._fallbackLocators(elements, screenName, platform), tokens: 0 };
     }
   }
 
@@ -275,27 +412,28 @@ export const ${screenName}Locators = {
    * Generate POM class
    * @private
    */
-  async _generatePOM(elements, screenName, platform) {
+  async _generatePOM(elements, screenName, platform = 'web') {
     if (!isLLMEnabled()) {
-      return { code: this._fallbackPOM(elements, screenName), tokens: 0 };
+      return { code: this._fallbackPOM(elements, screenName, platform), tokens: 0 };
     }
 
+    const isMobile = this._isMobilePlatform(platform);
     const elementsJson = JSON.stringify(elements, null, 2);
     
     const messages = [
       {
         role: 'system',
-        content: `You are an expert at writing Page Object Model classes for Playwright test automation.
+        content: `You are an expert at writing Page Object Model classes for ${isMobile ? 'Appium' : 'Playwright'} test automation.
 Generate a clean, well-structured POM class from the UI elements provided.
 
 Rules:
-- Extend BasePage if it's a full page, or BaseComponent for reusable sections
+- Use ${isMobile ? 'driver' : 'page'} as the main instance variable
 - Use getter methods for locators
-- Add action methods for interactive elements (click, fill, etc.)
+- Add action methods for interactive elements (${isMobile ? 'tap' : 'click'}, fill, etc.)
 - Add assertion helper methods (isVisible, getText, etc.)
 - Use JSDoc comments for all methods
 - Follow the async/await pattern
-- Keep methods focused and single-purpose
+${isMobile ? `- Use Appium/WebDriverIO locator strategies` : `- Use Playwright locator strategies`}
 
 Return ONLY valid JavaScript code, no markdown, no explanation.`
       },
@@ -307,23 +445,18 @@ ${elementsJson}
 
 Format:
 export class ${screenName} {
-  constructor(page) {
-    this.page = page;
+  constructor(${isMobile ? 'driver' : 'page'}) {
+    this.${isMobile ? 'driver' : 'page'} = ${isMobile ? 'driver' : 'page'};
   }
   
   // Locators
   get elementName() {
-    return this.page.locator('[data-testid="..."]');
+    return this.${isMobile ? "driver.$('~accessibilityId')" : "page.locator('[data-testid=\"...\"]')"};
   }
   
   // Actions
-  async clickElement() {
-    await this.elementName.click();
-  }
-  
-  // Assertions
-  async isElementVisible() {
-    return this.elementName.isVisible();
+  async ${isMobile ? 'tapElement' : 'clickElement'}() {
+    await this.elementName.${isMobile ? 'click()' : 'click()'};
   }
 }`
       }
@@ -334,7 +467,7 @@ export class ${screenName} {
       return { code: this._cleanCodeResponse(code), tokens: 0 };
     } catch (error) {
       console.error('POM generation error:', error.message);
-      return { code: this._fallbackPOM(elements, screenName), tokens: 0 };
+      return { code: this._fallbackPOM(elements, screenName, platform), tokens: 0 };
     }
   }
 
@@ -342,12 +475,12 @@ export class ${screenName} {
    * Generate transition functions
    * @private
    */
-  async _generateTransitions(elements, screenName) {
+  async _generateTransitions(elements, screenName, platform = 'web') {
     if (!isLLMEnabled()) {
-      return { code: this._fallbackTransitions(elements, screenName), tokens: 0 };
+      return { code: this._fallbackTransitions(elements, screenName, platform), tokens: 0 };
     }
 
-    // Filter to interactive elements
+    const isMobile = this._isMobilePlatform(platform);
     const interactiveElements = elements.filter(el => el.isInteractive);
     
     if (interactiveElements.length === 0) {
@@ -360,33 +493,29 @@ export class ${screenName} {
       {
         role: 'system',
         content: `You are an expert at writing transition functions for test automation state machines.
-Generate action functions that interact with UI elements and potentially change state.
+Generate action functions that interact with UI elements using ${isMobile ? 'Appium/WebDriverIO' : 'Playwright'}.
 
 Rules:
 - Each function should be async
-- Use clear, descriptive function names (e.g., clickSubmitButton, fillEmailInput)
-- Accept (page, data) parameters
+- Use clear, descriptive function names (e.g., ${isMobile ? 'tapSubmitButton' : 'clickSubmitButton'}, fillEmailInput)
+- Accept (${isMobile ? 'driver' : 'page'}, data) parameters
 - Include wait conditions after actions if needed
 - Add JSDoc with @param and @returns
-- Group related functions together
 
 Return ONLY valid JavaScript code, no markdown, no explanation.`
       },
       {
         role: 'user',
-        content: `Generate transition functions for "${screenName}" with these interactive elements:
+        content: `Generate transition functions for "${screenName}" (platform: ${platform}) with these interactive elements:
 
 ${elementsJson}
 
 Format:
 /**
- * Click the submit button
- * @param {Page} page - Playwright page
- * @param {Object} data - Test data context
+ * ${isMobile ? 'Tap' : 'Click'} the submit button
  */
-export async function clickSubmitButton(page, data) {
-  await page.locator('[data-testid="submit"]').click();
-  await page.waitForLoadState('networkidle');
+export async function ${isMobile ? 'tap' : 'click'}SubmitButton(${isMobile ? 'driver' : 'page'}, data) {
+  await ${isMobile ? "driver.$('~submit').click()" : "page.locator('[data-testid=\"submit\"]').click()"};
 }`
       }
     ];
@@ -396,7 +525,7 @@ export async function clickSubmitButton(page, data) {
       return { code: this._cleanCodeResponse(code), tokens: 0 };
     } catch (error) {
       console.error('Transitions generation error:', error.message);
-      return { code: this._fallbackTransitions(elements, screenName), tokens: 0 };
+      return { code: this._fallbackTransitions(elements, screenName, platform), tokens: 0 };
     }
   }
 
@@ -405,7 +534,6 @@ export async function clickSubmitButton(page, data) {
    * @private
    */
   _cleanCodeResponse(code) {
-    // Remove markdown code fences
     let cleaned = code.replace(/```javascript\n?/g, '').replace(/```js\n?/g, '').replace(/```\n?/g, '');
     return cleaned.trim();
   }
@@ -417,7 +545,6 @@ export async function clickSubmitButton(page, data) {
   _generateScreenName(title) {
     if (!title) return 'UnknownScreen';
     
-    // Convert to PascalCase
     return title
       .replace(/[^a-zA-Z0-9\s]/g, '')
       .split(/\s+/)
@@ -430,14 +557,21 @@ export async function clickSubmitButton(page, data) {
    * Fallback locators when LLM is unavailable
    * @private
    */
-  _fallbackLocators(elements, screenName) {
+  _fallbackLocators(elements, screenName, platform = 'web') {
+    const isMobile = this._isMobilePlatform(platform);
     const lines = [`export const ${screenName}Locators = {`];
     
     for (const el of elements) {
       const selector = el.selectors?.[0];
       if (selector) {
         lines.push(`  // ${el.label || el.purpose || el.type}`);
-        lines.push(`  ${el.name}: page => page.locator('${selector.value}'),`);
+        if (isMobile) {
+          // Mobile: just store selector string
+          lines.push(`  ${el.name}: '${selector.value}',`);
+        } else {
+          // Web: store as function
+          lines.push(`  ${el.name}: page => page.locator('${selector.value}'),`);
+        }
       }
     }
     
@@ -449,11 +583,14 @@ export async function clickSubmitButton(page, data) {
    * Fallback POM when LLM is unavailable
    * @private
    */
-  _fallbackPOM(elements, screenName) {
+  _fallbackPOM(elements, screenName, platform = 'web') {
+    const isMobile = this._isMobilePlatform(platform);
+    const instanceVar = isMobile ? 'driver' : 'page';
+    
     const lines = [
       `export class ${screenName} {`,
-      '  constructor(page) {',
-      '    this.page = page;',
+      `  constructor(${instanceVar}) {`,
+      `    this.${instanceVar} = ${instanceVar};`,
       '  }',
       ''
     ];
@@ -463,7 +600,11 @@ export async function clickSubmitButton(page, data) {
       if (selector) {
         lines.push(`  // ${el.label || el.type}`);
         lines.push(`  get ${el.name}() {`);
-        lines.push(`    return this.page.locator('${selector.value}');`);
+        if (isMobile) {
+          lines.push(`    return this.driver.$('${selector.value}');`);
+        } else {
+          lines.push(`    return this.page.locator('${selector.value}');`);
+        }
         lines.push('  }');
         lines.push('');
       }
@@ -477,18 +618,25 @@ export async function clickSubmitButton(page, data) {
    * Fallback transitions when LLM is unavailable
    * @private
    */
-  _fallbackTransitions(elements, screenName) {
-    const lines = [];
+  _fallbackTransitions(elements, screenName, platform = 'web') {
+    const isMobile = this._isMobilePlatform(platform);
+    const instanceVar = isMobile ? 'driver' : 'page';
+    const actionVerb = isMobile ? 'tap' : 'click';
     
+    const lines = [];
     const interactive = elements.filter(el => el.isInteractive);
     
     for (const el of interactive) {
       const selector = el.selectors?.[0];
       if (selector) {
-        const funcName = `click${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
+        const funcName = `${actionVerb}${el.name.charAt(0).toUpperCase() + el.name.slice(1)}`;
         lines.push(`// ${el.purpose || el.label || el.type}`);
-        lines.push(`export async function ${funcName}(page, data) {`);
-        lines.push(`  await page.locator('${selector.value}').click();`);
+        lines.push(`export async function ${funcName}(${instanceVar}, data) {`);
+        if (isMobile) {
+          lines.push(`  await ${instanceVar}.$('${selector.value}').click();`);
+        } else {
+          lines.push(`  await ${instanceVar}.locator('${selector.value}').click();`);
+        }
         lines.push('}');
         lines.push('');
       }
@@ -498,11 +646,14 @@ export async function clickSubmitButton(page, data) {
   }
 
   /**
-   * Close browser adapter
+   * Close all adapters
    */
   async close() {
     if (this.browserAdapter?.isOpen()) {
       await this.browserAdapter.close();
+    }
+    if (this.mobileAdapter?.isOpen()) {
+      await this.mobileAdapter.close();
     }
   }
 
@@ -515,6 +666,7 @@ export async function clickSubmitButton(page, data) {
     
     return {
       browser: { ready: true, adapter: 'playwright' },
+      mobile: { ready: true, adapter: 'appium' },
       vision: visionConfig,
       codegen: { ready: isLLMEnabled(), adapter: 'deepseek' },
       allReady: visionConfig.configured && isLLMEnabled()
@@ -522,7 +674,6 @@ export async function clickSubmitButton(page, data) {
   }
 }
 
-// Export singleton instance for convenience
 export const aiAssistant = new AIAssistantService();
 
 export default AIAssistantService;
