@@ -25,6 +25,8 @@ export default function ScanResultsView({
   const [rescanError, setRescanError] = useState(null);
 
   console.log('ScanResultsView result:', result);
+console.log('🔍 Patterns:', result.patterns);
+console.log('🔍 CompoundMethods:', result.compoundMethods);
 
   // Update when result changes
   useEffect(() => {
@@ -87,10 +89,11 @@ export default function ScanResultsView({
   };
 
   const codeTabs = [
-    { id: 'locators', label: '📍 Locators', code: result.generated?.locators },
-    { id: 'pom', label: '📄 POM', code: result.generated?.pom },
-    { id: 'transitions', label: '🔀 Transitions', code: result.generated?.transitions }
-  ].filter(tab => tab.code);
+  { id: 'locators', label: '📍 Locators', code: result.generated?.locators },
+  { id: 'compound', label: '🧩 Compound', code: result.generated?.compoundLocators },
+  { id: 'pom', label: '📄 POM', code: result.generated?.pom },
+  { id: 'transitions', label: '🔀 Transitions', code: result.generated?.transitions }
+].filter(tab => tab.code);
 
   return (
     <div style={{
@@ -362,6 +365,8 @@ export default function ScanResultsView({
 <div style={{ marginBottom: '20px' }}>
   <ElementSelector
     elements={allElements}
+    patterns={result.patterns}
+    compoundMethods={result.compoundMethods}
     screenshot={result.screenshot}
     theme={theme}
     onElementsChange={(selected) => {

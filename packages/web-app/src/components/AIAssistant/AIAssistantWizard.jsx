@@ -1,6 +1,6 @@
 // packages/web-app/src/components/AIAssistant/AIAssistantWizard.jsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DebugBrowserTab from './DebugBrowserTab';
 import ScanUrlTab from './ScanUrlTab';
 import ElementSelector from './ElementSelector';
@@ -31,6 +31,7 @@ export default function AIAssistantWizard({
   // Data collected through steps
   const [scanResult, setScanResult] = useState(null);
   const [selectedElements, setSelectedElements] = useState([]);
+  const [selectedCompoundMethods, setSelectedCompoundMethods] = useState([]);
   const [screenConfig, setScreenConfig] = useState({
     name: '',
     format: 'single', // 'single' | 'split'
@@ -98,39 +99,40 @@ export default function AIAssistantWizard({
 
   // Regenerate code when elements change
   useEffect(() => {
-    if (selectedElements.length > 0 && currentStep >= 2) {
-      regenerateCode();
-    }
-  }, [selectedElements, screenConfig.name, screenConfig.format]);
+  if (selectedElements.length > 0 && currentStep >= 2) {
+    regenerateCode();
+  }
+}, [selectedElements, screenConfig.name, screenConfig.format, selectedCompoundMethods]);
 
   const regenerateCode = async () => {
-    if (!selectedElements.length || !screenConfig.name) return;
+  if (!selectedElements.length || !screenConfig.name) return;
 
-    try {
-      const response = await fetch(`${API_URL}/api/ai-assistant/generate-screen-object`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          elements: selectedElements,
-          screenName: screenConfig.name,
-          format: screenConfig.format,
-          platform: screenConfig.platform,
-          style: {
-            useThisPage: true,
-            includeAssertions: true,
-            includeCompoundActions: true
-          }
-        })
-      });
+  try {
+    const response = await fetch(`${API_URL}/api/ai-assistant/generate-screen-object`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        elements: selectedElements,
+        screenName: screenConfig.name,
+        format: screenConfig.format,
+        platform: screenConfig.platform,
+        compoundMethods: selectedCompoundMethods,  // ADD THIS
+        style: {
+          useThisPage: true,
+          includeAssertions: true,
+          includeCompoundActions: true
+        }
+      })
+    });
 
-      const data = await response.json();
-      if (data.success) {
-        setGeneratedCode(data.code);
-      }
-    } catch (err) {
-      console.error('Code generation failed:', err);
+    const data = await response.json();
+    if (data.success) {
+      setGeneratedCode(data.code);
     }
-  };
+  } catch (err) {
+    console.error('Code generation failed:', err);
+  }
+};
 
   const handleCapture = (result) => {
     setScanResult(result);
@@ -348,20 +350,23 @@ export default function AIAssistantWizard({
 
     {/* Show appropriate panel based on mode */}
     {mode === 'create' ? (
-      <StepRefineElements
-        allElements={scanResult?.elements || []}
-        selectedElements={selectedElements}
-        setSelectedElements={setSelectedElements}
-        screenshot={scanResult?.screenshot}
-        theme={theme}
-        onAddElements={(newElements) => {
-          setScanResult(prev => ({
-            ...prev,
-            elements: [...(prev?.elements || []), ...newElements]
-          }));
-          setSelectedElements(prev => [...prev, ...newElements]);
-        }}
-        onRescan={async (focusPrompt) => {
+  <StepRefineElements
+  allElements={scanResult?.elements || []}
+  selectedElements={selectedElements}
+  setSelectedElements={setSelectedElements}
+  screenshot={scanResult?.screenshot}
+  patterns={scanResult?.patterns}
+  compoundMethods={scanResult?.compoundMethods}
+  onCompoundMethodsChange={setSelectedCompoundMethods}  // NEW
+  theme={theme}
+    onAddElements={(newElements) => {
+      setScanResult(prev => ({
+        ...prev,
+        elements: [...(prev?.elements || []), ...newElements]
+      }));
+      setSelectedElements(prev => [...prev, ...newElements]);
+    }}
+    onRescan={async (focusPrompt) => {
           if (!scanResult?.screenshot) {
             setError('No screenshot available');
             return;
@@ -391,17 +396,18 @@ export default function AIAssistantWizard({
       />
     ) : (
       <POMUpdatePanel
-        projectPath={projectPath}
-        capturedElements={scanResult?.elements || []}
-        platform={screenConfig.platform}
-        theme={theme}
-        onComplete={(result) => {
-          alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedLocators} locators\nUpdated ${result.changes.updatedSelectors} selectors\n\nBackup saved to ${result.backupPath}`);
-          // Skip Step 3 (save) since we already saved, go directly to Step 4 (implication)
-          setCurrentStep(4);
-        }}
-        onCancel={() => setMode('create')}
-      />
+  projectPath={projectPath}
+  capturedElements={scanResult?.elements || []}
+  patterns={scanResult?.patterns}
+  compoundMethods={scanResult?.compoundMethods}
+  platform={screenConfig.platform}
+  theme={theme}
+  onComplete={(result) => {
+    alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedLocators} locators\nUpdated ${result.changes.updatedSelectors} selectors\n\nBackup saved to ${result.backupPath}`);
+    setCurrentStep(4);
+  }}
+  onCancel={() => setMode('create')}
+/>
     )}
   </div>
 )}
@@ -823,28 +829,71 @@ function StepRefineElements({
   allElements, 
   selectedElements, 
   setSelectedElements, 
-  screenshot, 
+  screenshot,
+  patterns = {},
+  compoundMethods = [],
   theme, 
   onAddElements,
-  onRescan 
+  onRescan,
+  onCompoundMethodsChange  // NEW: callback to parent
 }) {
-  // Track which element indices are selected
   const [selectedIndices, setSelectedIndices] = useState(() => {
-    // Initially, find indices of selected elements in allElements
     return new Set(allElements.map((_, i) => i));
   });
+  const [selectedMethods, setSelectedMethods] = useState(() => {
+    // Select all compound methods by default
+    return new Set(compoundMethods.map((_, i) => i));
+  });
+  const [viewMode, setViewMode] = useState('grouped');
+  const [expandedGroups, setExpandedGroups] = useState(new Set(['compound', 'unique']));
 
-  // Update selection when allElements changes (e.g., after rescan)
+  // Update selected methods when compoundMethods changes
   useEffect(() => {
-    // Select all new elements by default
-    setSelectedIndices(new Set(allElements.map((_, i) => i)));
-  }, [allElements.length]);
+    setSelectedMethods(new Set(compoundMethods.map((_, i) => i)));
+  }, [compoundMethods.length]);
 
-  // When selection changes, update parent's selectedElements
+  // Notify parent when selected methods change
   useEffect(() => {
-    const selected = allElements.filter((_, i) => selectedIndices.has(i));
-    setSelectedElements(selected);
-  }, [selectedIndices, allElements, setSelectedElements]);
+    if (onCompoundMethodsChange) {
+      const selected = compoundMethods.filter((_, i) => selectedMethods.has(i));
+      onCompoundMethodsChange(selected);
+    }
+  }, [selectedMethods, compoundMethods, onCompoundMethodsChange]);
+
+  const toggleMethod = (index) => {
+    setSelectedMethods(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+  // Group elements: unique vs covered by compound methods
+  const groupedElements = useMemo(() => {
+    const repeatedPrefixes = new Set(
+      (patterns?.repeatedLabels || []).map(r => r.prefix.toLowerCase())
+    );
+    
+    const unique = [];
+    const coveredByCompound = [];
+    
+    allElements.forEach((el, idx) => {
+      const labelPrefix = (el.label || '').split(',')[0].trim().toLowerCase();
+      const isRepeated = repeatedPrefixes.has(labelPrefix);
+      const hasGoodSelector = el._domMatched && el.selectorStrategy !== 'xpath-fallback';
+      
+      if (isRepeated && !hasGoodSelector) {
+        coveredByCompound.push({ ...el, _idx: idx });
+      } else {
+        unique.push({ ...el, _idx: idx });
+      }
+    });
+    
+    return { unique, coveredByCompound };
+  }, [allElements, patterns]);
 
   const toggleElement = (index) => {
     setSelectedIndices(prev => {
@@ -875,8 +924,20 @@ function StepRefineElements({
     setSelectedIndices(matching);
   };
 
-  // Get unique types for filter buttons
+  const toggleGroup = (groupId) => {
+    setExpandedGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupId)) {
+        newSet.delete(groupId);
+      } else {
+        newSet.add(groupId);
+      }
+      return newSet;
+    });
+  };
+
   const types = [...new Set(allElements.map(el => el.type))];
+  const hasCompoundMethods = compoundMethods && compoundMethods.length > 0;
 
   return (
     <div>
@@ -930,47 +991,51 @@ function StepRefineElements({
         </div>
         
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          <button
-            onClick={selectAll}
-            style={{
-              padding: '4px 10px',
+          {/* View mode toggle */}
+          {hasCompoundMethods && (
+            <div style={{
+              display: 'flex',
               background: theme.colors.background.tertiary,
-              border: `1px solid ${theme.colors.border}`,
               borderRadius: '4px',
-              fontSize: '11px',
-              color: theme.colors.text.secondary,
-              cursor: 'pointer'
-            }}
-          >
-            All
-          </button>
-          <button
-            onClick={selectNone}
-            style={{
-              padding: '4px 10px',
-              background: theme.colors.background.tertiary,
-              border: `1px solid ${theme.colors.border}`,
-              borderRadius: '4px',
-              fontSize: '11px',
-              color: theme.colors.text.secondary,
-              cursor: 'pointer'
-            }}
-          >
-            None
-          </button>
+              overflow: 'hidden',
+              marginRight: '8px'
+            }}>
+              <button
+                onClick={() => setViewMode('grouped')}
+                style={{
+                  padding: '4px 10px',
+                  background: viewMode === 'grouped' ? theme.colors.accents.purple : 'transparent',
+                  border: 'none',
+                  fontSize: '11px',
+                  color: viewMode === 'grouped' ? 'white' : theme.colors.text.secondary,
+                  cursor: 'pointer'
+                }}
+              >
+                📦 Grouped
+              </button>
+              <button
+                onClick={() => setViewMode('flat')}
+                style={{
+                  padding: '4px 10px',
+                  background: viewMode === 'flat' ? theme.colors.accents.purple : 'transparent',
+                  border: 'none',
+                  fontSize: '11px',
+                  color: viewMode === 'flat' ? 'white' : theme.colors.text.secondary,
+                  cursor: 'pointer'
+                }}
+              >
+                📋 Flat
+              </button>
+            </div>
+          )}
+
+          <button onClick={selectAll} style={filterBtnStyle(theme, false)}>All</button>
+          <button onClick={selectNone} style={filterBtnStyle(theme, false)}>None</button>
           {types.map(type => (
             <button
               key={type}
               onClick={() => selectByType(type)}
-              style={{
-                padding: '4px 10px',
-                background: theme.colors.background.tertiary,
-                border: `1px solid ${theme.colors.border}`,
-                borderRadius: '4px',
-                fontSize: '11px',
-                color: theme.colors.text.secondary,
-                cursor: 'pointer'
-              }}
+              style={filterBtnStyle(theme, false)}
             >
               {getTypeIcon(type)} {type}
             </button>
@@ -980,110 +1045,443 @@ function StepRefineElements({
 
       {/* Elements list */}
       <div style={{
-        maxHeight: '350px',
+        maxHeight: '400px',
         overflowY: 'auto',
         border: `1px solid ${theme.colors.border}`,
         borderRadius: '8px',
         marginBottom: '16px'
       }}>
-        {allElements.map((element, idx) => {
-          const isSelected = selectedIndices.has(idx);
-          
-          return (
-            <div
-              key={idx}
-              style={{
-                padding: '10px 12px',
-                borderBottom: `1px solid ${theme.colors.border}`,
-                background: isSelected 
-                  ? `${theme.colors.accents.green}08`
-                  : theme.colors.background.secondary,
-                opacity: isSelected ? 1 : 0.6,
-                transition: 'all 0.2s'
-              }}
-            >
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px'
-              }}>
-                {/* Checkbox */}
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => toggleElement(idx)}
-                  style={{ 
-                    width: '18px', 
-                    height: '18px',
-                    cursor: 'pointer'
-                  }}
+        {viewMode === 'grouped' && hasCompoundMethods ? (
+          <>
+            {/* Compound Methods Section */}
+            <GroupHeader
+              title="🧩 Smart Compound Locators"
+              subtitle={`${compoundMethods.length} methods covering ${groupedElements.coveredByCompound.length} elements`}
+              expanded={expandedGroups.has('compound')}
+              onToggle={() => toggleGroup('compound')}
+              theme={theme}
+              color={theme.colors.accents.purple}
+            />
+            
+            {expandedGroups.has('compound') && (
+  <div style={{ 
+    background: `${theme.colors.accents.purple}05`,
+    borderBottom: `1px solid ${theme.colors.border}`
+  }}>
+    {compoundMethods.filter(m => !m.isDynamic).map((method, idx) => (
+      <CompoundMethodRow
+        key={idx}
+        method={method}
+        index={idx}
+        isSelected={selectedMethods.has(idx)}
+        onToggle={() => toggleMethod(idx)}
+        theme={theme}
+      />
+    ))}
+  </div>
+)}
+
+            {/* Unique Elements Section */}
+            <GroupHeader
+              title="✨ Unique Locators"
+              subtitle={`${groupedElements.unique.length} elements with reliable selectors`}
+              expanded={expandedGroups.has('unique')}
+              onToggle={() => toggleGroup('unique')}
+              theme={theme}
+              color={theme.colors.accents.green}
+            />
+            
+            {expandedGroups.has('unique') && groupedElements.unique.map((element) => (
+              <ElementRowSimple
+                key={element._idx}
+                element={element}
+                isSelected={selectedIndices.has(element._idx)}
+                onToggle={() => toggleElement(element._idx)}
+                theme={theme}
+              />
+            ))}
+
+            {/* Covered elements (collapsed by default) */}
+            {groupedElements.coveredByCompound.length > 0 && (
+              <>
+                <GroupHeader
+                  title="🔄 Covered by Compound Methods"
+                  subtitle={`${groupedElements.coveredByCompound.length} elements (use methods above instead)`}
+                  expanded={expandedGroups.has('covered')}
+                  onToggle={() => toggleGroup('covered')}
+                  theme={theme}
+                  color={theme.colors.text.tertiary}
+                  muted
                 />
-
-                {/* Type icon */}
-                <span style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '4px',
-                  background: getTypeColor(element.type, theme),
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '14px',
-                  flexShrink: 0
-                }}>
-                  {getTypeIcon(element.type)}
-                </span>
-
-                {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontWeight: 600,
-                    color: theme.colors.text.primary,
-                    fontSize: '13px',
-                    textDecoration: isSelected ? 'none' : 'line-through'
-                  }}>
-                    {element.name}
-                  </div>
-                  <div style={{
-                    fontSize: '11px',
-                    color: theme.colors.text.tertiary,
-                    fontFamily: 'monospace',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {element.selectors?.[0]?.value || 'No selector'}
-                  </div>
-                </div>
-
-                {/* Type badge */}
-                <span style={{
-                  padding: '2px 8px',
-                  background: `${theme.colors.accents.blue}20`,
-                  borderRadius: '4px',
-                  fontSize: '10px',
-                  color: theme.colors.accents.blue,
-                  flexShrink: 0
-                }}>
-                  {element.type}
-                </span>
-              </div>
-            </div>
-          );
-        })}
+                
+                {expandedGroups.has('covered') && groupedElements.coveredByCompound.map((element) => (
+                  <ElementRowSimple
+                    key={element._idx}
+                    element={element}
+                    isSelected={selectedIndices.has(element._idx)}
+                    onToggle={() => toggleElement(element._idx)}
+                    theme={theme}
+                    muted
+                  />
+                ))}
+              </>
+            )}
+          </>
+        ) : (
+          // Flat view
+          allElements.map((element, idx) => (
+            <ElementRowSimple
+              key={idx}
+              element={element}
+              isSelected={selectedIndices.has(idx)}
+              onToggle={() => toggleElement(idx)}
+              theme={theme}
+            />
+          ))
+        )}
       </div>
 
       {/* Rescan section */}
       <RescanSection 
         theme={theme}
-        onRescan={async (focusPrompt) => {
-          if (onRescan) {
-            await onRescan(focusPrompt);
-          }
-        }}
+        onRescan={onRescan}
       />
     </div>
   );
+}
+
+// Group header component
+function GroupHeader({ title, subtitle, expanded, onToggle, theme, color, muted }) {
+  return (
+    <div
+      onClick={onToggle}
+      style={{
+        padding: '12px 16px',
+        background: muted ? theme.colors.background.tertiary : `${color}10`,
+        borderBottom: `1px solid ${theme.colors.border}`,
+        cursor: 'pointer',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}
+    >
+      <div>
+        <div style={{
+          fontWeight: 600,
+          fontSize: '14px',
+          color: muted ? theme.colors.text.tertiary : color
+        }}>
+          {expanded ? '▼' : '▶'} {title}
+        </div>
+        <div style={{
+          fontSize: '11px',
+          color: theme.colors.text.tertiary,
+          marginTop: '2px'
+        }}>
+          {subtitle}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Compound method row
+function CompoundMethodRow({ method, index, isSelected, onToggle, theme }) {
+  const [expanded, setExpanded] = useState(false);
+  
+  return (
+    <div style={{ borderBottom: `1px solid ${theme.colors.border}` }}>
+      <div
+        style={{
+          padding: '10px 16px',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '12px',
+          opacity: isSelected ? 1 : 0.5
+        }}
+      >
+        {/* Checkbox */}
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onToggle}
+          style={{ width: '18px', height: '18px', cursor: 'pointer', marginTop: '2px' }}
+        />
+
+        <span 
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            fontSize: '12px',
+            color: theme.colors.text.tertiary,
+            marginTop: '2px',
+            cursor: 'pointer'
+          }}
+        >
+          {expanded ? '▼' : '▶'}
+        </span>
+        
+        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            color: theme.colors.accents.purple,
+            fontWeight: 600,
+            textDecoration: isSelected ? 'none' : 'line-through'
+          }}>
+            {method.name}({method.params.map(p => p.name).join(', ')})
+          </div>
+          <div style={{
+            fontSize: '11px',
+            color: theme.colors.text.secondary,
+            marginTop: '4px'
+          }}>
+            {method.description}
+          </div>
+          {method.note && (
+            <div style={{
+              fontSize: '10px',
+              color: theme.colors.text.tertiary,
+              marginTop: '4px',
+              fontStyle: 'italic'
+            }}>
+              📍 {method.note}
+            </div>
+          )}
+        </div>
+        
+        <span style={{
+          padding: '2px 8px',
+          background: `${theme.colors.accents.purple}20`,
+          borderRadius: '4px',
+          fontSize: '10px',
+          color: theme.colors.accents.purple
+        }}>
+          {method.locatorType}
+        </span>
+      </div>
+      
+      {expanded && (
+        <div style={{
+          padding: '0 16px 12px 40px',
+          background: `${theme.colors.background.tertiary}50`
+        }}>
+          {/* Parameters */}
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              color: theme.colors.text.tertiary,
+              marginBottom: '4px',
+              textTransform: 'uppercase'
+            }}>
+              Parameters
+            </div>
+            {method.params.map((param, idx) => (
+              <div key={idx} style={{
+                fontSize: '11px',
+                color: theme.colors.text.secondary,
+                marginLeft: '8px'
+              }}>
+                <code style={{ color: theme.colors.accents.blue }}>{param.name}</code>
+                <span style={{ color: theme.colors.text.tertiary }}> : {param.type}</span>
+                <span style={{ marginLeft: '8px', color: theme.colors.text.tertiary }}>
+                  — {param.description}
+                </span>
+              </div>
+            ))}
+          </div>
+          
+          {/* Template */}
+          <div>
+            <div style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              color: theme.colors.text.tertiary,
+              marginBottom: '4px',
+              textTransform: 'uppercase'
+            }}>
+              Selector Template
+            </div>
+            <code style={{
+              display: 'block',
+              padding: '8px',
+              background: '#1a1a2e',
+              borderRadius: '4px',
+              fontSize: '10px',
+              color: '#e0e0e0',
+              overflowX: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all'
+            }}>
+              {method.template}
+            </code>
+          </div>
+          
+          {/* Usage example */}
+          <div style={{ marginTop: '8px' }}>
+            <div style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              color: theme.colors.text.tertiary,
+              marginBottom: '4px',
+              textTransform: 'uppercase'
+            }}>
+              Usage Example
+            </div>
+            <code style={{
+              display: 'block',
+              padding: '8px',
+              background: '#1a1a2e',
+              borderRadius: '4px',
+              fontSize: '10px',
+              color: '#a0e0a0'
+            }}>
+              {generateUsageExample(method)}
+            </code>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function generateUsageExample(method) {
+  const exampleValues = {
+    section: '"Evening"',
+    status: '"Pending"',
+    type: '"Evening"',
+    timeRange: '"4:00pm - 12:00am"',
+    index: '0',
+    parts: '["Accepted", "1/10"]'
+  };
+  
+  const args = method.params.map(p => exampleValues[p.name] || `"${p.name}"`).join(', ');
+  return `await screen.${method.name}(${args});`;
+}
+
+// Simple element row for the wizard
+function ElementRowSimple({ element, isSelected, onToggle, theme, muted = false }) {
+  const selectorQuality = element._domMatched 
+    ? (element.selectorStrategy === 'xpath-fallback' ? 'warning' : 'good')
+    : 'bad';
+
+  return (
+    <div style={{
+      padding: '10px 12px',
+      borderBottom: `1px solid ${theme.colors.border}`,
+      background: isSelected 
+        ? `${theme.colors.accents.green}08`
+        : theme.colors.background.secondary,
+      opacity: muted ? 0.6 : 1,
+      transition: 'all 0.2s'
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px'
+      }}>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onToggle}
+          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+        />
+
+        {/* Selector quality indicator */}
+        <span style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '50%',
+          background: selectorQuality === 'good' 
+            ? theme.colors.accents.green 
+            : selectorQuality === 'warning'
+            ? theme.colors.accents.yellow
+            : theme.colors.accents.red,
+          flexShrink: 0
+        }} title={
+          selectorQuality === 'good' ? 'Reliable selector' :
+          selectorQuality === 'warning' ? 'XPath fallback - may be fragile' :
+          'No DOM match - unreliable'
+        } />
+
+        <span style={{
+          width: '28px',
+          height: '28px',
+          borderRadius: '4px',
+          background: getTypeColor(element.type, theme),
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '14px',
+          flexShrink: 0
+        }}>
+          {getTypeIcon(element.type)}
+        </span>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontWeight: 600,
+            color: theme.colors.text.primary,
+            fontSize: '13px',
+            textDecoration: isSelected ? 'none' : 'line-through'
+          }}>
+            {element.name}
+          </div>
+          <div style={{
+            fontSize: '11px',
+            color: theme.colors.text.tertiary,
+            fontFamily: 'monospace',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
+            {element.selectors?.[0]?.value || 'No selector'}
+          </div>
+        </div>
+
+        {/* Strategy badge */}
+        {element.selectorStrategy && (
+          <span style={{
+            padding: '2px 6px',
+            background: element.selectorStrategy === 'xpath-fallback'
+              ? `${theme.colors.accents.yellow}20`
+              : `${theme.colors.accents.green}20`,
+            borderRadius: '4px',
+            fontSize: '9px',
+            color: element.selectorStrategy === 'xpath-fallback'
+              ? theme.colors.accents.yellow
+              : theme.colors.accents.green,
+            flexShrink: 0
+          }}>
+            {element.selectorStrategy}
+          </span>
+        )}
+
+        <span style={{
+          padding: '2px 8px',
+          background: `${theme.colors.accents.blue}20`,
+          borderRadius: '4px',
+          fontSize: '10px',
+          color: theme.colors.accents.blue,
+          flexShrink: 0
+        }}>
+          {element.type}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function filterBtnStyle(theme, active) {
+  return {
+    padding: '4px 10px',
+    background: active ? theme.colors.accents.purple : theme.colors.background.tertiary,
+    border: `1px solid ${active ? theme.colors.accents.purple : theme.colors.border}`,
+    borderRadius: '4px',
+    fontSize: '11px',
+    color: active ? 'white' : theme.colors.text.secondary,
+    cursor: 'pointer'
+  };
 }
 
 // Helper component for rescan
