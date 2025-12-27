@@ -163,6 +163,7 @@ export default function ImplicationUpdatePanel({
         : [];
       
       const instanceName = screenName.charAt(0).toLowerCase() + screenName.slice(1);
+      const targetPlatform = mergeOptions.targetPlatform || platform;
 
       console.log('🔍 Sending implication merge:', {
         filteredDiff,
@@ -177,7 +178,7 @@ export default function ImplicationUpdatePanel({
           filePath: selectedImpl.fullPath,
           diff: filteredDiff,
           compoundMethods: filteredCompoundMethods,
-          options: { platform, screenName, instanceName, ...mergeOptions }
+          options: { platform: targetPlatform, screenName, instanceName, ...mergeOptions }
         })
       });
       
@@ -600,21 +601,56 @@ export default function ImplicationUpdatePanel({
           </div>
 
           {/* Options */}
-          {hasCompoundMethods && (
+          <div style={{
+            marginBottom: '16px',
+            padding: '12px',
+            background: theme.colors.background.tertiary,
+            borderRadius: '6px'
+          }}>
             <div style={{
-              marginBottom: '16px',
-              padding: '12px',
-              background: theme.colors.background.tertiary,
-              borderRadius: '6px'
+              fontSize: '13px',
+              fontWeight: 600,
+              color: theme.colors.text.primary,
+              marginBottom: '8px'
             }}>
-              <div style={{
-                fontSize: '13px',
-                fontWeight: 600,
-                color: theme.colors.text.primary,
-                marginBottom: '8px'
+              ⚙️ Options
+            </div>
+            
+            {/* Platform selector */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ 
+                display: 'block',
+                fontSize: '12px',
+                color: theme.colors.text.secondary,
+                marginBottom: '4px'
               }}>
-                ⚙️ Options
-              </div>
+                Target Platform
+              </label>
+              <select
+                value={mergeOptions.targetPlatform || platform}
+                onChange={(e) => setMergeOptions(prev => ({
+                  ...prev,
+                  targetPlatform: e.target.value
+                }))}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  background: theme.colors.background.secondary,
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: '4px',
+                  color: theme.colors.text.primary,
+                  fontSize: '13px'
+                }}
+              >
+                <option value="web">Web</option>
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
+                <option value="manager">Manager (Mobile)</option>
+                <option value="dancer">Dancer (Mobile)</option>
+              </select>
+            </div>
+
+            {hasCompoundMethods && (
               <label style={{ 
                 display: 'flex', 
                 alignItems: 'center', 
@@ -634,22 +670,8 @@ export default function ImplicationUpdatePanel({
                 />
                 Include compound methods in mirrorsOn
               </label>
-            </div>
-          )}
-
-          {error && (
-            <div style={{
-              marginBottom: '16px',
-              padding: '12px',
-              background: `${theme.colors.accents.red}15`,
-              border: `1px solid ${theme.colors.accents.red}`,
-              borderRadius: '6px',
-              color: theme.colors.accents.red,
-              fontSize: '13px'
-            }}>
-              ❌ {error}
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Actions */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
