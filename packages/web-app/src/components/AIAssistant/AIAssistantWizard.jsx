@@ -1,6 +1,6 @@
 // packages/web-app/src/components/AIAssistant/AIAssistantWizard.jsx
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import DebugBrowserTab from './DebugBrowserTab';
 import ScanUrlTab from './ScanUrlTab';
 import ElementSelector from './ElementSelector';
@@ -31,7 +31,6 @@ export default function AIAssistantWizard({
   // Data collected through steps
   const [scanResult, setScanResult] = useState(null);
   const [selectedElements, setSelectedElements] = useState([]);
-  const [selectedCompoundMethods, setSelectedCompoundMethods] = useState([]);
   const [screenConfig, setScreenConfig] = useState({
     name: '',
     format: 'single', // 'single' | 'split'
@@ -52,6 +51,15 @@ export default function AIAssistantWizard({
   const [savedScreenObject, setSavedScreenObject] = useState(null);
   const [mode, setMode] = useState('create'); // 'create' | 'update'
   const [implMode, setImplMode] = useState('create'); // 'create' | 'update'
+  // Add state for selected compound methods (near other state declarations)
+  const [selectedCompoundMethods, setSelectedCompoundMethods] = useState([]);
+
+// Memoize callback to prevent infinite loops
+const handleCompoundMethodsChange = useCallback((methods) => {
+  setSelectedCompoundMethods(methods);
+}, []);
+
+
 
   // Load project config for defaults
   useEffect(() => {
@@ -98,11 +106,11 @@ export default function AIAssistantWizard({
   };
 
   // Regenerate code when elements change
-  useEffect(() => {
+useEffect(() => {
   if (selectedElements.length > 0 && currentStep >= 2) {
     regenerateCode();
   }
-}, [selectedElements, screenConfig.name, screenConfig.format, selectedCompoundMethods]);
+}, [selectedElements, screenConfig.name, screenConfig.format]);
 
   const regenerateCode = async () => {
   if (!selectedElements.length || !screenConfig.name) return;
@@ -350,14 +358,14 @@ export default function AIAssistantWizard({
 
     {/* Show appropriate panel based on mode */}
     {mode === 'create' ? (
-  <StepRefineElements
+<StepRefineElements
   allElements={scanResult?.elements || []}
   selectedElements={selectedElements}
   setSelectedElements={setSelectedElements}
   screenshot={scanResult?.screenshot}
   patterns={scanResult?.patterns}
   compoundMethods={scanResult?.compoundMethods}
-  onCompoundMethodsChange={setSelectedCompoundMethods}  // NEW
+  onCompoundMethodsChange={handleCompoundMethodsChange}
   theme={theme}
     onAddElements={(newElements) => {
       setScanResult(prev => ({
@@ -399,7 +407,7 @@ export default function AIAssistantWizard({
   projectPath={projectPath}
   capturedElements={scanResult?.elements || []}
   patterns={scanResult?.patterns}
-  compoundMethods={scanResult?.compoundMethods}
+  compoundMethods={scanResult?.compoundMethods || []}
   platform={screenConfig.platform}
   theme={theme}
   onComplete={(result) => {
@@ -407,6 +415,7 @@ export default function AIAssistantWizard({
     setCurrentStep(4);
   }}
   onCancel={() => setMode('create')}
+  onCompoundMethodsChange={handleCompoundMethodsChange}
 />
     )}
   </div>
@@ -481,18 +490,23 @@ export default function AIAssistantWizard({
         theme={theme}
       />
     ) : (
-      <ImplicationUpdatePanel
-        projectPath={projectPath}
-        capturedElements={selectedElements}
-        screenName={screenConfig.name}
-        platform={screenConfig.platform}
-        theme={theme}
-        onComplete={(result) => {
-          alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedElements} elements`);
-          if (onClose) onClose();
-        }}
-        onCancel={() => setImplMode('create')}
-      />
+<ImplicationUpdatePanel
+  projectPath={projectPath}
+  capturedElements={selectedElements}
+  patterns={scanResult?.patterns}
+  compoundMethods={selectedCompoundMethods.length > 0 
+    ? selectedCompoundMethods 
+    : (scanResult?.compoundMethods || [])}
+  screenName={screenConfig.name}
+  platform={screenConfig.platform}
+  theme={theme}
+  onComplete={(result) => {
+    alert(`✅ Updated ${result.filePath}\n\nAdded ${result.changes.addedElements} elements`);
+    if (onComplete) onComplete({ skipped: false, ...result });
+  }}
+  onCancel={() => setImplMode('create')}
+  onCompoundMethodsChange={handleCompoundMethodsChange}
+/>
     )}
   </div>
 )}
@@ -835,7 +849,7 @@ function StepRefineElements({
   theme, 
   onAddElements,
   onRescan,
-  onCompoundMethodsChange  // NEW: callback to parent
+  onCompoundMethodsChange
 }) {
   const [selectedIndices, setSelectedIndices] = useState(() => {
     return new Set(allElements.map((_, i) => i));
@@ -847,18 +861,26 @@ function StepRefineElements({
   const [viewMode, setViewMode] = useState('grouped');
   const [expandedGroups, setExpandedGroups] = useState(new Set(['compound', 'unique']));
 
-  // Update selected methods when compoundMethods changes
+   // Update selected methods when compoundMethods changes
   useEffect(() => {
     setSelectedMethods(new Set(compoundMethods.map((_, i) => i)));
   }, [compoundMethods.length]);
 
+  // Track previous selection to avoid infinite loops
+  const prevSelectionRef = useRef(null);
+
   // Notify parent when selected methods change
   useEffect(() => {
-    if (onCompoundMethodsChange) {
+    if (onCompoundMethodsChange && compoundMethods.length > 0) {
       const selected = compoundMethods.filter((_, i) => selectedMethods.has(i));
-      onCompoundMethodsChange(selected);
+      const selectionKey = [...selectedMethods].sort().join(',');
+      
+      if (prevSelectionRef.current !== selectionKey) {
+        prevSelectionRef.current = selectionKey;
+        onCompoundMethodsChange(selected);
+      }
     }
-  }, [selectedMethods, compoundMethods, onCompoundMethodsChange]);
+  }, [selectedMethods]);
 
   const toggleMethod = (index) => {
     setSelectedMethods(prev => {

@@ -3225,35 +3225,60 @@ router.post('/compare-implication', async (req, res) => {
  * POST /api/ai-assistant/merge-implication
  */
 router.post('/merge-implication', async (req, res) => {
-  const { filePath, diff, options = {} } = req.body;
+  const { 
+    filePath, 
+    diff, 
+    compoundMethods = [],
+    options = {} 
+  } = req.body;
   
   if (!filePath || !diff) {
     return res.status(400).json({ error: 'filePath and diff required' });
   }
 
   try {
+    console.log('🔍 Merge implication request:', {
+      filePath,
+      diff: JSON.stringify(diff, null, 2),
+      compoundMethodsCount: compoundMethods?.length || 0,
+      compoundMethodNames: compoundMethods?.map(m => m.name),
+      options
+    });
+
     const existingImpl = await implicationComparator.parseExistingImplication(filePath);
+    
+    console.log('🔍 Parsed implication:', {
+      className: existingImpl.className,
+      status: existingImpl.status,
+      screens: existingImpl.screens?.length || 0
+    });
     
     // Create backup
     const backupPath = filePath + '.bak';
     await fs.copyFile(filePath, backupPath);
     
-    // Merge
-    const newContent = await implicationComparator.merge(existingImpl, diff, options);
+    // Merge with compound methods
+    const newContent = await implicationComparator.merge(existingImpl, diff, {
+      ...options,
+      compoundMethods
+    });
     
     // Write
     await fs.writeFile(filePath, newContent, 'utf-8');
     
     res.json({
-      success: true,
-      filePath,
-      backupPath,
-      changes: {
-        addedElements: diff.new?.length || 0
-      }
-    });
+  success: true,
+  skipped: false,
+  filePath,
+  backupPath,
+  changes: {
+    addedElements: diff.new?.length || 0,
+    addedCompoundMethods: compoundMethods?.length || 0
+  }
+});
   } catch (error) {
-    console.error('Merge implication error:', error);
+    console.error('❌ Merge implication error:', error);
+    console.error('Stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
 });

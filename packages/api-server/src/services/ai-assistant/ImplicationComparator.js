@@ -12,8 +12,12 @@ class ImplicationComparator {
   
   async parseExistingImplication(filePath) {
     const content = await fs.readFile(filePath, 'utf-8');
+    
+    // Detect CommonJS vs ES modules
+    const isCommonJS = content.includes('require(') || content.includes('module.exports');
+    
     const ast = parser.parse(content, {
-      sourceType: 'module',
+      sourceType: isCommonJS ? 'script' : 'module',
       plugins: ['classProperties']
     });
 
@@ -24,7 +28,10 @@ class ImplicationComparator {
       entity: null,
       platforms: [],
       mirrorsOn: null,
-      screens: [],       // { platform, screenName, elements: [] }
+      mirrorsOnStart: null,  // Line number where mirrorsOn starts
+      mirrorsOnEnd: null,    // Line number where mirrorsOn ends
+      screens: [],           // { platform, screenName, elements: [] }
+      compoundMethods: [],   // Existing compound methods
       transitions: [],
       rawContent: content
     };
@@ -66,6 +73,8 @@ class ImplicationComparator {
         
         if (propName === 'mirrorsOn') {
           result.mirrorsOn = generate(path.node.value).code;
+          result.mirrorsOnStart = path.node.loc?.start.line;
+          result.mirrorsOnEnd = path.node.loc?.end.line;
           
           // Extract screens and their elements
           extractScreensFromMirrorsOn(path.node.value, result);
@@ -112,63 +121,136 @@ class ImplicationComparator {
   }
 
   async merge(existingImpl, diff, options = {}) {
-    const { 
-      platform, 
-      screenName, 
-      instanceName,
-      addToVisible = true 
-    } = options;
+  const { 
+    platform, 
+    screenName, 
+    instanceName,
+    compoundMethods = [],
+    includeCompoundMethods = true 
+  } = options;
 
-    let content = existingImpl.rawContent;
-    
-    if (diff.new.length === 0) {
-      return content;
-    }
-
-    // Find the mirrorsOn block for this platform/screen
-    const screenPattern = new RegExp(
-      `(${screenName}:\\s*\\{[^}]*blocks:\\s*\\[)([^\\]]*)(\\])`,
-      's'
-    );
-    
-    const match = content.match(screenPattern);
-    
-    if (match) {
-      // Add new elements to existing blocks
-      const newElements = diff.new.map(el => `'${el.name}'`).join(', ');
-      
-      // Find visible array in the blocks and append
-      const visiblePattern = /(visible:\s*\[)([^\]]*?)(\])/;
-      const visibleMatch = content.match(visiblePattern);
-      
-      if (visibleMatch) {
-        const existingVisible = visibleMatch[2].trim();
-        const newVisible = existingVisible 
-          ? `${existingVisible}, ${newElements}`
-          : newElements;
-        content = content.replace(visiblePattern, `$1${newVisible}$3`);
-      }
-    } else {
-      // No existing screen block - need to add one
-      // Find mirrorsOn.UI.{platform} and add new screen
-      const platformPattern = new RegExp(
-        `(UI:\\s*\\{[^}]*${platform}:\\s*\\{)([^}]*)(\\})`,
-        's'
-      );
-      
-      const platformMatch = content.match(platformPattern);
-      
-      if (platformMatch) {
-        const newBlock = generateScreenBlock(screenName, instanceName, diff.new);
-        const existingContent = platformMatch[2].trim();
-        const separator = existingContent ? ',\n        ' : '';
-        const newContent = `${existingContent}${separator}${newBlock}`;
-        content = content.replace(platformPattern, `$1${newContent}$3`);
-      }
-    }
-
+  let content = existingImpl.rawContent;
+  
+  // Nothing to add
+  if (diff.new.length === 0 && (!includeCompoundMethods || compoundMethods.length === 0)) {
     return content;
   }
+
+  console.log('📝 Merge params:', { platform, screenName, instanceName });
+  console.log('📝 New elements:', diff.new.length);
+  console.log('📝 Compound methods:', compoundMethods.length);
+
+  // Build the new screen block
+  const screenBlockName = screenName.endsWith('Screen') ? screenName : `${screenName}Screen`;
+  const instance = instanceName || screenName.charAt(0).toLowerCase() + screenName.slice(1);
+  
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 7);
+
+  // Build visible elements list
+  const visibleElements = diff.new.map(el => `'${el.name}'`).join(',\n                    ');
+
+  // Build compound methods block if we have any
+  let compoundBlock = '';
+  if (includeCompoundMethods && compoundMethods.length > 0) {
+    const methodsJson = compoundMethods.map(m => {
+      const paramsJson = m.params.map(p => 
+        `{ name: '${p.name}', type: '${p.type}' }`
+      ).join(', ');
+      return `                  {
+                    name: '${m.name}',
+                    description: '${m.description.replace(/'/g, "\\'")}',
+                    params: [${paramsJson}],
+                    template: \`${m.template}\`
+                  }`;
+    }).join(',\n');
+
+    compoundBlock = `,
+              {
+                id: 'blk_compound_${timestamp + 1}_${random}',
+                type: 'compound-locators',
+                label: 'Dynamic element lookups',
+                order: 1,
+                expanded: true,
+                enabled: true,
+                data: {
+                  methods: [
+${methodsJson}
+                  ]
+                }
+              }`;
+  }
+
+  // The new screen definition
+  const newScreenBlock = `${screenBlockName}: {
+            description: '${screenName} elements',
+            screen: '${instance}.screen.js',
+            instance: '${instance}',
+            blocks: [
+              {
+                id: 'blk_ui_${timestamp}_${random}',
+                type: 'ui-assertion',
+                label: '${screenName} visible elements',
+                order: 0,
+                expanded: true,
+                enabled: true,
+                data: {
+                  visible: [
+                    ${visibleElements}
+                  ],
+                  timeout: 30000
+                }
+              }${compoundBlock}
+            ]
+          }`;
+
+  // Check if platform exists in UI
+  const platformPattern = new RegExp(`(UI:\\s*\\{[\\s\\S]*?)(${platform}:\\s*\\{)([\\s\\S]*?)(\\}\\s*,?\\s*(?=\\w+:|\\}))`, 'm');
+  const platformMatch = content.match(platformPattern);
+
+  if (platformMatch) {
+    // Platform exists - add screen to it
+    console.log(`📝 Platform '${platform}' exists, adding screen`);
+    
+    // Find the closing brace of the platform object and insert before it
+    // Look for pattern like: manager: { ... existing screens ... }
+    const platformRegex = new RegExp(
+      `(${platform}:\\s*\\{)([\\s\\S]*?)(\\}\\s*,?\\s*(?=dancer:|web:|manager:|android:|ios:|\\}\\s*\\};))`,
+      'm'
+    );
+    
+    const match = content.match(platformRegex);
+    if (match) {
+      const existingContent = match[2].trim();
+      // Check if it ends with a comma or needs one
+      const needsComma = existingContent && !existingContent.endsWith(',');
+      const separator = existingContent ? (needsComma ? ',\n        ' : '\n        ') : '';
+      
+      content = content.replace(
+        platformRegex,
+        `$1$2${separator}${newScreenBlock}\n        $3`
+      );
+      console.log(`✅ Added ${screenBlockName} to ${platform}`);
+    }
+  } else {
+    // Platform doesn't exist - add it
+    console.log(`📝 Platform '${platform}' doesn't exist, adding it`);
+    
+    // Find UI: { and add the new platform
+    const uiPattern = /(UI:\s*\{)/;
+    const uiMatch = content.match(uiPattern);
+    
+    if (uiMatch) {
+      const newPlatform = `$1\n      ${platform}: {\n        ${newScreenBlock}\n      },`;
+      content = content.replace(uiPattern, newPlatform);
+      console.log(`✅ Added platform '${platform}' with ${screenBlockName}`);
+    } else {
+      console.log('❌ Could not find UI: { in file');
+    }
+  }
+
+  return content;
+}
 }
 
 function extractScreensFromMirrorsOn(node, result) {
@@ -176,7 +258,7 @@ function extractScreensFromMirrorsOn(node, result) {
   const code = generate(node).code;
   
   // Match pattern: ScreenName: { ... blocks: [...] }
-  const screenMatches = code.matchAll(/(\w+Screen):\s*\{[^}]*blocks:\s*\[([\s\S]*?)\]/g);
+  const screenMatches = code.matchAll(/(\w+Screen|\w+):\s*\{[^}]*blocks:\s*\[([\s\S]*?)\]/g);
   
   for (const match of screenMatches) {
     const screenName = match[1];
@@ -199,18 +281,26 @@ function extractScreensFromMirrorsOn(node, result) {
       platform = 'android';
     } else if (code.includes('ios:') && code.indexOf(screenName) > code.indexOf('ios:')) {
       platform = 'ios';
+    } else if (code.includes('dancer:') && code.indexOf(screenName) > code.indexOf('dancer:')) {
+      platform = 'dancer';
+    } else if (code.includes('manager:') && code.indexOf(screenName) > code.indexOf('manager:')) {
+      platform = 'manager';
     }
     
     result.screens.push({ platform, screenName, elements });
   }
 }
 
-function generateScreenBlock(screenName, instanceName, elements) {
-  const visibleElements = elements.map(el => `'${el.name}'`).join(', ');
+function generateScreenBlock(screenName, instanceName, elements, compoundMethods = []) {
+  const visibleElements = [
+    ...elements.map(el => `'${el.name}'`),
+    ...compoundMethods.map(m => `'@${m.name}'`)  // @ prefix for methods
+  ].join(', ');
+  
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 7);
   
-  return `${screenName}: {
+  let block = `${screenName}: {
           screen: '${instanceName}.screen.js',
           instance: '${instanceName}',
           blocks: [
@@ -226,9 +316,94 @@ function generateScreenBlock(screenName, instanceName, elements) {
                 hidden: [],
                 timeout: 30000
               }
-            }
+            }`;
+
+  // Add compound methods block if we have any
+  if (compoundMethods.length > 0) {
+    const methodsTimestamp = Date.now() + 1;
+    const methodsRandom = Math.random().toString(36).substring(2, 7);
+    
+    block += `,
+            {
+              id: 'blk_compound_${methodsTimestamp}_${methodsRandom}',
+              type: 'compound-locators',
+              label: 'Dynamic element lookups',
+              order: 1,
+              expanded: true,
+              enabled: true,
+              data: {
+                methods: [
+${compoundMethods.map(m => `                  {
+                    name: '${m.name}',
+                    description: '${m.description}',
+                    params: [${m.params.map(p => `{ name: '${p.name}', type: '${p.type}' }`).join(', ')}],
+                    template: \`${m.template}\`
+                  }`).join(',\n')}
+                ]
+              }
+            }`;
+  }
+
+  block += `
           ]
         }`;
+  
+  return block;
+}
+
+/**
+ * Add a compound methods block to an existing screen in mirrorsOn
+ */
+function addCompoundMethodsBlock(content, screenName, compoundMethods, platform) {
+  // Check if compound-locators block already exists for this screen
+  const compoundBlockPattern = new RegExp(
+    `${screenName}:[^}]*type:\\s*['"]compound-locators['"]`,
+    's'
+  );
+  
+  if (compoundBlockPattern.test(content)) {
+    // Block exists, we could merge but for now just skip
+    console.log(`ℹ️ Compound block already exists for ${screenName}`);
+    return content;
+  }
+
+  // Find the last block in this screen's blocks array and add after it
+  // This is a simplified approach - in production you'd use AST manipulation
+  const screenBlocksPattern = new RegExp(
+    `(${screenName}:\\s*\\{[^}]*blocks:\\s*\\[[\\s\\S]*?)(\\]\\s*\\})`,
+    's'
+  );
+  
+  const match = content.match(screenBlocksPattern);
+  
+  if (match) {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 7);
+    
+    const compoundBlock = `,
+            {
+              id: 'blk_compound_${timestamp}_${random}',
+              type: 'compound-locators',
+              label: 'Dynamic element lookups',
+              order: 99,
+              expanded: true,
+              enabled: true,
+              data: {
+                methods: [
+${compoundMethods.map(m => `                  {
+                    name: '${m.name}',
+                    description: '${m.description.replace(/'/g, "\\'")}',
+                    params: [${m.params.map(p => `{ name: '${p.name}', type: '${p.type}' }`).join(', ')}],
+                    template: \`${m.template}\`
+                  }`).join(',\n')}
+                ]
+              }
+            }`;
+    
+    content = content.replace(screenBlocksPattern, `$1${compoundBlock}$2`);
+  }
+
+  return content;
 }
 
 export default ImplicationComparator;

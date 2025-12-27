@@ -1428,12 +1428,12 @@ const disableTransitionMode = () => {
   })) || []}
   existingEntities={existingEntities}
   onComplete={(result) => {
-    console.log('🤖 AI Assistant complete:', result);
-    // Refresh graph after creating implication
-    if (!result.skipped) {
-      handleScan();
-    }
-  }}
+  console.log('🤖 AI Assistant complete:', result);
+  // Refresh graph after creating/updating implication
+  if (!result?.skipped) {
+    handleScan();
+  }
+}}
 />
 
         {/* ✅ ADD INTELLIGENCE SEARCH HERE */}

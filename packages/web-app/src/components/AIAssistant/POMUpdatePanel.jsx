@@ -1,6 +1,6 @@
 // packages/web-app/src/components/AIAssistant/POMUpdatePanel.jsx
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 
 const API_URL = 'http://localhost:3000';
 
@@ -15,7 +15,8 @@ export default function POMUpdatePanel({
   platform,
   theme,
   onComplete,
-  onCancel
+  onCancel,
+  onCompoundMethodsChange  // ADD THIS
 }) {
   // State
   const [availablePOMs, setAvailablePOMs] = useState([]);
@@ -59,12 +60,20 @@ export default function POMUpdatePanel({
     }
   }, [diff]);
 
-  // Auto-select all compound methods
+  // Track previous selection to avoid infinite loops
+  const prevSelectionRef = useRef(null);
+
   useEffect(() => {
-    if (compoundMethods?.length > 0) {
-      setSelectedMethods(new Set(compoundMethods.map((_, i) => i)));
+    if (onCompoundMethodsChange && compoundMethods.length > 0) {
+      const selected = compoundMethods.filter((_, i) => selectedMethods.has(i));
+      const selectionKey = [...selectedMethods].sort().join(',');
+      
+      if (prevSelectionRef.current !== selectionKey) {
+        prevSelectionRef.current = selectionKey;
+        onCompoundMethodsChange(selected);
+      }
     }
-  }, [compoundMethods]);
+  }, [selectedMethods]);
 
   // Group elements by pattern
   const groupedElements = useMemo(() => {
